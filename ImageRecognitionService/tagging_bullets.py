@@ -2,218 +2,217 @@ import cv2
 import numpy as np
 import pandas as pd
 from ultralytics import YOLO
+from datetime import timedelta
 from collections import defaultdict
 import os
 import argparse
-from datetime import timedelta
 import random
 
 # === CONFIG ===
-MODEL_PATH           = './trained_models/kanat_model10_v.2.0/weights/best.pt'
-VIDEO_PATH           = './videos/good_shooting_vid2.mp4'
-OUTPUT_DIR           = './video_output'
-EXCEL_OUTPUT         = os.path.join(OUTPUT_DIR, 'bullet_results.xlsx')
-IMAGE_SAVE_TEMPLATE  = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
+MODEL_PATH          = './trained_models/kanat_model10_v.2.0/weights/best.pt'
+VIDEO_PATH          = './videos/good_shooting_vid2.mp4'
+OUTPUT_DIR          = './video_output'
+EXCEL_OUTPUT        = os.path.join(OUTPUT_DIR, 'bullet_results.xlsx')
+IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
+TARGET_SIZE_CM      = 18
 
-TARGET_SIZE_CM       = 18
+# Clustering / suppression params
+CLUSTER_FACTOR      = 0.75   # fraction of bullet-box diagonal
+MIN_CLUSTER_DIST    = 10     # px minimum cluster radius
+IOU_SUPPRESS_THRESH = 0.2    # suppress if IoU > 0.2
 
-# Duplicate-suppression thresholds
-BULLET_MIN_DIST      = 5     # px (was 10)
-IOU_THRESH           = 0.5   # only suppress when IoU > 0.5
-
-# Annotation styling (thicker/bolder)
-OUTER_RADIUS         = 12
-OUTER_THICKNESS      = 2
-INNER_RADIUS         = 4
-MEAN_RADIUS          = 8
-MEAN_THICKNESS       = 2
-RECT_THICKNESS       = 2
-FONT_SCALE           = 0.7
-TEXT_THICKNESS       = 2
+# Annotation styling
+OUTER_RADIUS = 12
+OUTER_THICK  = 2
+INNER_RADIUS = 4
+MEAN_RADIUS  = 8
+MEAN_THICK   = 2
+RECT_THICK   = 2
+FONT_SCALE   = 0.7
+TEXT_THICK   = 2
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # === GLOBALS ===
-target_color_map   = {}   # target_id → [B, G, R]
-seen_bullet_dict   = {}   # center_key → {'row': ..., 'box': ...}
+target_color_map = {}  # target_id → BGR color
+clusters         = []  # each: dict(center, radius, box, row)
 
 # === HELPERS ===
 
-def time_str_to_seconds(time_str):
-    return sum(int(x) * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
+def time_str_to_seconds(ts):
+    h, m, s = map(int, ts.split(':'))
+    return h*3600 + m*60 + s
 
 def get_center(box):
     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
     return np.array([(x1 + x2) / 2, (y1 + y2) / 2])
 
-def compute_iou(boxA, boxB):
-    xA1, yA1, xA2, yA2 = boxA.xyxy[0].cpu().numpy()
-    xB1, yB1, xB2, yB2 = boxB.xyxy[0].cpu().numpy()
-    xi1, yi1 = max(xA1, xB1), max(yA1, yB1)
-    xi2, yi2 = min(xA2, xB2), min(yA2, yB2)
-    interW, interH = max(0, xi2 - xi1), max(0, yi2 - yi1)
-    interA = interW * interH
-    areaA = (xA2 - xA1) * (yA2 - yA1)
-    areaB = (xB2 - xB1) * (yB2 - yB1)
-    return interA / (areaA + areaB - interA + 1e-6)
+def compute_iou(a, b):
+    x1, y1, x2, y2 = a.xyxy[0].cpu().numpy()
+    X1, Y1, X2, Y2 = b.xyxy[0].cpu().numpy()
+    xi1, yi1 = max(x1, X1), max(y1, Y1)
+    xi2, yi2 = min(x2, X2), min(y2, Y2)
+    iw, ih   = max(0, xi2 - xi1), max(0, yi2 - yi1)
+    inter    = iw * ih
+    areaA    = (x2 - x1) * (y2 - y1)
+    areaB    = (X2 - X1) * (Y2 - Y1)
+    return inter / (areaA + areaB - inter + 1e-6)
 
-def find_seen_key(center, box, seen_dict):
-    for prev_key, data in seen_dict.items():
-        prev_ctr = np.array(prev_key)
-        if np.linalg.norm(center - prev_ctr) < BULLET_MIN_DIST:
-            return prev_key
-        if compute_iou(data['box'], box) > IOU_THRESH:
-            return prev_key
-    return None
-
-def assign_target_ids(centers):
-    sorted_list = sorted(enumerate(centers), key=lambda x: (x[1][1], x[1][0]))
-    return {orig_idx: new_id+1 for new_id, (orig_idx, _) in enumerate(sorted_list)}
-
-def assign_target_colors(tids):
-    return {tid: [random.randint(0,255) for _ in range(3)] for tid in tids}
-
-def annotate_frame(img, bullet_ctr, mean_cm, tgt_box, tgt_id, dist_cm, cm_per_px, tgt_ctr_px):
-    # pixel-offset for mean
-    mean_px = tgt_ctr_px + (mean_cm / cm_per_px)
-
-    # bullet outer + inner
-    cv2.circle(img, tuple(bullet_ctr.astype(int)), OUTER_RADIUS, (0,0,255), OUTER_THICKNESS)
-    cv2.circle(img, tuple(bullet_ctr.astype(int)), INNER_RADIUS, (0,0,255), -1)
-
+def annotate(img, ctr, mx_cm, my_cm, tgt_box, tid, dist_cm, scale, tgt_ctr):
+    mean_px = tgt_ctr + np.array([mx_cm, my_cm]) / scale
+    # bullet
+    cv2.circle(img, tuple(ctr.astype(int)), OUTER_RADIUS, (0,0,255), OUTER_THICK)
+    cv2.circle(img, tuple(ctr.astype(int)), INNER_RADIUS, (0,0,255), -1)
     # mean hit
-    cv2.circle(img, tuple(mean_px.astype(int)), MEAN_RADIUS, (0,255,0), MEAN_THICKNESS)
+    cv2.circle(img, tuple(mean_px.astype(int)), MEAN_RADIUS, (0,255,0), MEAN_THICK)
     cv2.putText(
         img,
-        f"{dist_cm:.2f} cm",
-        tuple((bullet_ctr + np.array([OUTER_RADIUS, -OUTER_RADIUS])).astype(int)),
+        f"{dist_cm:.1f}cm",
+        tuple((ctr + np.array([OUTER_RADIUS, -OUTER_RADIUS])).astype(int)),
         cv2.FONT_HERSHEY_SIMPLEX,
         FONT_SCALE,
         (255,0,0),
-        TEXT_THICKNESS
+        TEXT_THICK
     )
-
-    # target box + label
-    x1,y1,x2,y2 = tgt_box.xyxy[0].cpu().numpy().astype(int)
-    color = target_color_map[tgt_id]
-    cv2.rectangle(img, (x1,y1), (x2,y2), color, RECT_THICKNESS)
+    # target box & label
+    x1, y1, x2, y2 = tgt_box.xyxy[0].cpu().numpy().astype(int)
+    col = target_color_map[tid]
+    cv2.rectangle(img, (x1, y1), (x2, y2), col, RECT_THICK)
     cv2.putText(
         img,
-        f"Target {tgt_id}",
-        (x1+5, y1-5),
+        f"T{tid}",
+        (x1 + 5, y1 - 5),
         cv2.FONT_HERSHEY_SIMPLEX,
         FONT_SCALE,
-        color,
-        TEXT_THICKNESS
+        col,
+        TEXT_THICK
     )
 
 # === MAIN PROCESS ===
 
-def process_video(start_time, end_time):
-    cap       = cv2.VideoCapture(VIDEO_PATH)
-    fps       = cap.get(cv2.CAP_PROP_FPS)
-    start_fr  = int(time_str_to_seconds(start_time) * fps)
-    end_fr    = int(time_str_to_seconds(end_time)   * fps)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_fr)
+def process_video(start, end):
+    cap    = cv2.VideoCapture(VIDEO_PATH)
+    fps    = cap.get(cv2.CAP_PROP_FPS)
+    startF = int(time_str_to_seconds(start) * fps)
+    endF   = int(time_str_to_seconds(end)   * fps)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, startF)
 
-    model         = YOLO(MODEL_PATH)
-    target_hits   = defaultdict(list)
-    bullet_count  = 0
-    rows          = []
-    frame_idx     = start_fr
+    model = YOLO(MODEL_PATH)
+    # For each target ID, track all hit centers to compute relative means over time
+    target_hits = defaultdict(list)
+    bullet_id   = 0
 
+    # Frame loop
     try:
-        while cap.isOpened() and frame_idx < end_fr:
+        frame_idx = startF
+        while cap.isOpened() and frame_idx < endF:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            res     = model(frame)[0]
-            boxes   = res.boxes
-            targets = [b for b in boxes if int(b.cls[0]) == 2]
-            bullets = [b for b in boxes if int(b.cls[0]) == 1]
+            results = model(frame)[0]
+            boxes   = results.boxes
+            tgts    = [b for b in boxes if int(b.cls[0]) == 2]
+            blts    = [b for b in boxes if int(b.cls[0]) == 1]
 
-            if not targets:
+            if not tgts:
                 frame_idx += 1
                 continue
 
-            # assign target IDs & colors
-            centers  = [get_center(t) for t in targets]
-            tid_map  = assign_target_ids(centers)
+            # assign target IDs/colors
+            tgt_centers = [get_center(t) for t in tgts]
+            sorted_idx  = sorted(enumerate(tgt_centers), key=lambda x: (x[1][1], x[1][0]))
+            tid_map     = {orig: i+1 for i,(orig,_) in enumerate(sorted_idx)}
             if not target_color_map:
-                target_color_map.update(assign_target_colors(tid_map.values()))
+                target_color_map.update({tid: [random.randint(0,255) for _ in range(3)]
+                                         for tid in tid_map.values()})
 
-            # scale cm/px
-            w,h      = targets[0].xywh[0][2:].cpu().numpy()
-            cm_per_px= TARGET_SIZE_CM / ((w+h)/2)
+            # cm-per-pixel from first target
+            w, h    = tgts[0].xywh[0][2:].cpu().numpy()
+            scale   = TARGET_SIZE_CM / ((w + h) / 2)
 
-            for b in bullets:
-                ctr    = get_center(b)
-                key    = (int(ctr[0]), int(ctr[1]))
-                seen_k = find_seen_key(ctr, b, seen_bullet_dict)
-                if seen_k is not None:
-                    # already processed
+            # process each bullet detection
+            for b in blts:
+                ctr = get_center(b)
+                # determine cluster radius for this box
+                diag   = np.hypot(*b.xywh[0][2:].cpu().numpy())
+                radius = max(diag * CLUSTER_FACTOR, MIN_CLUSTER_DIST)
+
+                # check existing clusters
+                duplicate = False
+                for cl in clusters:
+                    if np.linalg.norm(ctr - cl['center']) < cl['radius'] or \
+                       compute_iou(cl['box'], b) > IOU_SUPPRESS_THRESH:
+                        # update cluster center
+                        cl['center'] = (cl['center'] * cl['count'] + ctr) / (cl['count'] + 1)
+                        cl['count'] += 1
+                        cl['box']    = b
+                        duplicate    = True
+                        break
+                if duplicate:
                     continue
 
-                # brand-new bullet →
-                dists  = [np.linalg.norm(ctr - c) for c in centers]
-                ni     = int(np.argmin(dists))
-                tgt_b  = targets[ni]
-                tgt_ctr= centers[ni]
-                tgt_id = tid_map[ni]
-                dist_cm= dists[ni] * cm_per_px
+                # new unique bullet → build metadata row
+                # assign to nearest target
+                dists   = [np.linalg.norm(ctr - tc) for tc in tgt_centers]
+                ni      = int(np.argmin(dists))
+                tid     = tid_map[ni]
+                dist_cm = dists[ni] * scale
 
-                bullet_count += 1
-                target_hits[tgt_id].append(ctr)
-                mean_px = np.mean(target_hits[tgt_id], axis=0)
-                mean_cm = (mean_px - tgt_ctr) * cm_per_px
+                # update relative-hit lists for mean
+                target_hits[tid].append(ctr)
+                mean_px = np.mean(target_hits[tid], axis=0)
+                # mean hit in cm relative to target center
+                mx_cm, my_cm = ((mean_px - tgt_centers[ni]) * scale).tolist()
 
-                ts_str = str(timedelta(seconds=int(frame_idx/fps)))
-                out   = frame.copy()
-                annotate_frame(out, ctr, mean_cm, tgt_b, tgt_id, dist_cm, cm_per_px, tgt_ctr)
+                # annotate & save snapshot
+                bullet_id += 1
+                ts_str     = str(timedelta(seconds=int(frame_idx / fps)))
+                out_img    = frame.copy()
+                annotate(out_img, ctr, mx_cm, my_cm, tgts[ni], tid, dist_cm, scale, tgt_centers[ni])
+                snap_path  = IMAGE_SAVE_TEMPLATE.format(id=bullet_id)
+                cv2.imwrite(snap_path, out_img)
 
-                path  = IMAGE_SAVE_TEMPLATE.format(id=bullet_count)
-                cv2.imwrite(path, out)
-
-                # row
+                # record cluster → only one row per bullet
                 row = {
-                    "Bullet ID": bullet_count,
-                    "Position": key,
-                    "Dist (cm)": round(dist_cm,2),
-                    "Target ID": tgt_id,
+                    "Bullet ID": bullet_id,
+                    "Center X": int(ctr[0]),
+                    "Center Y": int(ctr[1]),
+                    "MeanHit X (cm)": round(mx_cm, 2),
+                    "MeanHit Y (cm)": round(my_cm, 2),
+                    "Dist to Target (cm)": round(dist_cm, 2),
+                    "Target ID": tid,
                     "Timestamp": ts_str,
-                    "Snapshot": path
+                    "Snapshot": snap_path
                 }
-                # mean hits
-                for t in sorted(target_color_map):
-                    if t == tgt_id:
-                        row[f"MeanHit T{t}"] = (round(mean_cm[0],2), round(mean_cm[1],2))
-                    else:
-                        row[f"MeanHit T{t}"] = 'X'
-
-                rows.append(row)
-                seen_bullet_dict[key] = {'row': row, 'box': b}
+                clusters.append({
+                    'center': ctr,
+                    'radius': radius,
+                    'box': b,
+                    'count': 1,
+                    'row': row
+                })
 
             frame_idx += 1
 
     except KeyboardInterrupt:
-        print("\n[INFO] User interrupted.")
+        print("\n[INFO] Interrupted by user — cleaning up…")
 
     finally:
         cap.release()
         cv2.destroyAllWindows()
 
-    # save Excel
+    # gather rows, exactly one per cluster
+    rows = [cl['row'] for cl in clusters]
     pd.DataFrame(rows).to_excel(EXCEL_OUTPUT, index=False)
-    print(f"[INFO] → {len(rows)} bullets saved in {EXCEL_OUTPUT}")
-    print(f"[INFO] Unique bullets detected: {len(seen_bullet_dict)}")
+    print(f"[INFO] → {len(rows)} bullets saved (unique clusters) to {EXCEL_OUTPUT}")
 
 
 # === ENTRY POINT ===
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser("Video Bullet Detection with YOLOv11")
-    p.add_argument("--start", required=True, help="HH:MM:SS")
-    p.add_argument("--end",   required=True, help="HH:MM:SS")
+    p.add_argument("--start", required=True, help="Start HH:MM:SS")
+    p.add_argument("--end",   required=True, help="End   HH:MM:SS")
     args = p.parse_args()
     process_video(args.start, args.end)

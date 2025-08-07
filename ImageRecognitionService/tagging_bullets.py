@@ -20,6 +20,10 @@ TARGET_SIZE_CM      = 18
 CLUSTER_FACTOR      = 0.75   # fraction of bullet-box diagonal
 MIN_CLUSTER_DIST    = 10     # px minimum cluster radius
 IOU_SUPPRESS_THRESH = 0.2    # suppress if IoU > 0.2
+global OVERLAP_THRESHOLD
+OVERLAP_THRESHOLD =0.5   # 50% overlap threshold for duplicate detection
+global MIN_CONFIDENCE
+MIN_CONFIDENCE      = 0.6    # minimum confidence for bullet detection
 
 # Annotation styling
 OUTER_RADIUS = 12
@@ -36,6 +40,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # === GLOBALS ===
 target_color_map = {}  # target_id → BGR color
 clusters         = []  # each: dict(center, radius, box, row)
+detected_bullets = []  # list of all detected bullet bounding boxes
 
 # === HELPERS ===
 
@@ -57,6 +62,52 @@ def compute_iou(a, b):
     areaA    = (x2 - x1) * (y2 - y1)
     areaB    = (X2 - X1) * (Y2 - Y1)
     return inter / (areaA + areaB - inter + 1e-6)
+
+def compute_overlap_percentage(box_a, box_b):
+    """
+    Calculate the overlap percentage between two bounding boxes.
+    Returns the percentage of overlap relative to the smaller box area.
+    """
+    x1, y1, x2, y2 = box_a.xyxy[0].cpu().numpy()
+    X1, Y1, X2, Y2 = box_b.xyxy[0].cpu().numpy()
+    
+    # Calculate intersection
+    xi1, yi1 = max(x1, X1), max(y1, Y1)
+    xi2, yi2 = min(x2, X2), min(y2, Y2)
+    
+    if xi2 <= xi1 or yi2 <= yi1:
+        return 0.0  # No overlap
+    
+    intersection_area = (xi2 - xi1) * (yi2 - yi1)
+    area_a = (x2 - x1) * (y2 - y1)
+    area_b = (X2 - X1) * (Y2 - Y1)
+    
+    # Return overlap percentage relative to the smaller box
+    smaller_area = min(area_a, area_b)
+    return intersection_area / smaller_area if smaller_area > 0 else 0.0
+
+def is_duplicate_bullet(new_box, existing_bullets, threshold=OVERLAP_THRESHOLD):
+    """
+    Check if a new bullet detection overlaps significantly with existing bullets.
+    Returns True if the new bullet overlaps more than threshold% with any existing bullet.
+    """
+    new_center = get_center(new_box)
+    
+    for i, existing_box in enumerate(existing_bullets):
+        # Check overlap percentage
+        overlap_pct = compute_overlap_percentage(new_box, existing_box)
+        if overlap_pct > threshold:
+            print(f"[DEBUG] Overlap detected: {overlap_pct*100:.1f}% with existing bullet {i+1}")
+            return True
+        
+        # Also check center distance as additional safety
+        existing_center = get_center(existing_box)
+        distance = np.linalg.norm(new_center - existing_center)
+        if distance < 20:  # If centers are very close, likely same bullet
+            print(f"[DEBUG] Close center detected: {distance:.1f}px distance with existing bullet {i+1}")
+            return True
+    
+    return False
 
 def annotate(img, ctr, mx_cm, my_cm, tgt_box, tid, dist_cm, scale, tgt_ctr):
     mean_px = tgt_ctr + np.array([mx_cm, my_cm]) / scale
@@ -133,12 +184,34 @@ def process_video(start, end):
 
             # process each bullet detection
             for b in blts:
+                # Check confidence threshold
+                if b.conf[0] < MIN_CONFIDENCE:
+                    print(f"[INFO] Skipping low confidence detection: {b.conf[0]:.2f} < {MIN_CONFIDENCE}")
+                    continue
+                
                 ctr = get_center(b)
+                
+                # Check for overlap with existing bullets (strict threshold)
+                if is_duplicate_bullet(b, detected_bullets, OVERLAP_THRESHOLD):
+                    print(f"[INFO] Skipping duplicate bullet detection (overlap > {OVERLAP_THRESHOLD*100}%)")
+                    continue
+                
+                # Additional check: ensure minimum distance from all existing bullet centers
+                min_distance = float('inf')
+                for existing_bullet in detected_bullets:
+                    existing_center = get_center(existing_bullet)
+                    dist = np.linalg.norm(ctr - existing_center)
+                    min_distance = min(min_distance, dist)
+                
+                if min_distance < 30:  # If too close to any existing bullet
+                    print(f"[INFO] Skipping bullet - too close to existing bullet ({min_distance:.1f}px)")
+                    continue
+                
                 # determine cluster radius for this box
                 diag   = np.hypot(*b.xywh[0][2:].cpu().numpy())
                 radius = max(diag * CLUSTER_FACTOR, MIN_CLUSTER_DIST)
 
-                # check existing clusters
+                # check existing clusters (additional safety check)
                 duplicate = False
                 for cl in clusters:
                     if np.linalg.norm(ctr - cl['center']) < cl['radius'] or \
@@ -192,6 +265,10 @@ def process_video(start, end):
                     'count': 1,
                     'row': row
                 })
+                
+                # Add to detected bullets list for future overlap checking
+                detected_bullets.append(b)
+                print(f"[INFO] New bullet detected: ID {bullet_id}, Target {tid}, Distance {dist_cm:.1f}cm")
 
             frame_idx += 1
 
@@ -214,5 +291,19 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser("Video Bullet Detection with YOLOv11")
     p.add_argument("--start", required=True, help="Start HH:MM:SS")
     p.add_argument("--end",   required=True, help="End   HH:MM:SS")
+    p.add_argument("--iou", type=float, default=0.5, 
+                   help="Overlap threshold for duplicate detection (default: 0.5)")
+    p.add_argument("--confidence", type=float, default=0.6,
+                   help="Minimum confidence for bullet detection (default: 0.6)")
     args = p.parse_args()
+    
+    # Update global thresholds if provided
+    if args.iou != 0.5:  # Compare with default value
+        OVERLAP_THRESHOLD = args.iou
+    print(f"[INFO] Using overlap threshold: {OVERLAP_THRESHOLD*100}%")
+    
+    if args.confidence != 0.6:
+        MIN_CONFIDENCE = args.confidence
+        print(f"[INFO] Using confidence threshold: {MIN_CONFIDENCE}")
+    
     process_video(args.start, args.end)

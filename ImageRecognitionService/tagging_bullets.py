@@ -10,7 +10,7 @@ import random
 
 # === CONFIG ===
 MODEL_PATH          = './trained_models/kanat_model10_v.2.0/weights/best.pt'
-VIDEO_PATH          = './videos/good_shooting_vid2.mp4'
+VIDEO_PATH          = './videos/test_video.mp4'
 OUTPUT_DIR          = './video_output'
 EXCEL_OUTPUT        = os.path.join(OUTPUT_DIR, 'bullet_results.xlsx')
 IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
@@ -34,6 +34,7 @@ MEAN_THICK   = 2
 RECT_THICK   = 2
 FONT_SCALE   = 0.7
 TEXT_THICK   = 2
+
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -109,22 +110,34 @@ def is_duplicate_bullet(new_box, existing_bullets, threshold=OVERLAP_THRESHOLD):
     
     return False
 
-def annotate(img, ctr, mx_cm, my_cm, tgt_box, tid, dist_cm, scale, tgt_ctr):
-    mean_px = tgt_ctr + np.array([mx_cm, my_cm]) / scale
+def annotate(img, ctr, mean_range_cm, unused, tgt_box, tid, dist_cm, scale, tgt_ctr):
     # bullet
     cv2.circle(img, tuple(ctr.astype(int)), OUTER_RADIUS, (0,0,255), OUTER_THICK)
     cv2.circle(img, tuple(ctr.astype(int)), INNER_RADIUS, (0,0,255), -1)
-    # mean hit
-    cv2.circle(img, tuple(mean_px.astype(int)), MEAN_RADIUS, (0,255,0), MEAN_THICK)
+    
+    # Display mean range information
     cv2.putText(
         img,
-        f"{dist_cm:.1f}cm",
+        f"Range: {dist_cm:.1f}cm",
         tuple((ctr + np.array([OUTER_RADIUS, -OUTER_RADIUS])).astype(int)),
         cv2.FONT_HERSHEY_SIMPLEX,
         FONT_SCALE,
         (255,0,0),
         TEXT_THICK
     )
+    
+    # Display mean range if available
+    if mean_range_cm > 0:
+        cv2.putText(
+            img,
+            f"Mean: {mean_range_cm:.1f}cm",
+            tuple((ctr + np.array([OUTER_RADIUS, -OUTER_RADIUS + 20])).astype(int)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            FONT_SCALE,
+            (0,255,0),
+            TEXT_THICK
+        )
+    
     # target box & label
     x1, y1, x2, y2 = tgt_box.xyxy[0].cpu().numpy().astype(int)
     col = target_color_map[tid]
@@ -232,17 +245,24 @@ def process_video(start, end):
                 tid     = tid_map[ni]
                 dist_cm = dists[ni] * scale
 
-                # update relative-hit lists for mean
+                # update relative-hit lists for mean range calculation
                 target_hits[tid].append(ctr)
-                mean_px = np.mean(target_hits[tid], axis=0)
-                # mean hit in cm relative to target center
-                mx_cm, my_cm = ((mean_px - tgt_centers[ni]) * scale).tolist()
+                
+                # Calculate mean range (distance) to target center
+                target_center = tgt_centers[ni]
+                distances_to_target = []
+                for hit_center in target_hits[tid]:
+                    dist_px = np.linalg.norm(hit_center - target_center)
+                    dist_cm_hit = dist_px * scale
+                    distances_to_target.append(dist_cm_hit)
+                
+                mean_range_cm = np.mean(distances_to_target)
 
                 # annotate & save snapshot
                 bullet_id += 1
                 ts_str     = str(timedelta(seconds=int(frame_idx / fps)))
                 out_img    = frame.copy()
-                annotate(out_img, ctr, mx_cm, my_cm, tgts[ni], tid, dist_cm, scale, tgt_centers[ni])
+                annotate(out_img, ctr, mean_range_cm, 0, tgts[ni], tid, dist_cm, scale, tgt_centers[ni])  # Using mean_range_cm instead of mx_cm, my_cm
                 snap_path  = IMAGE_SAVE_TEMPLATE.format(id=bullet_id)
                 cv2.imwrite(snap_path, out_img)
 
@@ -251,8 +271,7 @@ def process_video(start, end):
                     "Bullet ID": bullet_id,
                     "Center X": int(ctr[0]),
                     "Center Y": int(ctr[1]),
-                    "MeanHit X (cm)": round(mx_cm, 2),
-                    "MeanHit Y (cm)": round(my_cm, 2),
+                    "Mean Range to Target (cm)": round(mean_range_cm, 2),
                     "Dist to Target (cm)": round(dist_cm, 2),
                     "Target ID": tid,
                     "Timestamp": ts_str,

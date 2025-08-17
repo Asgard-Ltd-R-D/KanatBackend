@@ -20,7 +20,8 @@ public class QuestDbPacketStorage : IPacketStorage, IDisposable
     private readonly Task _processingTask;
     private readonly List<PacketData> _batchBuffer;
     private readonly object _batchLock = new();
-    private readonly Timer _batchTimer;
+    // Timer removed - using new backpressure-controlled approach
+    private readonly SemaphoreSlim _semaphore = new SemaphoreSlim(1, 1);
 
     public QuestDbPacketStorage(
         ILogger<QuestDbPacketStorage> logger,
@@ -32,18 +33,19 @@ public class QuestDbPacketStorage : IPacketStorage, IDisposable
         // Initialize connection string with QuestDB-specific parameters
         _connectionString = $"Host={_options.Host};Port={_options.Port};Username={_options.Username};Password={_options.Password};Database={_options.Database};ServerCompatibilityMode=NoTypeLoading;";
         
-        // Initialize channel and processing
-        _packetChannel = Channel.CreateUnbounded<PacketData>(new UnboundedChannelOptions
+        // Initialize channel with bounded capacity for backpressure control
+        _packetChannel = Channel.CreateBounded<PacketData>(new BoundedChannelOptions(_options.BatchSize * 10)
         {
             SingleReader = true,
-            SingleWriter = false
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
         });
         
         _cancellationTokenSource = new CancellationTokenSource();
         _batchBuffer = new List<PacketData>(_options.BatchSize);
         
-        // Start batch processing timer (30ms as specified)
-        _batchTimer = new Timer(ProcessBatch, null, TimeSpan.FromMilliseconds(_options.BatchTimeoutMs), TimeSpan.FromMilliseconds(_options.BatchTimeoutMs));
+        // No need for timer-based processing with new approach
+        // _batchTimer = new Timer(ProcessBatch, null, TimeSpan.FromMilliseconds(_options.BatchTimeoutMs), TimeSpan.FromMilliseconds(_options.BatchTimeoutMs));
         
         // Start the processing task
         _processingTask = Task.Run(ProcessPacketsAsync);
@@ -68,7 +70,17 @@ public class QuestDbPacketStorage : IPacketStorage, IDisposable
 
     public async Task StorePacketAsync(PacketData packet)
     {
-        await _packetChannel.Writer.WriteAsync(packet);
+        try
+        {
+            // Wait for space in the channel (backpressure control)
+            await _packetChannel.Writer.WaitToWriteAsync();
+            await _packetChannel.Writer.WriteAsync(packet);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to store packet {Id}, channel may be full", packet.Id);
+            // Optionally implement retry logic here
+        }
     }
 
     public async Task StorePacketsBatchAsync(IEnumerable<PacketData> packets)
@@ -157,17 +169,49 @@ public class QuestDbPacketStorage : IPacketStorage, IDisposable
     {
         try
         {
-            await foreach (var packet in _packetChannel.Reader.ReadAllAsync(_cancellationTokenSource.Token))
+            while (!_cancellationTokenSource.Token.IsCancellationRequested)
             {
-                lock (_batchLock)
+                // Process packets in batches with backpressure control
+                var batch = new List<PacketData>();
+                
+                // Collect packets up to batch size or timeout
+                var timeout = TimeSpan.FromMilliseconds(_options.BatchTimeoutMs);
+                var startTime = DateTime.UtcNow;
+                
+                while (batch.Count < _options.BatchSize && 
+                       DateTime.UtcNow - startTime < timeout &&
+                       !_cancellationTokenSource.Token.IsCancellationRequested)
                 {
-                    _batchBuffer.Add(packet);
-                    
-                    if (_batchBuffer.Count >= _options.BatchSize)
+                    try
                     {
-                        _ = Task.Run(() => ProcessBatchInternalAsync(_batchBuffer.ToList()));
-                        _batchBuffer.Clear();
+                        // Try to read a packet with a short timeout
+                        var readTask = _packetChannel.Reader.ReadAsync(_cancellationTokenSource.Token).AsTask();
+                        if (await Task.WhenAny(readTask, Task.Delay(10, _cancellationTokenSource.Token)) == readTask)
+                        {
+                            var packet = await readTask;
+                            batch.Add(packet);
+                        }
+                        else
+                        {
+                            // No packet available, break if we have some packets
+                            if (batch.Count > 0) break;
+                        }
                     }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                }
+                
+                // Process the batch if we have packets
+                if (batch.Count > 0)
+                {
+                    await ProcessBatchInternalAsync(batch);
+                }
+                else
+                {
+                    // Small delay to prevent busy waiting
+                    await Task.Delay(1, _cancellationTokenSource.Token);
                 }
             }
         }
@@ -181,49 +225,50 @@ public class QuestDbPacketStorage : IPacketStorage, IDisposable
         }
     }
 
-    private void ProcessBatch(object? state)
-    {
-        lock (_batchLock)
-        {
-            if (_batchBuffer.Count > 0)
-            {
-                var batchToProcess = _batchBuffer.ToList();
-                _batchBuffer.Clear();
-                _ = Task.Run(() => ProcessBatchInternalAsync(batchToProcess));
-            }
-        }
-    }
+    // Old timer-based processing removed - using new backpressure-controlled approach
 
     private async Task ProcessBatchInternalAsync(List<PacketData> packets)
     {
         if (packets.Count == 0) return;
 
+        // Use semaphore to ensure only one database operation at a time
+        await _semaphore.WaitAsync();
         try
         {
             // Create table if it doesn't exist
             await EnsureTableExistsAsync();
             
-            // Sort packets by timestamp to ensure chronological order for QuestDB
-            packets.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
-            
-            // Insert packets in batch using parameterized query
+            // Use QuestDB's SYSDATE() function to ensure proper timestamp ordering
+            // This bypasses the client-side timestamp ordering issues
             var insertQuery = @"
                 INSERT INTO packets (id, timestamp, source_ip, destination_ip, source_port, destination_port, length, protocol, payload, device_name)
-                VALUES (@id, @timestamp, @source_ip, @destination_ip, @source_port, @destination_port, @length, @protocol, @payload, @device_name)";
+                VALUES (@id, SYSDATE(), @source_ip, @destination_ip, @source_port, @destination_port, @length, @protocol, @payload, @device_name)";
+            
+            // Log batch info for debugging
+            if (packets.Count > 1)
+            {
+                _logger.LogDebug("Processing batch of {Count} packets with QuestDB SYSDATE()", packets.Count);
+            }
+            
+            // Note: insertQuery is now defined above with SYSDATE()
             
             using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync();
+            
+            // Use a longer command timeout for QuestDB
+            // Note: CommandTimeout is set on the command, not the connection
             
             using var transaction = await connection.BeginTransactionAsync();
             try
             {
                 using var command = new NpgsqlCommand(insertQuery, connection, transaction);
+                command.CommandTimeout = 60; // Set timeout for QuestDB operations
                 
                 foreach (var packet in packets)
                 {
                     command.Parameters.Clear();
                     command.Parameters.AddWithValue("@id", packet.Id.ToString());
-                    command.Parameters.AddWithValue("@timestamp", packet.Timestamp);
+                    // Note: timestamp is now handled by SYSDATE() in the query
                     command.Parameters.AddWithValue("@source_ip", packet.SourceIp);
                     command.Parameters.AddWithValue("@destination_ip", packet.DestinationIp);
                     command.Parameters.AddWithValue("@source_port", packet.SourcePort);
@@ -238,9 +283,19 @@ public class QuestDbPacketStorage : IPacketStorage, IDisposable
                 
                 await transaction.CommitAsync();
             }
-            catch
+            catch (Exception ex)
             {
-                await transaction.RollbackAsync();
+                try
+                {
+                    if (transaction.Connection != null && transaction.Connection.State == System.Data.ConnectionState.Open)
+                    {
+                        await transaction.RollbackAsync();
+                    }
+                }
+                catch (Exception rollbackEx)
+                {
+                    _logger.LogWarning(rollbackEx, "Failed to rollback transaction");
+                }
                 throw;
             }
             
@@ -253,6 +308,10 @@ public class QuestDbPacketStorage : IPacketStorage, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing batch of {Count} packets", packets.Count);
+        }
+        finally
+        {
+            _semaphore.Release();
         }
     }
 
@@ -337,7 +396,6 @@ public class QuestDbPacketStorage : IPacketStorage, IDisposable
     public void Dispose()
     {
         _cancellationTokenSource.Cancel();
-        _batchTimer?.Dispose();
         _cancellationTokenSource?.Dispose();
     }
 }

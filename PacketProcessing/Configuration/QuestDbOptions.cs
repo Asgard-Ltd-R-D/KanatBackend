@@ -9,6 +9,6 @@ public class QuestDbOptions
     public string Username { get; set; } = "quest";
     public string Password { get; set; } = "quest";
     public string Database { get; set; } = "qdb";
-    public int BatchSize { get; set; } = 100;
+    public int BatchSize { get; set; } = 25;
     public int BatchTimeoutMs { get; set; } = 30;
 }

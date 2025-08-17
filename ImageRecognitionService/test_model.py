@@ -4,7 +4,7 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 print(BASE_DIR)
 # Load your best model
-model_path = os.path.join(BASE_DIR,'trained_models' ,'kanat_model', 'weights', 'best.pt')
+model_path = os.path.join(BASE_DIR,'trained_models' ,'kanat_model10_v.2.0', 'weights', 'best.pt')
 
 
 model = YOLO(model_path)

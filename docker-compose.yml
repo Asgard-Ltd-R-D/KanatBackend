@@ -1,0 +1,25 @@
+services:
+  questdb:
+    image: questdb/questdb:latest
+    container_name: questdb-packet-processing
+    ports:
+      - "8812:8812" # HTTP/Web Console
+      - "9009:9009" # PostgreSQL wire protocol
+      - "9000:9000" # InfluxDB line protocol
+    environment:
+      - QDB_PG_USER=quest
+      - QDB_PG_PASSWORD=quest
+      - QDB_PG_DATABASE=qdb
+    volumes:
+      - questdb_data:/root/.questdb/db
+      - questdb_logs:/root/.questdb/log
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8812/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  questdb_data:
+  questdb_logs:

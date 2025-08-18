@@ -31,12 +31,12 @@ class Program
             })
             .ConfigureServices((context, services) =>
             {
-                // Configure QuestDB options
-                services.Configure<QuestDbOptions>(
-                    context.Configuration.GetSection(QuestDbOptions.SectionName));
+                // Configure QuestDB ILP options
+                services.Configure<InfluxDbOptions>(
+                    context.Configuration.GetSection(InfluxDbOptions.SectionName));
                 
                 // Register services
-                services.AddSingleton<IPacketStorage, QuestDbPacketStorage>();
+                services.AddSingleton<IPacketStorage, InfluxDbPacketStorage>();
                 services.AddHostedService<PacketCaptureWorker>();
                 
                 // Configure logging

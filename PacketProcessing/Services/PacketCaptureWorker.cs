@@ -82,6 +82,7 @@ public class PacketCaptureWorker : BackgroundService
                     var packet = ParsePacket(e, device.Name ?? string.Empty);
                     if (packet != null)
                     {
+                        _logger.LogDebug("Captured packet from device {DeviceName} with length {Length}", device.Name, packet.Length);
                         // fire-and-forget to avoid blocking the capture thread
                         _ = _packetStorage.StorePacketAsync(packet);
                     }

@@ -15,6 +15,11 @@ public class PacketCaptureWorker : BackgroundService
     private readonly ConcurrentDictionary<string, LibPcapLiveDevice> _activeDevices;
     private readonly string _filter;
     private readonly int _port;
+    
+    // Packet counting and deduplication
+    private long _totalPacketsCaptured;
+    private long _totalPacketsStored;
+    private readonly object _statsLock = new object();
 
     public PacketCaptureWorker(
         ILogger<PacketCaptureWorker> logger,
@@ -82,9 +87,31 @@ public class PacketCaptureWorker : BackgroundService
                     var packet = ParsePacket(e, device.Name ?? string.Empty);
                     if (packet != null)
                     {
-                        _logger.LogDebug("Captured packet from device {DeviceName} with length {Length}", device.Name, packet.Length);
-                        // fire-and-forget to avoid blocking the capture thread
-                        _ = _packetStorage.StorePacketAsync(packet);
+                        Interlocked.Increment(ref _totalPacketsCaptured);
+                        
+                        _logger.LogDebug("Captured packet from device {DeviceName} with length {Length}, timestamp {Timestamp}", 
+                            device.Name, packet.Length, packet.Timestamp.ToString("HH:mm:ss.ffffff"));
+                        
+                        // Store packet asynchronously but track completion
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await _packetStorage.StorePacketAsync(packet);
+                                Interlocked.Increment(ref _totalPacketsStored);
+                                
+                                // Log statistics periodically
+                                if (_totalPacketsStored % 100 == 0)
+                                {
+                                    LogPacketStatistics();
+                                }
+                            }
+                            catch (Exception storageEx)
+                            {
+                                _logger.LogError(storageEx, "Failed to store packet {Id} from device {DeviceName}", 
+                                    packet.Id, device.Name);
+                            }
+                        });
                     }
                 }
                 catch (Exception ex)
@@ -130,17 +157,38 @@ public class PacketCaptureWorker : BackgroundService
             var packetData = rawPacket.Data;
             if (packetData == null) return null;
 
-            // Minimal mapping (placeholders for now)
+            // Use PCAP timestamp (when packet was discovered) not system time
+            var packetTimestamp = rawPacket.Timeval.Date;
+            
+            // Parse UDP header (basic parsing)
+            var sourcePort = 0;
+            var destPort = 0;
+            var sourceIp = "0.0.0.0";
+            var destIp = "0.0.0.0";
+            
+            if (packetData.Length >= 8) // Minimum UDP header size
+            {
+                // UDP header: [0-1] Source Port, [2-3] Destination Port, [4-5] Length, [6-7] Checksum
+                sourcePort = (packetData[0] << 8) | packetData[1];
+                destPort = (packetData[2] << 8) | packetData[3];
+                
+                // For now, use placeholder IPs - you can extend this to parse IP headers if needed
+                // In a real implementation, you'd parse the IP header to get actual source/dest IPs
+            }
+
+            // Create packet data with PCAP timestamp
             return new PacketData
             {
+                Id = Guid.NewGuid(), // Generate unique ID for database
+                Timestamp = packetTimestamp, // Use PCAP timestamp, not system time
                 Length = packetData.Length,
                 Protocol = "UDP",
                 Payload = packetData,
                 DeviceName = deviceName,
-                SourceIp = "0.0.0.0",
-                DestinationIp = "0.0.0.0",
-                SourcePort = 0,
-                DestinationPort = 0
+                SourceIp = sourceIp,
+                DestinationIp = destIp,
+                SourcePort = sourcePort,
+                DestinationPort = destPort
             };
         }
         catch (Exception ex)
@@ -150,6 +198,15 @@ public class PacketCaptureWorker : BackgroundService
         }
     }
 
+    private void LogPacketStatistics()
+    {
+        lock (_statsLock)
+        {
+            _logger.LogInformation("Packet Statistics: Captured {TotalCaptured}, Stored {TotalStored}, Success Rate: {SuccessRate:P1}", 
+                _totalPacketsCaptured, _totalPacketsStored, 
+                _totalPacketsCaptured > 0 ? (double)_totalPacketsStored / _totalPacketsCaptured : 0.0);
+        }
+    }
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping packet capture worker...");

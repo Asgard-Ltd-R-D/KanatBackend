@@ -24,8 +24,12 @@ def blast(host: str, port: int, pps: int, payload_size: int, seconds: int):
             # (optional) include a counter in first 8 bytes to help validation
             counter = sent_total & 0xFFFFFFFFFFFFFFFF
             buf = struct.pack(">Q", counter) + payload[8:] if payload_size >= 8 else payload
-            sock.sendto(buf, (host, port))
-            sent_total += 1
+            try:
+                sock.sendto(buf, (host, port))
+                sent_total += 1  # count only on successful send
+            except OSError:
+                # skip increment on failure; continue trying
+                pass
         next_tick += tick_interval
         # coarse sleep; then spin if needed
         now = time.perf_counter()
@@ -34,7 +38,7 @@ def blast(host: str, port: int, pps: int, payload_size: int, seconds: int):
             time.sleep(sleep_s - 0.001)
         while time.perf_counter() < next_tick:
             pass
-    print(f"Done. Sent ~{sent_total} packets.")
+    print(f"Done. Sent {sent_total} packets.")
 
 def write_pcap(path: str, packets: int, payload_size: int, pps: int):
     """

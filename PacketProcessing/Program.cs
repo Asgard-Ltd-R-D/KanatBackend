@@ -17,6 +17,39 @@ class Program
         Console.WriteLine("Packet Processing Service Starting...");
         Console.WriteLine("Press Ctrl+C to stop the service.");
         
+        // Start statistics monitoring task
+        var statsTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested)
+                {
+                    await Task.Delay(10000); // Log stats every 10 seconds
+                    
+                    try
+                    {
+                        var packetStorage = host.Services.GetRequiredService<IPacketStorage>() as InfluxDbPacketStorage;
+                        
+                        if (packetStorage != null)
+                        {
+                            packetStorage.LogPacketStatistics();
+                        }
+                        
+                        // Note: PacketCaptureWorker statistics are logged internally every 100 packets
+                        // and we can't easily access the instance from here in a clean way
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error logging statistics: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Statistics task error: {ex.Message}");
+            }
+        });
+        
         await host.RunAsync();
     }
 

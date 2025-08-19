@@ -31,8 +31,8 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
     private int _queuedCount;
 
     // Autoscaler knobs (you can move these into configuration if you like)
-    private readonly int _minWorkers = 1;
-    private readonly int _maxWorkers = 4;
+    private readonly int _minWorkers = 3;
+    private readonly int _maxWorkers = 8;
     private readonly int _scaleUpBacklog = 10_000;   // if backlog > this -> scale up (and RAM ok)
     private readonly int _scaleDownBacklog = 2_000;  // if backlog < this -> scale down
     private readonly long _maxRamBytes = 2L * 1024 * 1024 * 1024; // 2GB (soft limit)
@@ -71,10 +71,17 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
 
     // Producer API -------------------------------------------------------------
 
+    // Packet counting for verification
+    private long _totalPacketsReceived;
+    private long _totalPacketsProcessed;
+    private long _totalPacketsFlushed;
+    private readonly object _statsLock = new object();
+
     public async Task StorePacketAsync(PacketData packet)
     {
         try
         {
+            Interlocked.Increment(ref _totalPacketsReceived);
             await _packetChannel.Writer.WriteAsync(packet, _cts.Token);
             Interlocked.Increment(ref _queuedCount);
         }
@@ -89,7 +96,10 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
     {
         try
         {
-            foreach (var p in packets)
+            var packetList = packets.ToList();
+            Interlocked.Add(ref _totalPacketsReceived, packetList.Count);
+            
+            foreach (var p in packetList)
             {
                 await _packetChannel.Writer.WriteAsync(p, _cts.Token);
                 Interlocked.Increment(ref _queuedCount);
@@ -107,6 +117,30 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
 
     public Task<long> GetPacketCountAsync(DateTime from, DateTime to)
         => Task.FromResult(0L);
+
+    // Statistics and monitoring
+    public (long Received, long Processed, long Flushed, long Queued) GetPacketStatistics()
+    {
+        lock (_statsLock)
+        {
+            return (_totalPacketsReceived, _totalPacketsProcessed, _totalPacketsFlushed, Volatile.Read(ref _queuedCount));
+        }
+    }
+
+    public void LogPacketStatistics()
+    {
+        var stats = GetPacketStatistics();
+        var successRate = stats.Received > 0 ? (double)stats.Flushed / stats.Received : 0.0;
+        
+        _logger.LogInformation("Packet Flow: Received={Received}, Processed={Processed}, Flushed={Flushed}, Queued={Queued}, Success Rate={SuccessRate:P1}",
+            stats.Received, stats.Processed, stats.Flushed, stats.Queued, successRate);
+        
+        // Alert if we're losing packets
+        if (stats.Received > 0 && successRate < 0.95)
+        {
+            _logger.LogWarning("Packet loss detected! Success rate: {SuccessRate:P1}", successRate);
+        }
+    }
 
     // Workers & Autoscaler -----------------------------------------------------
 
@@ -151,6 +185,19 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
                     _logger.LogInformation("Autoscaler: DOWN -> workers={Count}, backlog={Depth}, mem={MemMB}MB",
                         _workerCts.Count, depth, mem / (1024 * 1024));
                 }
+
+                // Log status periodically
+                if (depth > 0 || _workerCts.Count > _minWorkers)
+                {
+                    _logger.LogDebug("Autoscaler status: workers={Count}, backlog={Depth}, mem={MemMB}MB",
+                        _workerCts.Count, depth, mem / (1024 * 1024));
+                }
+
+                // Log detailed statistics every 10 seconds
+                if (DateTime.UtcNow.Second % 10 == 0)
+                {
+                    LogPacketStatistics();
+                }
             }
             catch (Exception ex)
             {
@@ -179,23 +226,64 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
 
                 // Drain up to BatchSize or until timeout
                 var deadline = DateTime.UtcNow.AddMilliseconds(_options.BatchTimeoutMs);
-                while (batch.Count < _options.BatchSize)
+                
+                // First, try to drain as many packets as possible without waiting
+                while (batch.Count < _options.BatchSize && reader.TryRead(out var item))
                 {
-                    while (reader.TryRead(out var item))
+                    batch.Add(item);
+                }
+                
+                // If we still need more packets and have time, wait for more
+                if (batch.Count < _options.BatchSize && DateTime.UtcNow < deadline)
+                {
+                    try
                     {
-                        batch.Add(item);
-                        if (batch.Count >= _options.BatchSize) break;
+                        // Wait for additional packets with a short timeout
+                        var additionalTimeout = deadline - DateTime.UtcNow;
+                        if (additionalTimeout > TimeSpan.Zero)
+                        {
+                            var additionalTask = reader.ReadAsync(token).AsTask();
+                            if (await Task.WhenAny(additionalTask, Task.Delay(additionalTimeout, token)) == additionalTask)
+                            {
+                                batch.Add(await additionalTask);
+                                
+                                // Try to get more packets quickly after the first additional one
+                                while (batch.Count < _options.BatchSize && reader.TryRead(out var item))
+                                {
+                                    batch.Add(item);
+                                }
+                            }
+                        }
                     }
-
-                    if (batch.Count >= _options.BatchSize || DateTime.UtcNow >= deadline) break;
-                    await Task.Delay(1, token);
+                    catch (OperationCanceledException) { /* token cancelled */ }
                 }
 
-                // We’re about to consume these items from backlog
+                // We're about to consume these items from backlog
                 Interlocked.Add(ref _queuedCount, -batch.Count);
+                Interlocked.Add(ref _totalPacketsProcessed, batch.Count);
+
+                // Log batch processing for monitoring
+                if (batch.Count > 1)
+                {
+                    var firstTime = batch.First().Timestamp;
+                    var lastTime = batch.Last().Timestamp;
+                    _logger.LogDebug("Worker processing batch of {Count} packets, range {First} to {Last}, remaining backlog: {Backlog}",
+                        batch.Count, firstTime.ToString("HH:mm:ss.ffffff"), lastTime.ToString("HH:mm:ss.ffffff"), Volatile.Read(ref _queuedCount));
+                }
 
                 // Write one batch on this sender
                 await WriteBatch(sender, batch);
+                
+                // Update flushed count after successful write
+                Interlocked.Add(ref _totalPacketsFlushed, batch.Count);
+                
+                // Simple channel draining verification
+                var currentBacklog = Volatile.Read(ref _queuedCount);
+                if (currentBacklog > _options.BatchSize * 20)
+                {
+                    _logger.LogWarning("High channel backlog: {Backlog} packets queued with {Workers} workers",
+                        currentBacklog, _workerCts.Count);
+                }
             }
         }
         catch (OperationCanceledException) { /* shutting down */ }

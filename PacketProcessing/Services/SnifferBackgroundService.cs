@@ -12,26 +12,30 @@ namespace PacketProcessing.Services;
 
 public class SnifferBackgroundService : BackgroundService
 {
-    private readonly ApplicationOptions.SnifferDefinition _snifferDefinition;
-    private readonly ConcurrentDictionary<string, LibPcapLiveDevice> _activeDevices;
-    private readonly ILogger<SnifferBackgroundService> _logger;
-    private readonly Func<byte[], ulong, string, string, int, int, int, string, BasePacket?> _packetParser;
-    private readonly Func<BasePacket, Task> _packetHandler;
-    private readonly string _snifferName;
+    protected readonly ApplicationOptions.SnifferDefinition _snifferDefinition;
+    protected readonly ConcurrentDictionary<string, LibPcapLiveDevice> _activeDevices;
+    protected readonly ILogger<SnifferBackgroundService> _logger;
+    protected readonly string _snifferName;
+    protected Func<byte[], ulong, string, string, int, int, int, string, string, BasePacket?>? _packetParser;
+    protected Func<BasePacket, Task>? _packetHandler;
 
     public SnifferBackgroundService(
         IOptions<ApplicationOptions.SnifferDefinition> snifferDefinition,
         ConcurrentDictionary<string, LibPcapLiveDevice> activeDevices,
-        ILogger<SnifferBackgroundService> logger,
-        Func<byte[], ulong, string, string, int, int, int, string, BasePacket?> packetParser,
-        Func<BasePacket, Task> packetHandler)
+        ILogger<SnifferBackgroundService> logger)
     {
         _snifferDefinition = snifferDefinition.Value;
         _activeDevices = activeDevices;
         _logger = logger;
-        _packetParser = packetParser;
-        _packetHandler = packetHandler;
         _snifferName = _snifferDefinition.Name;
+    }
+
+    public void SetPacketParser(Func<byte[], ulong, string, string, int, int, int, string, string, BasePacket?> packetParser) {
+        _packetParser = packetParser;
+    }
+
+    public void SetPacketHandler(Func<BasePacket, Task> packetHandler) {
+        _packetHandler = packetHandler;
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -165,11 +169,10 @@ public class SnifferBackgroundService : BackgroundService
     {
         try
         {
-            var basePacket = new BasePacket();
             var raw = e.GetPacket();
             if (raw == null) 
             {
-                _logger.LogError("Failed to get packet from capture {CaptureId}", basePacket.Id);
+                _logger.LogError("Failed to get packet from capture {CaptureId}", e.GetPacket().GetHashCode());
                 return;
             }
 
@@ -185,18 +188,17 @@ public class SnifferBackgroundService : BackgroundService
 
             if (packetInfo == null) 
             {
-                _logger.LogError("Failed to extract packet info from packet {PacketId}", basePacket.Id);
+                _logger.LogError("Failed to extract packet info from packet {PacketId}", e.GetPacket().GetHashCode());
                 return;
             }
 
             // Parse the packet using the configured parser
             var packetData = raw.Data;
-            var parsedPacket = 
-            _packetParser(
-                packetData, 
+            var parsedPacket = _packetParser(
+                packetData ?? [], 
                 packetInfo.GetValueOrDefault().timestamp,
                 packetInfo.GetValueOrDefault().sourceIp, 
-                packetInfo.GetValueOrDefault().destinationIp, 
+                packetInfo.GetValueOrDefault().destinationIp,
                 packetInfo.GetValueOrDefault().sourcePort, 
                 packetInfo.GetValueOrDefault().destinationPort,
                 packetInfo.GetValueOrDefault().length,

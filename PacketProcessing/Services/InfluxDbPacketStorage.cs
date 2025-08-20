@@ -50,9 +50,8 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
             $"auto_flush_rows={_options.BatchSize};auto_flush_interval={_options.BatchTimeoutMs};";
 
         // Bounded channel big enough to absorb bursts
-        _packetChannel = Channel.CreateBounded<PacketData>(new BoundedChannelOptions(_options.BatchSize * 5000)
+        _packetChannel = Channel.CreateUnbounded<PacketData>(new UnboundedChannelOptions()
         {
-            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = false,
             SingleWriter = false
         });
@@ -310,12 +309,15 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
 
         try
         {
+            // Start transaction and set table ONCE for the entire batch
+            sender.Transaction("packets");
+            
             foreach (var p in batch)
             {
                 var ts = p.Timestamp == default ? DateTime.UtcNow : p.Timestamp;
 
-                await sender.Table("packets")
-                      .Symbol("protocol", p.Protocol ?? string.Empty)
+                // Add each row to the transaction (don't call Table() again)
+                sender.Symbol("protocol", p.Protocol ?? string.Empty)
                       .Symbol("device_name", p.DeviceName ?? string.Empty)
                       .Column("id", p.Id.ToString())
                       .Column("source_ip", p.SourceIp ?? string.Empty)
@@ -323,9 +325,11 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
                       .Column("source_port", p.SourcePort)
                       .Column("destination_port", p.DestinationPort)
                       .Column("length", p.Length)
-                      .AtAsync(ts);
+                      .At(ts); // Use At() not AtAsync() for better performance
             }
-            // rely on auto-flush in Sender (rows+interval); no explicit Flush
+            
+            // Commit the entire batch
+            await sender.CommitAsync();
         }
         catch (Exception ex) when (ex is IOException || ex is SocketException || ex.GetType().Name.Contains("Ingress"))
         {
@@ -333,13 +337,15 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
             _logger.LogWarning(ex, "ILP write failed in worker; recreating sender and retrying batch once...");
             try { sender.Dispose(); } catch { /* ignore */ }
             sender = Sender.New(_connectionString);
-
+            
+            // Retry with the same approach
+            sender.Transaction("packets");
+            
             foreach (var p in batch)
             {
                 var ts = p.Timestamp == default ? DateTime.UtcNow : p.Timestamp;
 
-                await sender.Table("packets")
-                      .Symbol("protocol", p.Protocol ?? string.Empty)
+                sender.Symbol("protocol", p.Protocol ?? string.Empty)
                       .Symbol("device_name", p.DeviceName ?? string.Empty)
                       .Column("id", p.Id.ToString())
                       .Column("source_ip", p.SourceIp ?? string.Empty)
@@ -347,8 +353,10 @@ public class InfluxDbPacketStorage : IPacketStorage, IDisposable
                       .Column("source_port", p.SourcePort)
                       .Column("destination_port", p.DestinationPort)
                       .Column("length", p.Length)
-                      .AtAsync(ts);
+                      .At(ts);
             }
+            
+            await sender.CommitAsync();
         }
     }
 

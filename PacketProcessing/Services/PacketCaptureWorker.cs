@@ -183,7 +183,6 @@ public class PacketCaptureWorker : BackgroundService
                 Timestamp = packetTimestamp, // Use PCAP timestamp, not system time
                 Length = packetData.Length,
                 Protocol = "UDP",
-                Payload = packetData,
                 DeviceName = deviceName,
                 SourceIp = sourceIp,
                 DestinationIp = destIp,

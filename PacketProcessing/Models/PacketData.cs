@@ -12,12 +12,6 @@ public class PacketData
     public int DestinationPort { get; set; }
     public int Length { get; set; }
     public string Protocol { get; set; } = string.Empty;
-    public byte[] Payload { get; set; } = Array.Empty<byte>();
     public string DeviceName { get; set; } = string.Empty;
-    
-    [JsonIgnore]
-    public string PayloadHex => Convert.ToHexString(Payload);
-    
-    [JsonIgnore]
-    public string PayloadAscii => System.Text.Encoding.ASCII.GetString(Payload);
+
 }

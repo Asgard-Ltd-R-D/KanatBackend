@@ -1,9 +1,9 @@
-﻿namespace PacketProcessing.Context;
+﻿using Microsoft.EntityFrameworkCore;
 
-public class AppDbContext : DbContext
+namespace PacketProcessing.Context;
+
+public class AppDbContext(DbContextOptions<AppDbContext> o) : DbContext(o)
 {
-    public AppDbContext(DbContextOptions<AppDbContext> o) : base(o) { }
-
     protected override void OnModelCreating(ModelBuilder b)
     {
         

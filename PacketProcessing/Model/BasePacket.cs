@@ -1,6 +1,6 @@
 ﻿namespace PacketProcessing.Model;
 
-public abstract class BasePacket;
+public abstract class BasePacket
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public long Timestamp { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();

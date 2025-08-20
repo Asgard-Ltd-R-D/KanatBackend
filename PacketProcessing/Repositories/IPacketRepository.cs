@@ -1,4 +1,6 @@
-﻿namespace PacketProcessing.Repositories;
+﻿using PacketProcessing.Model;
+
+namespace PacketProcessing.Repositories;
 
 public interface IPacketRepository<T> where T : BasePacket
 {

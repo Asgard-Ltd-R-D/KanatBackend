@@ -1,4 +1,7 @@
-﻿namespace PacketProcessing.Config;
+﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
+
+namespace PacketProcessing.Config;
 
 public class ConfigurationInjection
 {

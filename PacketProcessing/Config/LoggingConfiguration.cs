@@ -1,4 +1,7 @@
-﻿namespace PacketProcessing.Config;
+﻿using Microsoft.AspNetCore.Builder;
+using Serilog;
+
+namespace PacketProcessing.Config;
 
 public class LoggingConfiguration
 {

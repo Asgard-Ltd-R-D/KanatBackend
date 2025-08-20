@@ -1,4 +1,6 @@
-﻿namespace PacketProcessing.Config;
+﻿using Microsoft.Extensions.Options;
+
+namespace PacketProcessing.Config;
 
 public class ApplicationOptions 
 {
@@ -53,6 +55,11 @@ public class ApplicationOptions
         /// Example: "ef", "influx", "quest".
         /// </summary>
         public string Repository { get; set; } = "ef";
+
+        public static implicit operator SnifferDefinition(IOptions<SnifferDefinition> v)
+        {
+            throw new NotImplementedException();
+        }
     }
 
     /// <summary>

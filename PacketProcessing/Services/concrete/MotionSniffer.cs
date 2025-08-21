@@ -28,7 +28,7 @@ public class MotionSniffer : SnifferBackgroundService<MotionPacket>
     ? "udp" // default
     : _snifferDefinition.Filter;
 
-    protected override Func<ReadOnlyMemory<byte>, PacketInfo, MotionPacket?> PacketParser => (payload, info) =>
+    protected override Func<ReadOnlyMemory<byte>, MotionPacket?> PacketParser => (payload, info) =>
     {
         return new MotionPacket
         {

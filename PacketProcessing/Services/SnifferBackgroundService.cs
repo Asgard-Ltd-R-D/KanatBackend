@@ -17,7 +17,7 @@ public abstract class SnifferBackgroundService<T> : BackgroundService where T : 
     protected readonly ILogger<SnifferBackgroundService> _logger;
     protected readonly string _snifferName;
 
-    protected abstract Func<ReadOnlyMemory<byte>, PacketInfo, T?> PacketParser { get; }
+    protected abstract Func<ReadOnlyMemory<byte>, T?> PacketParser { get; }
     protected abstract Func<T, Task> PacketHandler { get; }
 
     public SnifferBackgroundService(
@@ -122,20 +122,7 @@ public abstract class SnifferBackgroundService<T> : BackgroundService where T : 
             var raw = e.GetPacket();
             if (raw is null || raw.Data is null || raw.Data.Length == 0) return;
 
-            var infoMaybe = PacketUtils.ExtractPacketInfo(e);
-            if (infoMaybe is null) return;
-
             var pi = infoMaybe.Value;
-            var info = new PacketInfo(
-                pi.timestamp,
-                pi.sourceIp,
-                pi.destinationIp,
-                pi.sourcePort,
-                pi.destinationPort,
-                pi.length,
-                pi.protocol,
-                dev.Name ?? "unknown"
-            );
 
             // Zero-copy: wrap raw byte[] as ReadOnlyMemory<byte>
             var payload = new ReadOnlyMemory<byte>(raw.Data);

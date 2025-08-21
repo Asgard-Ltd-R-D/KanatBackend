@@ -2,6 +2,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.Repositories;
 using System.Threading.Channels;
+using QuestDB;
 
 namespace PacketProcessing.Channel;
 
@@ -133,30 +134,10 @@ public sealed class BaseChannelService<T> : BackgroundService, IChannel<T>
 
     private async Task WorkerLoopAsync(CancellationToken ct)
     {
+        var sender = Sender.New(_repository.ILPConnectionString);
         var reader = _channel.Reader;
         var buffer = new List<T>(_batchSize);
         var deadline = DateTime.UtcNow.AddMilliseconds(_batchTimeoutMs);
-
-        async Task FlushAsync()
-        {
-            if (buffer.Count == 0) { deadline = DateTime.UtcNow.AddMilliseconds(_batchTimeoutMs); return; }
-
-            try
-            {
-                await _repository.InsertBatchAsync(buffer, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { /* shutting down */ }
-            catch (Exception ex)
-            {
-                // Don’t re-enqueue to avoid ordering cycles; log & drop (or plug in a DLQ here)
-                _logger.LogError(ex, "Failed to persist batch of {Count}", buffer.Count);
-            }
-            finally
-            {
-                buffer.Clear();
-                deadline = DateTime.UtcNow.AddMilliseconds(_batchTimeoutMs);
-            }
-        }
 
         try
         {
@@ -185,6 +166,29 @@ public sealed class BaseChannelService<T> : BackgroundService, IChannel<T>
         catch (Exception ex)
         {
             _logger.LogError(ex, "Worker crashed");
+        }
+
+        return;
+
+        async Task FlushAsync()
+        {
+            if (buffer.Count == 0) { deadline = DateTime.UtcNow.AddMilliseconds(_batchTimeoutMs); return; }
+
+            try
+            {
+                await _repository.InsertBatchAsync(sender, buffer, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { /* shutting down */ }
+            catch (Exception ex)
+            {
+                // Don’t re-enqueue to avoid ordering cycles; log & drop
+                _logger.LogError(ex, "Failed to persist batch of {Count}", buffer.Count);
+            }
+            finally
+            {
+                buffer.Clear();
+                deadline = DateTime.UtcNow.AddMilliseconds(_batchTimeoutMs);
+            }
         }
     }
 

@@ -1,6 +1,9 @@
+using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using PacketProcessing.Config;
+using PacketProcessing.Model;
 using PacketProcessing.Repositories;
 
 namespace PacketProcessing.Services;
@@ -12,30 +15,32 @@ public interface IPacketSink<TPacket>
 }
 
 public sealed class PacketPipelineService<TPacket> : BackgroundService, IPacketSink<TPacket>
-    where TPacket : class
+    where TPacket : BasePacket
 {
     private readonly IRepository<TPacket> _repository;
-    private readonly IRealtimeClient<TPacket> _realtime;
     private readonly ILogger<PacketPipelineService<TPacket>> _logger;
     
     protected readonly ApplicationOptions.ChannelOptions _channelOptions;
     protected readonly ApplicationOptions.WorkerOptions _workerOptions;
+    protected readonly ApplicationOptions.DbOptions _dbOptions;
 
     private readonly Channel<TPacket> _channel;
-    private readonly List<Task> _workers = new();
+    private readonly List<Task> _workers = [];
 
     public PacketPipelineService(
         IRepository<TPacket> repository,
-        IRealtimeClient<TPacket> realtime,
-        IOptions<BatchOptions> opt,
+        IOptions<ApplicationOptions.ChannelOptions> channelOptions,
+        IOptions<ApplicationOptions.WorkerOptions> workerOptions,
+        IOptions<ApplicationOptions.DbOptions> dbOptions,
         ILogger<PacketPipelineService<TPacket>> logger)
     {
         _repository = repository;
-        _realtime = realtime;
         _logger = logger;
-        _opt = opt.Value;
+        _channelOptions = channelOptions.Value;
+        _workerOptions = workerOptions.Value;
+        _dbOptions = dbOptions.Value;
 
-        var chOpts = new BoundedChannelOptions(_opt.ChannelCapacity)
+        var chOpts = new BoundedChannelOptions(_channelOptions.Capacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
             SingleWriter = false,
@@ -54,7 +59,7 @@ public sealed class PacketPipelineService<TPacket> : BackgroundService, IPacketS
     {
         try
         {
-            for (int i = 0; i < Math.Max(1, _opt.Workers); i++)
+            for (int i = 0; i < Math.Max(1, _workerOptions.MinWorkers); i++)
                 _workers.Add(Task.Run(() => WorkerLoopAsync(stoppingToken), stoppingToken));
 
             await Task.WhenAll(_workers);
@@ -69,9 +74,9 @@ public sealed class PacketPipelineService<TPacket> : BackgroundService, IPacketS
     private async Task WorkerLoopAsync(CancellationToken ct)
     {
         var reader = _channel.Reader;
-        var buffer = new List<TPacket>(_opt.MaxBatchSize);
+        var buffer = new List<TPacket>(_dbOptions.BatchSize);
         int approxBytes = 0;
-        var deadline = DateTime.UtcNow + _opt.MaxBatchAge;
+        var deadline = DateTime.UtcNow.Millisecond + _dbOptions.BatchTimeoutMs;
 
         static int EstimateBytes(TPacket p)
         {
@@ -88,16 +93,12 @@ public sealed class PacketPipelineService<TPacket> : BackgroundService, IPacketS
             {
                 // Storage first (durable)
                 await _repository.AddBatchAsync(buffer, ct);
-
-                // Realtime next (best-effort)
-                try { await _realtime.SendBatchAsync(buffer, ct); }
-                catch (Exception ex) { _logger.LogDebug(ex, "Realtime batch send failed ({Count})", buffer.Count); }
             }
             finally
             {
                 buffer.Clear();
                 approxBytes = 0;
-                deadline = DateTime.UtcNow + _opt.MaxBatchAge;
+                deadline = DateTime.UtcNow.Millisecond + _dbOptions.BatchTimeoutMs;
             }
         }
 
@@ -105,23 +106,14 @@ public sealed class PacketPipelineService<TPacket> : BackgroundService, IPacketS
         {
             while (reader.TryRead(out var item))
             {
-                // Optional ultra-low-latency realtime path
-                if (_opt.RealtimePerItem)
-                {
-                    // Fire-and-forget, don’t block the hot path
-                    _ = _realtime.SendAsync(item, ct).AsTask().ContinueWith(
-                        t => { if (t.Exception != null) _logger.LogDebug(t.Exception, "Realtime send failed"); },
-                        TaskScheduler.Default);
-                }
-
                 buffer.Add(item);
                 approxBytes += EstimateBytes(item);
 
-                if (buffer.Count >= _opt.MaxBatchSize || approxBytes >= _opt.MaxBatchBytes)
+                if (buffer.Count >= _dbOptions.BatchSize)
                     await FlushAsync();
             }
 
-            if (DateTime.UtcNow >= deadline)
+            if (DateTime.UtcNow.Millisecond >= deadline)
                 await FlushAsync();
         }
 

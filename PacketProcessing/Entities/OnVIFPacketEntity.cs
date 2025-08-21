@@ -11,6 +11,5 @@ public class OnVIFPacketEntity
     public string Description { get; set; }
     public float? Zoom { get; set; }
     public float Measurement { get; set; }
-    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
     public ulong Timestamp { get; set; }
 }

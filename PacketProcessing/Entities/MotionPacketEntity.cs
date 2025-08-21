@@ -7,9 +7,9 @@ public class MotionPacketEntity
     [Key]
     public Guid Id { get; set; } = Guid.NewGuid();
     public bool Type { get; set; }
-    public string OpCode { get; set; }
-    public string OpCodeDescription { get; set; }
-    public int Axis { get; set; }
+    public required string OpCode { get; set; }
+    public required string OpCodeDescription { get; set; }
+    public required int Axis { get; set; }
     public float? FloatValue { get; set; }
-    public ulong Timestamp { get; set; }
+    public required ulong Timestamp { get; set; }
 }

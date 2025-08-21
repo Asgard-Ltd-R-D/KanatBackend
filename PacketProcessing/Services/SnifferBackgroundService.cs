@@ -10,14 +10,15 @@ using SharpPcap.LibPcap;
 
 namespace PacketProcessing.Services;
 
-public class SnifferBackgroundService : BackgroundService
+public abstract class SnifferBackgroundService<TPacket> : BackgroundService where TPacket : BasePacket
 {
     protected readonly ApplicationOptions.SnifferDefinition _snifferDefinition;
     protected readonly ConcurrentDictionary<string, LibPcapLiveDevice> _activeDevices;
     protected readonly ILogger<SnifferBackgroundService> _logger;
     protected readonly string _snifferName;
-    protected Func<byte[], ulong, string, string, int, int, int, string, string, BasePacket?>? _packetParser;
-    protected Func<BasePacket, Task>? _packetHandler;
+
+    protected abstract Func<ReadOnlyMemory<byte>, PacketInfo, TPacket?> PacketParser { get; }
+    protected abstract Func<TPacket, Task> PacketHandler { get; }
 
     public SnifferBackgroundService(
         IOptions<ApplicationOptions.SnifferDefinition> snifferDefinition,
@@ -30,39 +31,35 @@ public class SnifferBackgroundService : BackgroundService
         _snifferName = _snifferDefinition.Name;
     }
 
-    public void SetPacketParser(Func<byte[], ulong, string, string, int, int, int, string, string, BasePacket?> packetParser) {
-        _packetParser = packetParser;
-    }
+    protected virtual IEnumerable<LibPcapLiveDevice> SelectDevices(IEnumerable<LibPcapLiveDevice> all)
+    => all;
 
-    public void SetPacketHandler(Func<BasePacket, Task> packetHandler) {
-        _packetHandler = packetHandler;
-    }
+    protected virtual string? GetFilter() => _snifferDefinition.Filter;
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         try
         {
-            _logger.LogInformation("Starting sniffer '{SnifferName}' with filter: {Filter}", _snifferName, _snifferDefinition.Filter);
+            _logger.LogInformation("Starting sniffer '{SnifferName}' with filter: {Filter}", _snifferName, GetFilter());
             
-            var devices = CaptureDeviceList.Instance;
-            if (devices.Count == 0)
+            var all = CaptureDeviceList.Instance.OfType<LibPcapLiveDevice>().ToList();
+            if (all.Count == 0)
             {
                 _logger.LogError("No capture devices found. Install libpcap/Npcap.");
                 return;
             }
 
-            _logger.LogInformation("Available devices: {Count}", devices.Count);
-
-            var captureTasks = new List<Task>();
-            foreach (var device in devices)
+            var devices = SelectDevices(all).ToList();
+            if (devices.Count == 0)
             {
-                if (device is LibPcapLiveDevice liveDevice)
-                {
-                    captureTasks.Add(StartCaptureOnDeviceAsync(liveDevice, ct));
-                }
+                _logger.LogWarning("No devices selected for sniffer '{SnifferName}'.", _snifferName);
+                return;
             }
 
-            await Task.WhenAll(captureTasks);
+            // Start capture on all devices
+            var tasks = new List<Task>(devices.Count);
+            devices.ForEach(dev => tasks.Add(StartCaptureOnDeviceAsync(dev, ct)));
+            await Task.WhenAll(tasks);
         }
         catch (Exception ex)
         {
@@ -70,31 +67,36 @@ public class SnifferBackgroundService : BackgroundService
         }
     }
 
-    private async Task StartCaptureOnDeviceAsync(LibPcapLiveDevice device, CancellationToken stoppingToken)
+    private async Task StartCaptureOnDeviceAsync(LibPcapLiveDevice device, CancellationToken ct)
     {
+        string key = device.Name ?? Guid.NewGuid().ToString("N");
+
         try
         {
-            device.Open(DeviceModes.Promiscuous);
-            device.Filter = _snifferDefinition.Filter;
+            // Open the device, set filter, and set up packet arrival handler
+            device.Open(mode, read_timeout: 1);
 
-            if (_activeDevices.TryAdd(device.Name ?? Guid.NewGuid().ToString("N"), device))
+            var filter = GetFilter();
+            if (!string.IsNullOrWhiteSpace(filter))
+                device.Filter = filter!;
+            
+            if (_activeDevices.TryAdd(key, device))
             {
-                _logger.LogInformation("Started capturing on device {Name} with filter: {Filter} for sniffer '{SnifferName}'", 
+                _logger.LogInformation("Capturing on device {Name} with filter: {Filter} for '{SnifferName}'",
                     device.Name, device.Filter, _snifferName);
             }
 
             device.OnPacketArrival += OnPacketArrival;
-
             device.StartCapture();
 
-            while (!stoppingToken.IsCancellationRequested)
+            while (!ct.IsCancellationRequested)
             {
-                await Task.Delay(1000, stoppingToken);
+                await Task.Delay(250, ct);
             }
 
             device.StopCapture();
             device.Close();
-            _logger.LogInformation("Stopped capturing on device {Name} for sniffer '{SnifferName}'", device.Name, _snifferName);
+            _logger.LogInformation("Stopped device {Name} for '{SnifferName}'", device.Name, _snifferName);
         }
         catch (Exception ex)
         {
@@ -102,135 +104,75 @@ public class SnifferBackgroundService : BackgroundService
         }
         finally
         {
-            var key = _activeDevices.FirstOrDefault(kv => kv.Value == device).Key;
-            if (key != null)
-            {
-                _activeDevices.TryRemove(key, out _);
-            }
-        }
-    }
-
-    protected void StartDevices()
-    {
-        foreach (var (key, dev) in _activeDevices)
-        {
-            try
-            {
-                dev.Open(DeviceModes.Promiscuous, read_timeout: 1);
-                if (!string.IsNullOrWhiteSpace(_snifferDefinition.Filter))
-                    dev.Filter = _snifferDefinition.Filter;
-
-                dev.OnPacketArrival += OnPacketArrival;
-                dev.StartCapture();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to start capture on device '{Device}' for sniffer '{SnifferName}'", dev.Name, _snifferName);
-                try { dev.Close(); } catch { /* ignore */ }
-            }
-        }
-    }
-
-    protected void StopDevices()
-    {
-        foreach (var kv in _activeDevices)
-        {
-            var dev = kv.Value;
-            try
+            if (_activeDevices.TryRemove(key, out var dev))
             {
                 try { dev.OnPacketArrival -= OnPacketArrival; } catch { /* ignore */ }
                 try { if (dev.Started) dev.StopCapture(); } catch { /* ignore */ }
                 try { dev.Close(); } catch { /* ignore */ }
             }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Error while stopping device '{Device}' for sniffer '{SnifferName}'", kv.Key, _snifferName);
-            }
         }
-        _activeDevices.Clear();
     }
 
     private void OnPacketArrival(object? sender, PacketCapture e)
     {
         try
         {
-            if (sender is LibPcapLiveDevice dev)
-            {
-                HandlePacket(dev, e);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "HandlePacket threw in sniffer '{SnifferName}'", _snifferName);
-        }
-    }
+            if (sender is not LibPcapLiveDevice dev) return;
 
-    private void HandlePacket(LibPcapLiveDevice device, PacketCapture e)
-    {
-        try
-        {
             var raw = e.GetPacket();
-            if (raw == null) 
-            {
-                _logger.LogError("Failed to get packet from capture {CaptureId}", e.GetPacket().GetHashCode());
-                return;
-            }
+            if (raw is null || raw.Data is null || raw.Data.Length == 0) return;
 
-            (
-                ulong timestamp, 
-                string sourceIp, 
-                string destinationIp, 
-                int sourcePort, 
-                int destinationPort, 
-                int length, 
-                string protocol
-            )? packetInfo = PacketUtils.ExtractPacketInfo(e);
+            var infoMaybe = PacketUtils.ExtractPacketInfo(e);
+            if (infoMaybe is null) return;
 
-            if (packetInfo == null) 
-            {
-                _logger.LogError("Failed to extract packet info from packet {PacketId}", e.GetPacket().GetHashCode());
-                return;
-            }
-
-            // Parse the packet using the configured parser
-            var packetData = raw.Data;
-            var parsedPacket = _packetParser(
-                packetData ?? [], 
-                packetInfo.GetValueOrDefault().timestamp,
-                packetInfo.GetValueOrDefault().sourceIp, 
-                packetInfo.GetValueOrDefault().destinationIp,
-                packetInfo.GetValueOrDefault().sourcePort, 
-                packetInfo.GetValueOrDefault().destinationPort,
-                packetInfo.GetValueOrDefault().length,
-                packetInfo.GetValueOrDefault().protocol,
-                device.Name ?? "unknown"
+            var pi = infoMaybe.Value;
+            var info = new PacketInfo(
+                pi.timestamp,
+                pi.sourceIp,
+                pi.destinationIp,
+                pi.sourcePort,
+                pi.destinationPort,
+                pi.length,
+                pi.protocol,
+                dev.Name ?? "unknown"
             );
-            
-            if (parsedPacket != null)
+
+            // Zero-copy: wrap raw byte[] as ReadOnlyMemory<byte>
+            var payload = new ReadOnlyMemory<byte>(raw.Data);
+
+            var parsed = PacketParser(payload, info);
+            if (parsed is null) return;
+
+            _ = Task.Run(async () =>
             {
-                // Handle the packet asynchronously
-                _ = Task.Run(async () =>
+                try { await PacketHandler(parsed); }
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        await _packetHandler(parsedPacket);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error handling packet in sniffer '{SnifferName}'", _snifferName);
-                    }
-                });
-            }
+                    _logger.LogError(ex, "Packet handler failed in '{SnifferName}'", _snifferName);
+                }
+            });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error parsing packet in sniffer '{SnifferName}'", _snifferName);
+            _logger.LogDebug(ex, "OnPacketArrival error in '{SnifferName}'", _snifferName);
         }
     }
 
     public override void Dispose()
     {
-        StopDevices();
+        foreach (var kv in _activeDevices)
+        {
+            var dev = kv.Value;
+            try
+            {
+                try { dev.OnPacketArrival -= OnPacketArrival; } catch { }
+                try { if (dev.Started) dev.StopCapture(); } catch { }
+                try { dev.Close(); } catch { }
+            }
+            catch { }
+        }
+        _activeDevices.Clear();
+
         base.Dispose();
     }
 }

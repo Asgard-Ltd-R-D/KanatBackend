@@ -3,8 +3,20 @@ using PacketDotNet;
 
 namespace PacketProcessing.Utils;
 
+public readonly record struct PacketInfo(
+    ulong Timestamp,
+    string SourceIp,
+    string DestinationIp,
+    int SourcePort,
+    int DestinationPort,
+    int Length,
+    string Protocol,
+    string DeviceName
+);
+
+
 public static class PacketUtils {
-    public static (ulong timestamp, string sourceIp, string destinationIp, int sourcePort, int destinationPort, int length, string protocol)? ExtractPacketInfo(PacketCapture e) {
+    public static PacketInfo? ExtractPacketInfo(PacketCapture e) {
         var raw = e.GetPacket();
         if (raw == null) return null;
 

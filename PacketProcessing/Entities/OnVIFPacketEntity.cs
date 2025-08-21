@@ -6,7 +6,7 @@ namespace PacketProcessing.Entities;
 public class OnVIFPacketEntity
 {
     [Key]
-    public Guid Id { get; set; }
+    public Guid Id { get; set; } = Guid.NewGuid();
     public bool Type { get; set; }
     public string Description { get; set; }
     public float? Zoom { get; set; }

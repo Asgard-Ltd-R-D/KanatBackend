@@ -1,5 +1,4 @@
-﻿using PacketProcessing.Model;
-using PacketProcessing.Utils.Enums;
+﻿using PacketProcessing.Utils.Enums;
 
 namespace PacketProcessing.Repositories;
 

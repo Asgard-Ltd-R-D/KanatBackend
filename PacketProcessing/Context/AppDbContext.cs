@@ -2,8 +2,6 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using PacketProcessing.Config;
 using PacketProcessing.Entities;
 
 namespace PacketProcessing.Context;
@@ -14,6 +12,7 @@ public class AppDbContext : DbContext
     
     public DbSet<MotionPacketEntity> MotionPackets => Set<MotionPacketEntity>();
     public DbSet<OnVIFPacketEntity> OnvifPackets => Set<OnVIFPacketEntity>();   
+    public DbSet<SafetyPacketEntity> SafetyPackets => Set<SafetyPacketEntity>();
     
     public AppDbContext(DbContextOptions<AppDbContext> contextOptions, ILogger<AppDbContext> logger) : base(contextOptions)
     {
@@ -74,6 +73,39 @@ public class AppDbContext : DbContext
                 .IsRequired();
 
             e.HasIndex(x => x.Timestamp).HasDatabaseName("ix_onvif_timestamp");
+        });
+
+        // Safety packets
+        b.Entity<SafetyPacketEntity>(e =>
+        {
+            e.ToTable("safety_packets");
+
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+
+            e.Property(x => x.Type);
+
+            e.Property(x => x.OpCode)
+                .HasMaxLength(128)
+                .IsUnicode(false)
+                .IsRequired();
+
+            e.Property(x => x.OpCodeDescription)
+                .HasMaxLength(512)
+                .IsUnicode(true)
+                .IsRequired();
+
+            e.Property(x => x.State)
+                .HasMaxLength(128)
+                .IsUnicode(false)
+                .IsRequired();
+
+            e.Property(x => x.Timestamp)
+                .HasColumnType("bigint")
+                .IsRequired();
+
+            e.HasIndex(x => x.Timestamp).HasDatabaseName("ix_safety_timestamp");
+            e.HasIndex(x => x.OpCode).HasDatabaseName("ix_safety_opcode");
         });
     }
 

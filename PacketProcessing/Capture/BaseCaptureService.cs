@@ -18,11 +18,9 @@ public abstract class BaseCaptureService<T>(
     protected abstract Func<ReadOnlyMemory<byte>, T?> PacketParser { get; set; }
     protected abstract Func<T, Task> PacketHandler { get; set; }
     
-    public required string _snifferName = snifferName;
     public required string _protocol = protocol;
     public required List<string> _ips = [..ips];
     
-    public string SnifferName { get => _snifferName; set => _snifferName = value; }
     public string Protocol { get => _protocol; set => _protocol = string.IsNullOrWhiteSpace(value) ? "ip" : value.Trim(); }
     public IReadOnlyList<string> Ips { get => _ips; set => _ips = [..value]; }
     

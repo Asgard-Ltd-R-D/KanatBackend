@@ -44,18 +44,6 @@ public class ApplicationOptions
         /// </summary>
         public string Filter { get; set; } = "udp";
 
-        /// <summary>
-        /// Name of the parser to apply to packets in this sniffer.
-        /// Example: "none", "dns", "custom-parser".
-        /// </summary>
-        public string Parser { get; set; } = "none";
-
-        /// <summary>
-        /// Repository or database table where captured packets will be stored.
-        /// Example: "ef", "influx", "quest".
-        /// </summary>
-        public string Repository { get; set; } = "ef";
-
         public static implicit operator SnifferDefinition(IOptions<SnifferDefinition> v)
         {
             throw new NotImplementedException();

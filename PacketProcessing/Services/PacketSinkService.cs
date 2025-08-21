@@ -3,36 +3,35 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PacketProcessing.Config;
-using PacketProcessing.Model;
 using PacketProcessing.Repositories;
 
 namespace PacketProcessing.Services;
 
-public interface IPacketSink<TPacket>
+public interface IPacketSink<T>
 {
-    ValueTask EnqueueAsync(TPacket packet, CancellationToken ct = default);
-    bool TryEnqueue(TPacket packet);
+    ValueTask EnqueueAsync(T packet, CancellationToken ct = default);
+    bool TryEnqueue(T packet);
 }
 
-public sealed class PacketPipelineService<TPacket> : BackgroundService, IPacketSink<TPacket>
-    where TPacket : BasePacket
+public sealed class PacketPipelineService<T> : BackgroundService, IPacketSink<T>
+    where T : class
 {
-    private readonly IRepository<TPacket> _repository;
-    private readonly ILogger<PacketPipelineService<TPacket>> _logger;
+    private readonly IRepository<T> _repository;
+    private readonly ILogger<PacketPipelineService<T>> _logger;
     
     protected readonly ApplicationOptions.ChannelOptions _channelOptions;
     protected readonly ApplicationOptions.WorkerOptions _workerOptions;
     protected readonly ApplicationOptions.DbOptions _dbOptions;
 
-    private readonly Channel<TPacket> _channel;
+    private readonly Channel<T> _channel;
     private readonly List<Task> _workers = [];
 
     public PacketPipelineService(
-        IRepository<TPacket> repository,
+        IRepository<T> repository,
         IOptions<ApplicationOptions.ChannelOptions> channelOptions,
         IOptions<ApplicationOptions.WorkerOptions> workerOptions,
         IOptions<ApplicationOptions.DbOptions> dbOptions,
-        ILogger<PacketPipelineService<TPacket>> logger)
+        ILogger<PacketPipelineService<T>> logger)
     {
         _repository = repository;
         _logger = logger;
@@ -67,18 +66,18 @@ public sealed class PacketPipelineService<TPacket> : BackgroundService, IPacketS
         catch (OperationCanceledException) { /* normal on shutdown */ }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Packet pipeline {Type} crashed", typeof(TPacket).Name);
+            _logger.LogError(ex, "Packet pipeline {Type} crashed", typeof(T).Name);
         }
     }
 
     private async Task WorkerLoopAsync(CancellationToken ct)
     {
         var reader = _channel.Reader;
-        var buffer = new List<TPacket>(_dbOptions.BatchSize);
+        var buffer = new List<T>(_dbOptions.BatchSize);
         int approxBytes = 0;
         var deadline = DateTime.UtcNow.Millisecond + _dbOptions.BatchTimeoutMs;
 
-        static int EstimateBytes(TPacket p)
+        static int EstimateBytes(T p)
         {
             // If your TPacket exposes Payload.Length, use it here.
             // Fallback heuristic:
@@ -92,7 +91,7 @@ public sealed class PacketPipelineService<TPacket> : BackgroundService, IPacketS
             try
             {
                 // Storage first (durable)
-                await _repository.AddBatchAsync(buffer, ct);
+                await _repository.InsertBatchAsync(buffer, ct);
             }
             finally
             {
@@ -124,5 +123,15 @@ public sealed class PacketPipelineService<TPacket> : BackgroundService, IPacketS
     {
         _channel.Writer.TryComplete();
         await base.StopAsync(cancellationToken);
+    }
+
+    public ValueTask EnqueueAsync(T packet, CancellationToken ct = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public bool TryEnqueue(T packet)
+    {
+        throw new NotImplementedException();
     }
 }

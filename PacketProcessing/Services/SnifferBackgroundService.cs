@@ -10,15 +10,15 @@ using SharpPcap.LibPcap;
 
 namespace PacketProcessing.Services;
 
-public abstract class SnifferBackgroundService<TPacket> : BackgroundService where TPacket : BasePacket
+public abstract class SnifferBackgroundService<T> : BackgroundService where T : class
 {
     protected readonly ApplicationOptions.SnifferDefinition _snifferDefinition;
     protected readonly ConcurrentDictionary<string, LibPcapLiveDevice> _activeDevices;
     protected readonly ILogger<SnifferBackgroundService> _logger;
     protected readonly string _snifferName;
 
-    protected abstract Func<ReadOnlyMemory<byte>, PacketInfo, TPacket?> PacketParser { get; }
-    protected abstract Func<TPacket, Task> PacketHandler { get; }
+    protected abstract Func<ReadOnlyMemory<byte>, PacketInfo, T?> PacketParser { get; }
+    protected abstract Func<T, Task> PacketHandler { get; }
 
     public SnifferBackgroundService(
         IOptions<ApplicationOptions.SnifferDefinition> snifferDefinition,

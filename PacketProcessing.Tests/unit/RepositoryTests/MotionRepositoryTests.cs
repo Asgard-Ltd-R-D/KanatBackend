@@ -25,6 +25,8 @@ public class MotionRepositoryTests
     public async Task Write_Single_Then_Read_Back()
     {
         await _fx._Qdb.ExecuteAsync($"truncate table \"{Table}\"");
+        
+        using var sender = _fx.CreateSender();
         var repo = _fx.CreateRepository<MotionPacketEntity>();
 
         var now = DateTime.UtcNow;
@@ -38,7 +40,7 @@ public class MotionRepositoryTests
             Timestamp = now
         };
 
-        await repo.WriteAsync(_fx._Sender, e);
+        await repo.WriteAsync(sender, e);
 
         var all = (await repo.GetAllPacketsAsync()).ToList();
         all.Should().HaveCount(1);
@@ -52,6 +54,8 @@ public class MotionRepositoryTests
     public async Task Write_Batch_Then_Read_Paged()
     {
         await _fx._Qdb.ExecuteAsync($"truncate table \"{Table}\"");
+        
+        using var sender = _fx.CreateSender();
         var repo = _fx.CreateRepository<MotionPacketEntity>();
 
         var now = DateTime.UtcNow;
@@ -67,7 +71,7 @@ public class MotionRepositoryTests
             })
             .ToList();
 
-        await repo.WriteBatchAsync(_fx._Sender, batch);
+        await repo.WriteBatchAsync(sender, batch);
 
         var page1 = (await repo.GetPaginatedPacketsBetweenTimestampsAsync(
             now.AddMinutes(-1), now.AddMinutes(1), OrderBy.Asc, page: 1, pageSize: 4)).ToList();
@@ -84,9 +88,11 @@ public class MotionRepositoryTests
     public async Task DeleteAll_Truncates_Table()
     {
         await _fx._Qdb.ExecuteAsync($"truncate table \"{Table}\"");
+        
+        using var sender = _fx.CreateSender();
         var repo = _fx.CreateRepository<MotionPacketEntity>();
 
-        await repo.WriteAsync(_fx._Sender, new MotionPacketEntity
+        await repo.WriteAsync(sender, new MotionPacketEntity
         {
             Type = false,
             OpCode = "X",

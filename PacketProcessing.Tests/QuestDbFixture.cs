@@ -18,7 +18,8 @@ public class QuestDbFixture : IAsyncLifetime
 
     private readonly string _ilpEndpoint =
         Environment.GetEnvironmentVariable("QDB_ILP") 
-        ?? "tcp::addr=localhost:9009";
+        ?? "http::addr=localhost:9000;username=quest;password=quest" +
+           "auto_flush_rows=100;auto_flush_interval=30";
     
     public IQuestDbClient _Qdb { get; private set; } = null!;
     public ISender _Sender { get; private set; } = null!;
@@ -52,6 +53,9 @@ public class QuestDbFixture : IAsyncLifetime
 
     public async Task<long> CountAsync(string table)
         => await _Qdb.ExecuteScalarAsync<long>($"select count(*) from \"{table}\"");
+    
+    public ISender CreateSender()
+        => Sender.New(_ilpEndpoint);
 
     private async Task TruncateAllAsync()
     {

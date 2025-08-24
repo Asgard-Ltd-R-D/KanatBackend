@@ -4,7 +4,7 @@ using QuestDB.Senders;
 
 namespace PacketProcessing.Entities;
 
-public abstract class BasePacketEntity : IQuestDbMappable
+public abstract class BasePacketEntity
 {
     [Column("id", IsTag = true)]
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -16,20 +16,6 @@ public abstract class BasePacketEntity : IQuestDbMappable
     protected abstract string MeasurementName { get; }
     
     protected abstract void WriteColumns(ISender sender);
-    
-    // ---- QuestDbMappable ----
-    public string QuestTable => MeasurementName;
-    public string QuestTimestampColumn => "timestamp";
-
-    public virtual IReadOnlyList<(string Name, string Type, bool IsSymbol, bool Indexed)> GetQuestColumns()
-        => new (string, string, bool, bool)[]
-        {
-            // “id” is a tag → SYMBOL is ideal; index it for fast filters
-            ("id", "SYMBOL", isSymbol: true, indexed: true),
-
-            // designated timestamp column stored as TIMESTAMP
-            ("timestamp", "TIMESTAMP", isSymbol: false, indexed: false),
-        };
     
     // ---- ILP write ----
     public virtual RowMap ToRowMap()

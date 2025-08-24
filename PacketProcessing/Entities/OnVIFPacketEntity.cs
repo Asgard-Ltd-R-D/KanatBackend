@@ -28,16 +28,4 @@ public class OnVIFPacketEntity : BasePacketEntity
             sender.Column("zoom", Zoom.Value);
         sender.Column("measurement", Measurement);
     }
-    
-    public override IReadOnlyList<(string Name, string Type, bool IsSymbol, bool Indexed)> GetQuestColumns()
-    {
-        var baseCols = base.GetQuestColumns(); // id, timestamp
-        return new List<(string, string, bool, bool)>(baseCols)
-        {
-            ("type",        "BOOLEAN", false, false),
-            ("description", "STRING",  false, true),   
-            ("zoom",        "DOUBLE",  false, false),  
-            ("measurement", "DOUBLE",  false, false),
-        };
-    }
 }

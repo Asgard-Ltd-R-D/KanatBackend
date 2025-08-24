@@ -23,7 +23,8 @@ public class InfluxRepository<T> : IInfluxRepository<T>, IAsyncDisposable where 
             var row = PacketRowMapper<T>.Map(entity);
 
             // create a new RawTable with the same structure as row, and use it to create a transaction
-            sender.Transaction(row.Table);
+            var table = row.Table;
+            sender.Transaction(table);
 
             // apply the row to the sender
             row.Apply(sender);

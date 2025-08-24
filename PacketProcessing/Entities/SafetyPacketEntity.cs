@@ -27,16 +27,4 @@ public class SafetyPacketEntity : BasePacketEntity
         sender.Column("opCodeDescription", OpCodeDescription);
         sender.Column("state", State);
     }
-    
-    public override IReadOnlyList<(string Name, string Type, bool IsSymbol, bool Indexed)> GetQuestColumns()
-    {
-        var baseCols = base.GetQuestColumns(); // id, timestamp
-        return new List<(string, string, bool, bool)>(baseCols)
-        {
-            ("type",               "BOOLEAN", false, false),
-            ("opCode",             "STRING",  false, true),
-            ("opCodeDescription",  "STRING",  false, false),
-            ("state",              "STRING",  false, true)
-        };
-    }
 }

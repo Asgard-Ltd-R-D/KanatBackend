@@ -17,7 +17,7 @@ public static class DatabaseMigrationHelper
     /// Ensures the database is up to date with the latest migrations
     /// </summary>
     /// <param name="app">The WebApplication instance</param>
-    public static void EnsureDatabaseUpToDate(WebApplication app)
+    public static async Task EnsureDatabaseUpToDateAsync(WebApplication app)
     {
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
         var logger = loggerFactory.CreateLogger("DatabaseMigrationHelper");
@@ -32,11 +32,11 @@ public static class DatabaseMigrationHelper
             
             // Step 2: Ensure database and tables are created
             logger.LogInformation("Step 1: Initializing database and tables...");
-            dbContext.EnsureDatabaseCreated();
+            await dbContext.EnsureDatabaseAsync();
             
             // Step 3: Verify all required tables exist
             logger.LogInformation("Step 2: Verifying table structure...");
-            VerifyDatabaseStructure(dbContext, logger);
+            await VerifyDatabaseStructureAsync(dbContext, logger);
             
             logger.LogInformation("Database initialization completed successfully!");
         }
@@ -52,18 +52,18 @@ public static class DatabaseMigrationHelper
     /// </summary>
     /// <param name="dbContext">The database context</param>
     /// <param name="logger">The logger instance</param>
-    private static void VerifyDatabaseStructure(AppDbContext dbContext, ILogger logger)
+    private static async Task VerifyDatabaseStructureAsync(AppDbContext dbContext, ILogger logger)
     {
         try
         {
             // Verify each entity table exists and is accessible
-            var motionPacketsCount = dbContext.MotionPackets.Count();
+            var motionPacketsCount = await dbContext.MotionPackets.CountAsync();
             logger.LogInformation("✓ Motion packets table verified (Count: {Count})", motionPacketsCount);
             
-            var onvifPacketsCount = dbContext.OnvifPackets.Count();
+            var onvifPacketsCount = await dbContext.OnVifPackets.CountAsync();
             logger.LogInformation("✓ OnVIF packets table verified (Count: {Count})", onvifPacketsCount);
             
-            var safetyPacketsCount = dbContext.SafetyPackets.Count();
+            var safetyPacketsCount = await dbContext.SafetyPackets.CountAsync();
             logger.LogInformation("✓ Safety packets table verified (Count: {Count})", safetyPacketsCount);
             
             logger.LogInformation("All database tables verified successfully!");

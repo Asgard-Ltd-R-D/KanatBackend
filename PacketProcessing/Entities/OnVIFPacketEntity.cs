@@ -1,15 +1,17 @@
-using InfluxDB.Client.Core;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using QuestDB.Senders;
 
 namespace PacketProcessing.Entities;
 
-[Measurement("onvif_packets")]
+[Table("onvif_packets")]
 public class OnVIFPacketEntity : BasePacketEntity
 {
     [Column("type")]
     public required bool Type { get; set; }
     
     [Column("description")]
+    [StringLength(128)]
     public required string Description { get; set; }
     
     [Column("zoom")]
@@ -18,9 +20,9 @@ public class OnVIFPacketEntity : BasePacketEntity
     [Column("measurement")]
     public required float Measurement { get; set; }
 
-    protected override string MeasurementName => "onvif_packets";
+    public override string TableName => "onvif_packets";
     
-    protected override void WriteColumns(ISender sender)
+    public override void WriteColumns(ISender sender)
     {
         sender.Column("type", Type);
         sender.Column("description", Description);

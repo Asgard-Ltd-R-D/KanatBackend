@@ -43,6 +43,22 @@ public sealed class Repository<T> : IRepository<T> where T : BasePacketEntity
         int pageSize = 1_000)
         => _efRepo.GetPaginatedPacketsBetweenTimestampsAsync(
             startTimestamp, endTimestamp, orderBy, page, pageSize);
+    
+    // EF Repository methods
+    public Task<T> AddAsync(T entity)
+        => _efRepo.AddAsync(entity);
+    
+    public Task<int> AddRangeAsync(IEnumerable<T> entities)
+        => _efRepo.AddRangeAsync(entities);
+    
+    public Task<T?> GetByIdAsync(Guid id)
+        => _efRepo.GetByIdAsync(id);
+    
+    public Task<T> UpdateAsync(T entity)
+        => _efRepo.UpdateAsync(entity);
+    
+    public Task<bool> DeleteAsync(Guid id)
+        => _efRepo.DeleteAsync(id);
 
     public async ValueTask DisposeAsync()
     {

@@ -1,18 +1,21 @@
-using InfluxDB.Client.Core;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using QuestDB.Senders;
 
 namespace PacketProcessing.Entities;
 
-[Measurement("motion_packets")]
+[Table("motion_packets")]
 public class MotionPacketEntity : BasePacketEntity
 {
     [Column("type")]
     public required bool Type { get; set; }
     
     [Column("opCode")]
+    [StringLength(32)]
     public required string OpCode { get; set; }
     
     [Column("opCodeDescription")]
+    [StringLength(128)]
     public required string OpCodeDescription { get; set; }
     
     [Column("axis")]
@@ -21,9 +24,9 @@ public class MotionPacketEntity : BasePacketEntity
     [Column("floatValue")]
     public float? FloatValue { get; set; }
 
-    protected override string MeasurementName => "motion_packets";
+    public override string TableName => "motion_packets";
     
-    protected override void WriteColumns(ISender sender)
+    public override void WriteColumns(ISender sender)
     {
         sender.Column("type", Type);
         sender.Column("opCode", OpCode);

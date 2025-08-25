@@ -1,4 +1,5 @@
-using InfluxDB.Client.Core;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using PacketProcessing.Utils.QuestDB;
 using QuestDB.Senders;
 
@@ -6,21 +7,31 @@ namespace PacketProcessing.Entities;
 
 public abstract class BasePacketEntity
 {
-    [Column("id", IsTag = true)]
+    [Key]
+    [Column("id")]
     public Guid Id { get; set; } = Guid.NewGuid();
     
-    [Column("timestamp", IsTimestamp = true)]
+    [Column("timestamp")]
     public required DateTime Timestamp { get; set; } = DateTime.UtcNow;
     
+    /// <summary>
+    /// Gets the table name for this entity
+    /// </summary>
+    public abstract string TableName { get; }
     
-    protected abstract string MeasurementName { get; }
+    /// <summary>
+    /// Writes the columns to the sender for this entity
+    /// </summary>
+    /// <param name="sender">The sender to write columns to</param>
+    public abstract void WriteColumns(ISender sender);
     
-    protected abstract void WriteColumns(ISender sender);
-    
-    // ---- ILP write ----
+    /// <summary>
+    /// Creates a RowMap function to write this object to the sender
+    /// </summary>
+    /// <returns>RowMap function to activate</returns>
     public virtual RowMap ToRowMap()
     {
-        var table = MeasurementName;
+        var table = TableName;
         var tsUtc = DateTime.SpecifyKind(Timestamp, DateTimeKind.Utc);
 
         return new RowMap(
@@ -29,7 +40,6 @@ public abstract class BasePacketEntity
             apply: sender =>
             {
                 sender
-                    .Table(table)
                     .Symbol("id", Id.ToString("N"));
 
                 WriteColumns(sender);

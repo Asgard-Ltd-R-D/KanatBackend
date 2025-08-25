@@ -1,9 +1,8 @@
-using PacketProcessing.Entities;
 using PacketProcessing.Utils.Enums;
 
 namespace PacketProcessing.Repositories.EfRepository;
 
-public interface IEfRepository<T> where T : BasePacketEntity
+public interface IEfRepository<T> where T : class
 {
     Task<IEnumerable<T>> GetAllPacketsAsync();
     

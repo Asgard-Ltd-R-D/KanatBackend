@@ -6,6 +6,10 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -54,10 +58,12 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
 
     <!-- JSON serialization -->
-    <PackageReference Include="System.Text.Json" Version="8.0.1" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
 
     <!-- Health Checks -->
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="8.0.1" />
   </ItemGroup>
+  
+
 
 </Project>

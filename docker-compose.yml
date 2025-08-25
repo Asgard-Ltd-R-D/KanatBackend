@@ -20,6 +20,26 @@ services:
       timeout: 10s
       retries: 3
 
+  postgresdb:
+    image: postgres:15-alpine
+    container_name: postgres-packet-processing
+    ports:
+      - "5432:5432" # PostgreSQL port
+    environment:
+      - POSTGRES_DB=packet_processing
+      - POSTGRES_USER=packet_user
+      - POSTGRES_PASSWORD=packet_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U packet_user -d packet_processing"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   questdb_data:
   questdb_logs:
+  postgres_data:

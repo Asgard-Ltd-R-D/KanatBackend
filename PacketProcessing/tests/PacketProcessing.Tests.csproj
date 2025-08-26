@@ -20,6 +20,11 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+
+    <!-- Database connectivity -->
+    <PackageReference Include="Npgsql" Version="8.0.4" />
+    <PackageReference Include="net-questdb-client" Version="3.0.0" />
+    <PackageReference Include="InfluxDB.Client" Version="4.18.0" />
   </ItemGroup>
 
   <ItemGroup>

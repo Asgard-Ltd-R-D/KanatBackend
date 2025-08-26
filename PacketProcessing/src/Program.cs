@@ -14,7 +14,7 @@ var app = builder.Build();
 /// <summary>
 /// Ensure database is up to date with latest migrations
 /// </summary>
-await DatabaseMigrationHelper.EnsureDatabaseUpToDateAsync(app);
+await DatabaseMigrationHelper.EnsureDatabasesUpToDateAsync(app);
 
 /// <summary>
 /// Configure all middleware components

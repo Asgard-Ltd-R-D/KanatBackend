@@ -26,48 +26,132 @@ public class AppDbContext : DbContext
         base.OnModelCreating(modelBuilder);
         
         // Configure Range entities
-        modelBuilder.Entity<TargetEntity>(entity =>
-        {
-            entity.ToTable("targets");
-            entity.HasKey(x => x.Id);
-            entity.HasIndex(x => x.Timestamp)
-                .HasDatabaseName("ix_targets_timestamp");
-            entity.HasMany(x => x.Hits)
-                .WithOne(x => x.Target)
-                .HasForeignKey(x => x.TargetId);
-        });
-        
         modelBuilder.Entity<RangeEntity>(entity =>
         {
             entity.ToTable("ranges");
             entity.HasKey(x => x.Id);
+            
+            // Configure columns
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.Timestamp).HasColumnName("timestamp");
+            entity.Property(x => x.Start).HasColumnName("start_time");
+            entity.Property(x => x.End).HasColumnName("end_time");
+            entity.Property(x => x.Description).HasColumnName("description").HasMaxLength(500);
+            
+            // Configure indexes
             entity.HasIndex(x => x.Timestamp)
                 .HasDatabaseName("ix_ranges_timestamp");
-            entity.HasIndex(x => x.EventId)
-                .HasDatabaseName("ix_ranges_event_id");
-            entity.HasOne(x => x.Event)
+            entity.HasIndex(x => x.Start)
+                .HasDatabaseName("ix_ranges_start_time");
+            entity.HasIndex(x => x.End)
+                .HasDatabaseName("ix_ranges_end_time");
+            
+            // Configure navigation properties
+            entity.HasMany(x => x.Events)
                 .WithOne(x => x.Range)
-                .HasForeignKey(x => x.EventId);
-        });
-        
-        modelBuilder.Entity<HitEntity>(entity =>
-        {
-            entity.ToTable("hits");
-            entity.HasKey(x => x.Id);
-            entity.HasIndex(x => x.Timestamp)
-                .HasDatabaseName("ix_hits_timestamp");
-            entity.HasIndex(x => x.TargetId)
-                .HasDatabaseName("ix_hits_target_id");
-            entity.HasIndex(x => x.EventId)
-                .HasDatabaseName("ix_hits_event_id");
+                .HasForeignKey(x => x.RangeId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
         
         modelBuilder.Entity<EventEntity>(entity =>
         {
             entity.ToTable("events");
             entity.HasKey(x => x.Id);
+            
+            // Configure columns
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.Timestamp).HasColumnName("timestamp");
+            entity.Property(x => x.Start).HasColumnName("start_time");
+            entity.Property(x => x.End).HasColumnName("end_time");
+            entity.Property(x => x.RangeId).HasColumnName("range_id");
+            
+            // Configure indexes
             entity.HasIndex(x => x.Timestamp)
                 .HasDatabaseName("ix_events_timestamp");
+            entity.HasIndex(x => x.Start)
+                .HasDatabaseName("ix_events_start_time");
+            entity.HasIndex(x => x.End)
+                .HasDatabaseName("ix_events_end_time");
+            entity.HasIndex(x => x.RangeId)
+                .HasDatabaseName("ix_events_range_id");
+            
+            // Configure foreign key constraint
+            entity.HasOne(x => x.Range)
+                .WithMany(x => x.Events)
+                .HasForeignKey(x => x.RangeId)
+                .OnDelete(DeleteBehavior.Cascade);
+            
+            // Configure navigation properties
+            entity.HasMany(x => x.Hits)
+                .WithOne(x => x.Event)
+                .HasForeignKey(x => x.EventId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+        
+        modelBuilder.Entity<TargetEntity>(entity =>
+        {
+            entity.ToTable("targets");
+            entity.HasKey(x => x.Id);
+            
+            // Configure columns
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.Timestamp).HasColumnName("timestamp");
+            entity.Property(x => x.PosX).HasColumnName("pos_x");
+            entity.Property(x => x.PosY).HasColumnName("pos_y");
+            entity.Property(x => x.CenterX).HasColumnName("center_x");
+            entity.Property(x => x.CenterY).HasColumnName("center_y");
+            
+            // Configure indexes
+            entity.HasIndex(x => x.Timestamp)
+                .HasDatabaseName("ix_targets_timestamp");
+            entity.HasIndex(x => x.PosX)
+                .HasDatabaseName("ix_targets_pos_x");
+            entity.HasIndex(x => x.PosY)
+                .HasDatabaseName("ix_targets_pos_y");
+            
+            // Configure navigation properties
+            entity.HasMany(x => x.Hits)
+                .WithOne(x => x.Target)
+                .HasForeignKey(x => x.TargetId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+        
+        modelBuilder.Entity<HitEntity>(entity =>
+        {
+            entity.ToTable("hits");
+            entity.HasKey(x => x.Id);
+            
+            // Configure columns
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.Timestamp).HasColumnName("timestamp");
+            entity.Property(x => x.RangeToTarget).HasColumnName("range_to_target");
+            entity.Property(x => x.PosX).HasColumnName("pos_x");
+            entity.Property(x => x.PosY).HasColumnName("pos_y");
+            entity.Property(x => x.CenterX).HasColumnName("center_x");
+            entity.Property(x => x.CenterY).HasColumnName("center_y");
+            entity.Property(x => x.TargetId).HasColumnName("target_id");
+            entity.Property(x => x.EventId).HasColumnName("event_id");
+            
+            // Configure indexes
+            entity.HasIndex(x => x.Timestamp)
+                .HasDatabaseName("ix_hits_timestamp");
+            entity.HasIndex(x => x.TargetId)
+                .HasDatabaseName("ix_hits_target_id");
+            entity.HasIndex(x => x.EventId)
+                .HasDatabaseName("ix_hits_event_id");
+            entity.HasIndex(x => x.RangeToTarget)
+                .HasDatabaseName("ix_hits_range_to_target");
+            
+            // Configure foreign key constraints
+            entity.HasOne(x => x.Target)
+                .WithMany(x => x.Hits)
+                .HasForeignKey(x => x.TargetId)
+                .OnDelete(DeleteBehavior.Cascade);
+            
+            entity.HasOne(x => x.Event)
+                .WithMany(x => x.Hits)
+                .HasForeignKey(x => x.EventId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
     
@@ -109,9 +193,10 @@ public class AppDbContext : DbContext
                 
                 foreach (var tableName in tables)
                 {
-                    var tableExists = await Database.CanConnectAsync() && 
-                                    await Database.SqlQuery<int>($"SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{tableName}'").FirstOrDefaultAsync() > 0;
-                    
+                    // Use parameterized scalar EXISTS with alias "Value" so EF can project to a scalar type
+                    var tableExists = await Database.CanConnectAsync() &&
+                                       await Database.SqlQuery<bool>($"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = {tableName}) AS \"Value\"").FirstAsync();
+
                     if (!tableExists)
                     {
                         _logger.LogWarning("Table {TableName} does not exist in PostgreSQL, creating it...", tableName);

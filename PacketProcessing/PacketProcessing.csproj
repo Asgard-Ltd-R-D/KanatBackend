@@ -25,7 +25,7 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.4" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.4" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.7" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.1" />
 
     <!-- Entity Framework Core -->
@@ -44,6 +44,7 @@
     <PackageReference Include="Npgsql" Version="8.0.4" />
     <PackageReference Include="net-questdb-client" Version="3.0.0" />
     <PackageReference Include="InfluxDB.Client" Version="4.18.0" />
+    <PackageReference Include="QuestDB.Net" Version="1.3.1" />
 
     <!-- Packet capture -->
     <PackageReference Include="SharpPcap" Version="6.3.1" />

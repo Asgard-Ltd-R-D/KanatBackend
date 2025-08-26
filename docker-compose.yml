@@ -1,7 +1,7 @@
 services:
   questdb:
     image: questdb/questdb:latest
-    container_name: questdb-packet-processing
+    container_name: questdb-packets
     ports:
       - "8812:8812" # HTTP/Web Console
       - "9009:9009" # PostgreSQL wire protocol
@@ -22,19 +22,19 @@ services:
 
   postgresdb:
     image: postgres:15-alpine
-    container_name: postgres-packet-processing
+    container_name: postgres-events
     ports:
-      - "5432:5432" # PostgreSQL port
+      - "56432:5432" # PostgreSQL port
     environment:
-      - POSTGRES_DB=packet_processing
-      - POSTGRES_USER=packet_user
-      - POSTGRES_PASSWORD=packet_password
+      - POSTGRES_DB=pdb
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U packet_user -d packet_processing"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pdb"]
       interval: 30s
       timeout: 10s
       retries: 3

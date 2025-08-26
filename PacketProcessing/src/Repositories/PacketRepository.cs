@@ -4,7 +4,6 @@ using PacketProcessing.Entities;
 using PacketProcessing.Utils.Enums;
 using PacketProcessing.Utils.QuestDB;
 using QuestDB.Senders;
-using Npgsql;
 
 namespace PacketProcessing.Repositories;
 
@@ -17,12 +16,14 @@ namespace PacketProcessing.Repositories;
 public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEntity
 {
     private readonly ILogger<PacketRepository<T>> _logger;
-    private readonly string _questDbConnectionString;
+    private readonly QuestClient _questClient;
     
     public PacketRepository(AppDbContext context, ILogger<PacketRepository<T>> logger, string questDbConnectionString) 
     {
-        _questDbConnectionString = questDbConnectionString ?? throw new ArgumentNullException(nameof(questDbConnectionString));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        
+        // Initialize QuestDB client
+        _questClient = new QuestClient(questDbConnectionString, logger);
     }
     
     /// <summary>
@@ -146,7 +147,7 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
     }
     
     /// <summary>
-    /// Retrieves all packets of the specified type from QuestDB using PostgreSQL wire protocol
+    /// Retrieves all packets of the specified type from QuestDB
     /// </summary>
     /// <returns>A collection of all packets ordered by timestamp (newest first)</returns>
     public async Task<IEnumerable<T>> GetAllFromQuestDbAsync()
@@ -158,20 +159,9 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
             var tableName = QuestDbUtilities.GetTableName<T>();
             var query = $"SELECT * FROM {tableName} ORDER BY timestamp DESC";
             
-            var result = new List<T>();
-            using var connection = new NpgsqlConnection(_questDbConnectionString);
-            await connection.OpenAsync();
+            var result = await _questClient.ExecuteQueryAsync(query, QuestDbUtilities.ParseQuestDbRawResponse<T>);
             
-            using var command = new NpgsqlCommand(query, connection);
-            using var reader = await command.ExecuteReaderAsync();
-            
-            while (await reader.ReadAsync())
-            {
-                var entity = QuestDbUtilities.MapReaderToEntity<T>(reader);
-                result.Add(entity);
-            }
-                
-            _logger.LogDebug("Retrieved {Count} packets of type {EntityType} from QuestDB", result.Count, typeof(T).Name);
+            _logger.LogDebug("Retrieved {Count} packets of type {EntityType} from QuestDB", result.Count(), typeof(T).Name);
             return result;
         }
         catch (Exception ex)
@@ -192,15 +182,11 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
             _logger.LogInformation("Deleting all packets of type {EntityType} from QuestDB", typeof(T).Name);
             
             var tableName = QuestDbUtilities.GetTableName<T>();
-            var query = $"DELETE FROM {tableName}";
+            var truncateQuery = $"TRUNCATE TABLE {tableName}";
             
-            using var connection = new NpgsqlConnection(_questDbConnectionString);
-            await connection.OpenAsync();
+            await _questClient.ExecuteNonQueryAsync(truncateQuery);
             
-            using var command = new NpgsqlCommand(query, connection);
-            var affectedRows = await command.ExecuteNonQueryAsync();
-            
-            _logger.LogInformation("Deleted {Count} packets of type {EntityType} from QuestDB", affectedRows, typeof(T).Name);
+            _logger.LogInformation("Successfully truncated table {TableName} in QuestDB", tableName);
         }
         catch (Exception ex)
         {
@@ -210,7 +196,7 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
     }
     
     /// <summary>
-    /// Retrieves paginated packets within a specified time range from QuestDB
+    /// Retrieves paginated packets within a specified time range from QuestDB using HTTP API
     /// </summary>
     /// <param name="startTimestamp">The start timestamp for the query range</param>
     /// <param name="endTimestamp">The end timestamp for the query range</param>
@@ -234,31 +220,23 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
             var orderClause = orderBy == OrderBy.Asc ? "ASC" : "DESC";
             var skip = (page - 1) * pageSize;
             
+            // For QuestDB, we need to fetch more data and then skip/limit in memory
+            // We'll fetch skip + pageSize records and then take only the pageSize we need
+            var fetchSize = skip + pageSize;
+            
             var query = $@"
                 SELECT * FROM {tableName} 
-                WHERE timestamp >= @startTimestamp AND timestamp <= @endTimestamp 
+                WHERE timestamp >= '{startTimestamp:yyyy-MM-dd HH:mm:ss}' AND timestamp <= '{endTimestamp:yyyy-MM-dd HH:mm:ss}' 
                 ORDER BY timestamp {orderClause} 
-                LIMIT @pageSize OFFSET @skip";
+                LIMIT {fetchSize}";
             
-            var result = new List<T>();
-            using var connection = new NpgsqlConnection(_questDbConnectionString);
-            await connection.OpenAsync();
+            var allResults = await _questClient.ExecuteQueryAsync(query, QuestDbUtilities.ParseQuestDbRawResponse<T>);
             
-            using var command = new NpgsqlCommand(query, connection);
-            command.Parameters.AddWithValue("@startTimestamp", startTimestamp);
-            command.Parameters.AddWithValue("@endTimestamp", endTimestamp);
-            command.Parameters.AddWithValue("@pageSize", pageSize);
-            command.Parameters.AddWithValue("@skip", skip);
+            // Apply pagination in memory
+            var result = allResults.Skip(skip).Take(pageSize).ToList();
             
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                var entity = QuestDbUtilities.MapReaderToEntity<T>(reader);
-                result.Add(entity);
-            }
-                
-            _logger.LogDebug("Retrieved {Count} packets of type {EntityType} from QuestDB for page {Page}", 
-                result.Count, typeof(T).Name, page);
+            _logger.LogDebug("Retrieved {Count} packets of type {EntityType} from QuestDB for page {Page} (fetched {TotalFetched}, skipped {Skipped})", 
+                result.Count, typeof(T).Name, page, allResults.Count(), skip);
             return result;
         }
         catch (Exception ex)
@@ -268,4 +246,5 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
             throw;
         }
     }
+    
 }

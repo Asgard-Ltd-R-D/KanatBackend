@@ -1,17 +1,15 @@
 ﻿namespace PacketProcessing.Config;
 
-using Microsoft.EntityFrameworkCore;
 using Serilog;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using PacketProcessing.Context;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Hosting;
-using PacketProcessing.Capture;
-using PacketProcessing.Entities;
 using PacketProcessing.Entities.Packet;
+using PacketProcessing.Services.Networking;
+using PacketProcessing.Services.Processing;
+using System.Threading.Channels;
 
 /// <summary>
 /// Configuration and Dependency Injection Manager
@@ -31,30 +29,8 @@ public class ConfigurationInjection
         LoggingConfiguration.ConfigureLogging(builder);
         builder.Host.UseSerilog();
 
-        // Register DB Context with proper configuration for QuestDB (using PostgreSQL wire protocol)
-        var connectionString = builder.Configuration.GetConnectionString("PSQL");
-        // 1) Register your scoped AppDbContext, but force its Options to be singleton
-        builder.Services.AddDbContext<AppDbContext>(
-            // configuration callback
-            (sp, opts) => opts
-                .UseNpgsql(connectionString)
-                .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
-                .EnableDetailedErrors(builder.Environment.IsDevelopment())
-                .ConfigureWarnings(w => 
-                    w.Ignore(CoreEventId.NavigationBaseIncludeIgnored)),
-            // The DbContext itself remains scoped
-            contextLifetime: ServiceLifetime.Scoped,
-            // The Options object becomes singleton
-            optionsLifetime: ServiceLifetime.Singleton
-        );
-
-        // 2) Register the factory as before
-        builder.Services.AddDbContextFactory<AppDbContext>(opts =>
-            opts.UseNpgsql(connectionString)
-                .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
-                .EnableDetailedErrors(builder.Environment.IsDevelopment())
-                .ConfigureWarnings(w =>
-                    w.Ignore(CoreEventId.NavigationBaseIncludeIgnored)));
+        // Configure all database services using unified DatabaseConfiguration
+        DatabaseConfiguration.ConfigureServices(builder.Services, builder.Configuration);
 
         // Ensure DB is set up before services
         EnvironmentConfiguration.LoadConfigurations(builder);
@@ -63,10 +39,47 @@ public class ConfigurationInjection
         //TODO: Implement Repositories and Services
 
         
+        // Register Channels for inter-service communication
+        builder.Services.AddSingleton<Channel<MotionPacketEntity>>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfiguration>();
+            var maxMembers = config.GetValue<int>("DataPipes:MotionCapture:Channel:Members", 200000);
+            return Channel.CreateBounded<MotionPacketEntity>(new BoundedChannelOptions(maxMembers)
+            {
+                FullMode = BoundedChannelFullMode.Wait
+            });
+        });
+        
+        builder.Services.AddSingleton<Channel<SafetyPacketEntity>>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfiguration>();
+            var maxMembers = config.GetValue<int>("DataPipes:SafetyCapture:Channel:Members", 100000);
+            return Channel.CreateBounded<SafetyPacketEntity>(new BoundedChannelOptions(maxMembers)
+            {
+                FullMode = BoundedChannelFullMode.Wait
+            });
+        });
+        
+        builder.Services.AddSingleton<Channel<OnVIFPacketEntity>>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfiguration>();
+            var maxMembers = config.GetValue<int>("DataPipes:OnVIFCapture:Channel:Members", 1000);
+            return Channel.CreateBounded<OnVIFPacketEntity>(new BoundedChannelOptions(maxMembers)
+            {
+                FullMode = BoundedChannelFullMode.Wait
+            });
+        });
+        
         // Register Background Services
-        builder.Services.AddHostedService<BaseCaptureService<MotionPacketEntity>>();
-        builder.Services.AddHostedService<BaseCaptureService<SafetyPacketEntity>>();
-        builder.Services.AddHostedService<BaseCaptureService<OnVIFPacketEntity>>();
+        // Capture Services (capture packets and write to channels)
+        builder.Services.AddHostedService<MotionCaptureService>();
+        builder.Services.AddHostedService<SafetyCaptureService>();
+        builder.Services.AddHostedService<OnVIFCaptureService>();
+        
+        // Register Packet Processing Services as regular services (not background services)
+        builder.Services.AddScoped<MotionPacketService>();
+        builder.Services.AddScoped<SafetyPacketService>();
+        builder.Services.AddScoped<OnVIFPacketService>();
         
         // Register Services (including CORS)
         CorsConfiguration.ConfigureCorsServices(builder.Services);
@@ -78,10 +91,10 @@ public class ConfigurationInjection
         builder.Services.AddEndpointsApiExplorer();
         builder.Services.AddSwaggerGen();
         builder.Services.AddControllers();
+        
         // Configure routing to use lowercase URLs
         builder.Services.AddRouting(options => options.LowercaseUrls = true);
         
-
         // Configure Kestrel server limits
         builder.WebHost.ConfigureKestrel(options =>
         {
@@ -99,6 +112,34 @@ public class ConfigurationInjection
     
     /// <summary>
     /// Configures all application middleware components
+    /// </summary>
+    /// <param name="app">The WebApplication instance</param>
+    public static async Task InjectMiddlewareAsync(WebApplication app)
+    {
+        // Global exception handler should be first
+        app.UseGlobalExceptionHandler();
+
+        // Enable CORS Middleware
+        CorsConfiguration.ConfigureCorsMiddleware(app);
+
+        // Ensure databases are up to date before starting the application
+        await DatabaseMigrationHelper.EnsureDatabasesUpToDateAsync(app);
+
+        // Use Middleware (e.g., Swagger, HTTPS Redirection)
+        if (!app.Environment.IsProduction())
+        {
+            app.UseSwagger();
+            Log.Information("Swagger is enabled on route {Route}", app.Configuration.GetValue<string>("Application:Url")+"/swagger");
+            app.UseSwaggerUI();
+        }
+        // Map simple health check endpoint
+        app.MapHealthChecks("/health");
+        
+        app.MapControllers();
+    }
+    
+    /// <summary>
+    /// Configures all application middleware components (synchronous version for backward compatibility)
     /// </summary>
     /// <param name="app">The WebApplication instance</param>
     public static void InjectMiddleware(WebApplication app)

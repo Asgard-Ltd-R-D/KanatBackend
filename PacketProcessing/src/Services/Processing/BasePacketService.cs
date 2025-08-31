@@ -7,6 +7,9 @@ using System.Collections.Concurrent;
 using PacketProcessing.Utils.Enums;
 using QuestDB;
 using PacketProcessing.Config;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.AspNetCore.Mvc.TagHelpers;
+using QuestDB.Senders;
 
 namespace PacketProcessing.Services.Processing;
 
@@ -123,18 +126,20 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
     /// <summary>
     /// Starts the specified number of workers
     /// </summary>
-    private async Task StartWorkers(int count)
+    private Task StartWorkers(int count)
     {
         for (int i = 0; i < count && _currentWorkerCount < _maxWorkers; i++)
         {
             var workerId = Interlocked.Increment(ref _currentWorkerCount) - 1;
-            var workerTask = Task.Run(() => ProcessBatchesAsync(workerId, _cancellationTokenSource.Token));
+            var workerTask = Task.Run(() => WorkerLoopAsync(workerId, _cancellationTokenSource.Token));
             
             if (_workers.TryAdd(workerId, workerTask))
             {
                 _logger.LogDebug("Started worker {WorkerId} for {ServiceType}", workerId, typeof(T).Name);
             }
         }
+        
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -166,7 +171,7 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
     /// <summary>
     /// Stops the specified number of workers
     /// </summary>
-    private async Task StopWorkers(int count)
+    private Task StopWorkers(int count)
     {
         var workersToStop = _workers.Take(count).ToList();
         foreach (var worker in workersToStop)
@@ -176,6 +181,8 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
                 _logger.LogDebug("Stopping worker {WorkerId} for {ServiceType}", worker.Key, typeof(T).Name);
             }
         }
+        
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -197,13 +204,13 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
     /// <summary>
     /// Main batch processing loop for each worker
     /// </summary>
-    private async Task ProcessBatchesAsync(int workerId, CancellationToken cancellationToken)
+    private async Task WorkerLoopAsync(int workerId, CancellationToken ct)
     {
         _logger.LogDebug("Worker {WorkerId} started processing {ServiceType} batches", workerId, typeof(T).Name);
         
         try
         {
-            while (!cancellationToken.IsCancellationRequested)
+            while (!ct.IsCancellationRequested)
             {
                 var batch = new List<T>();
                 var batchTimeout = new CancellationTokenSource(_batchTimeout);
@@ -213,25 +220,24 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
                 {
                     try
                     {
-                        if (_channel.Reader.TryRead(out var packet))
+                        // If channel is null, break
+                        if (_channel is null) break;
+
+                        // If channel has a packet, add it to the batch
+                        else if (_channel.Reader.TryRead(out var packet))
                         {
                             batch.Add(packet);
                         }
+
+                        // If channel has no packet, wait for next packet with timeout
                         else
                         {
                             // Wait for next packet with timeout
-                            var readTask = _channel.Reader.ReadAsync(cancellationToken);
+                            var readTask = _channel.Reader.ReadAsync(ct).AsTask();
                             var timeoutTask = Task.Delay(_batchTimeout, batchTimeout.Token);
-                            
-                            var completedTask = await Task.WhenAny(readTask.AsTask(), timeoutTask);
-                            if (completedTask == readTask.AsTask())
-                            {
-                                batch.Add(await readTask);
-                            }
-                            else
-                            {
-                                break; // Timeout reached
-                            }
+                            var completedTask = await Task.WhenAny(readTask, timeoutTask);
+                            if (completedTask == readTask) batch.Add(await readTask);
+                            else break;
                         }
                     }
                     catch (OperationCanceledException) when (batchTimeout.Token.IsCancellationRequested)
@@ -243,7 +249,7 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
                 // Process batch if we have packets
                 if (batch.Count > 0)
                 {
-                    await ProcessBatchAsync(batch, workerId);
+                    await ProcessPacketBatchAsync(batch, workerId, ct);
                 }
             }
         }
@@ -259,38 +265,32 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
     /// <summary>
     /// Processes a batch of packets using ISender
     /// </summary>
-    private async Task ProcessBatchAsync(List<T> batch, int workerId)
+    private async Task ProcessPacketBatchAsync(List<T> batch, int workerId, CancellationToken ct)
     {
+        ISender? sender = null;
+
         try
         {
             _logger.LogDebug("Worker {WorkerId} processing batch of {Count} {ServiceType} packets", 
                 workerId, batch.Count, typeof(T).Name);
             
             // Create ISender for batch processing
-            using var sender = Sender.New(_questDbConnectionString);
-            
-            foreach (var packet in batch)
-            {
-                try
-                {
-                    // Convert packet to row map and apply to sender
-                    var rowMap = packet.ToRowMap();
-                    rowMap.Apply(sender);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to process packet {PacketId} in worker {WorkerId}", packet.Id, workerId);
-                }
-    
-            
+            sender = Sender.New(_questDbConnectionString);
+
+            // Write batch to QuestDB
+            await _repository.WriteBatchQuestDbAsync(sender, batch, ct); 
+
             _logger.LogDebug("Worker {WorkerId} successfully processed batch of {Count} {ServiceType} packets", 
-                workerId, batch.Count, typeof(T).Name);
-            }
+                workerId, batch.Count, typeof(T).Name);     
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Worker {WorkerId} failed to process batch of {Count} {ServiceType} packets", 
                 workerId, batch.Count, typeof(T).Name);
+        }
+        finally {
+            sender?.Dispose();
+            batch?.Clear();
         }
     }
 

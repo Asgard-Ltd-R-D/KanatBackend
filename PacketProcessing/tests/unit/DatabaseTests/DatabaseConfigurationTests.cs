@@ -200,9 +200,9 @@ public class DatabaseConfigurationTests
             $"Postgres={config.Postgres != null}, QuestDb={config.QuestDb != null}, General={config.General != null}"
         );
         
-        Assert.NotNull(config.Postgres);
-        Assert.NotNull(config.QuestDb);
-        Assert.NotNull(config.General);
+        Assert.NotNull(config.Postgres!);
+        Assert.NotNull(config.QuestDb!);
+        Assert.NotNull(config.General!);
     }
 
     [Fact]
@@ -225,7 +225,7 @@ public class DatabaseConfigurationTests
                 {"QuestDb:Database", "qdb"},
                 {"QuestDb:Username", "quest"},
                 {"QuestDb:Password", "quest"}
-            })
+            }.Cast<KeyValuePair<string, string?>>())
             .Build();
 
         // Act & Assert
@@ -259,7 +259,7 @@ public class DatabaseConfigurationTests
                 {"Postgres:Username", "test"},
                 {"Postgres:Password", "test"}
                 // Missing QuestDb connection string
-            })
+            }.Cast<KeyValuePair<string, string?>>())
             .Build();
 
         // Act & Assert
@@ -271,9 +271,11 @@ public class DatabaseConfigurationTests
             exception != null,
             "Configuration missing QuestDb connection string",
             "InvalidOperationException thrown",
-            exception.Message
+            exception?.Message ?? "Unknown error"
         );
         
-        Assert.Contains("QuestDB connection string not found", exception.Message);
+        Assert.NotNull(exception.Message);
+        var message = exception.Message!;
+        Assert.Contains("QuestDB connection string not found", message);
     }
 }

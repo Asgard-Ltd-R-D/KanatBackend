@@ -21,6 +21,16 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
 
+    <!-- Testing utilities -->
+    <PackageReference Include="Moq" Version="4.20.70" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.7" />
+
     <!-- Database connectivity -->
     <PackageReference Include="Npgsql" Version="8.0.4" />
     <PackageReference Include="net-questdb-client" Version="3.0.0" />

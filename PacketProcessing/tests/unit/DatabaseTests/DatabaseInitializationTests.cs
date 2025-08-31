@@ -43,7 +43,7 @@ public class DatabaseInitializationTests : IDisposable
                 {"QuestDb:Database", "qdb"},
                 {"QuestDb:Username", "quest"},
                 {"QuestDb:Password", "quest"}
-            })
+            }.Cast<KeyValuePair<string, string?>>())
             .Build();
 
         // Configure database services
@@ -57,15 +57,30 @@ public class DatabaseInitializationTests : IDisposable
     [Fact]
     public async Task DatabaseInitializationService_ShouldInitializePostgresDatabase()
     {
+        Console.WriteLine("🗄️  Test: PostgreSQL Database Initialization");
+        Console.WriteLine("=============================================");
+        
         // Arrange
         var logger = _serviceProvider.GetRequiredService<ILogger<DatabaseInitializationService>>();
         var service = new DatabaseInitializationService(_serviceProvider, logger);
+        
+        Console.WriteLine("✓ Database initialization service created");
+        Console.WriteLine("✓ Logger configured and ready");
 
         // Act
+        Console.WriteLine("🔄 Starting database initialization service...");
         await service.StartAsync(CancellationToken.None);
+        Console.WriteLine("✓ Service started successfully");
 
         // Assert
+        Console.WriteLine("🔍 Testing database connectivity...");
         var canConnect = await _dbContext.Database.CanConnectAsync();
+        
+        Console.WriteLine($"✓ Database connection test completed");
+        Console.WriteLine($"  • Connection result: {(canConnect ? "✅ SUCCESS" : "❌ FAILED")}");
+        Console.WriteLine($"  • Database: PostgreSQL");
+        Console.WriteLine($"  • Host: localhost:56432");
+        Console.WriteLine($"  • Database: pdb");
         
         TestResultLogger.LogTestResult(
             "DatabaseInitializationService_ShouldInitializePostgresDatabase",
@@ -76,20 +91,45 @@ public class DatabaseInitializationTests : IDisposable
         );
         
         Assert.True(canConnect);
+        
+        if (canConnect)
+        {
+            Console.WriteLine("✅ Test PASSED - PostgreSQL database is accessible!\n");
+        }
+        else
+        {
+            Console.WriteLine("❌ Test FAILED - Cannot connect to PostgreSQL database\n");
+        }
     }
 
     [Fact]
     public async Task DatabaseInitializationService_ShouldInitializeQuestDbTables()
     {
+        Console.WriteLine("📊 Test: QuestDB Table Initialization");
+        Console.WriteLine("=====================================");
+        
         // Arrange
         var logger = _serviceProvider.GetRequiredService<ILogger<DatabaseInitializationService>>();
         var service = new DatabaseInitializationService(_serviceProvider, logger);
+        
+        Console.WriteLine("✓ Database initialization service created");
+        Console.WriteLine("✓ QuestDB table creator service ready");
 
         // Act
+        Console.WriteLine("🔄 Starting database initialization service...");
         await service.StartAsync(CancellationToken.None);
+        Console.WriteLine("✓ Service started successfully");
 
         // Assert
+        Console.WriteLine("🔍 Testing QuestDB table creation...");
         var tablesCreated = await _tableCreator.EnsureTablesExistAsync();
+        
+        Console.WriteLine($"✓ Table creation test completed");
+        Console.WriteLine($"  • Tables created: {tablesCreated}");
+        Console.WriteLine($"  • Expected: false (tables should already exist)");
+        Console.WriteLine($"  • Database: QuestDB");
+        Console.WriteLine($"  • Host: localhost:9009");
+        Console.WriteLine($"  • Database: qdb");
         
         TestResultLogger.LogTestResult(
             "DatabaseInitializationService_ShouldInitializeQuestDbTables",
@@ -99,18 +139,35 @@ public class DatabaseInitializationTests : IDisposable
             $"TablesCreated={tablesCreated}"
         );
         
-        // Tables should already exist after initialization
         Assert.False(tablesCreated);
+        
+        if (!tablesCreated)
+        {
+            Console.WriteLine("✅ Test PASSED - QuestDB tables are properly initialized!\n");
+        }
+        else
+        {
+            Console.WriteLine("❌ Test FAILED - Tables were created when they should already exist\n");
+        }
     }
 
     [Fact]
     public async Task AppDbContext_EnsureDatabaseAsync_ShouldCreateDatabase()
     {
+        Console.WriteLine("🏗️  Test: Database Creation and Accessibility");
+        Console.WriteLine("=============================================");
+        
         // Act
+        Console.WriteLine("🔄 Ensuring database exists...");
         var databaseCreated = await _dbContext.EnsureDatabaseAsync();
+        Console.WriteLine($"✓ Database creation process completed");
+        Console.WriteLine($"  • Database created: {databaseCreated}");
 
         // Assert
+        Console.WriteLine("🔍 Testing database connectivity...");
         var canConnect = await _dbContext.Database.CanConnectAsync();
+        Console.WriteLine($"✓ Connectivity test completed");
+        Console.WriteLine($"  • Can connect: {(canConnect ? "✅ YES" : "❌ NO")}");
         
         TestResultLogger.LogTestResult(
             "AppDbContext_EnsureDatabaseAsync_ShouldCreateDatabase",
@@ -121,15 +178,31 @@ public class DatabaseInitializationTests : IDisposable
         );
         
         Assert.True(canConnect);
+        
+        if (canConnect)
+        {
+            Console.WriteLine("✅ Test PASSED - Database is accessible after creation!\n");
+        }
+        else
+        {
+            Console.WriteLine("❌ Test FAILED - Cannot connect to database after creation\n");
+        }
     }
 
     [Fact]
     public async Task AppDbContext_ShouldHaveAllRequiredTables()
     {
+        Console.WriteLine("📋 Test: Required Database Tables Verification");
+        Console.WriteLine("=============================================");
+        
         // Arrange
+        Console.WriteLine("🔄 Ensuring database exists...");
         await _dbContext.EnsureDatabaseAsync();
+        Console.WriteLine("✓ Database ready for table verification");
 
         // Act & Assert
+        Console.WriteLine("🔍 Checking required tables...");
+        
         var targetsTableExists = await _dbContext.Targets.AnyAsync();
         var rangesTableExists = await _dbContext.Ranges.AnyAsync();
         var eventsTableExists = await _dbContext.Events.AnyAsync();
@@ -140,6 +213,13 @@ public class DatabaseInitializationTests : IDisposable
         allTablesExist &= eventsTableExists || await _dbContext.Events.CountAsync() >= 0;
         allTablesExist &= hitsTableExists || await _dbContext.Hits.CountAsync() >= 0;
 
+        Console.WriteLine("✓ Table verification completed");
+        Console.WriteLine($"  • Targets table: {(targetsTableExists ? "✅ EXISTS" : "❌ MISSING")}");
+        Console.WriteLine($"  • Ranges table: {(rangesTableExists ? "✅ EXISTS" : "❌ MISSING")}");
+        Console.WriteLine($"  • Events table: {(eventsTableExists ? "✅ EXISTS" : "❌ MISSING")}");
+        Console.WriteLine($"  • Hits table: {(hitsTableExists ? "✅ EXISTS" : "❌ MISSING")}");
+        Console.WriteLine($"  • Overall result: {(allTablesExist ? "✅ ALL TABLES EXIST" : "❌ SOME TABLES MISSING")}");
+
         TestResultLogger.LogTestResult(
             "AppDbContext_ShouldHaveAllRequiredTables",
             allTablesExist,
@@ -149,6 +229,15 @@ public class DatabaseInitializationTests : IDisposable
         );
         
         Assert.True(allTablesExist);
+        
+        if (allTablesExist)
+        {
+            Console.WriteLine("✅ Test PASSED - All required tables are present!\n");
+        }
+        else
+        {
+            Console.WriteLine("❌ Test FAILED - Some required tables are missing\n");
+        }
     }
 
     [Fact]

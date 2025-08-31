@@ -32,9 +32,7 @@ public class MotionPacketEntity : BasePacketEntity
         sender.Column("opCode", OpCode);
         sender.Column("opCodeDescription", OpCodeDescription);
         sender.Column("axis", Axis);
-        if (FloatValue.HasValue)
-            sender.Column("floatValue", FloatValue.Value);
-        else
-            sender.NullableColumn("floatValue", float.NaN);
+        if (FloatValue.HasValue) sender.Column("floatValue", FloatValue.Value);
+        else sender.NullableColumn("floatValue", float.NaN);
     }
 }

@@ -16,20 +16,17 @@ namespace PacketProcessing.Controllers;
 public class CaptureControlController : ControllerBase
 {
     private readonly ILogger<CaptureControlController> _logger;
-    private readonly IEnumerable<IHostedService> _captureServices;
     private readonly MotionPacketService _motionPacketService;
     private readonly SafetyPacketService _safetyPacketService;
     private readonly OnVIFPacketService _onvifPacketService;
 
     public CaptureControlController(
         ILogger<CaptureControlController> logger,
-        IEnumerable<IHostedService> captureServices,
         MotionPacketService motionPacketService,
         SafetyPacketService safetyPacketService,
         OnVIFPacketService onvifPacketService)
     {
         _logger = logger;
-        _captureServices = captureServices.Where(s => s is BaseCaptureService<BasePacketEntity>);
         _motionPacketService = motionPacketService;
         _safetyPacketService = safetyPacketService;
         _onvifPacketService = onvifPacketService;
@@ -43,15 +40,14 @@ public class CaptureControlController : ControllerBase
     {
         try
         {
-            var captureServices = _captureServices.OfType<BaseCaptureService<BasePacketEntity>>().ToList();
-            
             var status = new
             {
-                CaptureServices = captureServices.Select(s => new
+                CaptureServices = new []
                 {
-                    ServiceType = s.GetType().Name,
-                    IsCapturing = s.IsCapturing
-                }),
+                    new { ServiceType = nameof(MotionPacketService), IsCapturing = _motionPacketService.IsCapturing },
+                    new { ServiceType = nameof(SafetyPacketService), IsCapturing = _safetyPacketService.IsCapturing },
+                    new { ServiceType = nameof(OnVIFPacketService), IsCapturing = _onvifPacketService.IsCapturing },
+                },
                 PacketProcessingServices = new[]
                 {
                     new { ServiceType = "MotionPacketService", IsRunning = true },
@@ -79,13 +75,10 @@ public class CaptureControlController : ControllerBase
     {
         try
         {
-            var captureServices = _captureServices.OfType<BaseCaptureService<BasePacketEntity>>().ToList();
-            
-            // Start capture services first
-            foreach (var captureService in captureServices)
-            {
-                await captureService.StartCaptureAsync();
-            }
+            // Start capture via processing services first
+            await _motionPacketService.StartCaptureAsync();
+            await _safetyPacketService.StartCaptureAsync();
+            await _onvifPacketService.StartCaptureAsync();
 
             // Start processing services
             await _motionPacketService.StartAsync();
@@ -112,18 +105,15 @@ public class CaptureControlController : ControllerBase
     {
         try
         {
-            var captureServices = _captureServices.OfType<BaseCaptureService<BasePacketEntity>>().ToList();
-            
             // Stop processing services first
             await _motionPacketService.StopAsync();
             await _safetyPacketService.StopAsync();
             await _onvifPacketService.StopAsync();
 
-            // Stop capture services
-            foreach (var captureService in captureServices)
-            {
-                await captureService.StopCaptureAsync();
-            }
+            // Stop capture via processing services
+            await _motionPacketService.StopCaptureAsync();
+            await _safetyPacketService.StopCaptureAsync();
+            await _onvifPacketService.StopCaptureAsync();
 
             _logger.LogInformation("Stopped all capture and processing services");
             var result = ResponseResult.SuccessResult();

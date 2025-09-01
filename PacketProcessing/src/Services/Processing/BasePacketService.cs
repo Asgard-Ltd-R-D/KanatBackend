@@ -19,9 +19,7 @@ namespace PacketProcessing.Services.Processing;
 /// <typeparam name="T">The type of packet entity</typeparam>
 public abstract class BasePacketService<T> : IDisposable where T : BasePacketEntity
 {
-    private readonly ILogger<BasePacketService<T>> _logger;
-    private readonly IPacketRepository<T> _repository;
-    private readonly string _questDbConnectionString;
+    protected readonly ILogger<BasePacketService<T>> _logger;
     private readonly Channel<T> _channel;
     private readonly BaseCaptureService<T> _captureService;
 
@@ -41,17 +39,11 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
         BaseCaptureService<T> captureService,
         IConfiguration configuration)
     {
+        // Initialize dependencies
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _channel = channel ?? throw new ArgumentNullException(nameof(channel));
         _captureService = captureService ?? throw new ArgumentNullException(nameof(captureService));
-        
-        // Get QuestDB connection string from configuration
-        var questDbOptions = configuration.GetSection("QuestDb").Get<QuestDbConfiguration>();
-        _questDbConnectionString = questDbOptions?.GetPostgresConnectionString() ?? 
-                                  configuration.GetConnectionString("QuestDb") ?? 
-                                  throw new InvalidOperationException("QuestDB connection string not found");
-        
+                
         // Get concurrency configuration
         var concurrencySection = configuration.GetSection("Concurrency");
         _minWorkers = concurrencySection.GetValue<int>("MinWorkers", DEFAULT_MIN_WORKERS);
@@ -59,6 +51,7 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
         _batchSize = concurrencySection.GetValue<int>("BatchSize", DEFAULT_BATCH_SIZE);
         _batchTimeout = TimeSpan.FromMilliseconds(concurrencySection.GetValue<int>("BatchTimeoutMs", DEFAULT_BATCH_TIMEOUT_MS));
         
+        // Initialize worker pool
         _workers = new ConcurrentDictionary<int, Task>();
         _cancellationTokenSource = new CancellationTokenSource();
         _currentWorkerCount = _minWorkers;
@@ -127,6 +120,11 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
             _logger.LogError(ex, "Error stopping {ServiceType} packet processing service", typeof(T).Name);
         }
     }
+
+    // Capture control wrappers
+    public Task StartCaptureAsync() => _captureService.StartCaptureAsync();
+    public Task StopCaptureAsync() => _captureService.StopCaptureAsync();
+    public bool IsCapturing => _captureService.IsCapturing;
 
     /// <summary>
     /// Starts the specified number of workers
@@ -269,43 +267,14 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
 
     /// <summary>
     /// Processes a batch of packets using ISender
+    /// Override this method in concrete classes to implement custom batch processing logic
     /// </summary>
-    private async Task ProcessPacketBatchAsync(List<T> batch, int workerId, CancellationToken ct)
-    {
-        ISender? sender = null;
+    protected abstract Task ProcessPacketBatchAsync(List<T> batch, int workerId, CancellationToken ct);
 
-        try
-        {
-            _logger.LogDebug("Worker {WorkerId} processing batch of {Count} {ServiceType} packets", 
-                workerId, batch.Count, typeof(T).Name);
-            
-            // Create ISender for batch processing
-            sender = Sender.New(_questDbConnectionString);
-
-            // Write batch to QuestDB
-            await _repository.WriteBatchQuestDbAsync(sender, batch, ct); 
-
-            _logger.LogDebug("Worker {WorkerId} successfully processed batch of {Count} {ServiceType} packets", 
-                workerId, batch.Count, typeof(T).Name);     
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Worker {WorkerId} failed to process batch of {Count} {ServiceType} packets", 
-                workerId, batch.Count, typeof(T).Name);
-        }
-        finally {
-            sender?.Dispose();
-            batch?.Clear();
-        }
-    }
-
-    // Repository access methods
-    public async Task<IEnumerable<T>> GetAllAsync() 
-        => await _repository.GetAllFromQuestDbAsync();
-    public async Task<IEnumerable<T>> GetPaginatedAsync(DateTime startTimestamp, DateTime endTimestamp, OrderBy orderBy = OrderBy.Asc, int page = 1, int pageSize = 1000) 
-        => await _repository.GetPaginatedFromQuestDbAsync(startTimestamp, endTimestamp, orderBy, page, pageSize);
-    public async Task DeleteAllAsync() 
-        => await _repository.DeleteAllFromQuestDbAsync();
+    // Repository access methods - override in concrete classes
+    public abstract Task<IEnumerable<T>> GetAllAsync();
+    public abstract Task<IEnumerable<T>> GetPaginatedAsync(DateTime startTimestamp, DateTime endTimestamp, OrderBy orderBy = OrderBy.Asc, int page = 1, int pageSize = 1000);
+    public abstract Task DeleteAllAsync();
 
     /// <summary>
     /// Disposes the service and cleans up resources
@@ -316,6 +285,7 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
         {
             _cancellationTokenSource?.Cancel();
             _cancellationTokenSource?.Dispose();
+            GC.SuppressFinalize(this);
         }
         catch (Exception ex)
         {

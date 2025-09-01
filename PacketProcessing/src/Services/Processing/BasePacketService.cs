@@ -7,9 +7,9 @@ using System.Collections.Concurrent;
 using PacketProcessing.Utils.Enums;
 using QuestDB;
 using PacketProcessing.Config;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.AspNetCore.Mvc.TagHelpers;
 using QuestDB.Senders;
+using PacketProcessing.Services.Networking;
+using static PacketProcessing.Utils.Constants;
 
 namespace PacketProcessing.Services.Processing;
 
@@ -21,11 +21,14 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
 {
     private readonly ILogger<BasePacketService<T>> _logger;
     private readonly IPacketRepository<T> _repository;
-    private readonly Channel<T> _channel;
     private readonly string _questDbConnectionString;
+    private readonly Channel<T> _channel;
+    private readonly BaseCaptureService<T> _captureService;
+
     private readonly int _minWorkers;
     private readonly int _maxWorkers;
     private readonly int _batchSize;
+
     private readonly TimeSpan _batchTimeout;
     private readonly ConcurrentDictionary<int, Task> _workers;
     private readonly CancellationTokenSource _cancellationTokenSource;
@@ -35,11 +38,13 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
         ILogger<BasePacketService<T>> logger,
         IPacketRepository<T> repository,
         Channel<T> channel,
+        BaseCaptureService<T> captureService,
         IConfiguration configuration)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _channel = channel ?? throw new ArgumentNullException(nameof(channel));
+        _captureService = captureService ?? throw new ArgumentNullException(nameof(captureService));
         
         // Get QuestDB connection string from configuration
         var questDbOptions = configuration.GetSection("QuestDb").Get<QuestDbConfiguration>();
@@ -49,10 +54,10 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
         
         // Get concurrency configuration
         var concurrencySection = configuration.GetSection("Concurrency");
-        _minWorkers = concurrencySection.GetValue<int>("MinWorkers", 1);
-        _maxWorkers = concurrencySection.GetValue<int>("MaxWorkers", 8);
-        _batchSize = concurrencySection.GetValue<int>("BatchSize", 100);
-        _batchTimeout = TimeSpan.FromMilliseconds(concurrencySection.GetValue<int>("BatchTimeoutMs", 1000));
+        _minWorkers = concurrencySection.GetValue<int>("MinWorkers", DEFAULT_MIN_WORKERS);
+        _maxWorkers = concurrencySection.GetValue<int>("MaxWorkers", DEFAULT_MAX_WORKERS);
+        _batchSize = concurrencySection.GetValue<int>("BatchSize", DEFAULT_BATCH_SIZE);
+        _batchTimeout = TimeSpan.FromMilliseconds(concurrencySection.GetValue<int>("BatchTimeoutMs", DEFAULT_BATCH_TIMEOUT_MS));
         
         _workers = new ConcurrentDictionary<int, Task>();
         _cancellationTokenSource = new CancellationTokenSource();

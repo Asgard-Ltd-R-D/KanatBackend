@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using System.Collections.Concurrent;
 using SharpPcap.LibPcap;
+using System.Threading.Channels;
 
 namespace PacketProcessing.Services.Networking;
 
@@ -11,12 +12,13 @@ namespace PacketProcessing.Services.Networking;
 /// Safety packet capture service
 /// Captures safety packets and writes them to the safety channel
 /// </summary>
-public class SafetyCaptureService : BaseCaptureService<SafetyPacketEntity>
+public sealed class SafetyCaptureService : BaseCaptureService<SafetyPacketEntity>
 {
     public SafetyCaptureService(
         ILogger<SafetyCaptureService> logger,
-        IConfiguration configurationManager)
-        : base(logger, configurationManager, "SafetyCapture")
+        IConfiguration configurationManager,
+        Channel<SafetyPacketEntity> channel)
+        : base(logger, configurationManager, channel, "SafetyCapture")
     {
         // Set up packet parser and handler
         _packetParser = ParseSafetyPacket;

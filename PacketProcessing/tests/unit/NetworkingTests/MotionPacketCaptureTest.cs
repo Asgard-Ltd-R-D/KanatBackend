@@ -7,6 +7,7 @@ using PacketProcessing.Services.Networking;
 using PacketProcessing.Tests.Unit.NetworkingTests;
 using SharpPcap.LibPcap;
 using Xunit;
+using System.Threading.Channels;
 
 namespace PacketProcessing.Tests.Unit.NetworkingTests;
 
@@ -15,6 +16,8 @@ public class MotionPacketCaptureTest : IDisposable
     private readonly IConfiguration _configuration;
     private readonly ILogger<MotionCaptureService> _logger;
     private readonly MotionCaptureService _motionCaptureService;
+    private readonly Channel<MotionPacketEntity> _channel;
+    
     public MotionPacketCaptureTest()
     {
         // Set up configuration
@@ -23,8 +26,14 @@ public class MotionPacketCaptureTest : IDisposable
         // Set up logging
         _logger = TestSetup.CreateTestLogger<MotionCaptureService>();
 
-        // Create motion capture service (now only takes 2 parameters)
-        _motionCaptureService = new MotionCaptureService(_logger, _configuration);
+        // Create channel for testing
+        _channel = Channel.CreateBounded<MotionPacketEntity>(new BoundedChannelOptions(1000)
+        {
+            FullMode = BoundedChannelFullMode.Wait
+        });
+
+        // Create motion capture service with all required parameters
+        _motionCaptureService = new MotionCaptureService(_logger, _configuration, _channel);
     }
 
     [Fact]

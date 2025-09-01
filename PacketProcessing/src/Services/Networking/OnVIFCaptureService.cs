@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using System.Collections.Concurrent;
 using SharpPcap.LibPcap;
+using System.Threading.Channels;
 
 namespace PacketProcessing.Services.Networking;
 
@@ -11,12 +12,13 @@ namespace PacketProcessing.Services.Networking;
 /// OnVIF packet capture service
 /// Captures OnVIF packets and writes them to the OnVIF channel
 /// </summary>
-public class OnVIFCaptureService : BaseCaptureService<OnVIFPacketEntity>
+public sealed class OnVIFCaptureService : BaseCaptureService<OnVIFPacketEntity>
 {
     public OnVIFCaptureService(
         ILogger<OnVIFCaptureService> logger,
-        IConfiguration configurationManager)
-        : base(logger, configurationManager, "OnVIFCapture")
+        IConfiguration configurationManager,
+        Channel<OnVIFPacketEntity> channel)
+        : base(logger, configurationManager, channel, "OnVIFCapture")
     {
         // Set up packet parser and handler
         _packetParser = ParseOnVIFPacket;

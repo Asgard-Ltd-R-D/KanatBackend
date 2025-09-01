@@ -2,9 +2,7 @@ using PacketProcessing.Entities.Packet;
 using PacketProcessing.Utils;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
-using System.Collections.Concurrent;
-using SharpPcap.LibPcap;
-using System.Text;
+using System.Threading.Channels;
 
 namespace PacketProcessing.Services.Networking;
 
@@ -12,12 +10,13 @@ namespace PacketProcessing.Services.Networking;
 /// Motion packet capture service
 /// Captures motion packets and writes them to the motion channel
 /// </summary>
-public class MotionCaptureService : BaseCaptureService<MotionPacketEntity>
+public sealed class MotionCaptureService : BaseCaptureService<MotionPacketEntity>
 {
     public MotionCaptureService(
         ILogger<MotionCaptureService> logger,
-        IConfiguration configurationManager)
-        : base(logger, configurationManager, "MotionCapture")
+        IConfiguration configurationManager,
+        Channel<MotionPacketEntity> channel)
+        : base(logger, configurationManager, channel, "MotionCapture")
     {
         // Set up packet parser and handler
         _packetParser = ParseMotionPacket;

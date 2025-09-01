@@ -29,32 +29,20 @@ public abstract class BaseCaptureService<T> : BackgroundService where T : BasePa
     public BaseCaptureService(
         ILogger<BaseCaptureService<T>> logger,
         IConfiguration configurationManager,
+        Channel<T> channel,
         string dataPipeName)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _channel = channel ?? throw new ArgumentNullException(nameof(channel));
         _activeDevices = new ConcurrentDictionary<string, LibPcapLiveDevice>();
-        
+
         // Get configuration for this specific DataPipe
         var dataPipeSection = configurationManager.GetSection("DataPipes").GetSection(dataPipeName);
-        var channelSection = dataPipeSection.GetSection("Channel");
         var networkSection = dataPipeSection.GetSection("Network");
-        
-        // Get channel configuration
-        var maxMembers = channelSection.GetValue<int>("Members");
         
         // Get network configuration
         _protocol = networkSection.GetValue<string>("Protocol") ?? "tcp";
         _ips = networkSection.GetSection("IPs").Get<string[]>() ?? [];
-        
-        _logger.LogInformation("Initializing {DataPipeName} with protocol: {Protocol}, IPs: {IPs}, MaxChannelMembers: {MaxMembers}", 
-            dataPipeName, _protocol, string.Join(", ", _ips), maxMembers);
-        
-        // Create bounded channel with max members from configuration
-        _channel = Channel.CreateBounded<T>(new BoundedChannelOptions(maxMembers)
-        {
-            SingleWriter = false,
-            SingleReader = true,
-        });
     }
     
     internal virtual string GenerateFilter()
@@ -68,7 +56,7 @@ public abstract class BaseCaptureService<T> : BackgroundService where T : BasePa
     {
         try
         {
-            _logger.LogInformation("Capture service initialized. Waiting for start signal...");
+            _logger.LogInformation("Capture service initialized {DataPipeName}. Waiting for start signal...", typeof(T).Name);
 
             // Wait for cancellation (application shutdown) without starting capture
             while (!ct.IsCancellationRequested)

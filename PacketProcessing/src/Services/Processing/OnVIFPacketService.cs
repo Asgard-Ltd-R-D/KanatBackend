@@ -28,7 +28,7 @@ public sealed class OnVIFPacketService : BasePacketService<OnVIFPacketEntity>
         OnVIFCaptureService captureService,
         IConfiguration configuration,
         IHubClientHost host)
-        : base(logger, repository, channel, captureService, configuration)
+        : base(logger, channel, captureService, configuration)
     {
         _session = new SignalRClientSession(host);
         _repository = repository;

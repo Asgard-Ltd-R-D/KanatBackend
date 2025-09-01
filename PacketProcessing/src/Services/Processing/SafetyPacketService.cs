@@ -28,7 +28,7 @@ public sealed class SafetyPacketService : BasePacketService<SafetyPacketEntity>
         SafetyCaptureService captureService,
         IConfiguration configuration,
         IHubClientHost host)
-        : base(logger, repository, channel, captureService, configuration)
+        : base(logger, channel, captureService, configuration)
     {
         _session = new SignalRClientSession(host);
         _repository = repository;

@@ -34,7 +34,6 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
 
     protected BasePacketService(
         ILogger<BasePacketService<T>> logger,
-        IPacketRepository<T> repository,
         Channel<T> channel,
         BaseCaptureService<T> captureService,
         IConfiguration configuration)

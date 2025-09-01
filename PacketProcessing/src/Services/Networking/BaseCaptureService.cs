@@ -8,9 +8,9 @@ using SharpPcap.LibPcap;
 using System.Threading.Channels;
 using Microsoft.Extensions.Configuration;
 using PacketProcessing.Entities;
-using PacketProcessing.Utils;
+using PacketProcessing.Utils.Observers;
 
-public abstract class BaseCaptureService<T> : BackgroundService where T : BasePacketEntity
+public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> where T : BasePacketEntity
 {
     protected ILogger<BaseCaptureService<T>> _logger;  
     internal string _protocol;
@@ -25,6 +25,10 @@ public abstract class BaseCaptureService<T> : BackgroundService where T : BasePa
 
     internal bool _isCapturing = false;
     internal readonly object _captureLock = new();
+
+    // Observer pattern implementation
+    private readonly List<IObserver<T>> _observers = [];
+    private readonly object _observersLock = new();
 
     public BaseCaptureService(
         ILogger<BaseCaptureService<T>> logger,
@@ -298,4 +302,69 @@ public abstract class BaseCaptureService<T> : BackgroundService where T : BasePa
 
         base.Dispose();
     }
+
+    #region IObservable<T> Implementation
+
+    /// <summary>
+    /// Subscribes an observer to receive packet updates
+    /// </summary>
+    /// <param name="observer">The observer to subscribe</param>
+    public void Subscribe(IObserver<T> observer)
+    {
+        if (observer == null) return;
+        
+        lock (_observersLock)
+        {
+            if (!_observers.Contains(observer))
+            {
+                _observers.Add(observer);
+                _logger.LogDebug("Observer {ObserverType} subscribed to {ServiceType}", 
+                    observer.GetType().Name, typeof(T).Name);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Unsubscribes an observer from receiving packet updates
+    /// </summary>
+    /// <param name="observer">The observer to unsubscribe</param>
+    public void Unsubscribe(IObserver<T> observer)
+    {
+        if (observer == null) return;
+        
+        lock (_observersLock)
+        {
+            if (_observers.Remove(observer))
+            {
+                _logger.LogDebug("Observer {ObserverType} unsubscribed from {ServiceType}", 
+                    observer.GetType().Name, typeof(T).Name);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Notifies all subscribed observers with a captured packet
+    /// </summary>
+    /// <param name="packet">The packet to notify observers about</param>
+    public void NotifyObservers(T packet)
+    {
+        if (packet == null) return;
+
+        lock (_observersLock)
+        {
+            foreach (var observer in _observers)
+            {
+                try
+                {
+                    observer.Update(packet);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error notifying observer {ObserverType}", observer.GetType().Name);
+                }
+            }
+        }
+    }
+
+    #endregion
 }

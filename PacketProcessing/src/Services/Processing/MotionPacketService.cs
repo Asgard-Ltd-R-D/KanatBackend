@@ -10,6 +10,7 @@ using QuestDB;
 using QuestDB.Senders;
 using PacketProcessing.Config;
 using Microsoft.AspNetCore.SignalR.Client;
+using PacketProcessing.Utils.Observers;
 using PacketProcessing.Utils;
 
 namespace PacketProcessing.Services.Processing;
@@ -24,9 +25,10 @@ public sealed class MotionPacketService : BasePacketService<MotionPacketEntity>
     private readonly SignalRClientSession _session;
     private readonly IPacketRepository<MotionPacketEntity> _repository;
     private readonly string _questDbConnectionString;
+    private readonly MotionCaptureService _captureService;
 
-    private MotionPacketEntity _lastPacket = null!;
-    private IProducer<SampleMotionPacket> _packetSampleProducer = null!;
+    private IProducer<MotionPacketEntity> _packetSamplingProducer = null!;
+    private PacketSamplingObserver<MotionPacketEntity> _packetSamplingObserver = null!;
 
     public MotionPacketService(
         ILogger<MotionPacketService> logger,
@@ -35,10 +37,11 @@ public sealed class MotionPacketService : BasePacketService<MotionPacketEntity>
         MotionCaptureService captureService,
         IConfiguration configuration,
         IHubClientHost host)
-        : base(logger, channel, captureService, configuration)
+        : base(logger, channel, configuration)
     {
         _session = new SignalRClientSession(host);
         _repository = repository;
+        _captureService = captureService;
         
         // Get QuestDB connection string from configuration
         var questDbOptions = configuration.GetSection("QuestDb").Get<QuestDbConfiguration>();
@@ -46,46 +49,11 @@ public sealed class MotionPacketService : BasePacketService<MotionPacketEntity>
                                   configuration.GetConnectionString("QuestDb") ?? 
                                   throw new InvalidOperationException("QuestDB connection string not found");
         
-        // Mount producer
-        MountProducer();
+        // Mount producers and setup observers
+        SetupPacketSamplingObserver();
     }
 
-    protected override async Task ProcessPacketBatchAsync(List<MotionPacketEntity> batch, int workerId, CancellationToken ct)
-    {
-        ISender? sender = null;
-
-        try
-        {
-            _logger.LogDebug("Worker {WorkerId} processing batch of {Count} Motion packets", 
-                workerId, batch.Count);
-            
-            // Create ISender for batch processing
-            sender = Sender.New(_questDbConnectionString);
-
-            // Write batch to QuestDB
-            await _repository.WriteBatchQuestDbAsync(sender, batch, ct); 
-
-            // Send sample packet to SignalR
-            if (_lastPacket == null || _lastPacket.Timestamp + TimeSpan.FromMilliseconds(Constants.DEFAULT_PACKET_SAMPLE_MS) < batch.Last().Timestamp)
-            {
-                _lastPacket = batch.Last();
-                await _packetSampleProducer.ProduceAsync(new SampleMotionPacket(_lastPacket, DateTimeOffset.UtcNow), ct);
-            }
-
-            _logger.LogDebug("Worker {WorkerId} successfully processed batch of {Count} Motion packets", 
-                workerId, batch.Count);     
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Worker {WorkerId} failed to process batch of {Count} Motion packets", 
-                workerId, batch.Count);
-        }
-        finally 
-        {
-            sender?.Dispose();
-            batch?.Clear();
-        }
-    }
+    #region Data Access Methods
 
     public override async Task<IEnumerable<MotionPacketEntity>> GetAllAsync()
     {
@@ -102,9 +70,84 @@ public sealed class MotionPacketService : BasePacketService<MotionPacketEntity>
         await _repository.DeleteAllFromQuestDbAsync();
     }
 
-    private void MountProducer() 
+    #endregion
+
+    #region Capture Control Methods
+
+    public async Task StartCaptureAsync()
     {
-        _packetSampleProducer = _session.AttachProducer<SampleMotionPacket>(
-            (hub, m, ct) => hub.InvokeAsync("SendSampleMotionPacket", m.Packet, m.Timestamp, ct));
+        await _captureService.StartCaptureAsync();
     }
+
+    public async Task StopCaptureAsync()
+    {
+        await _captureService.StopCaptureAsync();
+    }
+
+    public bool IsCapturing => _captureService.IsCapturing;
+
+    #endregion
+
+    #region Packet Processing Methods
+
+    protected override async Task ProcessPacketBatchAsync(List<MotionPacketEntity> batch, int workerId, CancellationToken ct)
+    {
+        ISender? sender = null;
+
+        try
+        {
+            _logger.LogDebug("Worker {WorkerId} processing batch of {Count} Motion packets", 
+                workerId, batch.Count);
+            
+            // Create ISender for batch processing
+            sender = Sender.New(_questDbConnectionString);
+
+            // Write batch to QuestDB
+            await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
+
+            _logger.LogDebug("Worker {WorkerId} successfully processed batch of {Count} Motion packets", 
+                workerId, batch.Count);     
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Worker {WorkerId} failed to process batch of {Count} Motion packets", 
+                workerId, batch.Count);
+        }
+        finally 
+        {
+            sender?.Dispose();
+            batch?.Clear();
+        }
+    }
+
+    #endregion
+
+    #region Observer Setup Methods
+
+    private void SetupPacketSamplingObserver()
+    {
+        // Get sampling interval from configuration
+        var samplingIntervalMs = _configuration.GetSection("DataPipes:MotionCapture:Sampling:IntervalMs").Get<int>();
+        if (samplingIntervalMs == 0)
+        {
+            samplingIntervalMs = Constants.DEFAULT_PACKET_SAMPLE_MS;
+        }
+
+        // Create producer for packet sampling
+        _packetSamplingProducer = _session.AttachProducer<MotionPacketEntity>(
+            (hub, packet, ct) => hub.InvokeAsync("SendMotionPacketSample", packet, ct));
+
+        // Create packet sampling observer with configured interval
+        _packetSamplingObserver = new PacketSamplingObserver<MotionPacketEntity>(
+            new LoggerFactory().CreateLogger<PacketSamplingObserver<MotionPacketEntity>>(),
+            _packetSamplingProducer,
+            samplingIntervalMs);
+
+        // Subscribe observer to capture service
+        _captureService.Subscribe(_packetSamplingObserver);
+        
+        _logger.LogInformation("Motion packet sampling observer subscribed to capture service with {IntervalMs}ms sampling interval", samplingIntervalMs);
+    }
+
+    #endregion
 }

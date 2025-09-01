@@ -46,6 +46,9 @@ public sealed class MotionCaptureService : BaseCaptureService<MotionPacketEntity
             _logger.LogDebug("Parsed motion packet: Type={Type}, OpCode={OpCode}, Axis={Axis}, FloatValue={FloatValue}",
                 packet.Type, packet.OpCode, packet.Axis, packet.FloatValue);
 
+            // Notify observers after successful parsing
+            NotifyObservers(packet);
+
             return packet;
         }
         catch (Exception ex)
@@ -60,7 +63,6 @@ public sealed class MotionCaptureService : BaseCaptureService<MotionPacketEntity
     /// </summary>
     internal ValueTask HandleMotionPacket(MotionPacketEntity packet)
     {
-
         if (packet is null) return default;
         _logger.LogDebug("Motion packet queued for batch processing: {PacketId}", packet.Id);
         return _channel.Writer.WriteAsync(packet);

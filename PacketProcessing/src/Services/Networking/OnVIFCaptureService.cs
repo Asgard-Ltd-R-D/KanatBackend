@@ -2,8 +2,6 @@ using PacketProcessing.Entities.Packet;
 using PacketProcessing.Utils;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
-using System.Collections.Concurrent;
-using SharpPcap.LibPcap;
 using System.Threading.Channels;
 
 namespace PacketProcessing.Services.Networking;
@@ -47,6 +45,9 @@ public sealed class OnVIFCaptureService : BaseCaptureService<OnVIFPacketEntity>
 
             _logger.LogDebug("Parsed OnVIF packet: Type={Type}, Description={Description}, Zoom={Zoom}",
                 packet.Type, packet.Description, packet.Zoom);
+
+            // Notify observers after successful parsing
+            NotifyObservers(packet);
 
             return packet;
         }

@@ -20,29 +20,28 @@ namespace PacketProcessing.Services.Processing;
 public abstract class BasePacketService<T> : IDisposable where T : BasePacketEntity
 {
     protected readonly ILogger<BasePacketService<T>> _logger;
-    private readonly Channel<T> _channel;
-    private readonly BaseCaptureService<T> _captureService;
+    protected readonly IConfiguration _configuration;
+    protected readonly Channel<T> _channel;
 
-    private readonly int _minWorkers;
-    private readonly int _maxWorkers;
-    private readonly int _batchSize;
+    protected readonly int _minWorkers;
+    protected readonly int _maxWorkers;
+    protected readonly int _batchSize;
 
-    private readonly TimeSpan _batchTimeout;
-    private readonly ConcurrentDictionary<int, Task> _workers;
-    private readonly CancellationTokenSource _cancellationTokenSource;
-    private int _currentWorkerCount;
+    protected readonly TimeSpan _batchTimeout;
+    protected readonly ConcurrentDictionary<int, Task> _workers;
+    protected readonly CancellationTokenSource _cancellationTokenSource;
+    protected int _currentWorkerCount;
 
     protected BasePacketService(
         ILogger<BasePacketService<T>> logger,
         Channel<T> channel,
-        BaseCaptureService<T> captureService,
         IConfiguration configuration)
     {
         // Initialize dependencies
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _channel = channel ?? throw new ArgumentNullException(nameof(channel));
-        _captureService = captureService ?? throw new ArgumentNullException(nameof(captureService));
-                
+        _configuration = configuration;
+        
         // Get concurrency configuration
         var concurrencySection = configuration.GetSection("Concurrency");
         _minWorkers = concurrencySection.GetValue<int>("MinWorkers", DEFAULT_MIN_WORKERS);
@@ -119,11 +118,6 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
             _logger.LogError(ex, "Error stopping {ServiceType} packet processing service", typeof(T).Name);
         }
     }
-
-    // Capture control wrappers
-    public Task StartCaptureAsync() => _captureService.StartCaptureAsync();
-    public Task StopCaptureAsync() => _captureService.StopCaptureAsync();
-    public bool IsCapturing => _captureService.IsCapturing;
 
     /// <summary>
     /// Starts the specified number of workers

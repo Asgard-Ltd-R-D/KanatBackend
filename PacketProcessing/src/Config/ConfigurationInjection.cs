@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Services.Networking;
 using PacketProcessing.Services.Processing;
+using PacketProcessing.SignalR;
 using System.Threading.Channels;
 
 /// <summary>
@@ -75,6 +76,15 @@ public class ConfigurationInjection
         builder.Services.AddHostedService<MotionCaptureService>();
         builder.Services.AddHostedService<SafetyCaptureService>();
         builder.Services.AddHostedService<OnVIFCaptureService>();
+        
+        // Register SignalR Hub Client Host
+        builder.Services.AddSingleton<IHubClientHost>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfiguration>();
+            var baseUrl = config.GetValue<string>("Application:Url");
+            var hubUrl = $"{baseUrl}/realtime";
+            return new HubClientHost(hubUrl);
+        });
         
         // Register Packet Processing Services as regular services (not background services)
         builder.Services.AddScoped<MotionPacketService>();

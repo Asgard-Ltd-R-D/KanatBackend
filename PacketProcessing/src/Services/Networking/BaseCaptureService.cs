@@ -30,6 +30,12 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
     private readonly List<IObserver<T>> _observers = [];
     private readonly object _observersLock = new();
 
+    // Performance counters for high-throughput monitoring
+    private long _packetsProcessed = 0;
+    private long _packetsDropped = 0;
+    private DateTime _lastStatsTime = DateTime.UtcNow;
+    private readonly object _statsLock = new();
+
     public BaseCaptureService(
         ILogger<BaseCaptureService<T>> logger,
         IConfiguration configurationManager,
@@ -206,6 +212,28 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
     /// </summary>  
     public Channel<T> GetChannel => _channel;
 
+    /// <summary>
+    /// Gets current performance statistics
+    /// </summary>
+    public (long Processed, long Dropped, double Pps) GetPerformanceStats()
+    {
+        var now = DateTime.UtcNow;
+        var timeDiff = (now - _lastStatsTime).TotalSeconds;
+        
+        lock (_statsLock)
+        {
+            var processed = Interlocked.Read(ref _packetsProcessed);
+            var dropped = Interlocked.Read(ref _packetsDropped);
+            var pps = timeDiff > 0 ? processed / timeDiff : 0;
+            
+            _lastStatsTime = now;
+            Interlocked.Exchange(ref _packetsProcessed, 0);
+            Interlocked.Exchange(ref _packetsDropped, 0);
+            
+            return (processed, dropped, pps);
+        }
+    }
+
     private async Task StartCaptureOnDeviceAsync(LibPcapLiveDevice device, CancellationToken ct)
     {
         var key = device.Name;
@@ -227,8 +255,23 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
             device.OnPacketArrival += OnPacketArrival; // Register the OnPacketArrival event handler
             device.StartCapture(); // Start capturing packets
 
+            // Optimized capture loop for high throughput
             while (!ct.IsCancellationRequested)
-                await Task.Delay(250, ct); // Wait for 250ms before checking for cancellation
+            {
+                // Use shorter delay for more responsive cancellation and better throughput
+                await Task.Delay(50, ct); // Reduced from 250ms to 50ms
+                
+                // Log performance stats every 5 seconds for monitoring
+                if (DateTime.UtcNow - _lastStatsTime > TimeSpan.FromSeconds(5))
+                {
+                    var (Processed, Dropped, Pps) = GetPerformanceStats();
+                    if (Processed > 0)
+                    {
+                        _logger.LogInformation("Capture performance: {Pps:F0} pps, {Processed} processed, {Dropped} dropped", 
+                            Pps, Processed, Dropped);
+                    }
+                }
+            }
 
             device.StopCapture(); // Stop capturing packets
             device.Close(); // Close the device
@@ -253,54 +296,38 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
 
     internal void OnPacketArrival(object? sender, PacketCapture e)
     {
-        try
+        // Ultra-fast path - single null check, no try-catch
+        if (_packetParser is null || _packetHandler is null) 
         {
-            if (sender is not LibPcapLiveDevice) return;
-            if (_packetParser is null || _packetHandler is null) return;
-
-            // Get the raw packet data and check if it is empty
-            ReadOnlySpan<byte> span = e.Data;
-            if (span.IsEmpty) return;
-
-            _logger.LogDebug("Packet arrived: {Length} bytes", span.Length);
-
-            // Parse the packet using the extracted payload
-            var parsed = _packetParser.Invoke(span);
-            if (parsed is null)
-            {
-                _logger.LogDebug("Packet parsing failed");
-                return;
-            }
-
-            _logger.LogDebug("Packet parsed successfully: {Type}", parsed.GetType().Name);
-
-            // Delegate handling (storage / pipeline / realtime) to consumer
-            var vt = _packetHandler.Invoke(parsed);
-            if (!vt.IsCompletedSuccessfully)
-            {
-                _ = vt.AsTask(); // schedule continuation; no blocking, no extra Task when already completed
-            }
-
-            _logger.LogDebug("Packet handled successfully");
+            Interlocked.Increment(ref _packetsDropped);
+            return;
         }
-        catch (Exception ex)
+
+        // Get the raw packet data and check if it is empty
+        ReadOnlySpan<byte> span = e.Data;
+        if (span.IsEmpty) 
         {
-            _logger.LogDebug(ex, "OnPacketArrival error");
+            Interlocked.Increment(ref _packetsDropped);
+            return;
         }
-    }
 
-    /// <summary>
-    /// Disposes the capture service
-    /// </summary>
-    public override void Dispose()
-    {
-        try
+        // Parse the packet using the extracted payload
+        var parsed = _packetParser.Invoke(span);
+        if (parsed is null) 
         {
-            StopCaptureAsync().Wait();
+            Interlocked.Increment(ref _packetsDropped);
+            return;
         }
-        catch { /* best-effort */ }
 
-        base.Dispose();
+        // Delegate handling (storage / pipeline / realtime) to consumer
+        var vt = _packetHandler.Invoke(parsed);
+        if (!vt.IsCompletedSuccessfully)
+        {
+            _ = vt.AsTask(); // schedule continuation; no blocking, no extra Task when already completed
+        }
+
+        // Increment processed counter
+        Interlocked.Increment(ref _packetsProcessed);
     }
 
     #region IObservable<T> Implementation
@@ -367,4 +394,19 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
     }
 
     #endregion
+
+    /// <summary>
+    /// Disposes the capture service
+    /// </summary>
+    public override void Dispose()
+    {
+        try
+        {
+            StopCaptureAsync().Wait();
+            GC.SuppressFinalize(this);
+        }
+        catch { /* best-effort */ }
+
+        base.Dispose();
+    }
 }

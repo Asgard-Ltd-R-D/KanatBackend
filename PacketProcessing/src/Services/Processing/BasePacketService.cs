@@ -70,14 +70,14 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
             // Start initial workers
             await StartWorkers(_minWorkers);
             
-            // Start the main processing loop
+            // Start the main processing loop - optimized for high throughput
             _ = Task.Run(async () =>
             {
                 try
                 {
                     while (!cancellationToken.IsCancellationRequested)
                     {
-                        await Task.Delay(1000, cancellationToken); // Check every second
+                        await Task.Delay(250, cancellationToken); // Check every 250ms for faster response
                         
                         // Auto-scale based on channel pressure
                         await AutoScaleWorkers();
@@ -129,38 +129,40 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
             var workerId = Interlocked.Increment(ref _currentWorkerCount) - 1;
             var workerTask = Task.Run(() => WorkerLoopAsync(workerId, _cancellationTokenSource.Token));
             
-            if (_workers.TryAdd(workerId, workerTask))
-            {
-                _logger.LogDebug("Started worker {WorkerId} for {ServiceType}", workerId, typeof(T).Name);
-            }
+            _workers.TryAdd(workerId, workerTask);
         }
         
         return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Auto-scales workers based on channel pressure
+    /// Auto-scales workers based on channel pressure - optimized for high throughput
     /// </summary>
     private async Task AutoScaleWorkers()
     {
         var channelCount = _channel.Reader.Count;
         var currentWorkers = _workers.Count;
         
-        // Scale up if channel is getting full
-        if (channelCount > _batchSize * currentWorkers && currentWorkers < _maxWorkers)
+        // More aggressive scaling for high throughput scenarios
+        var pressureThreshold = _batchSize * currentWorkers;
+        var lowPressureThreshold = _batchSize / 2;
+        
+        // Scale up if channel is getting full (more aggressive for 10k pps)
+        if (channelCount > pressureThreshold && currentWorkers < _maxWorkers)
         {
-            var workersToAdd = Math.Min(2, _maxWorkers - currentWorkers);
+            // Scale up more aggressively for high throughput
+            var workersToAdd = Math.Min(4, _maxWorkers - currentWorkers);
             await StartWorkers(workersToAdd);
-            _logger.LogInformation("Auto-scaled up {ServiceType} workers by {Count} (channel pressure: {ChannelCount})",
-                typeof(T).Name, workersToAdd, channelCount);
+            _logger.LogInformation("Auto-scaled up {ServiceType} workers by {Count} (channel pressure: {ChannelCount}/{Threshold})",
+                typeof(T).Name, workersToAdd, channelCount, pressureThreshold);
         }
-        // Scale down if channel is mostly empty
-        else if (channelCount < _batchSize && currentWorkers > _minWorkers)
+        // Scale down if channel is mostly empty (more conservative to avoid thrashing)
+        else if (channelCount < lowPressureThreshold && currentWorkers > _minWorkers)
         {
             var workersToRemove = Math.Min(1, currentWorkers - _minWorkers);
             await StopWorkers(workersToRemove);
-            _logger.LogInformation("Auto-scaled down {ServiceType} workers by {Count} (channel pressure: {ChannelCount})",
-                typeof(T).Name, workersToRemove, channelCount);
+            _logger.LogInformation("Auto-scaled down {ServiceType} workers by {Count} (channel pressure: {ChannelCount}/{Threshold})",
+                typeof(T).Name, workersToRemove, channelCount, lowPressureThreshold);
         }
     }
 
@@ -172,10 +174,7 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
         var workersToStop = _workers.Take(count).ToList();
         foreach (var worker in workersToStop)
         {
-            if (_workers.TryRemove(worker.Key, out var task))
-            {
-                _logger.LogDebug("Stopping worker {WorkerId} for {ServiceType}", worker.Key, typeof(T).Name);
-            }
+            _workers.TryRemove(worker.Key, out var task);
         }
         
         return Task.CompletedTask;
@@ -198,45 +197,48 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
     }
 
     /// <summary>
-    /// Main batch processing loop for each worker
+    /// Main batch processing loop for each worker - optimized for high throughput
     /// </summary>
     private async Task WorkerLoopAsync(int workerId, CancellationToken ct)
     {
-        _logger.LogDebug("Worker {WorkerId} started processing {ServiceType} batches", workerId, typeof(T).Name);
+        // Pre-allocate batch list to avoid allocations in hot path
+        var batch = new List<T>(_batchSize);
+        var batchTimeoutCts = new CancellationTokenSource();
         
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                var batch = new List<T>();
-                var batchTimeout = new CancellationTokenSource(_batchTimeout);
+                batch.Clear(); // Reuse the list
+                batchTimeoutCts.CancelAfter(_batchTimeout);
                 
-                // Collect batch
-                while (batch.Count < _batchSize && !batchTimeout.Token.IsCancellationRequested)
+                // High-performance batch collection
+                while (batch.Count < _batchSize && !batchTimeoutCts.Token.IsCancellationRequested)
                 {
+                    // Fast path: try to read without waiting
+                    if (_channel.Reader.TryRead(out var packet))
+                    {
+                        batch.Add(packet);
+                        continue;
+                    }
+                    
+                    // If no packet available, wait briefly for one
                     try
                     {
-                        // If channel is null, break
-                        if (_channel is null) break;
-
-                        // If channel has a packet, add it to the batch
-                        else if (_channel.Reader.TryRead(out var packet))
+                        var readTask = _channel.Reader.ReadAsync(ct).AsTask();
+                        var timeoutTask = Task.Delay(5, batchTimeoutCts.Token); // Even shorter timeout for maximum responsiveness
+                        var completedTask = await Task.WhenAny(readTask, timeoutTask);
+                        
+                        if (completedTask == readTask)
                         {
-                            batch.Add(packet);
+                            batch.Add(await readTask);
                         }
-
-                        // If channel has no packet, wait for next packet with timeout
                         else
                         {
-                            // Wait for next packet with timeout
-                            var readTask = _channel.Reader.ReadAsync(ct).AsTask();
-                            var timeoutTask = Task.Delay(_batchTimeout, batchTimeout.Token);
-                            var completedTask = await Task.WhenAny(readTask, timeoutTask);
-                            if (completedTask == readTask) batch.Add(await readTask);
-                            else break;
+                            break; // Timeout reached
                         }
                     }
-                    catch (OperationCanceledException) when (batchTimeout.Token.IsCancellationRequested)
+                    catch (OperationCanceledException) when (batchTimeoutCts.Token.IsCancellationRequested)
                     {
                         break; // Batch timeout
                     }
@@ -254,8 +256,10 @@ public abstract class BasePacketService<T> : IDisposable where T : BasePacketEnt
         {
             _logger.LogError(ex, "Worker {WorkerId} encountered error processing {ServiceType} batches", workerId, typeof(T).Name);
         }
-        
-        _logger.LogDebug("Worker {WorkerId} stopped processing {ServiceType} batches", workerId, typeof(T).Name);
+        finally
+        {
+            batchTimeoutCts?.Dispose();
+        }
     }
 
     /// <summary>

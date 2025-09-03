@@ -96,17 +96,11 @@ public sealed class MotionPacketService : BasePacketService<MotionPacketEntity>
 
         try
         {
-            _logger.LogDebug("Worker {WorkerId} processing batch of {Count} Motion packets", 
-                workerId, batch.Count);
-            
             // Create ISender for batch processing
             sender = Sender.New(_questDbConnectionString);
 
             // Write batch to QuestDB
             await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
-
-            _logger.LogDebug("Worker {WorkerId} successfully processed batch of {Count} Motion packets", 
-                workerId, batch.Count);     
         }
         catch (Exception ex)
         {
@@ -116,7 +110,6 @@ public sealed class MotionPacketService : BasePacketService<MotionPacketEntity>
         finally 
         {
             sender?.Dispose();
-            batch?.Clear();
         }
     }
 

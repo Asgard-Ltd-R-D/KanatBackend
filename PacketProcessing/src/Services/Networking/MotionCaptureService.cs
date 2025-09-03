@@ -24,47 +24,28 @@ public sealed class MotionCaptureService : BaseCaptureService<MotionPacketEntity
     }
 
     /// <summary>
-    /// Parses raw packet data into a MotionPacketEntity using direct TCP parsing
+    /// Parses raw packet data into a MotionPacketEntity - optimized for high throughput
     /// </summary>
     internal MotionPacketEntity ParseMotionPacket(ReadOnlySpan<byte> rawPacket)
     {
-        try
-        {
-            if (rawPacket.IsEmpty)
-            {
-                _logger.LogWarning("Motion packet empty");
-                return null!;
-            }
+        // Fast path - minimal checks for performance
+        if (rawPacket.IsEmpty) return null!;
 
-            var packet = Parsers.Map<MotionPacketEntity>(_protocol, rawPacket);
-            if (packet == null)
-            {
-                _logger.LogWarning("Failed to parse motion packet from raw data");
-                return null!;
-            }
+        var packet = Parsers.Map<MotionPacketEntity>(_protocol, rawPacket);
+        if (packet == null) return null!;
 
-            _logger.LogDebug("Parsed motion packet: Type={Type}, OpCode={OpCode}, Axis={Axis}, FloatValue={FloatValue}",
-                packet.Type, packet.OpCode, packet.Axis, packet.FloatValue);
+        // Notify observers after successful parsing
+        NotifyObservers(packet);
 
-            // Notify observers after successful parsing
-            NotifyObservers(packet);
-
-            return packet;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to parse motion packet of {Length} bytes", rawPacket.Length);
-            return null!;
-        }
+        return packet;
     }
 
     /// <summary>
-    /// Handles parsed motion packet by writing it to the channel
+    /// Handles parsed motion packet by writing it to the channel - optimized for high throughput
     /// </summary>
     internal ValueTask HandleMotionPacket(MotionPacketEntity packet)
     {
         if (packet is null) return default;
-        _logger.LogDebug("Motion packet queued for batch processing: {PacketId}", packet.Id);
         return _channel.Writer.WriteAsync(packet);
     }
 }

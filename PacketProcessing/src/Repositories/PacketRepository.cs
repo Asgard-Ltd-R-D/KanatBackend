@@ -246,5 +246,4 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
             throw;
         }
     }
-    
 }

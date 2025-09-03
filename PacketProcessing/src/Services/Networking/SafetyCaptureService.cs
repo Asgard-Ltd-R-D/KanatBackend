@@ -24,47 +24,28 @@ public sealed class SafetyCaptureService : BaseCaptureService<SafetyPacketEntity
     }
 
     /// <summary>
-    /// Parses raw packet data into a SafetyPacketEntity
+    /// Parses raw packet data into a SafetyPacketEntity - optimized for high throughput
     /// </summary>
     internal SafetyPacketEntity ParseSafetyPacket(ReadOnlySpan<byte> rawPacket)
     {
-        try
-        {
-            if (rawPacket.IsEmpty)
-            {
-                _logger.LogWarning("Safety packet empty");
-                return null!;
-            }
+        // Fast path - minimal checks for performance
+        if (rawPacket.IsEmpty) return null!;
 
-            var packet = Parsers.Map<SafetyPacketEntity>(_protocol, rawPacket);
-            if (packet == null)
-            {
-                _logger.LogWarning("Failed to parse safety packet from raw data");
-                return null!;
-            }
+        var packet = Parsers.Map<SafetyPacketEntity>(_protocol, rawPacket);
+        if (packet == null) return null!;
 
-            _logger.LogDebug("Parsed safety packet: Type={Type}, OpCode={OpCode}, State={State}",
-                packet.Type, packet.OpCode, packet.State);
+        // Notify observers after successful parsing
+        NotifyObservers(packet);
 
-            // Notify observers after successful parsing
-            NotifyObservers(packet);
-
-            return packet;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to parse safety packet of {Length} bytes", rawPacket.Length);
-            return null!;
-        }
+        return packet;
     }
 
     /// <summary>
-    /// Handles parsed safety packet by writing it to the channel
+    /// Handles parsed safety packet by writing it to the channel - optimized for high throughput
     /// </summary>
     internal ValueTask HandleSafetyPacket(SafetyPacketEntity packet)
     {
         if (packet is null) return default;
-        _logger.LogDebug("Safety packet queued for batch processing: {PacketId}", packet.Id);
         return _channel.Writer.WriteAsync(packet);
     }
 }

@@ -24,47 +24,28 @@ public sealed class OnVIFCaptureService : BaseCaptureService<OnVIFPacketEntity>
     }
 
     /// <summary>
-    /// Parses raw packet data into an OnVIFPacketEntity
+    /// Parses raw packet data into an OnVIFPacketEntity - optimized for high throughput
     /// </summary>
     internal OnVIFPacketEntity ParseOnVIFPacket(ReadOnlySpan<byte> rawPacket)
     {
-        try
-        {
-            if (rawPacket.IsEmpty)
-            {
-                _logger.LogWarning("OnVIF packet empty");
-                return null!;
-            }
+        // Fast path - minimal checks for performance
+        if (rawPacket.IsEmpty) return null!;
 
-            var packet = Parsers.Map<OnVIFPacketEntity>(_protocol, rawPacket);
-            if (packet == null)
-            {
-                _logger.LogWarning("Failed to parse OnVIF packet from raw data");
-                return null!;
-            }
+        var packet = Parsers.Map<OnVIFPacketEntity>(_protocol, rawPacket);
+        if (packet == null) return null!;
 
-            _logger.LogDebug("Parsed OnVIF packet: Type={Type}, Description={Description}, Zoom={Zoom}",
-                packet.Type, packet.Description, packet.Zoom);
+        // Notify observers after successful parsing
+        NotifyObservers(packet);
 
-            // Notify observers after successful parsing
-            NotifyObservers(packet);
-
-            return packet;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to parse OnVIF packet of {Length} bytes", rawPacket.Length);
-            return null!;
-        }
+        return packet;
     }
 
     /// <summary>
-    /// Handles parsed OnVIF packet by writing it to the channel
+    /// Handles parsed OnVIF packet by writing it to the channel - optimized for high throughput
     /// </summary>
     internal ValueTask HandleOnVIFPacket(OnVIFPacketEntity packet)
     {
         if (packet is null) return default;
-        _logger.LogDebug("OnVIF packet queued for batch processing: {PacketId}", packet.Id);
         return _channel.Writer.WriteAsync(packet);
     }
 }

@@ -25,6 +25,7 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
 
     internal bool _isCapturing = false;
     internal readonly object _captureLock = new();
+    private CancellationTokenSource? _captureCts;
 
     // Observer pattern implementation
     private readonly List<IObserver<T>> _observers = [];
@@ -57,9 +58,21 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
     
     internal virtual string GenerateFilter()
     {
-        var ipExpr = string.Join(" or ", _ips.Select(ip => $"host {ip}")); // Generate a filter for the given IPs as "192.168.1.1 or 192.168.1.2"
+        // Normalize protocol to a valid BPF filter expression
+        var protocolFilter = _protocol?.ToLowerInvariant() switch
+        {
+            "http" => "tcp port 8080", // Filter for HTTP traffic on port 8080
+            _ => _protocol ?? "tcp"
+        };
 
-        return $"{_protocol} and ({ipExpr})";// Final output is "tcp and (host 192.168.1.1 or host 192.168.1.2)"
+        if (_ips is null || _ips.Count == 0)
+        {
+            // No IPs configured: use protocol-only filter (e.g., "tcp")
+            return protocolFilter;
+        }
+        
+        var ipExpr = string.Join(" or ", _ips.Select(ip => $"host {ip}")); // e.g., host 192.168.1.1 or host 192.168.1.2
+        return $"{protocolFilter} and ({ipExpr})";
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -100,6 +113,7 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
                 return;
             }
             _isCapturing = true;
+            _captureCts = new CancellationTokenSource();
         }
 
         try
@@ -116,7 +130,7 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
             // Auto-select devices if none are provided
             if (_activeDevices.IsEmpty)
             {
-                _logger.LogInformation("No devices pre-selected, auto-selecting all available devices for capture");
+                _logger.LogDebug("No devices pre-selected, auto-selecting all available devices for capture");
                 
                 // Add all available devices to capture from
                 foreach (var device in all)
@@ -125,7 +139,7 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
                     {
                         if (_activeDevices.TryAdd(device.Name, device))
                         {
-                            _logger.LogInformation("Auto-selected device: {DeviceName}", device.Name);
+                            _logger.LogDebug("Auto-selected device: {DeviceName}", device.Name);
                         }
                     }
                     catch (Exception ex)
@@ -145,10 +159,13 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
             _logger.LogInformation("Starting capture on {DeviceCount} devices", devices.Count);
 
             // Start capture on all selected devices
-            var tasks = new List<Task>(devices.Count);
-            tasks.AddRange(devices.Select(dev => StartCaptureOnDeviceAsync(dev, CancellationToken.None)));
-            
-            await Task.WhenAll(tasks);
+            // Fire-and-forget device tasks. Use capture CTS so StopCaptureAsync can cancel.
+            foreach (var dev in devices)
+            {
+                _ = StartCaptureOnDeviceAsync(dev, _captureCts!.Token);
+            }
+            // Yield once to let device tasks spin up
+            await Task.Yield();
         }
         catch (Exception ex)
         {
@@ -178,6 +195,8 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
         try
         {
             _logger.LogInformation("Stopping packet capture");
+
+            try { _captureCts?.Cancel(); } catch { }
 
             foreach (var kv in _activeDevices)
             {

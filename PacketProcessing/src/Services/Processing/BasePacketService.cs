@@ -9,7 +9,7 @@ using QuestDB;
 using PacketProcessing.Config;
 using QuestDB.Senders;
 using PacketProcessing.Services.Networking;
-using static PacketProcessing.Utils.Constants;
+using static PacketProcessing.Utils.Constants.Constants;
 
 namespace PacketProcessing.Services.Processing;
 

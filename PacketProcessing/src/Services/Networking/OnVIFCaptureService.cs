@@ -1,5 +1,5 @@
 using PacketProcessing.Entities.Packet;
-using PacketProcessing.Utils;
+using PacketProcessing.Utils.Parsers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using System.Threading.Channels;
@@ -31,7 +31,7 @@ public sealed class OnVIFCaptureService : BaseCaptureService<OnVIFPacketEntity>
         // Fast path - minimal checks for performance
         if (rawPacket.IsEmpty) return null!;
 
-        var packet = Parsers.Map<OnVIFPacketEntity>(_protocol, rawPacket);
+        var packet = ParseMapper.Map<OnVIFPacketEntity>(rawPacket);
         if (packet == null) return null!;
 
         // Notify observers after successful parsing

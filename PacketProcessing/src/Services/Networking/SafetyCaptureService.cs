@@ -1,5 +1,5 @@
 using PacketProcessing.Entities.Packet;
-using PacketProcessing.Utils;
+using PacketProcessing.Utils.Parsers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using System.Threading.Channels;
@@ -31,7 +31,7 @@ public sealed class SafetyCaptureService : BaseCaptureService<SafetyPacketEntity
         // Fast path - minimal checks for performance
         if (rawPacket.IsEmpty) return null!;
 
-        var packet = Parsers.Map<SafetyPacketEntity>(_protocol, rawPacket);
+        var packet = ParseMapper.Map<SafetyPacketEntity>(rawPacket);
         if (packet == null) return null!;
 
         // Notify observers after successful parsing

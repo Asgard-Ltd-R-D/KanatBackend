@@ -1,4 +1,4 @@
-namespace PacketProcessing.Utils;
+namespace PacketProcessing.Utils.Constants;
 
 public static class Constants {
     public static readonly int DEFAULT_MIN_WORKERS = 4;

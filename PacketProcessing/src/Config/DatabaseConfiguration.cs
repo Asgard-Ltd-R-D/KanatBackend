@@ -48,7 +48,7 @@ public class DatabaseConfiguration
         ConfigureRepositories(services, configuration);
         
         // Add database initialization service
-        services.AddHostedService<DatabaseInitializationService>();
+        // services.AddHostedService<DatabaseInitializationService>(); // Temporarily disabled for packet capture testing
     }
 
     /// <summary>

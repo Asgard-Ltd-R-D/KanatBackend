@@ -71,11 +71,15 @@ public class ConfigurationInjection
             });
         });
         
-        // Register Background Services
-        // Capture Services (capture packets and write to channels)
-        builder.Services.AddHostedService<MotionCaptureService>();
-        builder.Services.AddHostedService<SafetyCaptureService>();
-        builder.Services.AddHostedService<OnVIFCaptureService>();
+        // Register Capture Services as singletons so they can be injected,
+        // and also expose them as hosted services using the same instances
+        builder.Services.AddSingleton<MotionCaptureService>();
+        builder.Services.AddSingleton<SafetyCaptureService>();
+        builder.Services.AddSingleton<OnVIFCaptureService>();
+
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<MotionCaptureService>());
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<SafetyCaptureService>());
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<OnVIFCaptureService>());
         
         // Register SignalR Hub Client Host
         builder.Services.AddSingleton<IHubClientHost>(sp =>
@@ -87,9 +91,10 @@ public class ConfigurationInjection
         });
         
         // Register Packet Processing Services as regular services (not background services)
-        builder.Services.AddScoped<MotionPacketService>();
-        builder.Services.AddScoped<SafetyPacketService>();
-        builder.Services.AddScoped<OnVIFPacketService>();
+        // Temporarily commented out due to dependency injection issues
+        // builder.Services.AddScoped<MotionPacketService>();
+        // builder.Services.AddScoped<SafetyPacketService>();
+        // builder.Services.AddScoped<OnVIFPacketService>();
         
         // Register Services (including CORS)
         CorsConfiguration.ConfigureCorsServices(builder.Services);

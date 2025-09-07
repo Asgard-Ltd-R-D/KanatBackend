@@ -9,11 +9,14 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Configuration;
 using PacketProcessing.Entities;
 using PacketProcessing.Utils.Observers;
+using System.Net;
+using System.Net.Sockets;
 
 public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> where T : BasePacketEntity
 {
     protected ILogger<BaseCaptureService<T>> _logger;  
     internal string _protocol;
+    internal int? _port;
     internal IReadOnlyList<string> _ips;
     internal ConcurrentDictionary<string, LibPcapLiveDevice> _activeDevices;
 
@@ -58,21 +61,41 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
     
     internal virtual string GenerateFilter()
     {
-        // Normalize protocol to a valid BPF filter expression
-        var protocolFilter = _protocol?.ToLowerInvariant() switch
-        {
-            "http" => "tcp port 8080", // Filter for HTTP traffic on port 8080
-            _ => _protocol ?? "tcp"
-        };
+        if (string.IsNullOrWhiteSpace(_protocol))
+            throw new ArgumentException("Protocol must be provided", nameof(_protocol));
 
-        if (_ips is null || _ips.Count == 0)
+        if (_protocol.Equals("http", StringComparison.InvariantCultureIgnoreCase)) _protocol = "tcp port 80";
+        string baseExpr = _protocol.ToLowerInvariant();
+
+        var ips = _ips?.Where(s => !string.IsNullOrWhiteSpace(s)).ToList() ?? [];
+        if (ips.Count == 0) return baseExpr;
+
+        var hostClauses = new List<string>(ips.Count + 1);
+        foreach (var s in ips)
         {
-            // No IPs configured: use protocol-only filter (e.g., "tcp")
-            return protocolFilter;
+            if (IPAddress.TryParse(s, out var ip))
+            {
+                if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+                {
+                    hostClauses.Add($"ip6 host {s}");
+                }
+                else // IPv4
+                {
+                    hostClauses.Add($"ip host {s}");
+                    // Special case: include IPv6 loopback alongside 127.0.0.1
+                    if (s == "127.0.0.1")
+                        hostClauses.Add("ip6 host ::1");
+                }
+            }
+            else
+            {
+                // If a hostname is provided, let libpcap resolve it
+                hostClauses.Add($"host {s}");
+            }
         }
-        
-        var ipExpr = string.Join(" or ", _ips.Select(ip => $"host {ip}")); // e.g., host 192.168.1.1 or host 192.168.1.2
-        return $"{protocolFilter} and ({ipExpr})";
+
+        var hostsExpr = "(" + string.Join(" or ", hostClauses) + ")";
+        return $"{baseExpr} and {hostsExpr}";
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -80,6 +103,8 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
         try
         {
             _logger.LogInformation("Capture service initialized {DataPipeName}. Waiting for start signal...", typeof(T).Name);
+            _logger.LogInformation("Service Configuration - Name: {ServiceName}, Entity: {EntityType}, Protocol: {Protocol}, Port: {Port}, IPs: {IPs}", 
+                GetType().Name, typeof(T).Name, _protocol, _port?.ToString() ?? "any", string.Join(", ", _ips));
 
             // Wait for cancellation (application shutdown) without starting capture
             while (!ct.IsCancellationRequested)
@@ -118,7 +143,9 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
 
         try
         {
-            _logger.LogInformation("Starting packet capture with filter: {Filter}", GenerateFilter());
+            var filter = GenerateFilter();
+            _logger.LogInformation("Starting packet capture with filter: {Filter}", filter);
+            _logger.LogDebug("Capture configuration - Protocol: {Protocol}, IPs: {IPs}", _protocol, string.Join(", ", _ips));
 
             var all = CaptureDeviceList.Instance.OfType<LibPcapLiveDevice>().ToList();
             if (all.Count == 0)
@@ -126,6 +153,9 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
                 _logger.LogError("No capture devices found. Install libpcap/Npcap.");
                 return;
             }
+
+            _logger.LogInformation("Found {Count} capture devices: {Devices}", 
+                all.Count, string.Join(", ", all.Select(d => d.Name)));
 
             // Auto-select devices if none are provided
             if (_activeDevices.IsEmpty)
@@ -147,6 +177,14 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
                         _logger.LogWarning(ex, "Failed to add device {DeviceName}", device.Name);
                     }
                 }
+            }
+
+            // If still no devices, try to use the first available device
+            if (_activeDevices.IsEmpty && all.Count > 0)
+            {
+                var firstDevice = all.First();
+                _logger.LogWarning("No devices selected, using first available device: {DeviceName}", firstDevice.Name);
+                _activeDevices.TryAdd(firstDevice.Name, firstDevice);
             }
 
             var devices = _activeDevices.Values.ToList();
@@ -259,11 +297,16 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
 
         try
         {
+            _logger.LogDebug("Opening device {Name} for capture", device.Name);
             device.Open(DeviceModes.Promiscuous, read_timeout: 1);
+            _logger.LogDebug("Device {Name} opened successfully", device.Name);
 
             var filter = GenerateFilter();
             if (!string.IsNullOrWhiteSpace(filter))
+            {
                 device.Filter = filter;
+                _logger.LogDebug("Applied filter '{Filter}' to device {Name}", filter, device.Name);
+            }
 
             if (_activeDevices.TryAdd(key, device))
             {
@@ -280,14 +323,19 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
                 // Use shorter delay for more responsive cancellation and better throughput
                 await Task.Delay(50, ct); // Reduced from 250ms to 50ms
                 
-                // Log performance stats every 5 seconds for monitoring
-                if (DateTime.UtcNow - _lastStatsTime > TimeSpan.FromSeconds(5))
+                // Log performance stats every 2 seconds for monitoring
+                if (DateTime.UtcNow - _lastStatsTime > TimeSpan.FromSeconds(2))
                 {
                     var (Processed, Dropped, Pps) = GetPerformanceStats();
-                    if (Processed > 0)
+                    if (Processed > 0 || Dropped > 0)
                     {
-                        _logger.LogInformation("Capture performance: {Pps:F0} pps, {Processed} processed, {Dropped} dropped", 
-                            Pps, Processed, Dropped);
+                        _logger.LogInformation("Capture performance [{Service}]: {Pps:F0} pps, {Processed} processed, {Dropped} dropped", 
+                            typeof(T).Name, Pps, Processed, Dropped);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Capture performance [{Service}]: {Pps:F0} pps, {Processed} processed, {Dropped} dropped", 
+                            typeof(T).Name, Pps, Processed, Dropped);
                     }
                 }
             }
@@ -315,38 +363,68 @@ public abstract class BaseCaptureService<T> : BackgroundService, IObservable<T> 
 
     internal void OnPacketArrival(object? sender, PacketCapture e)
     {
+        // Log every packet arrival for debugging
+        _logger.LogInformation("Packet arrived on {Service} from {Device}", 
+            typeof(T).Name, e.Device?.Name ?? "unknown");
+
         // Ultra-fast path - single null check, no try-catch
         if (_packetParser is null || _packetHandler is null) 
         {
             Interlocked.Increment(ref _packetsDropped);
+            _logger.LogDebug("Packet dropped: Parser or handler not initialized");
             return;
         }
 
-        // Get the raw packet data and check if it is empty
-        ReadOnlySpan<byte> span = e.Data;
-        if (span.IsEmpty) 
+        try
+        {
+            // Use the same approach as the working POC - get RawCapture first
+            var rawPacket = e.GetPacket();
+            if (rawPacket == null) 
+            {
+                Interlocked.Increment(ref _packetsDropped);
+                _logger.LogDebug("Packet dropped: No raw packet data");
+                return;
+            }
+
+            var packetData = rawPacket.Data;
+            if (packetData == null || packetData.Length == 0) 
+            {
+                Interlocked.Increment(ref _packetsDropped);
+                _logger.LogDebug("Packet dropped: Empty packet data");
+                return;
+            }
+
+            _logger.LogDebug("Raw packet received: {Length} bytes from {Device}", packetData.Length, e.Device?.Name ?? "unknown");
+
+            // Parse the packet using the extracted payload
+            var parsed = _packetParser.Invoke(packetData);
+            if (parsed is null) 
+            {
+                Interlocked.Increment(ref _packetsDropped);
+                _logger.LogDebug("Packet dropped: Failed to parse packet of {Length} bytes", packetData.Length);
+                return;
+            }
+
+            _logger.LogDebug("Packet parsed successfully: {Type} - {Details}", 
+                typeof(T).Name, 
+                parsed.ToString() ?? "No details available");
+
+            // Delegate handling (storage / pipeline / realtime) to consumer
+            var vt = _packetHandler.Invoke(parsed);
+            if (!vt.IsCompletedSuccessfully)
+            {
+                _ = vt.AsTask(); // schedule continuation; no blocking, no extra Task when already completed
+            }
+
+            // Increment processed counter
+            Interlocked.Increment(ref _packetsProcessed);
+            _logger.LogDebug("Packet processed successfully: {Type}", typeof(T).Name);
+        }
+        catch (Exception ex)
         {
             Interlocked.Increment(ref _packetsDropped);
-            return;
+            _logger.LogDebug(ex, "Packet dropped: Exception during processing");
         }
-
-        // Parse the packet using the extracted payload
-        var parsed = _packetParser.Invoke(span);
-        if (parsed is null) 
-        {
-            Interlocked.Increment(ref _packetsDropped);
-            return;
-        }
-
-        // Delegate handling (storage / pipeline / realtime) to consumer
-        var vt = _packetHandler.Invoke(parsed);
-        if (!vt.IsCompletedSuccessfully)
-        {
-            _ = vt.AsTask(); // schedule continuation; no blocking, no extra Task when already completed
-        }
-
-        // Increment processed counter
-        Interlocked.Increment(ref _packetsProcessed);
     }
 
     #region IObservable<T> Implementation

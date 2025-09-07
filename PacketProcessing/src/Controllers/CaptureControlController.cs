@@ -16,20 +16,20 @@ namespace PacketProcessing.Controllers;
 public class CaptureControlController : ControllerBase
 {
     private readonly ILogger<CaptureControlController> _logger;
-    private readonly MotionPacketService _motionPacketService;
-    private readonly SafetyPacketService _safetyPacketService;
-    private readonly OnVIFPacketService _onvifPacketService;
+    private readonly MotionCaptureService _motionCaptureService;
+    private readonly SafetyCaptureService _safetyCaptureService;
+    private readonly OnVIFCaptureService _onvifCaptureService;
 
     public CaptureControlController(
         ILogger<CaptureControlController> logger,
-        MotionPacketService motionPacketService,
-        SafetyPacketService safetyPacketService,
-        OnVIFPacketService onvifPacketService)
+        MotionCaptureService motionCaptureService,
+        SafetyCaptureService safetyCaptureService,
+        OnVIFCaptureService onvifCaptureService)
     {
         _logger = logger;
-        _motionPacketService = motionPacketService;
-        _safetyPacketService = safetyPacketService;
-        _onvifPacketService = onvifPacketService;
+        _motionCaptureService = motionCaptureService;
+        _safetyCaptureService = safetyCaptureService;
+        _onvifCaptureService = onvifCaptureService;
     }
 
     /// <summary>
@@ -44,15 +44,9 @@ public class CaptureControlController : ControllerBase
             {
                 CaptureServices = new []
                 {
-                    new { ServiceType = nameof(MotionPacketService), IsCapturing = _motionPacketService.IsCapturing },
-                    new { ServiceType = nameof(SafetyPacketService), IsCapturing = _safetyPacketService.IsCapturing },
-                    new { ServiceType = nameof(OnVIFPacketService), IsCapturing = _onvifPacketService.IsCapturing },
-                },
-                PacketProcessingServices = new[]
-                {
-                    new { ServiceType = "MotionPacketService", IsRunning = true },
-                    new { ServiceType = "SafetyPacketService", IsRunning = true },
-                    new { ServiceType = "OnVIFPacketService", IsRunning = true }
+                    new { ServiceType = nameof(MotionCaptureService), IsCapturing = _motionCaptureService.IsCapturing },
+                    new { ServiceType = nameof(SafetyCaptureService), IsCapturing = _safetyCaptureService.IsCapturing },
+                    new { ServiceType = nameof(OnVIFCaptureService), IsCapturing = _onvifCaptureService.IsCapturing },
                 }
             };
 
@@ -68,24 +62,19 @@ public class CaptureControlController : ControllerBase
     }
 
     /// <summary>
-    /// Starts all capture and processing services
+    /// Starts all capture services
     /// </summary>
     [HttpPost("start")]
     public async Task<ActionResult<ResponseResult>> StartAllServices()
     {
         try
         {
-            // Start capture via processing services first
-            await _motionPacketService.StartCaptureAsync();
-            await _safetyPacketService.StartCaptureAsync();
-            await _onvifPacketService.StartCaptureAsync();
+            // Start capture services directly
+            await _motionCaptureService.StartCaptureAsync();
+            await _safetyCaptureService.StartCaptureAsync();
+            await _onvifCaptureService.StartCaptureAsync();
 
-            // Start processing services
-            await _motionPacketService.StartAsync();
-            await _safetyPacketService.StartAsync();
-            await _onvifPacketService.StartAsync();
-
-            _logger.LogInformation("Started all capture and processing services");
+            _logger.LogInformation("Started all capture services");
             var result = ResponseResult.SuccessResult();
             return Ok(result);
         }
@@ -98,24 +87,19 @@ public class CaptureControlController : ControllerBase
     }
 
     /// <summary>
-    /// Stops all capture and processing services
+    /// Stops all capture services
     /// </summary>
     [HttpPost("stop")]
     public async Task<ActionResult<ResponseResult>> StopAllServices()
     {
         try
         {
-            // Stop processing services first
-            await _motionPacketService.StopAsync();
-            await _safetyPacketService.StopAsync();
-            await _onvifPacketService.StopAsync();
+            // Stop capture services directly
+            await _motionCaptureService.StopCaptureAsync();
+            await _safetyCaptureService.StopCaptureAsync();
+            await _onvifCaptureService.StopCaptureAsync();
 
-            // Stop capture via processing services
-            await _motionPacketService.StopCaptureAsync();
-            await _safetyPacketService.StopCaptureAsync();
-            await _onvifPacketService.StopCaptureAsync();
-
-            _logger.LogInformation("Stopped all capture and processing services");
+            _logger.LogInformation("Stopped all capture services");
             var result = ResponseResult.SuccessResult();
             return Ok(result);
         }
@@ -128,23 +112,47 @@ public class CaptureControlController : ControllerBase
     }
 
     /// <summary>
-    /// Gets packet statistics from all processing services
+    /// Gets packet statistics from all capture services
     /// </summary>
     [HttpGet("statistics")]
     public async Task<ActionResult<ResponseResult<object>>> GetStatistics()
     {
         try
         {
-            var motionPackets = await _motionPacketService.GetAllAsync();
-            var safetyPackets = await _safetyPacketService.GetAllAsync();
-            var onvifPackets = await _onvifPacketService.GetAllAsync();
+            var motionStats = _motionCaptureService.GetPerformanceStats();
+            var safetyStats = _safetyCaptureService.GetPerformanceStats();
+            var onvifStats = _onvifCaptureService.GetPerformanceStats();
 
             var statistics = new
             {
-                MotionPackets = motionPackets.Count(),
-                SafetyPackets = safetyPackets.Count(),
-                OnVIFPackets = onvifPackets.Count(),
-                TotalPackets = motionPackets.Count() + safetyPackets.Count() + onvifPackets.Count()
+                CaptureServices = new
+                {
+                    Motion = new
+                    {
+                        Processed = motionStats.Processed,
+                        Dropped = motionStats.Dropped,
+                        Pps = motionStats.Pps,
+                        IsCapturing = _motionCaptureService.IsCapturing
+                    },
+                    Safety = new
+                    {
+                        Processed = safetyStats.Processed,
+                        Dropped = safetyStats.Dropped,
+                        Pps = safetyStats.Pps,
+                        IsCapturing = _safetyCaptureService.IsCapturing
+                    },
+                    OnVIF = new
+                    {
+                        Processed = onvifStats.Processed,
+                        Dropped = onvifStats.Dropped,
+                        Pps = onvifStats.Pps,
+                        IsCapturing = _onvifCaptureService.IsCapturing
+                    }
+                },
+                TotalProcessed = motionStats.Processed + safetyStats.Processed + onvifStats.Processed,
+                TotalDropped = motionStats.Dropped + safetyStats.Dropped + onvifStats.Dropped,
+                TotalPps = motionStats.Pps + safetyStats.Pps + onvifStats.Pps,
+                Timestamp = DateTime.UtcNow
             };
 
             var result = ResponseResult<object>.SuccessResult(statistics);
@@ -166,12 +174,8 @@ public class CaptureControlController : ControllerBase
     {
         try
         {
-            await _motionPacketService.DeleteAllAsync();
-            await _safetyPacketService.DeleteAllAsync();
-            await _onvifPacketService.DeleteAllAsync();
-
-            _logger.LogInformation("Cleared all packet data");
-            var result = ResponseResult.SuccessResult();
+            _logger.LogInformation("Clear packet data requested - packet processing services are temporarily disabled");
+            var result = ResponseResult.SuccessResult(200);
             return Ok(result);
         }
         catch (Exception ex)

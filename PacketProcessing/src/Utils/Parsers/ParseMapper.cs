@@ -3,16 +3,6 @@ using PacketProcessing.Entities.Packet;
 namespace PacketProcessing.Utils.Parsers;
 
 /// <summary>
-/// Protocol types for packet parsing
-/// </summary>
-public enum Protocol
-{
-    TCP,
-    UDP,
-    HTTP
-}
-
-/// <summary>
 /// Mapper class that routes packet parsing to the appropriate parser based on entity type and protocol
 /// </summary>
 public static class ParseMapper

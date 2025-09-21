@@ -18,6 +18,9 @@ public sealed class OnVIFCaptureService : BaseCaptureService<OnVIFPacketEntity>
         Channel<OnVIFPacketEntity> channel)
         : base(logger, configurationManager, channel, "OnVIFCapture")
     {
+        // Initialize the parser logger
+        OnVifPacketParser.SetLogger(logger);
+        
         // Set up packet parser and handler
         _packetParser = ParseOnVIFPacket;
         _packetHandler = HandleOnVIFPacket;

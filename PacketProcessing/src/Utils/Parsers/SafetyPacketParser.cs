@@ -1,5 +1,6 @@
 using PacketProcessing.Entities.Packet;
 using System.Buffers.Binary;
+using Microsoft.Extensions.Logging;
 
 namespace PacketProcessing.Utils.Parsers;
 
@@ -8,6 +9,12 @@ namespace PacketProcessing.Utils.Parsers;
 /// </summary>
 public static class SafetyPacketParser
 {
+    private static ILogger? _logger;
+    
+    public static void SetLogger(ILogger logger)
+    {
+        _logger = logger;
+    }
     private static readonly IReadOnlyDictionary<ushort, string> DO_PBE = new Dictionary<ushort, string>
     {
         { 0x0010, "1" },
@@ -35,103 +42,178 @@ public static class SafetyPacketParser
 
     /// <summary>
     /// Parses raw packet data into a SafetyPacketEntity
+    /// Based on TypeScript implementation that parses the last 20 bytes as Safety PDU
     /// </summary>
     /// <param name="rawPacket">Raw packet bytes</param>
     /// <returns>Parsed SafetyPacketEntity or null if parsing fails</returns>
     public static SafetyPacketEntity? Parse(ReadOnlySpan<byte> rawPacket)
     {
-        // ---- Ethernet ----
-        if (rawPacket.Length < 14) return null;
-        int offset;
-
-        // EtherType (with VLAN/QinQ handling)
-        ushort ethType = ReadBE16(rawPacket[12..]);
-        offset = 14;
-
-        // VLAN (0x8100) / QinQ (0x88A8)
-        if (ethType == 0x8100 || ethType == 0x88A8)
+        try
         {
-            if (rawPacket.Length < offset + 4) return null;
-            ethType = ReadBE16(rawPacket[(offset + 2)..]);
-            offset += 4;
-        }
-
-        // ---- IPv4 only (0x0800) ----
-        if (ethType != 0x0800) return null;
-        if (rawPacket.Length < offset + 20) return null; // min IPv4 header
-
-        var ipStart = offset;
-        byte verIhl = rawPacket[ipStart];
-        int version = verIhl >> 4;
-        if (version != 4) return null;
-
-        int ihlBytes = (verIhl & 0x0F) * 4;
-        if (ihlBytes < 20) return null;
-        if (rawPacket.Length < ipStart + ihlBytes) return null;
-
-        byte protocol = rawPacket[ipStart + 9];
-        if (protocol != 17) return null; // UDP
-
-        // Source/Dest IPs
-        var dstIpSpan = rawPacket.Slice(ipStart + 16, 4);
-        string dstIp = ToIPv4(dstIpSpan);
-
-        // ---- UDP ----
-        int udpStart = ipStart + ihlBytes;
-        if (rawPacket.Length < udpStart + 8) return null;
-
-        // UDP length check (optional but nice)
-        ushort udpLen = ReadBE16(rawPacket[(udpStart + 4)..]);
-        if (udpLen < 8) return null;
-        if (rawPacket.Length < udpStart + udpLen) return null;
-
-        int pduStart = udpStart + 8;
-        int pduLen = udpLen - 8;
-        var pdu = rawPacket.Slice(pduStart, pduLen);
-
-        // ---- SAFETY/Modbus-like PDU ----
-        // Layout:
-        // 0..1  TID
-        // 2..3  PID
-        // 4..5  Length  (UnitID + FC + DataN)
-        // 6     UnitID
-        // 7     FunctionCode
-        // 8..9  param1
-        // 10..11 param2
-        // 12..13 param3
-        // 14..15 param4
-        // 16..17 DO
-        // 18..19 STATE
-        if (pdu.Length < 20) return null;
-
-        // Extract DO/STATE codes (big-endian)
-        ushort doCode = ReadBE16(pdu.Slice(16, 2));
-        ushort stateCode = ReadBE16(pdu.Slice(18, 2));
-
-        bool isPbe = dstIp == "132.8.7.101";
-        bool isSbe = dstIp == "132.8.7.102";
-        IReadOnlyDictionary<ushort, string>? doMap =
-            isPbe ? DO_PBE :
-            isSbe ? DO_SBE : null;
+            _logger?.LogDebug("Starting safety packet parsing. Packet length: {Length} bytes", rawPacket.Length);
+            _logger?.LogDebug("Raw packet data: {Data}", BitConverter.ToString(rawPacket.ToArray()).Replace("-", ""));
+            
+            // ---- Parse full packet to extract destination IP ----
+            if (rawPacket.Length < 34)
+            {
+                _logger?.LogWarning("Packet too short for safety parsing. Length: {Length} bytes, minimum required: 34", rawPacket.Length);
+                return null; // Minimum Ethernet + IP + UDP header
+            }
         
-        string doText = doMap != null && doMap.TryGetValue(doCode, out var doName)
-            ? doName
-            : $"0x{doCode:X4}";
+            // Check for different packet formats and headers
+            int offset = 0;
+            
+            // Check for libpcap capture header (4 bytes) followed by IP header
+            if (rawPacket.Length >= 8 && rawPacket[0] == 0x02 && rawPacket[4] == 0x45)
+            {
+                // Libpcap capture header (4 bytes) + IP header
+                offset = 4;
+                _logger?.LogDebug("Libpcap capture header detected (4-byte prefix)");
+            }
+            // Look for Ethernet header by checking if first bytes look like Ethernet
+            else if (rawPacket.Length >= 14 && ReadBE16(rawPacket.Slice(12, 2)) == 0x0800)
+            {
+                // Standard Ethernet header
+                offset = 14;
+                _logger?.LogDebug("Standard Ethernet header detected");
+            }
+            else if (rawPacket.Length >= 20 && rawPacket[0] == 0x45) // IP header starts with 0x45 (Version 4, IHL 5)
+            {
+                // Loopback packet - no Ethernet header, starts directly with IP
+                offset = 0;
+                _logger?.LogDebug("Loopback packet detected (no Ethernet header)");
+            }
+            else
+            {
+                _logger?.LogWarning("Unknown packet format. First bytes: {FirstBytes}", BitConverter.ToString(rawPacket.Slice(0, Math.Min(20, rawPacket.Length)).ToArray()));
+                return null;
+            }
+            
+            // Verify we have enough data for IP header
+            if (rawPacket.Length < offset + 20)
+            {
+                _logger?.LogWarning("Packet too short for IP header. Length: {Length}, required: {Required}", rawPacket.Length, offset + 20);
+                return null; // Minimum IP header
+            }
+        
+            // Parse IP header
+            int ipStart = offset;
+            byte verIhl = rawPacket[ipStart];
+            int version = verIhl >> 4;
+            int ihlBytes = (verIhl & 0x0F) * 4;
+            _logger?.LogDebug("IP version: {Version}, IHL: {Ihl} bytes", version, ihlBytes);
+            
+            if (version != 4)
+            {
+                _logger?.LogWarning("Not IPv4 packet. Version: {Version}, expected: 4", version);
+                return null;
+            }
+            
+            if (ihlBytes < 20)
+            {
+                _logger?.LogWarning("Invalid IP header length. IHL: {Ihl} bytes, minimum: 20", ihlBytes);
+                return null;
+            }
+            if (rawPacket.Length < ipStart + ihlBytes)
+            {
+                _logger?.LogWarning("Packet too short for IP header. Length: {Length}, required: {Required}", rawPacket.Length, ipStart + ihlBytes);
+                return null;
+            }
+            
+            // Extract destination IP
+            string dstIp = ToIPv4(rawPacket.Slice(ipStart + 16, 4));
+            _logger?.LogDebug("Destination IP: {DstIp}", dstIp);
+            
+            // Parse UDP header
+            int udpStart = ipStart + ihlBytes;
+            if (rawPacket.Length < udpStart + 8)
+            {
+                _logger?.LogWarning("Packet too short for UDP header. Length: {Length}, required: {Required}", rawPacket.Length, udpStart + 8);
+                return null; // Minimum UDP header
+            }
+        
+            // Extract the UDP payload
+            int udpPayloadStart = udpStart + 8;
+            if (udpPayloadStart + 20 > rawPacket.Length)
+            {
+                _logger?.LogWarning("Packet too short for UDP payload. Length: {Length}, required: {Required}", rawPacket.Length, udpPayloadStart + 20);
+                return null;
+            }
+            
+            // Get the UDP payload length
+            ushort udpLength = ReadBE16(rawPacket.Slice(udpStart + 4, 2));
+            int udpPayloadLength = udpLength - 8; // Subtract UDP header length
+            _logger?.LogDebug("UDP length: {UdpLength}, payload length: {PayloadLength}", udpLength, udpPayloadLength);
+            
+            if (udpPayloadLength < 20)
+            {
+                _logger?.LogWarning("UDP payload too short for safety PDU. Payload length: {Length}, required: 20", udpPayloadLength);
+                return null;
+            }
+            
+            // Extract the Safety PDU from the UDP payload
+            var pdu = rawPacket.Slice(rawPacket.Length - 20, 20);
+            _logger?.LogDebug("Safety PDU (last 20 bytes): {Pdu}", BitConverter.ToString(pdu.ToArray()).Replace("-", ""));
+        
+            // ---- SAFETY/Modbus-like PDU (20 bytes) ----
+            // Layout (based on TypeScript):
+            // 0..1  TID (Transaction ID)
+            // 2..3  PID (Protocol ID) 
+            // 4..5  Length (UnitID + FC + DataN)
+            // 6     UnitID
+            // 7     FunctionCode
+            // 8..9  param1
+            // 10..11 param2
+            // 12..13 param3
+            // 14..15 param4
+            // 16..17 DO (Digital Output)
+            // 18..19 STATE
+            
+            // Extract DO and STATE values
+            ushort doValue = pdu.Length > 18 ? ReadBE16(pdu.Slice(16, 2)) : (ushort)0;
+            ushort stateValue = ReadBE16(pdu.Slice(18, 2));
+            _logger?.LogDebug("DO value: 0x{DoValue:X4}, State value: 0x{StateValue:X4}", doValue, stateValue);
 
-        string stateText = STATE.TryGetValue(stateCode, out var stName)
-            ? stName
-            : $"0x{stateCode:X4}";
+            // Determine device type and DO description based on destination IP
+            bool isPbe = dstIp == "132.8.7.101";
+            bool isSbe = dstIp == "132.8.7.102";
+            bool isLocalhost = dstIp == "127.0.0.1";
+            _logger?.LogDebug("Device type - PBE: {IsPbe}, SBE: {IsSbe}, Localhost: {IsLocalhost}", isPbe, isSbe, isLocalhost);
+            
+            IReadOnlyDictionary<ushort, string>? doMap = isPbe ? DO_PBE : (isSbe || isLocalhost) ? DO_SBE : null;
+            
+            string doDescription = doMap?.TryGetValue(doValue, out var doName) == true 
+                ? doName 
+                : $"0x{doValue:X4}";
 
-        // Build entity
-        return new SafetyPacketEntity
+            string stateDescription = STATE.TryGetValue(stateValue, out var stateName) 
+                ? stateName 
+                : $"0x{stateValue:X4}";
+
+            _logger?.LogDebug("Parsed values - DO: {DoDescription}, State: {StateDescription}", doDescription, stateDescription);
+
+            // Build entity (matching TypeScript SafetyDTO structure)
+            var entity = new SafetyPacketEntity
+            {
+                Id = Guid.NewGuid(),
+                Timestamp = DateTime.UtcNow,
+                Type = isPbe, // true for PBE, false for SBE
+                OpCode = doValue.ToString(),
+                OpCodeDescription = doDescription,
+                State = stateDescription
+            };
+
+            _logger?.LogInformation("Successfully parsed safety packet - DO: {DoDescription}, State: {StateDescription}, Device: {DeviceType}", 
+                doDescription, stateDescription, isPbe ? "PBE" : isSbe ? "SBE" : "Unknown");
+            
+            return entity;
+        }
+        catch (Exception ex)
         {
-            Id = Guid.NewGuid(),
-            Timestamp = DateTime.UtcNow,
-            Type = isPbe,
-            OpCode = doCode.ToString(),
-            OpCodeDescription = doText,
-            State = stateText
-        };
+            _logger?.LogError(ex, "Error parsing safety packet. Packet length: {Length} bytes, Raw data: {Data}", 
+                rawPacket.Length, BitConverter.ToString(rawPacket.ToArray()).Replace("-", ""));
+            return null;
+        }
     }
 
     private static ushort ReadBE16(ReadOnlySpan<byte> s) => 

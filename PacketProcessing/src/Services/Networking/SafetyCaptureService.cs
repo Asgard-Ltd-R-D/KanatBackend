@@ -18,6 +18,9 @@ public sealed class SafetyCaptureService : BaseCaptureService<SafetyPacketEntity
         Channel<SafetyPacketEntity> channel)
         : base(logger, configurationManager, channel, "SafetyCapture")
     {
+        // Initialize the parser logger
+        SafetyPacketParser.SetLogger(logger);
+        
         // Set up packet parser and handler
         _packetParser = ParseSafetyPacket;
         _packetHandler = HandleSafetyPacket;
@@ -32,7 +35,11 @@ public sealed class SafetyCaptureService : BaseCaptureService<SafetyPacketEntity
         if (rawPacket.IsEmpty) return null!;
 
         var packet = ParseMapper.Map<SafetyPacketEntity>(rawPacket);
-        if (packet == null) return null!;
+        if (packet == null) 
+        {
+            _logger.LogCritical("Failed to parse safety packet");
+            return null!;
+        }
 
         // Notify observers after successful parsing
         NotifyObservers(packet);

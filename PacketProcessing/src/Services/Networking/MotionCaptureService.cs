@@ -18,6 +18,9 @@ public sealed class MotionCaptureService : BaseCaptureService<MotionPacketEntity
         Channel<MotionPacketEntity> channel)
         : base(logger, configurationManager, channel, "MotionCapture")
     {
+        // Initialize the parser logger
+        MotionPacketParser.SetLogger(logger);
+        
         // Set up packet parser and handler
         _packetParser = ParseMotionPacket;
         _packetHandler = HandleMotionPacket;

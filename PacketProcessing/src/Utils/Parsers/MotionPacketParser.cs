@@ -1,5 +1,6 @@
 using PacketProcessing.Entities.Packet;
 using System.Buffers.Binary;
+using Microsoft.Extensions.Logging;
 
 namespace PacketProcessing.Utils.Parsers;
 
@@ -8,6 +9,12 @@ namespace PacketProcessing.Utils.Parsers;
 /// </summary>
 public static class MotionPacketParser
 {
+    private static ILogger? _logger;
+    
+    public static void SetLogger(ILogger logger)
+    {
+        _logger = logger;
+    }
     public static string? MotionDeviceIp { get; set; } = null;
     // ---- OPCODE map (subset, extend as needed to match your Lua table) ----
     private static readonly IReadOnlyDictionary<ushort, string> OPCODES = new Dictionary<ushort, string>
@@ -170,8 +177,17 @@ public static class MotionPacketParser
     /// <returns>Parsed MotionPacketEntity or null if parsing fails</returns>
     public static MotionPacketEntity? Parse(ReadOnlySpan<byte> rawPacket)
     {
-        // ---- Ethernet ----
-        if (rawPacket.Length < 14) return null;
+        try
+        {
+            _logger?.LogDebug("Starting motion packet parsing. Packet length: {Length} bytes", rawPacket.Length);
+            _logger?.LogDebug("Raw packet data: {Data}", BitConverter.ToString(rawPacket.ToArray()).Replace("-", ""));
+            
+            // ---- Ethernet ----
+            if (rawPacket.Length < 14)
+            {
+                _logger?.LogWarning("Packet too short for motion parsing. Length: {Length} bytes, minimum required: 14", rawPacket.Length);
+                return null;
+            }
         int offset;
 
         // EtherType (with VLAN/QinQ handling)
@@ -258,16 +274,28 @@ public static class MotionPacketParser
         string opcodeText = OPCODES.TryGetValue(opcode, out var name) ? name : $"0x{opcode:X4}";
 
         // Build entity
-        return new MotionPacketEntity
+            var entity = new MotionPacketEntity
+            {
+                Id = Guid.NewGuid(),
+                Timestamp = DateTime.UtcNow,
+                Type = isRpt,
+                Axis = axisId,
+                OpCode = $"0x{opcode:X4}",
+                OpCodeDescription = opcodeText,
+                FloatValue = floats is { Count: > 0 } ? floats[0] : null
+            };
+
+            _logger?.LogInformation("Successfully parsed motion packet - Type: {Type}, Axis: {Axis}, OpCode: {OpCode}, Description: {Description}, FloatValue: {FloatValue}", 
+                isRpt ? "RPT" : "CMD", axisId, $"0x{opcode:X4}", opcodeText, floats is { Count: > 0 } ? floats[0] : null);
+            
+            return entity;
+        }
+        catch (Exception ex)
         {
-            Id = Guid.NewGuid(),
-            Timestamp = DateTime.UtcNow,
-            Type = isRpt,
-            Axis = axisId,
-            OpCode = $"0x{opcode:X4}",
-            OpCodeDescription = opcodeText,
-            FloatValue = floats is { Count: > 0 } ? floats[0] : null
-        };
+            _logger?.LogError(ex, "Error parsing motion packet. Packet length: {Length} bytes, Raw data: {Data}", 
+                rawPacket.Length, BitConverter.ToString(rawPacket.ToArray()).Replace("-", ""));
+            return null;
+        }
     }
 
     private static ushort ReadBE16(ReadOnlySpan<byte> s) => 

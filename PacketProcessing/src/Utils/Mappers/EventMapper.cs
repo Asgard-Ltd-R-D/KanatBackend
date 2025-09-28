@@ -6,7 +6,7 @@ namespace PacketProcessing.Utils.Mappers;
 /// <summary>
 /// Mapper for converting between EventEntity and EventDto
 /// </summary>
-public static class EventMapper
+public sealed class EventMapper : IMapper<EventDto, EventEntity>
 {
     /// <summary>
     /// Maps an EventEntity to an EventDto
@@ -15,8 +15,7 @@ public static class EventMapper
     /// <returns>The mapped DTO</returns>
     public static EventDto ToDto(EventEntity entity)
     {
-        if (entity == null)
-            throw new ArgumentNullException(nameof(entity));
+        ArgumentNullException.ThrowIfNull(entity);
 
         return new EventDto
         {
@@ -28,15 +27,12 @@ public static class EventMapper
         };
     }
 
-    /// <summary>
-    /// Maps an EventDto to an EventEntity
     /// </summary>
     /// <param name="dto">The DTO to map</param>
     /// <returns>The mapped entity</returns>
     public static EventEntity ToEntity(EventDto dto)
     {
-        if (dto == null)
-            throw new ArgumentNullException(nameof(dto));
+        ArgumentNullException.ThrowIfNull(dto);
 
         return new EventEntity
         {
@@ -46,31 +42,5 @@ public static class EventMapper
             End = dto.End,
             RangeId = dto.RangeId
         };
-    }
-
-    /// <summary>
-    /// Maps a collection of EventEntity to a collection of EventDto
-    /// </summary>
-    /// <param name="entities">The entities to map</param>
-    /// <returns>The mapped DTOs</returns>
-    public static IEnumerable<EventDto> ToDtoCollection(IEnumerable<EventEntity> entities)
-    {
-        if (entities == null)
-            throw new ArgumentNullException(nameof(entities));
-
-        return entities.Select(ToDto);
-    }
-
-    /// <summary>
-    /// Maps a collection of EventDto to a collection of EventEntity
-    /// </summary>
-    /// <param name="dtos">The DTOs to map</param>
-    /// <returns>The mapped entities</returns>
-    public static IEnumerable<EventEntity> ToEntityCollection(IEnumerable<EventDto> dtos)
-    {
-        if (dtos == null)
-            throw new ArgumentNullException(nameof(dtos));
-
-        return dtos.Select(ToEntity);
     }
 }

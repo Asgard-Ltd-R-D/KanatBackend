@@ -6,7 +6,7 @@ namespace PacketProcessing.Utils.Mappers;
 /// <summary>
 /// Mapper for converting between SafetyPacketEntity and SafetyPacketDto
 /// </summary>
-public static class SafetyPacketMapper
+public sealed class SafetyPacketMapper : IMapper<SafetyPacketDto, SafetyPacketEntity>
 {
     /// <summary>
     /// Maps a SafetyPacketEntity to a SafetyPacketDto
@@ -15,8 +15,7 @@ public static class SafetyPacketMapper
     /// <returns>The mapped DTO</returns>
     public static SafetyPacketDto ToDto(SafetyPacketEntity entity)
     {
-        if (entity == null)
-            throw new ArgumentNullException(nameof(entity));
+        ArgumentNullException.ThrowIfNull(entity);
 
         return new SafetyPacketDto
         {
@@ -36,8 +35,7 @@ public static class SafetyPacketMapper
     /// <returns>The mapped entity</returns>
     public static SafetyPacketEntity ToEntity(SafetyPacketDto dto)
     {
-        if (dto == null)
-            throw new ArgumentNullException(nameof(dto));
+        ArgumentNullException.ThrowIfNull(dto);
 
         return new SafetyPacketEntity
         {
@@ -48,31 +46,5 @@ public static class SafetyPacketMapper
             OpCodeDescription = dto.OpCodeDescription,
             State = dto.State
         };
-    }
-
-    /// <summary>
-    /// Maps a collection of SafetyPacketEntity to a collection of SafetyPacketDto
-    /// </summary>
-    /// <param name="entities">The entities to map</param>
-    /// <returns>The mapped DTOs</returns>
-    public static IEnumerable<SafetyPacketDto> ToDtoCollection(IEnumerable<SafetyPacketEntity> entities)
-    {
-        if (entities == null)
-            throw new ArgumentNullException(nameof(entities));
-
-        return entities.Select(ToDto);
-    }
-
-    /// <summary>
-    /// Maps a collection of SafetyPacketDto to a collection of SafetyPacketEntity
-    /// </summary>
-    /// <param name="dtos">The DTOs to map</param>
-    /// <returns>The mapped entities</returns>
-    public static IEnumerable<SafetyPacketEntity> ToEntityCollection(IEnumerable<SafetyPacketDto> dtos)
-    {
-        if (dtos == null)
-            throw new ArgumentNullException(nameof(dtos));
-
-        return dtos.Select(ToEntity);
     }
 }

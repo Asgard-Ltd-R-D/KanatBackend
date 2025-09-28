@@ -6,7 +6,7 @@ namespace PacketProcessing.Utils.Mappers;
 /// <summary>
 /// Mapper for converting between HitEntity and HitDto
 /// </summary>
-public static class HitMapper
+public sealed class HitMapper : IMapper<HitDto, HitEntity>
 {
     /// <summary>
     /// Maps a HitEntity to a HitDto
@@ -15,8 +15,7 @@ public static class HitMapper
     /// <returns>The mapped DTO</returns>
     public static HitDto ToDto(HitEntity entity)
     {
-        if (entity == null)
-            throw new ArgumentNullException(nameof(entity));
+        ArgumentNullException.ThrowIfNull(entity);
 
         return new HitDto
         {
@@ -39,8 +38,7 @@ public static class HitMapper
     /// <returns>The mapped entity</returns>
     public static HitEntity ToEntity(HitDto dto)
     {
-        if (dto == null)
-            throw new ArgumentNullException(nameof(dto));
+        ArgumentNullException.ThrowIfNull(dto);
 
         return new HitEntity
         {
@@ -54,31 +52,5 @@ public static class HitMapper
             TargetId = dto.TargetId,
             EventId = dto.EventId
         };
-    }
-
-    /// <summary>
-    /// Maps a collection of HitEntity to a collection of HitDto
-    /// </summary>
-    /// <param name="entities">The entities to map</param>
-    /// <returns>The mapped DTOs</returns>
-    public static IEnumerable<HitDto> ToDtoCollection(IEnumerable<HitEntity> entities)
-    {
-        if (entities == null)
-            throw new ArgumentNullException(nameof(entities));
-
-        return entities.Select(ToDto);
-    }
-
-    /// <summary>
-    /// Maps a collection of HitDto to a collection of HitEntity
-    /// </summary>
-    /// <param name="dtos">The DTOs to map</param>
-    /// <returns>The mapped entities</returns>
-    public static IEnumerable<HitEntity> ToEntityCollection(IEnumerable<HitDto> dtos)
-    {
-        if (dtos == null)
-            throw new ArgumentNullException(nameof(dtos));
-
-        return dtos.Select(ToEntity);
     }
 }

@@ -6,7 +6,7 @@ namespace PacketProcessing.Utils.Mappers;
 /// <summary>
 /// Mapper for converting between OnVIFPacketEntity and OnVIFPacketDto
 /// </summary>
-public static class OnVIFPacketMapper
+public sealed class OnVIFPacketMapper : IMapper<OnVIFPacketDto, OnVIFPacketEntity>
 {
     /// <summary>
     /// Maps an OnVIFPacketEntity to an OnVIFPacketDto
@@ -15,8 +15,7 @@ public static class OnVIFPacketMapper
     /// <returns>The mapped DTO</returns>
     public static OnVIFPacketDto ToDto(OnVIFPacketEntity entity)
     {
-        if (entity == null)
-            throw new ArgumentNullException(nameof(entity));
+        ArgumentNullException.ThrowIfNull(entity);
 
         return new OnVIFPacketDto
         {
@@ -36,8 +35,7 @@ public static class OnVIFPacketMapper
     /// <returns>The mapped entity</returns>
     public static OnVIFPacketEntity ToEntity(OnVIFPacketDto dto)
     {
-        if (dto == null)
-            throw new ArgumentNullException(nameof(dto));
+        ArgumentNullException.ThrowIfNull(dto);
 
         return new OnVIFPacketEntity
         {
@@ -48,31 +46,5 @@ public static class OnVIFPacketMapper
             Zoom = dto.Zoom,
             Measurement = dto.Measurement
         };
-    }
-
-    /// <summary>
-    /// Maps a collection of OnVIFPacketEntity to a collection of OnVIFPacketDto
-    /// </summary>
-    /// <param name="entities">The entities to map</param>
-    /// <returns>The mapped DTOs</returns>
-    public static IEnumerable<OnVIFPacketDto> ToDtoCollection(IEnumerable<OnVIFPacketEntity> entities)
-    {
-        if (entities == null)
-            throw new ArgumentNullException(nameof(entities));
-
-        return entities.Select(ToDto);
-    }
-
-    /// <summary>
-    /// Maps a collection of OnVIFPacketDto to a collection of OnVIFPacketEntity
-    /// </summary>
-    /// <param name="dtos">The DTOs to map</param>
-    /// <returns>The mapped entities</returns>
-    public static IEnumerable<OnVIFPacketEntity> ToEntityCollection(IEnumerable<OnVIFPacketDto> dtos)
-    {
-        if (dtos == null)
-            throw new ArgumentNullException(nameof(dtos));
-
-        return dtos.Select(ToEntity);
     }
 }

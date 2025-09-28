@@ -2,18 +2,18 @@ using Microsoft.AspNetCore.SignalR.Client;
 
 namespace PacketProcessing.SignalR;
 
-public interface IHubClientHost
+public interface IHubClient
 {
     HubConnection Connection { get; }
     Task EnsureStartedAsync(CancellationToken ct = default);
 }
 
-public sealed class HubClientHost : IHubClientHost, IAsyncDisposable
+public sealed class HubClient : IHubClient, IAsyncDisposable
 {
     private readonly SemaphoreSlim _gate = new(1,1);
     public HubConnection Connection { get; }
 
-    public HubClientHost(string hubUrl, IRetryPolicy? retryPolicy = null)
+    public HubClient(string hubUrl, IRetryPolicy? retryPolicy = null)
     {
         Connection = new HubConnectionBuilder()
             .WithUrl(hubUrl)

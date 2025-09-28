@@ -8,9 +8,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Hosting;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Services.Networking;
-using PacketProcessing.Services.Processing;
-using PacketProcessing.SignalR;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 
 /// <summary>
 /// Configuration and Dependency Injection Manager
@@ -71,30 +70,48 @@ public class ConfigurationInjection
             });
         });
         
-        // Register Capture Services as singletons so they can be injected,
-        // and also expose them as hosted services using the same instances
-        builder.Services.AddSingleton<MotionCaptureService>();
-        builder.Services.AddSingleton<SafetyCaptureService>();
-        builder.Services.AddSingleton<OnVIFCaptureService>();
-
-        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<MotionCaptureService>());
-        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<SafetyCaptureService>());
-        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<OnVIFCaptureService>());
-        
-        // Register SignalR Hub Client Host
-        builder.Services.AddSingleton<IHubClientHost>(sp =>
+        // Register Capture Services as singletons
+        builder.Services.AddSingleton<CaptureService<MotionPacketEntity>>(sp =>
         {
+            var logger = sp.GetRequiredService<ILogger<CaptureService<MotionPacketEntity>>>();
             var config = sp.GetRequiredService<IConfiguration>();
-            var baseUrl = config.GetValue<string>("Application:Url");
-            var hubUrl = $"{baseUrl}/realtime";
-            return new HubClientHost(hubUrl);
+            var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
+            var deviceManager = sp.GetRequiredService<DeviceManager>();
+            return new CaptureService<MotionPacketEntity>(logger, config, channel, "MotionCapture", deviceManager);
         });
         
-        // Register Packet Processing Services as regular services (not background services)
-        // Temporarily commented out due to dependency injection issues
-        // builder.Services.AddScoped<MotionPacketService>();
-        // builder.Services.AddScoped<SafetyPacketService>();
-        // builder.Services.AddScoped<OnVIFPacketService>();
+        builder.Services.AddSingleton<CaptureService<SafetyPacketEntity>>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<CaptureService<SafetyPacketEntity>>>();
+            var config = sp.GetRequiredService<IConfiguration>();
+            var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
+            var deviceManager = sp.GetRequiredService<DeviceManager>();
+            return new CaptureService<SafetyPacketEntity>(logger, config, channel, "SafetyCapture", deviceManager);
+        });
+        
+        builder.Services.AddSingleton<CaptureService<OnVIFPacketEntity>>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<CaptureService<OnVIFPacketEntity>>>();
+            var config = sp.GetRequiredService<IConfiguration>();
+            var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
+            var deviceManager = sp.GetRequiredService<DeviceManager>();
+            return new CaptureService<OnVIFPacketEntity>(logger, config, channel, "OnVIFCapture", deviceManager);
+        });
+
+        // Register DeviceManager once
+        builder.Services.AddSingleton<DeviceManager>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<DeviceManager>>();
+            var dm = new DeviceManager(logger);
+            dm.InitializeDevices();
+            return dm;
+        });
+                
+        // Register as hosted services
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CaptureService<MotionPacketEntity>>());
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CaptureService<SafetyPacketEntity>>());
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CaptureService<OnVIFPacketEntity>>());
+    
         
         // Register Services (including CORS)
         CorsConfiguration.ConfigureCorsServices(builder.Services);

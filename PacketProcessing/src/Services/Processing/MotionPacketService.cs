@@ -9,10 +9,6 @@ using PacketProcessing.Utils.Enums;
 using QuestDB;
 using QuestDB.Senders;
 using PacketProcessing.Config;
-using Microsoft.AspNetCore.SignalR.Client;
-using PacketProcessing.Utils.Observers;
-using PacketProcessing.Utils;
-using PacketProcessing.Utils.Constants;
 
 namespace PacketProcessing.Services.Processing;
 
@@ -23,35 +19,30 @@ public sealed record SampleMotionPacket(MotionPacketEntity Packet = null!, DateT
 /// </summary>
 public sealed class MotionPacketService : BasePacketService<MotionPacketEntity>
 {
-    private readonly SignalRClientSession _session;
+    private readonly HubClient _hubClient;
     private readonly IPacketRepository<MotionPacketEntity> _repository;
-    private readonly string _questDbConnectionString;
-    private readonly MotionCaptureService _captureService;
+        private readonly string _questDbConnectionString;
+    private readonly CaptureService<MotionPacketEntity> _captureService;
 
-    private IProducer<MotionPacketEntity> _packetSamplingProducer = null!;
-    private PacketSamplingObserver<MotionPacketEntity> _packetSamplingObserver = null!;
 
     public MotionPacketService(
         ILogger<MotionPacketService> logger,
         IPacketRepository<MotionPacketEntity> repository,
         Channel<MotionPacketEntity> channel,
-        MotionCaptureService captureService,
+        CaptureService<MotionPacketEntity> captureService,
         IConfiguration configuration,
-        IHubClientHost host)
+        HubClient hubClient)
         : base(logger, channel, configuration)
     {
-        _session = new SignalRClientSession(host);
         _repository = repository;
         _captureService = captureService;
+        _hubClient = hubClient;
         
         // Get QuestDB connection string from configuration
         var questDbOptions = configuration.GetSection("QuestDb").Get<QuestDbConfiguration>();
         _questDbConnectionString = questDbOptions?.GetPostgresConnectionString() ?? 
                                   configuration.GetConnectionString("QuestDb") ?? 
                                   throw new InvalidOperationException("QuestDB connection string not found");
-        
-        // Mount producers and setup observers
-        SetupPacketSamplingObserver();
     }
 
     #region Data Access Methods
@@ -117,31 +108,6 @@ public sealed class MotionPacketService : BasePacketService<MotionPacketEntity>
     #endregion
 
     #region Observer Setup Methods
-
-    private void SetupPacketSamplingObserver()
-    {
-        // Get sampling interval from configuration
-        var samplingIntervalMs = _configuration.GetSection("DataPipes:MotionCapture:Sampling:IntervalMs").Get<int>();
-        if (samplingIntervalMs == 0)
-        {
-            samplingIntervalMs = Constants.DEFAULT_PACKET_SAMPLE_MS;
-        }
-
-        // Create producer for packet sampling
-        _packetSamplingProducer = _session.AttachProducer<MotionPacketEntity>(
-            (hub, packet, ct) => hub.InvokeAsync("SendMotionPacketSample", packet, ct));
-
-        // Create packet sampling observer with configured interval
-        _packetSamplingObserver = new PacketSamplingObserver<MotionPacketEntity>(
-            new LoggerFactory().CreateLogger<PacketSamplingObserver<MotionPacketEntity>>(),
-            _packetSamplingProducer,
-            samplingIntervalMs);
-
-        // Subscribe observer to capture service
-        _captureService.Subscribe(_packetSamplingObserver);
-        
-        _logger.LogInformation("Motion packet sampling observer subscribed to capture service with {IntervalMs}ms sampling interval", samplingIntervalMs);
-    }
 
     #endregion
 }

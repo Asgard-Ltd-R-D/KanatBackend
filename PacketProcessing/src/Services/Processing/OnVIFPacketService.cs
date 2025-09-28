@@ -9,10 +9,6 @@ using PacketProcessing.Utils.Enums;
 using QuestDB;
 using QuestDB.Senders;
 using PacketProcessing.Config;
-using Microsoft.AspNetCore.SignalR.Client;
-using PacketProcessing.Utils.Observers;
-using PacketProcessing.Utils;
-using PacketProcessing.Utils.Constants;
 
 namespace PacketProcessing.Services.Processing;
 
@@ -23,35 +19,30 @@ public sealed record SampleOnVifPacket(OnVIFPacketEntity Packet = null!, DateTim
 /// </summary>
 public sealed class OnVIFPacketService : BasePacketService<OnVIFPacketEntity>
 {
-    private readonly SignalRClientSession _session;
+    private readonly HubClient _hubClient;
     private readonly IPacketRepository<OnVIFPacketEntity> _repository;
     private readonly string _questDbConnectionString;
-    private readonly OnVIFCaptureService _captureService;
+    private readonly CaptureService<OnVIFPacketEntity> _captureService;
 
-    private IProducer<OnVIFPacketEntity> _packetSamplingProducer = null!;
-    private PacketSamplingObserver<OnVIFPacketEntity> _packetSamplingObserver = null!;
 
     public OnVIFPacketService(
         ILogger<OnVIFPacketService> logger,
         IPacketRepository<OnVIFPacketEntity> repository,
         Channel<OnVIFPacketEntity> channel,
-        OnVIFCaptureService captureService,
+        CaptureService<OnVIFPacketEntity> captureService,
         IConfiguration configuration,
-        IHubClientHost host)
+        HubClient hubClient)
         : base(logger, channel, configuration)
     {
-        _session = new SignalRClientSession(host);
         _repository = repository;
         _captureService = captureService;
+        _hubClient = hubClient;
         
         // Get QuestDB connection string from configuration
         var questDbOptions = configuration.GetSection("QuestDb").Get<QuestDbConfiguration>();
         _questDbConnectionString = questDbOptions?.GetPostgresConnectionString() ?? 
                                   configuration.GetConnectionString("QuestDb") ?? 
                                   throw new InvalidOperationException("QuestDB connection string not found");
-
-        // Setup packet sampling observer
-        SetupPacketSamplingObserver();
     }
 
     #region Data Access Methods
@@ -117,31 +108,6 @@ public sealed class OnVIFPacketService : BasePacketService<OnVIFPacketEntity>
     #endregion
 
     #region Observer Setup Methods
-
-    private void SetupPacketSamplingObserver()
-    {
-        // Get sampling interval from configuration
-        var samplingIntervalMs = _configuration.GetSection("DataPipes:OnVIFCapture:Sampling:IntervalMs").Get<int>();
-        if (samplingIntervalMs == 0)
-        {
-            samplingIntervalMs = Constants.DEFAULT_PACKET_SAMPLE_MS;
-        }
-
-        // Create producer for packet sampling
-        _packetSamplingProducer = _session.AttachProducer<OnVIFPacketEntity>(
-            (hub, packet, ct) => hub.InvokeAsync("SendOnVIFPacketSample", packet, ct));
-
-        // Create packet sampling observer with configured interval
-        _packetSamplingObserver = new PacketSamplingObserver<OnVIFPacketEntity>(
-            new LoggerFactory().CreateLogger<PacketSamplingObserver<OnVIFPacketEntity>>(),
-            _packetSamplingProducer,
-            samplingIntervalMs);
-
-        // Subscribe observer to capture service
-        _captureService.Subscribe(_packetSamplingObserver);
-        
-        _logger.LogInformation("OnVIF packet sampling observer subscribed to capture service with {IntervalMs}ms sampling interval", samplingIntervalMs);
-    }
 
     #endregion
 }

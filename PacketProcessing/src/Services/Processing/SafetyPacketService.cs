@@ -9,10 +9,6 @@ using PacketProcessing.Utils.Enums;
 using QuestDB;
 using QuestDB.Senders;
 using PacketProcessing.Config;
-using Microsoft.AspNetCore.SignalR.Client;
-using PacketProcessing.Utils.Observers;
-using PacketProcessing.Utils;
-using PacketProcessing.Utils.Constants;
 
 namespace PacketProcessing.Services.Processing;
 
@@ -23,35 +19,30 @@ public sealed record SampleSafetyPacket(SafetyPacketEntity Packet = null!, DateT
 /// </summary>
 public sealed class SafetyPacketService : BasePacketService<SafetyPacketEntity>
 {
-    private readonly SignalRClientSession _session;
+    private readonly HubClient _hubClient;
     private readonly IPacketRepository<SafetyPacketEntity> _repository;
     private readonly string _questDbConnectionString;
-    private readonly SafetyCaptureService _captureService;
+    private readonly CaptureService<SafetyPacketEntity> _captureService;
 
-    private IProducer<SafetyPacketEntity> _packetSamplingProducer = null!;
-    private PacketSamplingObserver<SafetyPacketEntity> _packetSamplingObserver = null!;
 
     public SafetyPacketService(
         ILogger<SafetyPacketService> logger,
         IPacketRepository<SafetyPacketEntity> repository,
         Channel<SafetyPacketEntity> channel,
-        SafetyCaptureService captureService,
+        CaptureService<SafetyPacketEntity> captureService,
         IConfiguration configuration,
-        IHubClientHost host)
+        HubClient hubClient)
         : base(logger, channel, configuration)
     {
-        _session = new SignalRClientSession(host);
         _repository = repository;
         _captureService = captureService;
+        _hubClient = hubClient;
         
         // Get QuestDB connection string from configuration
         var questDbOptions = configuration.GetSection("QuestDb").Get<QuestDbConfiguration>();
         _questDbConnectionString = questDbOptions?.GetPostgresConnectionString() ?? 
                                   configuration.GetConnectionString("QuestDb") ?? 
                                   throw new InvalidOperationException("QuestDB connection string not found");
-
-        // Setup packet sampling observer
-        SetupPacketSamplingObserver();
     }
 
     #region Data Access Methods
@@ -117,31 +108,6 @@ public sealed class SafetyPacketService : BasePacketService<SafetyPacketEntity>
     #endregion
 
     #region Observer Setup Methods
-
-    private void SetupPacketSamplingObserver()
-    {
-        // Get sampling interval from configuration
-        var samplingIntervalMs = _configuration.GetSection("DataPipes:SafetyCapture:Sampling:IntervalMs").Get<int>();
-        if (samplingIntervalMs == 0)
-        {
-            samplingIntervalMs = Constants.DEFAULT_PACKET_SAMPLE_MS;
-        }
-
-        // Create producer for packet sampling
-        _packetSamplingProducer = _session.AttachProducer<SafetyPacketEntity>(
-            (hub, packet, ct) => hub.InvokeAsync("SendSafetyPacketSample", packet, ct));
-
-        // Create packet sampling observer with configured interval
-        _packetSamplingObserver = new PacketSamplingObserver<SafetyPacketEntity>(
-            new LoggerFactory().CreateLogger<PacketSamplingObserver<SafetyPacketEntity>>(),
-            _packetSamplingProducer,
-            samplingIntervalMs);
-
-        // Subscribe observer to capture service
-        _captureService.Subscribe(_packetSamplingObserver);
-        
-        _logger.LogInformation("Safety packet sampling observer subscribed to capture service with {IntervalMs}ms sampling interval", samplingIntervalMs);
-    }
 
     #endregion
 }

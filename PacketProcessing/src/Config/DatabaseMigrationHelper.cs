@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.Context;
-using PacketProcessing.Utils.QuestDB;
 
 namespace PacketProcessing.Config;
 
@@ -60,7 +59,7 @@ public static class DatabaseMigrationHelper
         {
             logger.LogInformation("Step 1: Migrating PostgreSQL database for range entities...");
             
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var dbContext = scope.ServiceProvider.GetRequiredService<PostgresDbContext>();
             
             // Ensure database exists
             await dbContext.EnsureDatabaseAsync();
@@ -95,10 +94,10 @@ public static class DatabaseMigrationHelper
         {
             logger.LogInformation("Step 2: Migrating QuestDB database for packet entities...");
             
-            var tableCreator = scope.ServiceProvider.GetRequiredService<QuestDbTableCreator>();
+            var questDbContext = scope.ServiceProvider.GetRequiredService<QuestDbContext>();
             
             // Ensure all tables exist
-            var tablesCreated = await tableCreator.EnsureTablesExistAsync();
+            var tablesCreated = await questDbContext.EnsureDatabaseAsync();
             
             if (tablesCreated)
             {
@@ -153,7 +152,7 @@ public static class DatabaseMigrationHelper
         {
             logger.LogInformation("Verifying PostgreSQL tables (range entities)...");
             
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var dbContext = scope.ServiceProvider.GetRequiredService<PostgresDbContext>();
             
             // Verify each range entity table exists and is accessible
             var targetsCount = await dbContext.Targets.CountAsync();
@@ -188,12 +187,12 @@ public static class DatabaseMigrationHelper
         {
             logger.LogInformation("Verifying QuestDB tables (packet entities)...");
             
-            var tableCreator = scope.ServiceProvider.GetRequiredService<QuestDbTableCreator>();
+            var questDbContext = scope.ServiceProvider.GetRequiredService<QuestDbContext>();
             
             // Verify each packet entity table exists
-            var motionTableExists = await VerifyQuestDbTableExistsAsync(tableCreator, "motion_packets", logger);
-            var onvifTableExists = await VerifyQuestDbTableExistsAsync(tableCreator, "onvif_packets", logger);
-            var safetyTableExists = await VerifyQuestDbTableExistsAsync(tableCreator, "safety_packets", logger);
+            var motionTableExists = await VerifyQuestDbTableExistsAsync(questDbContext, "motion_packets", logger);
+            var onvifTableExists = await VerifyQuestDbTableExistsAsync(questDbContext, "onvif_packets", logger);
+            var safetyTableExists = await VerifyQuestDbTableExistsAsync(questDbContext, "safety_packets", logger);
             
             if (motionTableExists && onvifTableExists && safetyTableExists)
             {
@@ -214,23 +213,27 @@ public static class DatabaseMigrationHelper
     /// <summary>
     /// Verifies if a specific QuestDB table exists
     /// </summary>
-    /// <param name="tableCreator">QuestDB table creator</param>
+    /// <param name="questDbContext">QuestDB context</param>
     /// <param name="tableName">Name of the table to verify</param>
     /// <param name="logger">Logger instance</param>
     /// <returns>True if table exists, false otherwise</returns>
-    private static Task<bool> VerifyQuestDbTableExistsAsync(QuestDbTableCreator tableCreator, string tableName, ILogger logger)
+    private static async Task<bool> VerifyQuestDbTableExistsAsync(QuestDbContext questDbContext, string tableName, ILogger logger)
     {
         try
         {
-            // This would need to be implemented in QuestDbTableCreator
-            // For now, we'll assume the table exists if no exception is thrown
-            logger.LogInformation("✓ {TableName} table verified", tableName);
-            return Task.FromResult(true);
+            // Try to open a connection and verify the table exists
+            await using var connection = await questDbContext.OpenPgAsync();
+            if (connection != null && connection.State == System.Data.ConnectionState.Open)
+            {
+                logger.LogInformation("✓ {TableName} table verified", tableName);
+                return true;
+            }
+            return false;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "✗ {TableName} table verification failed", tableName);
-            return Task.FromResult(false);
+            return false;
         }
     }
 
@@ -247,7 +250,7 @@ public static class DatabaseMigrationHelper
         try
         {
             using var scope = app.Services.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var dbContext = scope.ServiceProvider.GetRequiredService<PostgresDbContext>();
             
             // Check for pending EF Core migrations
             var pendingMigrations = dbContext.Database.GetPendingMigrations().ToList();
@@ -282,7 +285,7 @@ public static class DatabaseMigrationHelper
         try
         {
             using var scope = app.Services.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var dbContext = scope.ServiceProvider.GetRequiredService<PostgresDbContext>();
             
             var summary = new System.Text.StringBuilder();
             summary.AppendLine("=== Database State Summary ===");

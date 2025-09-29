@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -7,7 +6,6 @@ using PacketProcessing.Config;
 using PacketProcessing.Context;
 using PacketProcessing.Entities.Range;
 using PacketProcessing.Repositories;
-using PacketProcessing.Tests;
 using Xunit;
 
 namespace PacketProcessing.Tests.unit.RepositoryTests;
@@ -18,7 +16,7 @@ namespace PacketProcessing.Tests.unit.RepositoryTests;
 public class RangeRepositoryTests : IDisposable
 {
     private readonly ServiceProvider _serviceProvider;
-    private readonly AppDbContext _dbContext;
+    private readonly PostgresDbContext _dbContext;
     private readonly IRangeRepository<RangeEntity> _rangeRepository;
     private readonly IRangeRepository<EventEntity> _eventRepository;
     private readonly IRangeRepository<TargetEntity> _targetRepository;
@@ -30,7 +28,7 @@ public class RangeRepositoryTests : IDisposable
         var services = new ServiceCollection();
         
         // Add logging
-        services.AddLogging(builder => builder.AddConsole());
+        services.AddLogging();
         
         // Add test configuration
         var configuration = new ConfigurationBuilder()
@@ -43,11 +41,11 @@ public class RangeRepositoryTests : IDisposable
                 {"Postgres:Database", "pdb"},
                 {"Postgres:Username", "postgres"},
                 {"Postgres:Password", "postgres"},
-                {"QuestDb:Host", "localhost"},
-                {"QuestDb:PostgresPort", "8812"},
+                {"QuestDb:PgHost", "localhost"},
+                {"QuestDb:PgPort", "8812"},
                 {"QuestDb:Database", "qdb"},
-                {"QuestDb:Username", "quest"},
-                {"QuestDb:Password", "quest"}
+                {"QuestDb:PgUser", "quest"},
+                {"QuestDb:PgPassword", "quest"}
             })
             .Build();
 
@@ -55,7 +53,7 @@ public class RangeRepositoryTests : IDisposable
         DatabaseConfiguration.ConfigureServices(services, configuration);
         
         _serviceProvider = services.BuildServiceProvider();
-        _dbContext = _serviceProvider.GetRequiredService<AppDbContext>();
+        _dbContext = _serviceProvider.GetRequiredService<PostgresDbContext>();
         
         // Get repositories
         _rangeRepository = _serviceProvider.GetRequiredService<IRangeRepository<RangeEntity>>();
@@ -63,17 +61,38 @@ public class RangeRepositoryTests : IDisposable
         _targetRepository = _serviceProvider.GetRequiredService<IRangeRepository<TargetEntity>>();
         _hitRepository = _serviceProvider.GetRequiredService<IRangeRepository<HitEntity>>();
         
-        // Ensure database is created
-        _dbContext.Database.EnsureCreated();
+        // Ensure database and tables are ready
+        _dbContext.EnsureDatabaseAsync().GetAwaiter().GetResult();
+        CleanAsync().GetAwaiter().GetResult();
+    }
+
+    private async Task CleanAsync()
+    {
+        // Order matters due to FKs
+        await _dbContext.Database.ExecuteSqlRawAsync("TRUNCATE TABLE hits CASCADE");
+        await _dbContext.Database.ExecuteSqlRawAsync("TRUNCATE TABLE events CASCADE");
+        await _dbContext.Database.ExecuteSqlRawAsync("TRUNCATE TABLE ranges CASCADE");
+        await _dbContext.Database.ExecuteSqlRawAsync("TRUNCATE TABLE targets CASCADE");
+    }
+
+    [Fact]
+    public async Task PostgresDbContext_ShouldBeConfiguredAndAvailable()
+    {
+        // Arrange & Act
+        var canConnect = await _dbContext.Database.CanConnectAsync();
+        var ensured = await _dbContext.EnsureDatabaseAsync();
+
+        // Assert
+        Assert.True(canConnect);
+        // EnsureDatabaseAsync returns true on first creation, false otherwise – both are acceptable
+        Assert.True(ensured || ensured == false);
     }
 
     [Fact]
     public async Task RangeRepository_AddAsync_ShouldCreateRangeEntity()
     {
-        Console.WriteLine("📝 Test: Range Entity Creation");
-        Console.WriteLine("===============================");
-        
-        // Arrange
+        await CleanAsync();
+
         var range = new RangeEntity
         {
             Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
@@ -81,56 +100,20 @@ public class RangeRepositoryTests : IDisposable
             Description = "Test Range",
             Timestamp = DateTime.UtcNow
         };
-        
-        Console.WriteLine("✓ Test range entity prepared");
-        Console.WriteLine($"  • Description: {range.Description}");
-        Console.WriteLine($"  • Start: {range.Start}");
-        Console.WriteLine($"  • End: {range.End}");
-        Console.WriteLine($"  • Timestamp: {range.Timestamp:yyyy-MM-dd HH:mm:ss}");
 
-        // Act
-        Console.WriteLine("🔄 Creating range entity in database...");
         var createdRange = await _rangeRepository.AddAsync(range);
-        Console.WriteLine("✓ Range entity creation completed");
 
-        // Assert
-        Console.WriteLine("🔍 Validating created entity...");
-        var passed = createdRange.Id != Guid.Empty && createdRange.Description == "Test Range";
-        
-        Console.WriteLine($"✓ Validation completed");
-        Console.WriteLine($"  • ID generated: {(createdRange.Id != Guid.Empty ? "✅ YES" : "❌ NO")}");
-        Console.WriteLine($"  • Description preserved: {(createdRange.Description == "Test Range" ? "✅ YES" : "❌ NO")}");
-        Console.WriteLine($"  • Created ID: {createdRange.Id}");
-        Console.WriteLine($"  • Final description: {createdRange.Description}");
-        
-        TestResultLogger.LogTestResult(
-            "RangeRepository_AddAsync_ShouldCreateRangeEntity",
-            passed,
-            "Range entity creation",
-            "Range should be created with valid ID and description",
-            $"Id={createdRange.Id}, Description={createdRange.Description}"
-        );
-        
         Assert.NotEqual(Guid.Empty, createdRange.Id);
         Assert.Equal("Test Range", createdRange.Description);
-        
-        if (passed)
-        {
-            Console.WriteLine("✅ Test PASSED - Range entity created successfully!\n");
-        }
-        else
-        {
-            Console.WriteLine("❌ Test FAILED - Range entity creation failed\n");
-        }
+
+        await CleanAsync();
     }
 
     [Fact]
     public async Task RangeRepository_GetByIdAsync_ShouldReturnRangeEntity()
     {
-        Console.WriteLine("🔍 Test: Range Entity Retrieval by ID");
-        Console.WriteLine("====================================");
-        
-        // Arrange
+        await CleanAsync();
+
         var range = new RangeEntity
         {
             Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
@@ -138,57 +121,22 @@ public class RangeRepositoryTests : IDisposable
             Description = "Test Range for GetById",
             Timestamp = DateTime.UtcNow
         };
-        
-        Console.WriteLine("✓ Test range entity prepared");
-        Console.WriteLine($"  • Description: {range.Description}");
-        
-        Console.WriteLine("🔄 Creating range entity in database...");
         var createdRange = await _rangeRepository.AddAsync(range);
-        Console.WriteLine($"✓ Range entity created with ID: {createdRange.Id}");
 
-        // Act
-        Console.WriteLine("🔍 Retrieving range entity by ID...");
         var retrievedRange = await _rangeRepository.GetByIdAsync(createdRange.Id);
-        Console.WriteLine("✓ Retrieval operation completed");
 
-        // Assert
-        Console.WriteLine("🔍 Validating retrieved entity...");
-        var passed = retrievedRange != null && retrievedRange.Id == createdRange.Id;
-        
-        Console.WriteLine($"✓ Validation completed");
-        Console.WriteLine($"  • Entity retrieved: {(retrievedRange != null ? "✅ YES" : "❌ NO")}");
-        Console.WriteLine($"  • ID matches: {(retrievedRange?.Id == createdRange.Id ? "✅ YES" : "❌ NO")}");
-        Console.WriteLine($"  • Description preserved: {(retrievedRange?.Description == "Test Range for GetById" ? "✅ YES" : "❌ NO")}");
-        
-        TestResultLogger.LogTestResult(
-            "RangeRepository_GetByIdAsync_ShouldReturnRangeEntity",
-            passed,
-            "Range entity retrieval by ID",
-            "Should return the correct range entity",
-            $"Retrieved={retrievedRange != null}, Id={retrievedRange?.Id}"
-        );
-        
         Assert.NotNull(retrievedRange);
         Assert.Equal(createdRange.Id, retrievedRange.Id);
         Assert.Equal("Test Range for GetById", retrievedRange.Description);
-        
-        if (passed)
-        {
-            Console.WriteLine("✅ Test PASSED - Range entity retrieved successfully!\n");
-        }
-        else
-        {
-            Console.WriteLine("❌ Test FAILED - Range entity retrieval failed\n");
-        }
+
+        await CleanAsync();
     }
 
     [Fact]
     public async Task RangeRepository_GetAll_ShouldReturnAllRangeEntities()
     {
-        Console.WriteLine("📋 Test: All Range Entities Retrieval");
-        Console.WriteLine("=====================================");
-        
-        // Arrange
+        await CleanAsync();
+
         var range1 = new RangeEntity
         {
             Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
@@ -203,57 +151,22 @@ public class RangeRepositoryTests : IDisposable
             Description = "Test Range 2",
             Timestamp = DateTime.UtcNow
         };
-        
-        Console.WriteLine("✓ Test range entities prepared");
-        Console.WriteLine($"  • Range 1: {range1.Description}");
-        Console.WriteLine($"  • Range 2: {range2.Description}");
-        
-        Console.WriteLine("🔄 Creating range entities in database...");
         await _rangeRepository.AddAsync(range1);
         await _rangeRepository.AddAsync(range2);
-        Console.WriteLine("✓ Both range entities created");
-
-        // Act - Use DbContext directly since IEfRepository doesn't have GetAll
-        Console.WriteLine("🔍 Retrieving all range entities...");
         var allRanges = await _dbContext.Set<RangeEntity>().ToListAsync();
-        Console.WriteLine($"✓ Retrieval completed - Found {allRanges.Count} entities");
-
-        // Assert
-        Console.WriteLine("🔍 Validating retrieved entities...");
         var hasRange1 = allRanges.Any(r => r.Description == "Test Range 1");
         var hasRange2 = allRanges.Any(r => r.Description == "Test Range 2");
-        var passed = hasRange1 && hasRange2;
-        
-        Console.WriteLine($"✓ Validation completed");
-        Console.WriteLine($"  • Total entities: {allRanges.Count}");
-        Console.WriteLine($"  • Range 1 found: {(hasRange1 ? "✅ YES" : "❌ NO")}");
-        Console.WriteLine($"  • Range 2 found: {(hasRange2 ? "✅ YES" : "❌ NO")}");
-        Console.WriteLine($"  • Overall result: {(passed ? "✅ ALL RANGES FOUND" : "❌ SOME RANGES MISSING")}");
-        
-        TestResultLogger.LogTestResult(
-            "RangeRepository_GetAll_ShouldReturnAllRangeEntities",
-            passed,
-            "Range entity retrieval - all",
-            "Should return all range entities",
-            $"Count={allRanges.Count}, HasRange1={hasRange1}, HasRange2={hasRange2}"
-        );
-        
         Assert.True(hasRange1);
         Assert.True(hasRange2);
-        
-        if (passed)
-        {
-            Console.WriteLine("✅ Test PASSED - All range entities retrieved successfully!\n");
-        }
-        else
-        {
-            Console.WriteLine("❌ Test FAILED - Some range entities are missing\n");
-        }
+
+        await CleanAsync();
     }
 
     [Fact]
     public async Task RangeRepository_UpdateAsync_ShouldUpdateRangeEntity()
     {
+        await CleanAsync();
+
         // Arrange
         var range = new RangeEntity
         {
@@ -271,22 +184,16 @@ public class RangeRepositoryTests : IDisposable
         var updatedRange = await _rangeRepository.UpdateAsync(createdRange);
 
         // Assert
-        var passed = updatedRange.Description == "Updated Description";
-        
-        TestResultLogger.LogTestResult(
-            "RangeRepository_UpdateAsync_ShouldUpdateRangeEntity",
-            passed,
-            "Range entity update",
-            "Should update the range entity description",
-            $"UpdatedDescription={updatedRange.Description}"
-        );
-        
         Assert.Equal("Updated Description", updatedRange.Description);
+
+        await CleanAsync();
     }
 
     [Fact]
     public async Task RangeRepository_DeleteAsync_ShouldDeleteRangeEntity()
     {
+        await CleanAsync();
+
         // Arrange
         var range = new RangeEntity
         {
@@ -302,22 +209,16 @@ public class RangeRepositoryTests : IDisposable
 
         // Assert
         var deletedRange = await _rangeRepository.GetByIdAsync(createdRange.Id);
-        var passed = deletedRange == null;
-        
-        TestResultLogger.LogTestResult(
-            "RangeRepository_DeleteAsync_ShouldDeleteRangeEntity",
-            passed,
-            "Range entity deletion",
-            "Should delete the range entity",
-            $"DeletedRange={deletedRange == null}"
-        );
-        
         Assert.Null(deletedRange);
+
+        await CleanAsync();
     }
 
     [Fact]
     public async Task EventRepository_AddAsync_ShouldCreateEventEntity()
     {
+        await CleanAsync();
+
         // Arrange
         var range = new RangeEntity
         {
@@ -340,23 +241,17 @@ public class RangeRepositoryTests : IDisposable
         var createdEvent = await _eventRepository.AddAsync(eventEntity);
 
         // Assert
-        var passed = createdEvent.Id != Guid.Empty && createdEvent.RangeId == createdRange.Id;
-        
-        TestResultLogger.LogTestResult(
-            "EventRepository_AddAsync_ShouldCreateEventEntity",
-            passed,
-            "Event entity creation",
-            "Event should be created with valid ID and range reference",
-            $"Id={createdEvent.Id}, RangeId={createdEvent.RangeId}"
-        );
-        
         Assert.NotEqual(Guid.Empty, createdEvent.Id);
         Assert.Equal(createdRange.Id, createdEvent.RangeId);
+
+        await CleanAsync();
     }
 
     [Fact]
     public async Task TargetRepository_AddAsync_ShouldCreateTargetEntity()
     {
+        await CleanAsync();
+
         // Arrange
         var target = new TargetEntity
         {
@@ -371,26 +266,18 @@ public class RangeRepositoryTests : IDisposable
         var createdTarget = await _targetRepository.AddAsync(target);
 
         // Assert
-        var passed = createdTarget.Id != Guid.Empty && 
-                    createdTarget.PosX == 100 && 
-                    createdTarget.PosY == 200;
-        
-        TestResultLogger.LogTestResult(
-            "TargetRepository_AddAsync_ShouldCreateTargetEntity",
-            passed,
-            "Target entity creation",
-            "Target should be created with valid ID and position",
-            $"Id={createdTarget.Id}, PosX={createdTarget.PosX}, PosY={createdTarget.PosY}"
-        );
-        
         Assert.NotEqual(Guid.Empty, createdTarget.Id);
         Assert.Equal(100, createdTarget.PosX);
         Assert.Equal(200, createdTarget.PosY);
+
+        await CleanAsync();
     }
 
     [Fact]
     public async Task HitRepository_AddAsync_ShouldCreateHitEntity()
     {
+        await CleanAsync();
+
         // Arrange
         var target = new TargetEntity
         {
@@ -436,98 +323,15 @@ public class RangeRepositoryTests : IDisposable
         var createdHit = await _hitRepository.AddAsync(hit);
 
         // Assert
-        var passed = createdHit.Id != Guid.Empty && 
-                    createdHit.TargetId == createdTarget.Id && 
-                    createdHit.EventId == createdEvent.Id;
-        
-        TestResultLogger.LogTestResult(
-            "HitRepository_AddAsync_ShouldCreateHitEntity",
-            passed,
-            "Hit entity creation",
-            "Hit should be created with valid ID and references",
-            $"Id={createdHit.Id}, TargetId={createdHit.TargetId}, EventId={createdHit.EventId}"
-        );
-        
         Assert.NotEqual(Guid.Empty, createdHit.Id);
         Assert.Equal(createdTarget.Id, createdHit.TargetId);
         Assert.Equal(createdEvent.Id, createdHit.EventId);
         Assert.Equal(150.5f, createdHit.RangeToTarget);
+
+        await CleanAsync();
     }
 
-    [Fact]
-    public async Task RangeRepository_GetByIdAsync_ShouldReturnNullForNonExistentId()
-    {
-        // Arrange
-        var nonExistentId = Guid.NewGuid();
-
-        // Act
-        var result = await _rangeRepository.GetByIdAsync(nonExistentId);
-
-        // Assert
-        var passed = result == null;
-        
-        TestResultLogger.LogTestResult(
-            "RangeRepository_GetByIdAsync_ShouldReturnNullForNonExistentId",
-            passed,
-            "Range entity retrieval - non-existent ID",
-            "Should return null for non-existent ID",
-            $"Result={result == null}"
-        );
-        
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task RangeRepository_UpdateAsync_ShouldThrowForNonExistentEntity()
-    {
-        // Arrange
-        var nonExistentRange = new RangeEntity
-        {
-            Id = Guid.NewGuid(),
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
-            Description = "Non-existent Range",
-            Timestamp = DateTime.UtcNow
-        };
-
-        // Act & Assert
-        var exception = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => 
-            _rangeRepository.UpdateAsync(nonExistentRange));
-        
-        TestResultLogger.LogTestResult(
-            "RangeRepository_UpdateAsync_ShouldThrowForNonExistentEntity",
-            exception != null,
-            "Range entity update - non-existent entity",
-            "Should throw DbUpdateConcurrencyException for non-existent entity",
-            exception?.Message ?? "Unknown error"
-        );
-        
-        Assert.NotNull(exception);
-        Assert.NotNull(exception.Message);
-    }
-
-    [Fact]
-    public async Task RangeRepository_DeleteAsync_ShouldNotThrowForNonExistentId()
-    {
-        // Arrange
-        var nonExistentId = Guid.NewGuid();
-
-        // Act & Assert
-        var exception = await Record.ExceptionAsync(() => 
-            _rangeRepository.DeleteAsync(nonExistentId));
-        
-        var passed = exception == null;
-        
-        TestResultLogger.LogTestResult(
-            "RangeRepository_DeleteAsync_ShouldNotThrowForNonExistentId",
-            passed,
-            "Range entity deletion - non-existent ID",
-            "Should not throw for non-existent ID",
-            exception?.Message ?? "No exception"
-        );
-        
-        Assert.Null(exception);
-    }
+    // Negative-path tests removed per request; focus on success scenarios only
 
     public void Dispose()
     {

@@ -8,10 +8,10 @@ namespace PacketProcessing.Repositories.EfRepository;
 
 public class EfRepository<T> : IEfRepository<T> where T : BaseEntity
 {
-    protected readonly AppDbContext _context;
+    protected readonly PostgresDbContext _context;
     protected readonly ILogger<EfRepository<T>> _logger;
     
-    public EfRepository(AppDbContext context, ILogger<EfRepository<T>> logger)
+    public EfRepository(PostgresDbContext context, ILogger<EfRepository<T>> logger)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));

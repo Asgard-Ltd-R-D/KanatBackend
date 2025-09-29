@@ -7,7 +7,6 @@ using PacketProcessing.Context;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Entities.Range;
 using PacketProcessing.Repositories;
-using PacketProcessing.Utils.QuestDB;
 
 namespace PacketProcessing.Config;
 
@@ -60,7 +59,7 @@ public class DatabaseConfiguration
         services.Configure<PostgresConfiguration>(configuration.GetSection(PostgresConfiguration.SectionName));
         
         // Add PostgreSQL DbContext
-        services.AddDbContext<AppDbContext>(options =>
+        services.AddDbContext<PostgresDbContext>(options =>
         {
             var connectionString = configuration.GetConnectionString("Postgres");
             options.UseNpgsql(connectionString, npgsqlOptions =>
@@ -76,6 +75,7 @@ public class DatabaseConfiguration
     /// <summary>
     /// Configures QuestDB services
     /// </summary>
+    [Obsolete]
     private static void ConfigureQuestDbServices(IServiceCollection services, IConfiguration configuration)
     {
         // Configure QuestDB options
@@ -87,11 +87,11 @@ public class DatabaseConfiguration
                                     configuration.GetConnectionString("QuestDb") ?? 
                                     throw new InvalidOperationException("QuestDB connection string not found");
         
-        // Register QuestDB table creator
-        services.AddSingleton<QuestDbTableCreator>(sp =>
+        // Register QuestDbContext
+        services.AddSingleton<QuestDbContext>(sp =>
         {
-            var logger = sp.GetRequiredService<ILogger<QuestDbTableCreator>>();
-            return new QuestDbTableCreator(logger, questDbConnectionString);
+            var logger = sp.GetRequiredService<ILogger<QuestDbContext>>();
+            return new QuestDbContext(configuration, logger);
         });
     }
 
@@ -117,29 +117,23 @@ public class DatabaseConfiguration
         // Register specific packet repositories for convenience
         services.AddScoped<IPacketRepository<MotionPacketEntity>>(sp =>
         {
-            var context = sp.GetRequiredService<AppDbContext>();
             var logger = sp.GetRequiredService<ILogger<PacketRepository<MotionPacketEntity>>>();
-            var tableCreator = sp.GetRequiredService<QuestDbTableCreator>();
-            var questDbConnectionString = tableCreator.GetConnectionString();
-            return new PacketRepository<MotionPacketEntity>(context, logger, questDbConnectionString);
+            var questDbContext = sp.GetRequiredService<QuestDbContext>();
+            return new PacketRepository<MotionPacketEntity>(logger, questDbContext);
         });
         
         services.AddScoped<IPacketRepository<OnVIFPacketEntity>>(sp =>
         {
-            var context = sp.GetRequiredService<AppDbContext>();
             var logger = sp.GetRequiredService<ILogger<PacketRepository<OnVIFPacketEntity>>>();
-            var tableCreator = sp.GetRequiredService<QuestDbTableCreator>();
-            var questDbConnectionString = tableCreator.GetConnectionString();
-            return new PacketRepository<OnVIFPacketEntity>(context, logger, questDbConnectionString);
+            var questDbContext = sp.GetRequiredService<QuestDbContext>();
+            return new PacketRepository<OnVIFPacketEntity>(logger, questDbContext);
         });
         
         services.AddScoped<IPacketRepository<SafetyPacketEntity>>(sp =>
         {
-            var context = sp.GetRequiredService<AppDbContext>();
             var logger = sp.GetRequiredService<ILogger<PacketRepository<SafetyPacketEntity>>>();
-            var tableCreator = sp.GetRequiredService<QuestDbTableCreator>();
-            var questDbConnectionString = tableCreator.GetConnectionString();
-            return new PacketRepository<SafetyPacketEntity>(context, logger, questDbConnectionString);
+            var questDbContext = sp.GetRequiredService<QuestDbContext>();
+            return new PacketRepository<SafetyPacketEntity>(logger, questDbContext);
         });
     }
     
@@ -153,28 +147,28 @@ public class DatabaseConfiguration
         // Register specific range repositories for convenience
         services.AddScoped<IRangeRepository<RangeEntity>>(sp =>
         {
-            var context = sp.GetRequiredService<AppDbContext>();
+            var context = sp.GetRequiredService<PostgresDbContext>();
             var logger = sp.GetRequiredService<ILogger<RangeRepository<RangeEntity>>>();
             return new RangeRepository<RangeEntity>(context, logger);
         });
         
         services.AddScoped<IRangeRepository<EventEntity>>(sp =>
         {
-            var context = sp.GetRequiredService<AppDbContext>();
+            var context = sp.GetRequiredService<PostgresDbContext>();
             var logger = sp.GetRequiredService<ILogger<RangeRepository<EventEntity>>>();
             return new RangeRepository<EventEntity>(context, logger);
         });
         
         services.AddScoped<IRangeRepository<TargetEntity>>(sp =>
         {
-            var context = sp.GetRequiredService<AppDbContext>();
+            var context = sp.GetRequiredService<PostgresDbContext>();
             var logger = sp.GetRequiredService<ILogger<RangeRepository<TargetEntity>>>();
             return new RangeRepository<TargetEntity>(context, logger);
         });
         
         services.AddScoped<IRangeRepository<HitEntity>>(sp =>
         {
-            var context = sp.GetRequiredService<AppDbContext>();
+            var context = sp.GetRequiredService<PostgresDbContext>();
             var logger = sp.GetRequiredService<ILogger<RangeRepository<HitEntity>>>();
             return new RangeRepository<HitEntity>(context, logger);
         });
@@ -282,7 +276,8 @@ public class QuestDbConfiguration
     /// <returns>The formatted connection string</returns>
     public string GetInfluxConnectionString()
     {
-        return $"http://{Host}:{InfluxPort}";
+        return $"http::addr={Host}:{InfluxPort};username={Username};password={Password};" + 
+               "Include Error Detail=true;";
     }
     
     /// <summary>
@@ -389,7 +384,7 @@ public class DatabaseInitializationService : IHostedService
         {
             _logger.LogInformation("Initializing PostgreSQL database for range entities...");
             
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var dbContext = scope.ServiceProvider.GetRequiredService<PostgresDbContext>();
             var databaseCreated = await dbContext.EnsureDatabaseAsync();
             
             if (databaseCreated)
@@ -418,8 +413,8 @@ public class DatabaseInitializationService : IHostedService
         {
             _logger.LogInformation("Initializing QuestDB database for packet entities...");
             
-            var tableCreator = scope.ServiceProvider.GetRequiredService<QuestDbTableCreator>();
-            var tablesCreated = await tableCreator.EnsureTablesExistAsync();
+            var questDbContext = scope.ServiceProvider.GetRequiredService<QuestDbContext>();
+            var tablesCreated = await questDbContext.EnsureDatabaseAsync();
             
             if (tablesCreated)
             {

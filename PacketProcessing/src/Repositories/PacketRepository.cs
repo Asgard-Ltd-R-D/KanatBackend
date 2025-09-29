@@ -1,9 +1,11 @@
+using Dapper;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using PacketProcessing.Context;
 using PacketProcessing.Entities;
 using PacketProcessing.Utils.Enums;
-using PacketProcessing.Utils.QuestDB;
 using QuestDB.Senders;
+using static PacketProcessing.Context.QuestDbContext;
 
 namespace PacketProcessing.Repositories;
 
@@ -16,14 +18,13 @@ namespace PacketProcessing.Repositories;
 public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEntity
 {
     private readonly ILogger<PacketRepository<T>> _logger;
-    private readonly QuestClient _questClient;
+    private readonly QuestDbContext _questDb;
     
-    public PacketRepository(AppDbContext context, ILogger<PacketRepository<T>> logger, string questDbConnectionString) 
+    public PacketRepository(ILogger<PacketRepository<T>> logger,
+                            QuestDbContext questDbContext)
     {
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        
-        // Initialize QuestDB client
-        _questClient = new QuestClient(questDbConnectionString, logger);
+        _logger  = logger ?? throw new ArgumentNullException(nameof(logger));
+        _questDb = questDbContext ?? throw new ArgumentNullException(nameof(questDbContext));
     }
     
     /// <summary>
@@ -46,15 +47,19 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
             _logger.LogDebug("Writing single packet of type {EntityType} with ID {Id} to QuestDB", 
                 typeof(T).Name, entity.Id);
             
-            // Map entity to QuestDB row using PacketRowMapper
-            var row = PacketRowMapper<T>.Map(entity);
-
-            // Create a transaction with the table structure from the row
-            var table = row.Table;
+            // start one transaction for this row
+            var table = entity.TableName;
             sender.Transaction(table);
+            sender.Symbol("id", entity.Id.ToString("N"));
 
-            // Apply the row to the sender
-            row.Apply(sender);
+            entity.WriteColumns(sender);
+
+            // ensure UTC timestamp
+            var tsUtc = entity.Timestamp.Kind == DateTimeKind.Utc
+                ? entity.Timestamp
+                : DateTime.SpecifyKind(entity.Timestamp, DateTimeKind.Utc);
+
+            sender.At(tsUtc, ct);
 
             // Commit the transaction
             await sender.CommitAsync(ct).ConfigureAwait(false);
@@ -106,28 +111,24 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
             _logger.LogDebug("Writing batch of {Count} packets of type {EntityType} to QuestDB", 
                 batch.Count, typeof(T).Name);
             
-            // Sort batch by timestamp for optimal performance
-            var rows = batch
-                .Select(PacketRowMapper<T>.Map)
-                .OrderBy(r => r.TimestampUtc)
-                .ToList();
-
             // Create a transaction with the table structure from the first row
-            var table = rows[0].Table;
+            var table = batch[0].TableName;
             sender.Transaction(table);
 
-            // Apply each row to the sender
-            foreach (var row in rows)
+            for (int i = 0; i < batch.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
-                row.Apply(sender); // Append to transaction, no commit yet
+                var e = batch[i];
+                var tsUtc = e.Timestamp.Kind == DateTimeKind.Utc ? e.Timestamp : DateTime.SpecifyKind(e.Timestamp, DateTimeKind.Utc);
+
+                sender.Symbol("id", e.Id.ToString("N"));
+                e.WriteColumns(sender);
+                sender.At(tsUtc, ct);
             }
 
             // Commit the entire batch transaction
             await sender.CommitAsync(ct).ConfigureAwait(false);
-            
-            _logger.LogInformation("Successfully wrote batch of {Count} packets of type {EntityType} to table {Table}", 
-                rows.Count, typeof(T).Name, table);
+            _logger.LogInformation("Successfully wrote batch of packets of type {EntityType} to table {Table}", typeof(T).Name, table);
         } 
         catch (Exception ex)
         {
@@ -147,22 +148,27 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
     }
     
     /// <summary>
-    /// Retrieves all packets of the specified type from QuestDB
+    /// Retrieves all packets of the specified type from QuestDB (newest first).
     /// </summary>
-    /// <returns>A collection of all packets ordered by timestamp (newest first)</returns>
     public async Task<IEnumerable<T>> GetAllFromQuestDbAsync()
     {
         try
         {
             _logger.LogDebug("Retrieving all packets of type {EntityType} from QuestDB", typeof(T).Name);
-            
-            var tableName = QuestDbUtilities.GetTableName<T>();
-            var query = $"SELECT * FROM {tableName} ORDER BY timestamp DESC";
-            
-            var result = await _questClient.ExecuteQueryAsync(query, QuestDbUtilities.ParseQuestDbRawResponse<T>);
-            
-            _logger.LogDebug("Retrieved {Count} packets of type {EntityType} from QuestDB", result.Count(), typeof(T).Name);
-            return result;
+
+            var table  = QuestDbContext.GetTableName<T>();
+            var select = QuestDbContext.SelectListFor<T>();
+            var sql = $"""
+                SELECT {select}
+                FROM {table}
+                ORDER BY timestamp DESC
+            """;
+
+            await using var conn = await _questDb.OpenPgAsync();
+
+            var rows = await conn.QueryAsync<T>(sql);
+            _logger.LogDebug("Retrieved {Count} packets of type {EntityType} from QuestDB", rows.Count(), typeof(T).Name);
+            return rows;
         }
         catch (Exception ex)
         {
@@ -172,38 +178,32 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
     }
     
     /// <summary>
-    /// Deletes all packets of the specified type from QuestDB
+    /// Deletes all packets of the specified type from QuestDB.
     /// </summary>
-    /// <returns>A task representing the asynchronous operation</returns>
     public async Task DeleteAllFromQuestDbAsync()
     {
         try
         {
-            _logger.LogInformation("Deleting all packets of type {EntityType} from QuestDB", typeof(T).Name);
-            
-            var tableName = QuestDbUtilities.GetTableName<T>();
-            var truncateQuery = $"TRUNCATE TABLE {tableName}";
-            
-            await _questClient.ExecuteNonQueryAsync(truncateQuery);
-            
-            _logger.LogInformation("Successfully truncated table {TableName} in QuestDB", tableName);
+            var table = QuestDbContext.GetTableName<T>();
+            _logger.LogInformation("Truncating QuestDB table {Table} for {EntityType}", table, typeof(T).Name);
+
+            var sql = $"TRUNCATE TABLE {table}";
+
+            await using var conn = await _questDb.OpenPgAsync();
+            await conn.ExecuteAsync(sql);
+
+            _logger.LogInformation("Successfully truncated table {Table} in QuestDB", table);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error deleting all packets of type {EntityType} from QuestDB", typeof(T).Name);
+            _logger.LogError(ex, "Error truncating QuestDB table for {EntityType}", typeof(T).Name);
             throw;
         }
     }
     
     /// <summary>
-    /// Retrieves paginated packets within a specified time range from QuestDB using HTTP API
+    /// Retrieves paginated packets in a time range using OFFSET/LIMIT (simple).
     /// </summary>
-    /// <param name="startTimestamp">The start timestamp for the query range</param>
-    /// <param name="endTimestamp">The end timestamp for the query range</param>
-    /// <param name="orderBy">The ordering direction (Ascending or Descending)</param>
-    /// <param name="page">The page number (1-based)</param>
-    /// <param name="pageSize">The number of items per page</param>
-    /// <returns>A collection of packets for the specified page</returns>
     public async Task<IEnumerable<T>> GetPaginatedFromQuestDbAsync(
         DateTime startTimestamp,
         DateTime endTimestamp,
@@ -213,35 +213,42 @@ public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEnti
     {
         try
         {
-            _logger.LogDebug("Retrieving paginated packets of type {EntityType} from QuestDB between {StartTimestamp} and {EndTimestamp}, page {Page}, size {PageSize}", 
+            if (startTimestamp.Kind != DateTimeKind.Utc || endTimestamp.Kind != DateTimeKind.Utc)
+                _logger.LogWarning("QuestDB expects UTC timestamps; got {StartKind}/{EndKind}", startTimestamp.Kind, endTimestamp.Kind);
+
+            _logger.LogDebug(
+                "QuestDB page for {EntityType}: {Start:u}..{End:u}, page {Page}, size {Size}",
                 typeof(T).Name, startTimestamp, endTimestamp, page, pageSize);
-            
-            var tableName = QuestDbUtilities.GetTableName<T>();
-            var orderClause = orderBy == OrderBy.Asc ? "ASC" : "DESC";
-            var skip = (page - 1) * pageSize;
-            
-            // For QuestDB, we need to fetch more data and then skip/limit in memory
-            // We'll fetch skip + pageSize records and then take only the pageSize we need
-            var fetchSize = skip + pageSize;
-            
-            var query = $@"
-                SELECT * FROM {tableName} 
-                WHERE timestamp >= '{startTimestamp:yyyy-MM-dd HH:mm:ss}' AND timestamp <= '{endTimestamp:yyyy-MM-dd HH:mm:ss}' 
-                ORDER BY timestamp {orderClause} 
-                LIMIT {fetchSize}";
-            
-            var allResults = await _questClient.ExecuteQueryAsync(query, QuestDbUtilities.ParseQuestDbRawResponse<T>);
-            
-            // Apply pagination in memory
-            var result = allResults.Skip(skip).Take(pageSize).ToList();
-            
-            _logger.LogDebug("Retrieved {Count} packets of type {EntityType} from QuestDB for page {Page} (fetched {TotalFetched}, skipped {Skipped})", 
-                result.Count, typeof(T).Name, page, allResults.Count(), skip);
-            return result;
+
+            var table  = QuestDbContext.GetTableName<T>();
+            var select = QuestDbContext.SelectListFor<T>();
+            var order  = orderBy == OrderBy.Asc ? "ASC" : "DESC";
+            var offset = Math.Max(0, (page - 1) * pageSize);
+
+            var lower = Math.Max(0, offset);
+            var upper = checked(lower + pageSize); // throws on overflow (defensive)
+            var sorder = orderBy == OrderBy.Asc ? "ASC" : "DESC"; // enum -> safe literal
+
+            var sql = $"""
+                SELECT {select}
+                FROM {table}
+                WHERE timestamp >= @start AND timestamp <= @end
+                ORDER BY timestamp {sorder}
+                LIMIT {lower}, {upper}
+            """;
+
+            var args = new { start = startTimestamp, end = endTimestamp };
+
+            await using var conn = await _questDb.OpenPgAsync();
+
+            var rows = await conn.QueryAsync<T>(sql, args);
+            _logger.LogDebug("QuestDB page fetched: {Count} rows (page {Page})", rows.Count(), page);
+            return rows;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error retrieving paginated packets of type {EntityType} from QuestDB between {StartTimestamp} and {EndTimestamp}", 
+            _logger.LogError(ex,
+                "Error retrieving paginated packets of type {EntityType} from QuestDB between {StartTimestamp} and {EndTimestamp}",
                 typeof(T).Name, startTimestamp, endTimestamp);
             throw;
         }

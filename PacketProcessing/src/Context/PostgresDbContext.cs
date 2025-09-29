@@ -5,11 +5,11 @@ using PacketProcessing.Entities.Range;
 
 namespace PacketProcessing.Context;
 
-public class AppDbContext : DbContext
+public sealed class PostgresDbContext : DbContext
 {
-    private readonly ILogger<AppDbContext> _logger;
+    private readonly ILogger<PostgresDbContext> _logger;
     
-    public AppDbContext(DbContextOptions<AppDbContext> options, ILogger<AppDbContext> logger)
+    public PostgresDbContext(DbContextOptions<PostgresDbContext> options, ILogger<PostgresDbContext> logger)
         : base(options)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));

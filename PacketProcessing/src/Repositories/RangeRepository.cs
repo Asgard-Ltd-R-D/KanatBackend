@@ -7,5 +7,5 @@ namespace PacketProcessing.Repositories;
 
 public class RangeRepository<T> : EfRepository<T>, IRangeRepository<T> where T : BaseEntity
 {
-    public RangeRepository(AppDbContext context, ILogger<EfRepository<T>> logger) : base(context, logger) { }
+    public RangeRepository(PostgresDbContext context, ILogger<EfRepository<T>> logger) : base(context, logger) { }
 }

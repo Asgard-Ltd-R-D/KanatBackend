@@ -1,5 +1,5 @@
-using PacketProcessing.Utils.QuestDB;
 using QuestDB.Senders;
+using static PacketProcessing.Context.QuestDbContext;
 
 namespace PacketProcessing.Entities;
 
@@ -15,27 +15,4 @@ public abstract class BasePacketEntity : BaseEntity
     /// </summary>
     /// <param name="sender">The sender to write columns to</param>
     public abstract void WriteColumns(ISender sender);
-    
-    /// <summary>
-    /// Creates a RowMap function to write this object to the sender
-    /// </summary>
-    /// <returns>RowMap function to activate</returns>
-    public virtual RowMap ToRowMap()
-    {
-        var table = TableName;
-        var tsUtc = DateTime.SpecifyKind(Timestamp, DateTimeKind.Utc);
-
-        return new RowMap(
-            table,
-            tsUtc,
-            apply: sender =>
-            {
-                sender
-                    .Symbol("id", Id.ToString("N"));
-
-                WriteColumns(sender);
-
-                sender.At(tsUtc);
-            });
-    }
 }

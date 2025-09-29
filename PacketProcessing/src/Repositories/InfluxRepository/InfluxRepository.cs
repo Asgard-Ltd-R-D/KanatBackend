@@ -1,13 +1,11 @@
 using Dapper;
 using Microsoft.Extensions.Logging;
-using NodaTime;
 using PacketProcessing.Context;
 using PacketProcessing.Entities;
 using PacketProcessing.Utils.Enums;
 using QuestDB.Senders;
-using static PacketProcessing.Context.QuestDbContext;
 
-namespace PacketProcessing.Repositories;
+namespace PacketProcessing.Repositories.InfluxRepository;
 
 /// <summary>
 /// Generic repository implementation for packet-specific operations
@@ -15,12 +13,12 @@ namespace PacketProcessing.Repositories;
 /// along with packet-specific query methods
 /// </summary>
 /// <typeparam name="T">The type of packet entity (must inherit from BasePacketEntity)</typeparam>
-public class PacketRepository<T> : IPacketRepository<T> where T : BasePacketEntity
+public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEntity
 {
-    private readonly ILogger<PacketRepository<T>> _logger;
+    private readonly ILogger<InfluxRepository<T>> _logger;
     private readonly QuestDbContext _questDb;
     
-    public PacketRepository(ILogger<PacketRepository<T>> logger,
+    public InfluxRepository(ILogger<InfluxRepository<T>> logger,
                             QuestDbContext questDbContext)
     {
         _logger  = logger ?? throw new ArgumentNullException(nameof(logger));

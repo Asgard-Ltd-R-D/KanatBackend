@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 using PacketProcessing.Config;
 using PacketProcessing.Context;
 using PacketProcessing.Entities.Packet;
-using PacketProcessing.Repositories;
+using PacketProcessing.Repositories.InfluxRepository;
 using PacketProcessing.Tests;
 using PacketProcessing.Utils.Enums;
 using QuestDB.Senders;
@@ -15,19 +15,19 @@ using Xunit;
 namespace PacketProcessing.Tests.unit.RepositoryTests;
 
 /// <summary>
-/// Tests for PacketRepository operations with new QuestDbContext architecture
+/// Tests for InfluxRepository operations with new QuestDbContext architecture
 /// </summary>
-public class PacketRepositoryTests : IDisposable
+public class InfluxRepositoryTests : IDisposable
 {
     private readonly ServiceProvider _serviceProvider;
     private readonly PostgresDbContext _postgresContext;
     private readonly QuestDbContext _questDbContext;
-    private readonly IPacketRepository<MotionPacketEntity> _motionRepository;
-    private readonly IPacketRepository<OnVIFPacketEntity> _onvifRepository;
-    private readonly IPacketRepository<SafetyPacketEntity> _safetyRepository;
+    private readonly IInfluxRepository<MotionPacketEntity> _motionRepository;
+    private readonly IInfluxRepository<OnVIFPacketEntity> _onvifRepository;
+    private readonly IInfluxRepository<SafetyPacketEntity> _safetyRepository;
     private readonly string _ilpHttpConnection;
 
-    public PacketRepositoryTests()
+    public InfluxRepositoryTests()
     {
         // Setup test services
         var services = new ServiceCollection();
@@ -64,9 +64,9 @@ public class PacketRepositoryTests : IDisposable
         // Get required services
         _postgresContext = _serviceProvider.GetRequiredService<PostgresDbContext>();
         _questDbContext = _serviceProvider.GetRequiredService<QuestDbContext>();
-        _motionRepository = _serviceProvider.GetRequiredService<IPacketRepository<MotionPacketEntity>>();
-        _onvifRepository = _serviceProvider.GetRequiredService<IPacketRepository<OnVIFPacketEntity>>();
-        _safetyRepository = _serviceProvider.GetRequiredService<IPacketRepository<SafetyPacketEntity>>();
+        _motionRepository = _serviceProvider.GetRequiredService<IInfluxRepository<MotionPacketEntity>>();
+        _onvifRepository = _serviceProvider.GetRequiredService<IInfluxRepository<OnVIFPacketEntity>>();
+        _safetyRepository = _serviceProvider.GetRequiredService<IInfluxRepository<SafetyPacketEntity>>();
         
         // ILP HTTP connection for QuestDB
         _ilpHttpConnection = "http::addr=localhost:9000;username=quest;password=quest;";
@@ -155,6 +155,9 @@ public class PacketRepositoryTests : IDisposable
         // Act - Write entity
         await _motionRepository.WriteQuestDbAsync(sender, entity);
         
+        // Wait for QuestDB to commit the data
+        await Task.Delay(1000);
+        
         // Verify data can be fetched
         var fetchedEntities = await _motionRepository.GetAllFromQuestDbAsync();
         Assert.NotEmpty(fetchedEntities);
@@ -195,6 +198,9 @@ public class PacketRepositoryTests : IDisposable
         // Act - Write batch
         await _motionRepository.WriteBatchQuestDbAsync(sender, entities);
         
+        // Wait for QuestDB to commit the data
+        await Task.Delay(1000);
+        
         // Verify data can be fetched
         var fetchedEntities = await _motionRepository.GetAllFromQuestDbAsync();
         Assert.Equal(10, fetchedEntities.Count());
@@ -211,7 +217,7 @@ public class PacketRepositoryTests : IDisposable
     }
 
     [Fact]
-    public async Task PacketRepository_GetAllFromQuestDbAsync_ShouldWork()
+    public async Task InfluxRepository_GetAllFromQuestDbAsync_ShouldWork()
     {
         // Clean up - Delete all data
         await _motionRepository.DeleteAllFromQuestDbAsync();
@@ -226,6 +232,9 @@ public class PacketRepositoryTests : IDisposable
         
         using var sender = Sender.New(_ilpHttpConnection);
         await _motionRepository.WriteBatchQuestDbAsync(sender, testEntities);
+        
+        // Wait for QuestDB to commit the data
+        await Task.Delay(1000);
         
         // Act - Get all data
         var fetchedEntities = await _motionRepository.GetAllFromQuestDbAsync();
@@ -245,7 +254,7 @@ public class PacketRepositoryTests : IDisposable
     }
 
     [Fact]
-    public async Task PacketRepository_GetPaginatedFromQuestDbAsync_ShouldWork()
+    public async Task InfluxRepository_GetPaginatedFromQuestDbAsync_ShouldWork()
     {
         // Clean up - Delete all data
         await _motionRepository.DeleteAllFromQuestDbAsync();
@@ -281,13 +290,16 @@ public class PacketRepositoryTests : IDisposable
         // Clean up - Delete all data
         await _motionRepository.DeleteAllFromQuestDbAsync();
         
+        // Wait for QuestDB to commit the deletion
+        await Task.Delay(1000);
+        
         // Verify cleanup worked
         var entitiesAfterCleanup = await _motionRepository.GetAllFromQuestDbAsync();
         Assert.Empty(entitiesAfterCleanup);
     }
 
     [Fact]
-    public async Task PacketRepository_ShouldWorkWithAllEntityTypes()
+    public async Task InfluxRepository_ShouldWorkWithAllEntityTypes()
     {
         // Clean up - Delete all data
         await _motionRepository.DeleteAllFromQuestDbAsync();

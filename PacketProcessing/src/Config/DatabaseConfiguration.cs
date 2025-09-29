@@ -7,6 +7,7 @@ using PacketProcessing.Context;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Entities.Range;
 using PacketProcessing.Repositories;
+using PacketProcessing.Repositories.InfluxRepository;
 
 namespace PacketProcessing.Config;
 
@@ -115,25 +116,25 @@ public class DatabaseConfiguration
     private static void ConfigurePacketRepositories(IServiceCollection services, IConfiguration configuration)
     {
         // Register specific packet repositories for convenience
-        services.AddScoped<IPacketRepository<MotionPacketEntity>>(sp =>
+        services.AddScoped<IInfluxRepository<MotionPacketEntity>>(sp =>
         {
-            var logger = sp.GetRequiredService<ILogger<PacketRepository<MotionPacketEntity>>>();
+            var logger = sp.GetRequiredService<ILogger<InfluxRepository<MotionPacketEntity>>>();
             var questDbContext = sp.GetRequiredService<QuestDbContext>();
-            return new PacketRepository<MotionPacketEntity>(logger, questDbContext);
+            return new InfluxRepository<MotionPacketEntity>(logger, questDbContext);
         });
         
-        services.AddScoped<IPacketRepository<OnVIFPacketEntity>>(sp =>
+        services.AddScoped<IInfluxRepository<OnVIFPacketEntity>>(sp =>
         {
-            var logger = sp.GetRequiredService<ILogger<PacketRepository<OnVIFPacketEntity>>>();
+            var logger = sp.GetRequiredService<ILogger<InfluxRepository<OnVIFPacketEntity>>>();
             var questDbContext = sp.GetRequiredService<QuestDbContext>();
-            return new PacketRepository<OnVIFPacketEntity>(logger, questDbContext);
+            return new InfluxRepository<OnVIFPacketEntity>(logger, questDbContext);
         });
         
-        services.AddScoped<IPacketRepository<SafetyPacketEntity>>(sp =>
+        services.AddScoped<IInfluxRepository<SafetyPacketEntity>>(sp =>
         {
-            var logger = sp.GetRequiredService<ILogger<PacketRepository<SafetyPacketEntity>>>();
+            var logger = sp.GetRequiredService<ILogger<InfluxRepository<SafetyPacketEntity>>>();
             var questDbContext = sp.GetRequiredService<QuestDbContext>();
-            return new PacketRepository<SafetyPacketEntity>(logger, questDbContext);
+            return new InfluxRepository<SafetyPacketEntity>(logger, questDbContext);
         });
     }
     

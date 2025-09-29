@@ -4,6 +4,7 @@ using PacketProcessing.Config;
 using PacketProcessing.Context;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Repositories;
+using PacketProcessing.Repositories.InfluxRepository;
 using PacketProcessing.Tests;
 using Xunit;
 
@@ -88,9 +89,9 @@ public class DatabaseConfigurationTests
         
         // Verify key services are registered
         Assert.NotNull(serviceProvider.GetService<QuestDbContext>());
-        Assert.NotNull(serviceProvider.GetService<IPacketRepository<MotionPacketEntity>>());
-        Assert.NotNull(serviceProvider.GetService<IPacketRepository<OnVIFPacketEntity>>());
-        Assert.NotNull(serviceProvider.GetService<IPacketRepository<SafetyPacketEntity>>());
+        Assert.NotNull(serviceProvider.GetService<IInfluxRepository<MotionPacketEntity>>());
+        Assert.NotNull(serviceProvider.GetService<IInfluxRepository<OnVIFPacketEntity>>());
+        Assert.NotNull(serviceProvider.GetService<IInfluxRepository<SafetyPacketEntity>>());
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 services:
+  # Database Services
   questdb:
     image: questdb/questdb:latest
     container_name: questdb-packets
@@ -38,6 +39,60 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Packet Processing Service
+  packetprocessing:
+    build:
+      context: ./PacketProcessing
+      dockerfile: Dockerfile
+    container_name: packet-processing
+    # Use host network for direct packet capture access
+    network_mode: host
+    # Required capabilities for packet capture
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    depends_on:
+#     questdb:
+#        condition: service_healthy
+      postgresdb:
+        condition: service_healthy
+    environment:
+      # Application environment
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://0.0.0.0:10801
+      
+      # PostgreSQL
+      - ConnectionStrings__DefaultConnection=Host=postgresdb;Port=5432;Database=pdb;Username=postgres;Password=postgres
+
+      # QuestDB (PG + HTTP + ILP/TCP)
+      - QuestDb__PgHost=questdb
+      - QuestDb__PgPort=8812
+      - QuestDb__PgUser=quest
+      - QuestDb__PgPassword=quest
+      - QuestDb__Database=qdb
+      - QuestDb__HttpHost=questdb
+      - QuestDb__HttpPort=9000
+      - QuestDb__IlpHost=questdb
+      - QuestDb__IlpPort=9009
+
+      # Capture (see §3 below)
+      - CAPTURE_MODE=auto
+      - FILTER=(tcp or udp)
+      - READ_TIMEOUT_MS=50
+      - KERNEL_BUFFER_MB=32
+      - LOG_EVERY_MS=1000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
 
 volumes:
   questdb_data:

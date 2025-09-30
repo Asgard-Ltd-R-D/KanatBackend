@@ -177,7 +177,6 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
     
     /// <summary>
     /// Deletes all packets of the specified type from QuestDB.
-    /// </summary>
     public async Task DeleteAllFromQuestDbAsync()
     {
         try
@@ -202,6 +201,12 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
     /// <summary>
     /// Retrieves paginated packets in a time range using OFFSET/LIMIT (simple).
     /// </summary>
+    /// <param name="startTimestamp">The start timestamp for the query range</param>
+    /// <param name="endTimestamp">The end timestamp for the query range</param>
+    /// <param name="orderBy">The ordering direction (Ascending or Descending)</param>
+    /// <param name="page">The page number (1-based)</param>
+    /// <param name="pageSize">The number of items per page</param>
+    /// <returns>A collection of packets for the specified page</returns>   
     public async Task<IEnumerable<T>> GetPaginatedFromQuestDbAsync(
         DateTime startTimestamp,
         DateTime endTimestamp,
@@ -248,6 +253,81 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             _logger.LogError(ex,
                 "Error retrieving paginated packets of type {EntityType} from QuestDB between {StartTimestamp} and {EndTimestamp}",
                 typeof(T).Name, startTimestamp, endTimestamp);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Retrieves paginated packets within a specified time range from QuestDB with a specified interval between packets
+    /// </summary>
+    /// <param name="startTimestamp">The start timestamp for the query range</param>
+    /// <param name="endTimestamp">The end timestamp for the query range</param>
+    /// <param name="interval">The interval for the query range in milliseconds</param>
+    /// <param name="orderBy">The ordering direction (Ascending or Descending)</param>
+    /// <param name="page">The page number (1-based)</param>
+    /// <param name="pageSize">The number of items per page</param>
+    /// <returns>A collection of packets for the specified page</returns>
+    public async Task<IEnumerable<T>> GetPaginatedFromQuestDbAsyncWithInterval(
+        DateTime startTimestamp, 
+        DateTime endTimestamp, 
+        int interval, 
+        OrderBy orderBy = OrderBy.Asc, 
+        int page = 1, 
+        int pageSize = 1000)
+    {
+        try
+        {
+            if (startTimestamp.Kind != DateTimeKind.Utc || endTimestamp.Kind != DateTimeKind.Utc)
+                _logger.LogWarning("QuestDB expects UTC timestamps; got {StartKind}/{EndKind}", startTimestamp.Kind, endTimestamp.Kind);
+
+            if (interval < 0)
+                throw new ArgumentOutOfRangeException(nameof(interval), "interval must be >= 0");
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 1_000;
+
+            _logger.LogDebug(
+                "QuestDB page for {EntityType}: {Start:u}..{End:u}, page {Page}, size {Size}",
+                typeof(T).Name, startTimestamp, endTimestamp, page, pageSize);
+
+            var table  = QuestDbContext.GetTableName<T>();
+            var select = QuestDbContext.SelectListFor<T>();
+            var order  = orderBy == OrderBy.Asc ? "ASC" : "DESC";
+            var offset = Math.Max(0, (page - 1) * pageSize);
+
+            var lower = Math.Max(0, offset);
+            var upper = checked(lower + pageSize); // throws on overflow (defensive)
+            var sorder = orderBy == OrderBy.Asc ? "ASC" : "DESC"; // enum -> safe literal
+            var intervalMs = TimeSpan.FromMilliseconds(interval); // convert milliseconds to TimeSpan
+
+            var sql = $"""
+                WITH b AS (
+                    SELECT
+                        {select},
+                        lag(timestamp) OVER (ORDER BY timestamp {sorder}, id {sorder}) AS prev_ts
+                    FROM {table}
+                    WHERE timestamp >= @start AND timestamp < @end
+                )
+                SELECT {select}
+                FROM b
+                WHERE prev_ts IS NULL
+                OR datediff('u', prev_ts, timestamp) >= @interval
+                ORDER BY timestamp {sorder}, id {sorder}
+                LIMIT {lower}, {upper}
+                """;
+
+            var args = new { start = startTimestamp, end = endTimestamp, interval = intervalMs };
+
+            await using var conn = await _questDb.OpenPgAsync();
+
+            var rows = await conn.QueryAsync<T>(sql, args);
+            _logger.LogDebug("QuestDB page fetched: {Count} rows (page {Page})", rows.Count(), page);
+            return rows;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error retrieving paginated packets of type {EntityType} from QuestDB between {StartTimestamp} and {EndTimestamp} with interval {Interval}",
+                typeof(T).Name, startTimestamp, endTimestamp, interval);
             throw;
         }
     }

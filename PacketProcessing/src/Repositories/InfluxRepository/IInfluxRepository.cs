@@ -34,6 +34,24 @@ public interface IInfluxRepository<T> where T : BasePacketEntity
         OrderBy orderBy = OrderBy.Asc, 
         int page = 1, 
         int pageSize = 1_000);
+
+    /// <summary>
+    /// Retrieves paginated packets within a specified time range from QuestDB with a specified interval
+    /// </summary>
+    /// <param name="startTimestamp">The start timestamp for the query range</param>
+    /// <param name="endTimestamp">The end timestamp for the query range</param>
+    /// <param name="interval">The interval for the query range in milliseconds</param>
+    /// <param name="orderBy">The ordering direction (Ascending or Descending)</param>
+    /// <param name="page">The page number (1-based)</param>
+    /// <param name="pageSize">The number of items per page</param>
+    /// <returns>A collection of packets for the specified page</returns>
+    Task<IEnumerable<T>> GetPaginatedFromQuestDbAsyncWithInterval(
+    DateTime startTimestamp, 
+    DateTime endTimestamp,
+    int interval,
+    OrderBy orderBy = OrderBy.Asc, 
+    int page = 1, 
+    int pageSize = 1_000);
     
     /// <summary>
     /// Writes a single packet entity to QuestDB using the provided sender

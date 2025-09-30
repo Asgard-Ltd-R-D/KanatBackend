@@ -23,6 +23,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     private readonly string _connectionString;
     private readonly int _batchSize;
     private readonly TimeSpan _batchTimeout;
+    private readonly int _workerCount;
 
     private long _flushedCount;
     private long _failedCount;
@@ -42,13 +43,36 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         _batchSize = concurrency.GetValue<int>("BatchSize", 500);
         _batchTimeout = TimeSpan.FromMilliseconds(concurrency.GetValue<int>("BatchTimeoutMs", 100));
 
+        var min = concurrency.GetValue<int>("MinWorkers", 2);
+        var max = concurrency.GetValue<int>("MaxWorkers", 8);
+        _workerCount = Math.Clamp(Environment.ProcessorCount, min, max);
+
         var opt = options.Value;
+        // removed auto_flush_* to avoid double-batching
         _connectionString =
+<<<<<<< HEAD
             $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};" +
             $"auto_flush_rows={opt.BatchSize};auto_flush_interval={opt.BatchTimeoutMs};";
+=======
+            $"http::addr={opt.Host}:{opt.Port};username={opt.Username};password={opt.Password};";
+
+        _logger.LogInformation(
+            "[{Entity}] DbWriter initialized with {Workers} workers, BatchSize={BatchSize}, Timeout={Timeout}ms",
+            typeof(T).Name, _workerCount, _batchSize, _batchTimeout.TotalMilliseconds);
+>>>>>>> 4ce0788 (Applied multi processing workload)
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    // ----------- BackgroundService entry point -----------
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var workers = Enumerable.Range(0, _workerCount)
+            .Select(i => Task.Run(() => WorkerLoopAsync(i, stoppingToken), stoppingToken))
+            .ToArray();
+
+        return Task.WhenAll(workers);
+    }
+
+    private async Task WorkerLoopAsync(int workerId, CancellationToken token)
     {
         ISender? sender = null;
         var buffer = new List<T>(_batchSize);
@@ -59,44 +83,48 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         {
             sender = Sender.New(_connectionString);
 
-            await foreach (var packet in _channel.Reader.ReadAllAsync(stoppingToken))
+            await foreach (var packet in _channel.Reader.ReadAllAsync(token))
             {
                 buffer.Add(packet);
+
+                // Drain aggressively up to batch size
+                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var more))
+                    buffer.Add(more);
 
                 var timeExceeded = (DateTime.UtcNow - lastFlush) >= _batchTimeout;
                 var sizeExceeded = buffer.Count >= _batchSize;
 
                 if (sizeExceeded || timeExceeded)
                 {
-                    await FlushInternalAsync(sender, buffer, stoppingToken);
+                    await FlushInternalAsync(sender, buffer, token);
                     buffer.Clear();
                     lastFlush = DateTime.UtcNow;
                 }
 
-                if (await logTicker.WaitForNextTickAsync(stoppingToken))
+                if (await logTicker.WaitForNextTickAsync(token))
                 {
                     var (flushed, failed) = GetStats();
-                    _logger.LogInformation("[{Entity}] DbWriter Stats: Flushed={Flushed}, Failed={Failed}",
-                        typeof(T).Name, flushed, failed);
+                    _logger.LogInformation(
+                        "[{Entity}] Worker {Worker} Stats: Flushed={Flushed}, Failed={Failed}",
+                        typeof(T).Name, workerId, flushed, failed);
                 }
             }
         }
         catch (OperationCanceledException) { /* shutdown */ }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "DbWriter crashed for {Entity}", typeof(T).Name);
+            _logger.LogError(ex, "[{Entity}] Worker {Worker} crashed", typeof(T).Name, workerId);
+            throw;
         }
         finally
         {
-            try { sender?.Dispose(); } catch { }
+            if (buffer.Count > 0 && sender is not null)
+                await FlushInternalAsync(sender, buffer, token);
+            sender?.Dispose();
         }
-
-        if (buffer.Count > 0 && sender is not null)
-            await FlushInternalAsync(sender, buffer, stoppingToken);
     }
 
     // ----------- IDbWriterService<T> Implementation -----------
-
     public async Task FlushBatchAsync(CancellationToken ct = default)
     {
         using var sender = Sender.New(_connectionString);
@@ -112,7 +140,6 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         (Interlocked.Read(ref _flushedCount), Interlocked.Read(ref _failedCount));
 
     // ----------- Internal logic -----------
-
     private async Task FlushInternalAsync(ISender sender, IReadOnlyList<T> batch, CancellationToken ct)
     {
         if (batch.Count == 0) return;

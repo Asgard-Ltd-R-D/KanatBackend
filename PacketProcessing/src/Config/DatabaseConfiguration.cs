@@ -76,7 +76,6 @@ public class DatabaseConfiguration
     /// <summary>
     /// Configures QuestDB services
     /// </summary>
-    [Obsolete]
     private static void ConfigureQuestDbServices(IServiceCollection services, IConfiguration configuration)
     {
         // Configure QuestDB options
@@ -116,21 +115,21 @@ public class DatabaseConfiguration
     private static void ConfigurePacketRepositories(IServiceCollection services, IConfiguration configuration)
     {
         // Register specific packet repositories for convenience
-        services.AddScoped<IInfluxRepository<MotionPacketEntity>>(sp =>
+        services.AddSingleton<IInfluxRepository<MotionPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<InfluxRepository<MotionPacketEntity>>>();
             var questDbContext = sp.GetRequiredService<QuestDbContext>();
             return new InfluxRepository<MotionPacketEntity>(logger, questDbContext);
         });
         
-        services.AddScoped<IInfluxRepository<OnVIFPacketEntity>>(sp =>
+        services.AddSingleton<IInfluxRepository<OnVIFPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<InfluxRepository<OnVIFPacketEntity>>>();
             var questDbContext = sp.GetRequiredService<QuestDbContext>();
             return new InfluxRepository<OnVIFPacketEntity>(logger, questDbContext);
         });
         
-        services.AddScoped<IInfluxRepository<SafetyPacketEntity>>(sp =>
+        services.AddSingleton<IInfluxRepository<SafetyPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<InfluxRepository<SafetyPacketEntity>>>();
             var questDbContext = sp.GetRequiredService<QuestDbContext>();

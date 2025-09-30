@@ -10,6 +10,11 @@ using PacketProcessing.Entities.Packet;
 using PacketProcessing.Services.Networking;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using PacketProcessing.Repositories.InfluxRepository;
+using Microsoft.Extensions.Options;
+using PacketProcessing.Utils.Records;
+using PacketProcessing.Services.Storage;
+using PacketProcessing.Services.Orchestration;
 
 /// <summary>
 /// Configuration and Dependency Injection Manager
@@ -38,81 +43,113 @@ public class ConfigurationInjection
         // Register Repositories & Services
         //TODO: Implement Repositories and Services
 
+        var config = builder.Configuration;
+
         
-        // Register Channels for inter-service communication
-        builder.Services.AddSingleton<Channel<MotionPacketEntity>>(sp =>
+        // === Channels ===
+        builder.Services.AddSingleton(sp =>
         {
-            var config = sp.GetRequiredService<IConfiguration>();
-            var maxMembers = config.GetValue<int>("DataPipes:MotionCapture:Channel:Members", 200000);
-            return Channel.CreateBounded<MotionPacketEntity>(new BoundedChannelOptions(maxMembers)
+            var max = config.GetValue<int>("DataPipes:MotionCapture:Channel:Members", 1000000);
+            return Channel.CreateBounded<MotionPacketEntity>(new BoundedChannelOptions(max)
             {
                 FullMode = BoundedChannelFullMode.Wait
             });
-        });
-        
-        builder.Services.AddSingleton<Channel<SafetyPacketEntity>>(sp =>
-        {
-            var config = sp.GetRequiredService<IConfiguration>();
-            var maxMembers = config.GetValue<int>("DataPipes:SafetyCapture:Channel:Members", 100000);
-            return Channel.CreateBounded<SafetyPacketEntity>(new BoundedChannelOptions(maxMembers)
-            {
-                FullMode = BoundedChannelFullMode.Wait
-            });
-        });
-        
-        builder.Services.AddSingleton<Channel<OnVIFPacketEntity>>(sp =>
-        {
-            var config = sp.GetRequiredService<IConfiguration>();
-            var maxMembers = config.GetValue<int>("DataPipes:OnVIFCapture:Channel:Members", 1000);
-            return Channel.CreateBounded<OnVIFPacketEntity>(new BoundedChannelOptions(maxMembers)
-            {
-                FullMode = BoundedChannelFullMode.Wait
-            });
-        });
-        
-        // Register Capture Services as singletons
-        builder.Services.AddSingleton<CaptureService<MotionPacketEntity>>(sp =>
-        {
-            var logger = sp.GetRequiredService<ILogger<CaptureService<MotionPacketEntity>>>();
-            var config = sp.GetRequiredService<IConfiguration>();
-            var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
-            var deviceManager = sp.GetRequiredService<DeviceManager>();
-            return new CaptureService<MotionPacketEntity>(logger, config, channel, "MotionCapture", deviceManager);
-        });
-        
-        builder.Services.AddSingleton<CaptureService<SafetyPacketEntity>>(sp =>
-        {
-            var logger = sp.GetRequiredService<ILogger<CaptureService<SafetyPacketEntity>>>();
-            var config = sp.GetRequiredService<IConfiguration>();
-            var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
-            var deviceManager = sp.GetRequiredService<DeviceManager>();
-            return new CaptureService<SafetyPacketEntity>(logger, config, channel, "SafetyCapture", deviceManager);
-        });
-        
-        builder.Services.AddSingleton<CaptureService<OnVIFPacketEntity>>(sp =>
-        {
-            var logger = sp.GetRequiredService<ILogger<CaptureService<OnVIFPacketEntity>>>();
-            var config = sp.GetRequiredService<IConfiguration>();
-            var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
-            var deviceManager = sp.GetRequiredService<DeviceManager>();
-            return new CaptureService<OnVIFPacketEntity>(logger, config, channel, "OnVIFCapture", deviceManager);
         });
 
-        // Register DeviceManager once
-        builder.Services.AddSingleton<DeviceManager>(sp =>
+        builder.Services.AddSingleton(sp =>
         {
-            var logger = sp.GetRequiredService<ILogger<DeviceManager>>();
-            var dm = new DeviceManager(logger);
-            dm.InitializeDevices();
-            return dm;
+            var max = config.GetValue<int>("DataPipes:SafetyCapture:Channel:Members", 1000000);
+            return Channel.CreateBounded<SafetyPacketEntity>(new BoundedChannelOptions(max)
+            {
+                FullMode = BoundedChannelFullMode.Wait
+            });
         });
-                
-        // Register as hosted services
-        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CaptureService<MotionPacketEntity>>());
-        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CaptureService<SafetyPacketEntity>>());
-        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CaptureService<OnVIFPacketEntity>>());
-    
+
+        builder.Services.AddSingleton(sp =>
+        {
+            var max = config.GetValue<int>("DataPipes:OnVIFCapture:Channel:Members", 100000);
+            return Channel.CreateBounded<OnVIFPacketEntity>(new BoundedChannelOptions(max)
+            {
+                FullMode = BoundedChannelFullMode.Wait
+            });
+        });
+
+        // === Handlers ===
+        builder.Services.AddSingleton<HandlerService<MotionPacketEntity>>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<HandlerService<MotionPacketEntity>>>();
+            var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
+            var repo = sp.GetRequiredService<IInfluxRepository<MotionPacketEntity>>();
+            var opts = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            return new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", logger, channel, repo, opts, cfg);
+        });
+
+        builder.Services.AddSingleton<HandlerService<SafetyPacketEntity>>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<HandlerService<SafetyPacketEntity>>>();
+            var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
+            var repo = sp.GetRequiredService<IInfluxRepository<SafetyPacketEntity>>();
+            var opts = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            return new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", logger, channel, repo, opts, cfg);
+        });
+
+        builder.Services.AddSingleton<HandlerService<OnVIFPacketEntity>>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<HandlerService<OnVIFPacketEntity>>>();
+            var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
+            var repo = sp.GetRequiredService<IInfluxRepository<OnVIFPacketEntity>>();
+            var opts = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            return new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", logger, channel, repo, opts, cfg);
+        });
+
+        // === Configuration ===
+        builder.Services.Configure<InfluxDbOptions>(config.GetSection("Database"));
+
+        // === Writers ===
+        builder.Services.AddSingleton<IHostedService>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<DbWriterService<MotionPacketEntity>>>();
+            var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
+            var repository = sp.GetRequiredService<IInfluxRepository<MotionPacketEntity>>();
+            var options = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var config = sp.GetRequiredService<IConfiguration>();
+            return new DbWriterService<MotionPacketEntity>(logger, channel, repository, options, config);
+        });
         
+        builder.Services.AddSingleton<IHostedService>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<DbWriterService<SafetyPacketEntity>>>();
+            var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
+            var repository = sp.GetRequiredService<IInfluxRepository<SafetyPacketEntity>>();
+            var options = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var config = sp.GetRequiredService<IConfiguration>();
+            return new DbWriterService<SafetyPacketEntity>(logger, channel, repository, options, config);
+        });
+        
+        builder.Services.AddSingleton<IHostedService>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<DbWriterService<OnVIFPacketEntity>>>();
+            var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
+            var repository = sp.GetRequiredService<IInfluxRepository<OnVIFPacketEntity>>();
+            var options = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var config = sp.GetRequiredService<IConfiguration>();
+            return new DbWriterService<OnVIFPacketEntity>(logger, channel, repository, options, config);
+        });
+
+        // === Handlers as hosted background services ===
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HandlerService<MotionPacketEntity>>());
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HandlerService<SafetyPacketEntity>>());
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HandlerService<OnVIFPacketEntity>>());
+
+        // === Orchestrator ===
+        builder.Services.AddSingleton<IPipelineOrchestrator, PipelineOrchestrator>();
+
+        // Device service
+        builder.Services.AddSingleton<IDeviceService, DeviceService>();
+
         // Register Services (including CORS)
         CorsConfiguration.ConfigureCorsServices(builder.Services);
 

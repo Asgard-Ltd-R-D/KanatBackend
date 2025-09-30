@@ -53,15 +53,15 @@ services:
       - NET_RAW
       - NET_ADMIN
     depends_on:
-#     questdb:
-#        condition: service_healthy
+      questdb:
+        condition: service_healthy
       postgresdb:
         condition: service_healthy
     environment:
       # Application environment
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://0.0.0.0:10801
-      
+
       # PostgreSQL
       - ConnectionStrings__DefaultConnection=Host=postgresdb;Port=5432;Database=pdb;Username=postgres;Password=postgres
 

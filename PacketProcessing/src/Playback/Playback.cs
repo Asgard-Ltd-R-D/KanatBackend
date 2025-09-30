@@ -10,7 +10,7 @@ namespace PacketProcessing.Playback;
 public sealed class Playback<T> : IDisposable where T : BasePacketEntity
 {
     public delegate Task TransmitDelegate(PlainDataDto dto, string methodName);
-    public delegate Task<IEnumerable<T>> FetchPageDelegate( DateTime startUtc, DateTime endUtc, int interval, OrderBy orderBy, int page, int pageSize) where T : BasePacketEntity;
+    public delegate Task<IEnumerable<T>> FetchPageDelegate(DateTime startUtc, DateTime endUtc, int interval, OrderBy orderBy, int page, int pageSize);
 
     private readonly ILogger<Playback<T>> _logger;
     private readonly TransmitDelegate _transmit;

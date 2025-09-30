@@ -113,6 +113,9 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             var table = batch[0].TableName;
             sender.Transaction(table);
 
+            // Sort batch by timestamp for O3 optimization
+            batch = [.. batch.OrderBy(e => e.Timestamp)];
+
             for (int i = 0; i < batch.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();

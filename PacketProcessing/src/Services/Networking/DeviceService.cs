@@ -47,20 +47,23 @@ public class DeviceService : IDeviceService
                 {
                     var evt = new RawPacketEvent(dev.Name, data);
 
-                    // Forward to this observer
-                    observer.OnNext(evt);
-
-                    // Also notify any global observers from IObservable
-                    foreach (var o in _observers.Keys)
+                    _ = Task.Run(() =>
                     {
-                        try { o.OnNext(evt); }
-                        catch (Exception ex) { _logger.LogError(ex, "Error notifying global observer"); }
-                    }
+                        try
+                        {
+                            // Forward to specific observer
+                            observer.OnNext(evt);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error notifying observer {Observer}", observer.GetType().Name);
+                        }
+                    });
                 }
             };
             try
             {
-                dev.Open(DeviceModes.None, read_timeout: 10);
+                dev.Open(DeviceModes.Promiscuous, read_timeout: 10000);
                 dev.Filter = filter;
                 dev.StartCapture();
                 if (_activeSubscriptions.TryAdd(observer, dev))

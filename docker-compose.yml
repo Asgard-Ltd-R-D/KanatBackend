@@ -1,13 +1,16 @@
 services:
   # Database Services
   questdb:
-    image: questdb/questdb:latest
+    build:
+      context: ./QuestDB
     container_name: questdb-packets
     ports:
       - "8812:8812" # HTTP/Web Console
       - "9009:9009" # PostgreSQL wire protocol
-      - "9000:9000" # InfluxDB line protocol
+      - "9000:9000" # QuestDB ILP
+      - "9003:9003" # Health and metrics
     environment:
+      - QDB_METRICS_ENABLED=TRUE
       - QDB_PG_USER=quest
       - QDB_PG_PASSWORD=quest
       - QDB_PG_DATABASE=qdb
@@ -16,8 +19,8 @@ services:
       - questdb_logs:/root/.questdb/log
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8812/health"]
-      interval: 30s
+      test: ["CMD", "curl", "-f", "http://localhost:9003"]
+      interval: 10s
       timeout: 10s
       retries: 3
 
@@ -36,7 +39,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d pdb"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
 
@@ -60,7 +63,7 @@ services:
     environment:
       # Application environment
       - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://0.0.0.0:10801
+      - ASPNETCORE_URLS=http://0.0.0.0:10901
 
       # PostgreSQL
       - ConnectionStrings__DefaultConnection=Host=postgresdb;Port=5432;Database=pdb;Username=postgres;Password=postgres

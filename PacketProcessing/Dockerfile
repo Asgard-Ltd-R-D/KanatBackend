@@ -1,43 +1,27 @@
-# ---- build ----
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
-WORKDIR /src
-
-# Copy project files
-COPY PacketProcessing.csproj ./
-COPY src/ ./src/
-COPY appsettings*.json ./
-
-# Restore dependencies
-RUN dotnet restore PacketProcessing.csproj
-
-# Publish the application
-RUN dotnet publish PacketProcessing.csproj -c Release -o /app
-
-# ---- runtime ----
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
-
-# Install required packages for packet capture
-# libpcap for direct packet capture, tcpdump for debugging, net-tools for network utilities
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpcap0.8 \
-    wireshark-common \
-    tcpdump \
-    net-tools \
-    iputils-ping \
-    && rm -rf /var/lib/apt/lists/*
-
+# Base runtime image
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 WORKDIR /app
 
-# Copy published application
-COPY --from=build /app ./
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-# Set environment variables for .NET optimization
-ENV DOTNET_GCServer=1
-ENV DOTNET_RUNNING_IN_CONTAINER=true
+# Build image
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+# Copy the project file and restore as distinct layers
+COPY ["PacketProcessing.csproj", "./"]
+RUN dotnet restore "PacketProcessing.csproj"
+# Copy all source code
+COPY . .
+# Build the project
+RUN dotnet build "PacketProcessing.csproj" -c Release -o /app/build
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5000/health || exit 1
+# Publish the application
+FROM build AS publish
+RUN dotnet publish "PacketProcessing.csproj" -c Release -o /app/publish /p:UseAppHost=true
 
+# Final runtime image
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "PacketProcessing.dll"]

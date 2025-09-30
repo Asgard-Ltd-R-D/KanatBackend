@@ -16,7 +16,7 @@ public static class BpfFilterBuilder
         {
             "tcp" => "tcp",
             "udp" => "udp",
-            "http" => "tcp port 80 or tcp port 443", // basic http(s)
+            "http" => "tcp port 80",
             "any" => string.Empty,
             _ => protocol ?? string.Empty
         };

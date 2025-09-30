@@ -50,16 +50,8 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         var opt = options.Value;
         // removed auto_flush_* to avoid double-batching
         _connectionString =
-<<<<<<< HEAD
             $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};" +
             $"auto_flush_rows={opt.BatchSize};auto_flush_interval={opt.BatchTimeoutMs};";
-=======
-            $"http::addr={opt.Host}:{opt.Port};username={opt.Username};password={opt.Password};";
-
-        _logger.LogInformation(
-            "[{Entity}] DbWriter initialized with {Workers} workers, BatchSize={BatchSize}, Timeout={Timeout}ms",
-            typeof(T).Name, _workerCount, _batchSize, _batchTimeout.TotalMilliseconds);
->>>>>>> 4ce0788 (Applied multi processing workload)
     }
 
     // ----------- BackgroundService entry point -----------

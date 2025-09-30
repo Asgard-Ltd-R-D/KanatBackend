@@ -51,7 +51,9 @@ public class ConfigurationInjection
             var max = config.GetValue<int>("DataPipes:MotionCapture:Channel:Members", 1000000);
             return Channel.CreateBounded<MotionPacketEntity>(new BoundedChannelOptions(max)
             {
-                FullMode = BoundedChannelFullMode.Wait
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = false,
+                SingleWriter = false
             });
         });
 
@@ -60,7 +62,9 @@ public class ConfigurationInjection
             var max = config.GetValue<int>("DataPipes:SafetyCapture:Channel:Members", 1000000);
             return Channel.CreateBounded<SafetyPacketEntity>(new BoundedChannelOptions(max)
             {
-                FullMode = BoundedChannelFullMode.Wait
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = false,
+                SingleWriter = false
             });
         });
 
@@ -69,7 +73,9 @@ public class ConfigurationInjection
             var max = config.GetValue<int>("DataPipes:OnVIFCapture:Channel:Members", 100000);
             return Channel.CreateBounded<OnVIFPacketEntity>(new BoundedChannelOptions(max)
             {
-                FullMode = BoundedChannelFullMode.Wait
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = false,
+                SingleWriter = false
             });
         });
 
@@ -78,30 +84,24 @@ public class ConfigurationInjection
         {
             var logger = sp.GetRequiredService<ILogger<HandlerService<MotionPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
-            var repo = sp.GetRequiredService<IInfluxRepository<MotionPacketEntity>>();
-            var opts = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
-            return new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", logger, channel, repo, opts, cfg);
+            return new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", logger, channel, cfg);
         });
 
         builder.Services.AddSingleton<HandlerService<SafetyPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<HandlerService<SafetyPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
-            var repo = sp.GetRequiredService<IInfluxRepository<SafetyPacketEntity>>();
-            var opts = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
-            return new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", logger, channel, repo, opts, cfg);
+            return new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", logger, channel, cfg);
         });
 
         builder.Services.AddSingleton<HandlerService<OnVIFPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<HandlerService<OnVIFPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
-            var repo = sp.GetRequiredService<IInfluxRepository<OnVIFPacketEntity>>();
-            var opts = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
-            return new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", logger, channel, repo, opts, cfg);
+            return new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", logger, channel, cfg);
         });
 
         // === Configuration ===

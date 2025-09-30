@@ -1,9 +1,9 @@
 services:
   # Database Services
-  questdb:
+  questdb-dev:
     build:
       context: ./QuestDB
-    container_name: questdb-packets
+    container_name: questdb-packets-dev
     ports:
       - "8812:8812" # HTTP/Web Console
       - "9009:9009" # PostgreSQL wire protocol
@@ -13,7 +13,7 @@ services:
       - QDB_METRICS_ENABLED=TRUE
       - QDB_PG_USER=quest
       - QDB_PG_PASSWORD=quest
-      - QDB_PG_DATABASE=qdb
+      - QDB_PG_DATABASE=PacketDBDev
     volumes:
       - questdb_data:/root/.questdb/db
       - questdb_logs:/root/.questdb/log
@@ -24,11 +24,11 @@ services:
       timeout: 10s
       retries: 3
 
-  postgresdb:
+  postgresdb-dev:
     image: postgres:15-alpine
-    container_name: postgres-events
+    container_name: postgres-range-dev
     ports:
-      - "56432:5432" # PostgreSQL port
+      - "5432:5432" # PostgreSQL port
     environment:
       - POSTGRES_DB=pdb
       - POSTGRES_USER=postgres
@@ -44,11 +44,11 @@ services:
       retries: 3
 
   # Packet Processing Service
-  packetprocessing:
+  packetprocessing-dev:
     build:
       context: ./PacketProcessing
       dockerfile: Dockerfile
-    container_name: packet-processing
+    container_name: packet-processing-dev
     # Use host network for direct packet capture access
     network_mode: host
     # Required capabilities for packet capture
@@ -56,38 +56,23 @@ services:
       - NET_RAW
       - NET_ADMIN
     depends_on:
-      questdb:
+      questdb-dev:
         condition: service_healthy
-      postgresdb:
+      postgresdb-dev:
         condition: service_healthy
     environment:
       # Application environment
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://0.0.0.0:10901
 
-      # PostgreSQL
-      - ConnectionStrings__DefaultConnection=Host=postgresdb;Port=5432;Database=pdb;Username=postgres;Password=postgres
-
-      # QuestDB (PG + HTTP + ILP/TCP)
-      - QuestDb__PgHost=questdb
-      - QuestDb__PgPort=8812
-      - QuestDb__PgUser=quest
-      - QuestDb__PgPassword=quest
-      - QuestDb__Database=qdb
-      - QuestDb__HttpHost=questdb
-      - QuestDb__HttpPort=9000
-      - QuestDb__IlpHost=questdb
-      - QuestDb__IlpPort=9009
-
-      # Capture (see §3 below)
+      # Capture
       - CAPTURE_MODE=auto
-      - FILTER=(tcp or udp)
       - READ_TIMEOUT_MS=50
       - KERNEL_BUFFER_MB=32
       - LOG_EVERY_MS=1000
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:10901/health"]
       interval: 30s
       timeout: 10s
       retries: 3

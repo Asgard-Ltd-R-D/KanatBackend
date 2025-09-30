@@ -10,8 +10,8 @@ using PacketProcessing.Utils.Parsers;
 using PacketProcessing.Repositories.InfluxRepository;
 using QuestDB.Senders;
 using QuestDB;
-using PacketProcessing.Utils.Records;
 using PacketProcessing.Utils.Filters;
+using PacketProcessing.Config;
 
 namespace PacketProcessing.Services.Networking;
 
@@ -44,7 +44,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>
         ILogger<HandlerService<T>> logger,
         Channel<T> channel,
         IInfluxRepository<T> repository,
-        IOptions<InfluxDbOptions> options,
+        IOptions<QuestDbConfiguration> options,
         IConfiguration configuration)
     {
         _logger = logger;
@@ -65,7 +65,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>
 
         var opt = options.Value;
         _connectionString =
-            $"http::addr={opt.Host}:{opt.Port};username={opt.Username};password={opt.Password};" +
+            $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};" +
             $"auto_flush_rows={opt.BatchSize};auto_flush_interval={opt.BatchTimeoutMs};";
 
         _logger.LogInformation(

@@ -1,0 +1,96 @@
+services:
+  # Database Services
+  questdb-prod:
+    build:
+      context: ./QuestDB
+    container_name: questdb-packets-prod
+    ports:
+      - "8812:8812" # HTTP/Web Console
+      - "9009:9009" # PostgreSQL wire protocol
+      - "9000:9000" # QuestDB ILP
+      - "9003:9003" # Health and metrics
+    environment:
+      - QDB_METRICS_ENABLED=TRUE
+      - QDB_PG_USER=quest
+      - QDB_PG_PASSWORD=quest
+      - QDB_PG_DATABASE=PacketDBProd
+    volumes:
+      - questdb_data_prod:/root/.questdb/db
+      - questdb_logs_prod:/root/.questdb/log
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9003"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    networks:
+      - kanat-network
+
+  postgresdb-prod:
+    image: postgres:15-alpine
+    container_name: postgres-range-prod
+    ports:
+      - "5432:5432" # PostgreSQL port
+    environment:
+      - POSTGRES_DB=pdb
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pdb"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    networks:
+      - kanat-network
+
+  # Packet Processing Service
+  packetprocessing-prod:
+    build:
+      context: ./PacketProcessing
+      dockerfile: Dockerfile
+    container_name: packet-processing-prod
+    # Use host network for direct packet capture access
+    network_mode: host
+    # Required capabilities for packet capture
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    depends_on:
+      questdb-prod:
+        condition: service_healthy
+      postgresdb-prod:
+        condition: service_healthy
+    environment:
+      # Application environment
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://0.0.0.0:10900
+
+      # Capture
+      - CAPTURE_MODE=auto
+      - READ_TIMEOUT_MS=50
+      - KERNEL_BUFFER_MB=32
+      - LOG_EVERY_MS=1000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:10900/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+
+volumes:
+  questdb_data_prod:
+  questdb_logs_prod:
+  postgres_data_prod:
+
+networks:
+  kanat-network:
+    driver: bridge

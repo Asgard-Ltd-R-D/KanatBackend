@@ -5,10 +5,10 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PacketProcessing.Entities;
 using PacketProcessing.Repositories.InfluxRepository;
-using PacketProcessing.Utils.Records;
 using QuestDB.Senders;
 using QuestDB;
 using Microsoft.Extensions.Configuration;
+using PacketProcessing.Config;
 
 namespace PacketProcessing.Services.Storage;
 
@@ -31,7 +31,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         ILogger<DbWriterService<T>> logger,
         Channel<T> channel,
         IInfluxRepository<T> repository,
-        IOptions<InfluxDbOptions> options,
+        IOptions<QuestDbConfiguration> options,
         IConfiguration configuration)
     {
         _logger = logger;
@@ -44,7 +44,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
 
         var opt = options.Value;
         _connectionString =
-            $"http::addr={opt.Host}:{opt.Port};username={opt.Username};password={opt.Password};" +
+            $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};" +
             $"auto_flush_rows={opt.BatchSize};auto_flush_interval={opt.BatchTimeoutMs};";
     }
 

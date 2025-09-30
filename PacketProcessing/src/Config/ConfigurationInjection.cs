@@ -12,7 +12,6 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.Repositories.InfluxRepository;
 using Microsoft.Extensions.Options;
-using PacketProcessing.Utils.Records;
 using PacketProcessing.Services.Storage;
 using PacketProcessing.Services.Orchestration;
 
@@ -80,7 +79,7 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<HandlerService<MotionPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
             var repo = sp.GetRequiredService<IInfluxRepository<MotionPacketEntity>>();
-            var opts = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var opts = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
             return new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", logger, channel, repo, opts, cfg);
         });
@@ -90,7 +89,7 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<HandlerService<SafetyPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
             var repo = sp.GetRequiredService<IInfluxRepository<SafetyPacketEntity>>();
-            var opts = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var opts = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
             return new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", logger, channel, repo, opts, cfg);
         });
@@ -100,13 +99,13 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<HandlerService<OnVIFPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
             var repo = sp.GetRequiredService<IInfluxRepository<OnVIFPacketEntity>>();
-            var opts = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var opts = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
             return new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", logger, channel, repo, opts, cfg);
         });
 
         // === Configuration ===
-        builder.Services.Configure<InfluxDbOptions>(config.GetSection("Database"));
+        builder.Services.Configure<QuestDbConfiguration>(config.GetSection("Database"));
 
         // === Writers ===
         builder.Services.AddSingleton<IHostedService>(sp =>
@@ -114,7 +113,7 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<DbWriterService<MotionPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
             var repository = sp.GetRequiredService<IInfluxRepository<MotionPacketEntity>>();
-            var options = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var options = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var config = sp.GetRequiredService<IConfiguration>();
             return new DbWriterService<MotionPacketEntity>(logger, channel, repository, options, config);
         });
@@ -124,7 +123,7 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<DbWriterService<SafetyPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
             var repository = sp.GetRequiredService<IInfluxRepository<SafetyPacketEntity>>();
-            var options = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var options = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var config = sp.GetRequiredService<IConfiguration>();
             return new DbWriterService<SafetyPacketEntity>(logger, channel, repository, options, config);
         });
@@ -134,7 +133,7 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<DbWriterService<OnVIFPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
             var repository = sp.GetRequiredService<IInfluxRepository<OnVIFPacketEntity>>();
-            var options = sp.GetRequiredService<IOptions<InfluxDbOptions>>();
+            var options = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var config = sp.GetRequiredService<IConfiguration>();
             return new DbWriterService<OnVIFPacketEntity>(logger, channel, repository, options, config);
         });
@@ -190,9 +189,6 @@ public class ConfigurationInjection
 
         // Enable CORS Middleware
         CorsConfiguration.ConfigureCorsMiddleware(app);
-
-        // Ensure databases are up to date before starting the application
-        await DatabaseMigrationHelper.EnsureDatabasesUpToDateAsync(app);
 
         // Use Middleware (e.g., Swagger, HTTPS Redirection)
         if (!app.Environment.IsProduction())

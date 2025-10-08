@@ -98,7 +98,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         // Block if channel is full (backpressure to capture)
         if (!_rawChannel.Writer.TryWrite(evt))
         {
-            _rawChannel.Writer.WriteAsync(evt).AsTask().GetAwaiter().GetResult();
+            _rawChannel.Writer.WriteAsync(evt).AsTask().GetAwaiter();
         }
     }
 

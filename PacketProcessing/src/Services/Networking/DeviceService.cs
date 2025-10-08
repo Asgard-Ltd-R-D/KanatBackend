@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.DTOs.Packet;
@@ -43,22 +44,23 @@ public class DeviceService : IDeviceService
             dev.OnPacketArrival += (s, e) =>
             {
                 var raw = e.GetPacket();
-                if (raw?.Data is { Length: > 0 } data)
-                {
-                    var evt = new RawPacketEvent(dev.Name, data);
+                var src = raw?.Data;
 
-                    _ = Task.Run(() =>
+                if (src is { Length: > 0 })
+                {
+                    var buf = ArrayPool<byte>.Shared.Rent(src.Length);
+                    Buffer.BlockCopy(src, 0, buf, 0, src.Length);
+                    var mem = new ReadOnlyMemory<byte>(buf, 0, src.Length);      
+                                  
+                    try
                     {
-                        try
-                        {
-                            // Forward to specific observer
-                            observer.OnNext(evt);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error notifying observer {Observer}", observer.GetType().Name);
-                        }
-                    });
+                        // Forward to specific observer
+                        observer.OnNext(new RawPacketEvent(dev.Name, mem));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error notifying observer {Observer}", observer.GetType().Name);
+                    }
                 }
             };
             try

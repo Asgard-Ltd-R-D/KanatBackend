@@ -6,6 +6,8 @@ using PacketProcessing.Entities;
 using PacketProcessing.Utils.Parsers;
 using PacketProcessing.Utils.Filters;
 using PacketProcessing.Config;
+using System.Runtime.InteropServices;
+using System.Buffers;
 
 namespace PacketProcessing.Services.Networking;
 
@@ -40,9 +42,9 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         _logger = logger;
         _parsedChannel = parsedChannel;
 
-        // small bounded channel for raw events to avoid backpressure on device
+        // bounded channel for raw events with increased capacity and backpressure
         _rawChannel = Channel.CreateBounded<RawPacketEvent>(
-            new BoundedChannelOptions(100_000) { SingleReader = false, SingleWriter = false });
+            new BoundedChannelOptions(500_000) { SingleReader = false, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait });
 
         _protocol = configuration.GetValue<string>($"{dataPipeName}:Network:Protocol") ?? "";
         _ips = configuration.GetSection($"{dataPipeName}:Network:IPs").Get<IEnumerable<string>>() ?? [];
@@ -93,10 +95,10 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     {
         Interlocked.Increment(ref _packetsCaptured);
 
+        // Block if channel is full (backpressure to capture)
         if (!_rawChannel.Writer.TryWrite(evt))
         {
-            Interlocked.Increment(ref _packetsDropped);
-            _logger.LogWarning("Raw channel full, dropped packet from {Device}", evt.DeviceName);
+            _rawChannel.Writer.WriteAsync(evt).AsTask().GetAwaiter().GetResult();
         }
     }
 
@@ -116,7 +118,11 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var workers = Enumerable.Range(0, _workerCount)
-            .Select(i => Task.Run(() => WorkerLoopAsync(i, stoppingToken), stoppingToken))
+            .Select(i => Task.Factory.StartNew(
+                () => WorkerLoopAsync(i, stoppingToken),
+                stoppingToken,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default).Unwrap())
             .ToArray();
 
         return Task.WhenAll(workers);
@@ -128,24 +134,35 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         {
             await foreach (var raw in _rawChannel.Reader.ReadAllAsync(token))
             {
+                ArraySegment<byte> segment = default;
                 try
                 {
                     var parsed = Parse(raw.Data.Span);
+
                     if (parsed is null)
                     {
                         Interlocked.Increment(ref _packetsDropped);
-                        continue;
                     }
-
-                    if (!_parsedChannel.Writer.TryWrite(parsed))
-                        Interlocked.Increment(ref _packetsDropped);
                     else
+                    {
+                        // Apply backpressure if channel is full
+                        if (!_parsedChannel.Writer.TryWrite(parsed))
+                        {
+                            await _parsedChannel.Writer.WriteAsync(parsed, token);
+                        }
                         Interlocked.Increment(ref _packetsParsed);
+                    }
                 }
                 catch (Exception ex)
                 {
                     Interlocked.Increment(ref _packetsDropped);
                     _logger.LogError(ex, "Worker {Worker} failed to parse packet", workerId);
+                }
+                finally
+                {
+                    // Return pooled memory after all processing is complete
+                    if (MemoryMarshal.TryGetArray(raw.Data, out segment))
+                        ArrayPool<byte>.Shared.Return(segment.Array!);
                 }
             }
         }

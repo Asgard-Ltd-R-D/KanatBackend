@@ -40,7 +40,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         _repository = repository;
 
         var concurrency = configuration.GetSection("Concurrency");
-        _batchSize = concurrency.GetValue<int>("BatchSize", 500);
+        _batchSize = concurrency.GetValue<int>("BatchSize", 1000);
         _batchTimeout = TimeSpan.FromMilliseconds(concurrency.GetValue<int>("BatchTimeoutMs", 100));
 
         var min = concurrency.GetValue<int>("MinWorkers", 2);
@@ -58,7 +58,11 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var workers = Enumerable.Range(0, _workerCount)
-            .Select(i => Task.Run(() => WorkerLoopAsync(i, stoppingToken), stoppingToken))
+            .Select(i => Task.Factory.StartNew(
+                () => WorkerLoopAsync(i, stoppingToken),
+                stoppingToken,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default).Unwrap())
             .ToArray();
 
         return Task.WhenAll(workers);

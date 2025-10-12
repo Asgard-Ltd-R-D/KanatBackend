@@ -55,6 +55,8 @@ services:
     cap_add:
       - NET_RAW
       - NET_ADMIN
+    ports:
+      - "10901:10901"
     depends_on:
       questdb-dev:
         condition: service_healthy
@@ -71,6 +73,7 @@ services:
       - KERNEL_BUFFER_MB=32
       - LOG_EVERY_MS=1000
     restart: unless-stopped
+    privileged: true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:10901/health"]
       interval: 30s

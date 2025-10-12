@@ -16,6 +16,10 @@ public static class MotionPacketParser
         _logger = logger;
     }
 
+    // Cached opcode strings to avoid allocations
+    private static readonly Dictionary<ushort, string> OpCodeStrings = new();
+    private static readonly object _opCodeLock = new();
+    
     // OpCode -> Description map (from your Lua e_opcode)
     private static readonly Dictionary<ushort, string> OpCodeDescriptions = new()
     {
@@ -223,8 +227,19 @@ public static class MotionPacketParser
                 floatValue = BitConverter.Int32BitsToSingle(unchecked((int)le));
             }
 
-            // Get the op code and description
-            string opCodeStr = $"0x{op:X4}";
+            // Get the op code and description (cache opcode string to avoid allocation)
+            string opCodeStr;
+            if (!OpCodeStrings.TryGetValue(op, out opCodeStr!))
+            {
+                lock (_opCodeLock)
+                {
+                    if (!OpCodeStrings.TryGetValue(op, out opCodeStr!))
+                    {
+                        opCodeStr = $"0x{op:X4}";
+                        OpCodeStrings[op] = opCodeStr;
+                    }
+                }
+            }
             string opDesc = OpCodeDescriptions.TryGetValue(op, out var desc) ? desc : "Unknown";
 
             // Determine the type of the packet
@@ -243,8 +258,11 @@ public static class MotionPacketParser
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Error parsing motion packet. Packet length: {Length} bytes, Raw data: {Data}", 
-                rawPacket.Length, BitConverter.ToString(rawPacket.ToArray()).Replace("-", ""));
+            // Only log detailed info in Debug mode to avoid expensive string operations
+            if (_logger?.IsEnabled(LogLevel.Debug) ?? false)
+            {
+                _logger.LogDebug(ex, "Error parsing motion packet. Length: {Length} bytes", rawPacket.Length);
+            }
             return null;
         }
     }

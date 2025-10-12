@@ -45,7 +45,11 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
         // bounded channel for raw events with increased capacity and backpressure
         _rawChannel = Channel.CreateBounded<RawPacketEvent>(
-            new BoundedChannelOptions(500_000) { SingleReader = false, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait });
+            new BoundedChannelOptions(500_000) { 
+                SingleReader = false,  // Multiple workers read
+                SingleWriter = false,  // DeviceService may write from multiple threads via Task.Run
+                FullMode = BoundedChannelFullMode.Wait 
+            });
 
         _protocol = configuration.GetValue<string>($"{dataPipeName}:Network:Protocol") ?? "";
         _ips = configuration.GetSection($"{dataPipeName}:Network:IPs").Get<IEnumerable<string>>() ?? [];

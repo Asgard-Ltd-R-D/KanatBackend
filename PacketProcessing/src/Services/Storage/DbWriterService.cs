@@ -72,7 +72,6 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     {
         ISender? sender = null;
         var buffer = new List<T>(_batchSize);
-        var lastFlush = DateTime.UtcNow;
         var logTicker = new PeriodicTimer(TimeSpan.FromSeconds(10));
 
         try
@@ -81,46 +80,51 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
 
             while (!token.IsCancellationRequested)
             {
-                // Wait for data with timeout to check batch timeout condition
-                var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                timeoutCts.CancelAfter(_batchTimeout);
-                
-                try
+                // POC-style deadline batching: Block for first packet
+                var first = await _channel.Reader.ReadAsync(token);
+                buffer.Clear();
+                buffer.Add(first);
+
+                // Set deadline based on batch timeout
+                var deadline = DateTime.UtcNow.Add(_batchTimeout);
+
+                // First, drain all immediately available packets up to batch size
+                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var item))
                 {
-                    await _channel.Reader.WaitToReadAsync(timeoutCts.Token);
+                    buffer.Add(item);
                 }
-                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+
+                // If we still have room and time remains, wait for more packets until deadline
+                if (buffer.Count < _batchSize && DateTime.UtcNow < deadline)
                 {
-                    // Timeout reached - flush if we have data
-                    if (buffer.Count > 0)
+                    try
                     {
-                        await FlushInternalAsync(sender, buffer, token);
-                        buffer.Clear();
-                        lastFlush = DateTime.UtcNow;
+                        var remainingTime = deadline - DateTime.UtcNow;
+                        if (remainingTime > TimeSpan.Zero)
+                        {
+                            var readTask = _channel.Reader.ReadAsync(token).AsTask();
+                            var timeoutTask = Task.Delay(remainingTime, token);
+                            
+                            if (await Task.WhenAny(readTask, timeoutTask) == readTask)
+                            {
+                                buffer.Add(await readTask);
+                                
+                                // Drain more if available after getting one more
+                                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var additional))
+                                {
+                                    buffer.Add(additional);
+                                }
+                            }
+                        }
                     }
-                    continue;
-                }
-                finally
-                {
-                    timeoutCts.Dispose();
-                }
-
-                // Drain all available packets up to batch size
-                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var packet))
-                {
-                    buffer.Add(packet);
+                    catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                    {
+                        // Deadline timeout - flush what we have
+                    }
                 }
 
-                // Flush if batch size reached or timeout exceeded
-                var timeExceeded = (DateTime.UtcNow - lastFlush) >= _batchTimeout;
-                var sizeExceeded = buffer.Count >= _batchSize;
-
-                if (sizeExceeded || timeExceeded)
-                {
-                    await FlushInternalAsync(sender, buffer, token);
-                    buffer.Clear();
-                    lastFlush = DateTime.UtcNow;
-                }
+                // Flush the batch immediately (deadline reached or batch full)
+                await FlushInternalAsync(sender, buffer, token);
 
                 if (await logTicker.WaitForNextTickAsync(token))
                 {

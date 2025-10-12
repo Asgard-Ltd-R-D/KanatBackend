@@ -5,6 +5,10 @@ namespace PacketProcessing.Utils.Parsers
 {
     public static class SafetyPacketParser
     {
+        // Cache DO value strings to avoid allocations
+        private static readonly Dictionary<ushort, string> DoValueStrings = new();
+        private static readonly object _doValueLock = new();
+        
         // DO maps (by destination IP)
         private static readonly IReadOnlyDictionary<ushort, string> DO_PBE = new Dictionary<ushort, string>
         {
@@ -89,12 +93,26 @@ namespace PacketProcessing.Utils.Parsers
             // Type: true for PBE, false otherwise (match your earlier convention)
             bool type = dstIp == "132.8.7.101";
 
+            // Cache DO value string to avoid repeated ToString allocations
+            string doValStr;
+            if (!DoValueStrings.TryGetValue(doVal, out doValStr!))
+            {
+                lock (_doValueLock)
+                {
+                    if (!DoValueStrings.TryGetValue(doVal, out doValStr!))
+                    {
+                        doValStr = doVal.ToString();
+                        DoValueStrings[doVal] = doValStr;
+                    }
+                }
+            }
+
             return new SafetyPacketEntity
             {
                 Id = Guid.NewGuid(),
                 Timestamp = DateTime.UtcNow,
                 Type = type,
-                OpCode = doVal.ToString(),
+                OpCode = doValStr,
                 OpCodeDescription = doDescr,
                 State = stDescr
             };

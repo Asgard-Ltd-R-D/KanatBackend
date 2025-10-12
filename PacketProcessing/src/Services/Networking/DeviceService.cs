@@ -70,7 +70,20 @@ public class DeviceService : IDeviceService
             };
             try
             {
-                dev.Open(DeviceModes.Promiscuous, read_timeout: 10000);
+                /*
+                    Mode: DeviceModes.Promiscuous capturing all packets on the network.
+                    read_timeout: 10000 ms waiting for 10 seconds for a packet to arrive.
+                    kernel_buffer_size: 128 MB on Linux for high-throughput (not supported on macOS)
+                */
+                DeviceConfiguration config = new()
+                {
+                    Mode = DeviceModes.Promiscuous,
+                    ReadTimeout = 10000,
+                    // KernelBufferSize only supported on Linux, not macOS
+                    KernelBufferSize = OperatingSystem.IsLinux() ? 1024 * 1024 * 128 : null
+                };
+
+                dev.Open(config);
                 dev.Filter = filter;
                 dev.StartCapture();
                 if (_activeSubscriptions.TryAdd(observer, dev))

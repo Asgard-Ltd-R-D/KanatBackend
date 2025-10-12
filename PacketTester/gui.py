@@ -74,7 +74,7 @@ class PacketTesterGUI(tk.Tk):
         self.interface_var = tk.StringVar(value=list_interfaces()[0] if list_interfaces() else "en0")
         self.pcap_var = tk.StringVar()
         self.loop_var = tk.IntVar(value=1)
-        self.pps_var = tk.IntVar(value=1000)
+        self.pps_var = tk.IntVar(value=0)
 
         self._build_widgets()
         self._proc = None

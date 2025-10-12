@@ -44,6 +44,7 @@ public class DeviceService : IDeviceService
             dev.OnPacketArrival += (s, e) =>
             {
                 var raw = e.GetPacket();
+                var timestamp = e.GetPacket().Timeval.Date; // The timestamp is the actual captured timestamp of the packet
                 var src = raw?.Data;
 
                 if (src is { Length: > 0 })
@@ -59,7 +60,7 @@ public class DeviceService : IDeviceService
                         try
                         {
                             // Forward to specific observer
-                            observer.OnNext(new RawPacketEvent(dev.Name, mem));
+                            observer.OnNext(new RawPacketEvent(dev.Name, mem, timestamp));
                         }
                         catch (Exception ex)
                         {

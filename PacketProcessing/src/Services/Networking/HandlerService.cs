@@ -209,7 +209,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                     try
                     {
                         var parsed = Parse(raw.Data.Span);
-
                         if (parsed is null)
                         {
                             Interlocked.Increment(ref _packetsDropped);
@@ -219,6 +218,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                         // Try fast path to parsed channel; otherwise await (true backpressure)
                         if (!_parsedChannel.Writer.TryWrite(parsed))
                         {
+                            parsed.Timestamp = raw.Timestamp; // Override the timestamp to the actual timestamp of the packet
                             Interlocked.Increment(ref _backpressureEvents);
                             await _parsedChannel.Writer.WriteAsync(parsed, token);
                         }

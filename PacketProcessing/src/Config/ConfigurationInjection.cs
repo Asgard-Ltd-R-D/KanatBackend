@@ -50,7 +50,7 @@ public class ConfigurationInjection
             var max = config.GetValue<int>("DataPipes:MotionCapture:Channel:Members", 1000000);
             return Channel.CreateBounded<MotionPacketEntity>(new BoundedChannelOptions(max)
             {
-                FullMode = BoundedChannelFullMode.DropOldest,
+                FullMode = BoundedChannelFullMode.Wait,  // Block instead of drop - guarantees delivery
                 SingleReader = false,
                 SingleWriter = false
             });
@@ -61,7 +61,7 @@ public class ConfigurationInjection
             var max = config.GetValue<int>("DataPipes:SafetyCapture:Channel:Members", 1000000);
             return Channel.CreateBounded<SafetyPacketEntity>(new BoundedChannelOptions(max)
             {
-                FullMode = BoundedChannelFullMode.DropOldest,
+                FullMode = BoundedChannelFullMode.Wait,  // Block instead of drop - guarantees delivery
                 SingleReader = false,
                 SingleWriter = false
             });
@@ -72,7 +72,7 @@ public class ConfigurationInjection
             var max = config.GetValue<int>("DataPipes:OnVIFCapture:Channel:Members", 100000);
             return Channel.CreateBounded<OnVIFPacketEntity>(new BoundedChannelOptions(max)
             {
-                FullMode = BoundedChannelFullMode.DropOldest,
+                FullMode = BoundedChannelFullMode.Wait,  // Block instead of drop - guarantees delivery
                 SingleReader = false,
                 SingleWriter = false
             });

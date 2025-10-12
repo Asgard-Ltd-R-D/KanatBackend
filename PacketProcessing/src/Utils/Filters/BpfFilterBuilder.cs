@@ -31,8 +31,6 @@ public static class BpfFilterBuilder
             conditions.Add($"({string.Join(" or ", ipExprs)})");
         }
 
-        conditions.Add("greater 0");
-
         return string.Join(" and ", conditions);
     }
 }

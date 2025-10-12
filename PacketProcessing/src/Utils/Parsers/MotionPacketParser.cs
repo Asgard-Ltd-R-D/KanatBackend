@@ -190,7 +190,7 @@ public static class MotionPacketParser
                 return null;
 
             // StartByte exists but isn't used for entity fields; we can read it if you need validation.
-            ushort startByte = BinaryPrimitives.ReadUInt16BigEndian(rawPacket.Slice(0, 2));
+            ushort startByte = BinaryPrimitives.ReadUInt16BigEndian(rawPacket[..2]);
 
             byte length = rawPacket[2];
             byte groupId = rawPacket[3];
@@ -206,7 +206,13 @@ public static class MotionPacketParser
             // Compute where the checksum should be and validate bounds
             int dataStart = 7;
             int checksumIndex = dataStart + dataLen;
-            if (checksumIndex > rawPacket.Length) return null;
+
+            // Must have data + 1 checksum byte available
+            if (checksumIndex < 0 || checksumIndex > rawPacket.Length - 1) return null;
+            
+            int expectedMinLen = checksumIndex + 1;
+            if (rawPacket.Length < expectedMinLen)
+                return null;
 
             float? floatValue = null;
 

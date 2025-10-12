@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-PacketTester GUI - Beautiful desktop interface for packet blasting and PCAP replay
+PacketTester GUI - PCAP Replay Tool
+Beautiful desktop interface for replaying PCAP files with original packet structure preserved.
 """
 import os
 import subprocess
@@ -70,21 +71,10 @@ class PacketTesterGUI(tk.Tk):
         self.style.configure("Card.TLabelframe.Label", font=("Helvetica", 12, "bold"), background="#ffffff", foreground="#374151")
         
         # Variables
-        self.mode_var = tk.StringVar(value="replay")
         self.interface_var = tk.StringVar(value=list_interfaces()[0] if list_interfaces() else "en0")
         self.pcap_var = tk.StringVar()
         self.loop_var = tk.IntVar(value=1)
-        self.shuffle_var = tk.BooleanVar(value=False)
-        self.rand_payload_var = tk.BooleanVar(value=False)
-        self.rand_min_var = tk.IntVar(value=64)
-        self.rand_max_var = tk.IntVar(value=512)
-
-        self.protocol_var = tk.StringVar(value="tcp")
-        self.host_var = tk.StringVar(value="132.8.7.125")
-        self.port_var = tk.IntVar(value=5000)
         self.pps_var = tk.IntVar(value=1000)
-        self.payload_var = tk.IntVar(value=256)
-        self.seconds_var = tk.IntVar(value=10)
 
         self._build_widgets()
         self._proc = None
@@ -102,7 +92,7 @@ class PacketTesterGUI(tk.Tk):
         title_frame = tk.Frame(header_frame, bg="#f5f5f5")
         title_frame.pack(side=tk.LEFT, fill=tk.Y)
         ttk.Label(title_frame, text="PacketTester", style="Header.TLabel").pack(anchor="w")
-        ttk.Label(title_frame, text="Replay PCAPs and generate network traffic", style="Subheader.TLabel").pack(anchor="w")
+        ttk.Label(title_frame, text="PCAP Replay Tool", style="Subheader.TLabel").pack(anchor="w")
         
         # Action buttons on right
         btn_frame = tk.Frame(header_frame, bg="#f5f5f5")
@@ -118,14 +108,8 @@ class PacketTesterGUI(tk.Tk):
         main_card = ttk.Labelframe(container, text="Configuration", style="Card.TLabelframe")
         main_card.pack(fill=tk.X, pady=(0, 12))
 
-        # Mode
-        row = 0
-        ttk.Label(main_card, text="Mode").grid(row=row, column=0, sticky="w", padx=(0,12), pady=6)
-        ttk.Combobox(main_card, textvariable=self.mode_var, values=["replay","blast","pcap-out"], 
-                     state="readonly", width=20).grid(row=row, column=1, sticky="w", pady=6)
-
         # Interface
-        row += 1
+        row = 0
         ttk.Label(main_card, text="Interface").grid(row=row, column=0, sticky="w", padx=(0,12), pady=6)
         ttk.Combobox(main_card, textvariable=self.interface_var, values=list_interfaces(), 
                      state="readonly", width=20).grid(row=row, column=1, sticky="w", pady=6)
@@ -148,41 +132,9 @@ class PacketTesterGUI(tk.Tk):
         ttk.Spinbox(replay_card, from_=1, to=1000, textvariable=self.loop_var, width=12).grid(row=row, column=1, sticky="w", pady=6)
         
         row += 1
-        ttk.Checkbutton(replay_card, text="Shuffle packets", variable=self.shuffle_var).grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Checkbutton(replay_card, text="Randomize payload", variable=self.rand_payload_var).grid(row=row, column=2, columnspan=2, sticky="w", pady=4)
-        
-        row += 1
-        ttk.Label(replay_card, text="Random size range").grid(row=row, column=0, sticky="w", padx=(0,12), pady=6)
-        size_frame = tk.Frame(replay_card, bg="#ffffff")
-        size_frame.grid(row=row, column=1, columnspan=3, sticky="w", pady=6)
-        ttk.Entry(size_frame, textvariable=self.rand_min_var, width=8).pack(side=tk.LEFT, padx=(0,4))
-        ttk.Label(size_frame, text="to").pack(side=tk.LEFT, padx=4)
-        ttk.Entry(size_frame, textvariable=self.rand_max_var, width=8).pack(side=tk.LEFT, padx=(4,0))
-
-        # Blast options card
-        blast_card = ttk.Labelframe(container, text="Live Blast Options", style="Card.TLabelframe")
-        blast_card.pack(fill=tk.X, pady=(0, 12))
-
-        row = 0
-        ttk.Label(blast_card, text="Protocol").grid(row=row, column=0, sticky="w", padx=(0,12), pady=6)
-        ttk.Combobox(blast_card, textvariable=self.protocol_var, values=["tcp","udp"], 
-                     state="readonly", width=12).grid(row=row, column=1, sticky="w", pady=6)
-        
-        row += 1
-        ttk.Label(blast_card, text="Target Host").grid(row=row, column=0, sticky="w", padx=(0,12), pady=6)
-        ttk.Entry(blast_card, textvariable=self.host_var, width=20).grid(row=row, column=1, sticky="w", pady=6)
-        ttk.Label(blast_card, text="Port").grid(row=row, column=2, sticky="w", padx=(12,12), pady=6)
-        ttk.Entry(blast_card, textvariable=self.port_var, width=10).grid(row=row, column=3, sticky="w", pady=6)
-        
-        row += 1
-        ttk.Label(blast_card, text="Packets/sec").grid(row=row, column=0, sticky="w", padx=(0,12), pady=6)
-        ttk.Entry(blast_card, textvariable=self.pps_var, width=12).grid(row=row, column=1, sticky="w", pady=6)
-        ttk.Label(blast_card, text="Duration (s)").grid(row=row, column=2, sticky="w", padx=(12,12), pady=6)
-        ttk.Entry(blast_card, textvariable=self.seconds_var, width=10).grid(row=row, column=3, sticky="w", pady=6)
-        
-        row += 1
-        ttk.Label(blast_card, text="Payload (bytes)").grid(row=row, column=0, sticky="w", padx=(0,12), pady=6)
-        ttk.Entry(blast_card, textvariable=self.payload_var, width=12).grid(row=row, column=1, sticky="w", pady=6)
+        ttk.Label(replay_card, text="PPS (Packets/sec)").grid(row=row, column=0, sticky="w", padx=(0,12), pady=6)
+        ttk.Entry(replay_card, textvariable=self.pps_var, width=12).grid(row=row, column=1, sticky="w", pady=6)
+        ttk.Label(replay_card, text="(0 = original timing)", font=("Helvetica", 9), foreground="#6b7280").grid(row=row, column=2, sticky="w", padx=(8,0), pady=6)
 
         # Output section
         output_frame = tk.Frame(container, bg="#f5f5f5")
@@ -258,52 +210,25 @@ class PacketTesterGUI(tk.Tk):
         venv_py = os.path.join(ROOT, ".venv", "bin", "python")
         exe = venv_py if os.path.exists(venv_py) else sys.executable
         script = os.path.join(ROOT, "packet_blaster.py")
-        mode = self.mode_var.get()
-        args = [exe, script, "--mode", mode]
-
-        if mode == "replay":
-            pcap = self.pcap_var.get()
-            if not pcap:
-                messagebox.showwarning("Missing PCAP", "Please select a PCAP file")
-                return
-            
-            # If just filename, prepend pcaps directory
-            if not os.path.isabs(pcap) and not os.path.exists(pcap):
-                pcap = os.path.join(ROOT, "pcaps", pcap)
-            
-            if not os.path.exists(pcap):
-                messagebox.showerror("File Not Found", f"PCAP file not found: {pcap}")
-                return
-            
-            args += ["--pcap-in", pcap, "--interface", self.interface_var.get(), 
-                     "--loop", str(self.loop_var.get())]
-            if self.shuffle_var.get():
-                args.append("--shuffle")
-            if self.rand_payload_var.get():
-                args.append("--randomize-payload")
-            if self.rand_min_var.get() and self.rand_max_var.get():
-                args += ["--randomize-size", str(self.rand_min_var.get()), str(self.rand_max_var.get())]
         
-        elif mode == "blast":
-            args += [
-                "--protocol", self.protocol_var.get(),
-                "--host", self.host_var.get(),
-                "--port", str(self.port_var.get()),
+        pcap = self.pcap_var.get()
+        if not pcap:
+            messagebox.showwarning("Missing PCAP", "Please select a PCAP file")
+            return
+        
+        # If just filename, prepend pcaps directory
+        if not os.path.isabs(pcap) and not os.path.exists(pcap):
+            pcap = os.path.join(ROOT, "pcaps", pcap)
+        
+        if not os.path.exists(pcap):
+            messagebox.showerror("File Not Found", f"PCAP file not found: {pcap}")
+            return
+        
+        args = [exe, script,
+                "--pcap-in", pcap,
+                "--interface", self.interface_var.get(), 
                 "--pps", str(self.pps_var.get()),
-                "--payload", str(self.payload_var.get()),
-                "--seconds", str(self.seconds_var.get()),
-            ]
-        
-        elif mode == "pcap-out":
-            out = filedialog.asksaveasfilename(
-                defaultextension=".pcap",
-                initialdir=os.path.join(ROOT, "pcaps"),
-                filetypes=[("PCAP Files", "*.pcap")]
-            )
-            if not out:
-                return
-            args += ["--pcap-out", out, "--pps", str(self.pps_var.get()), 
-                     "--payload", str(self.payload_var.get()), "--seconds", str(self.seconds_var.get())]
+                "--loop", str(self.loop_var.get())]
 
         self._run_in_thread(args)
 

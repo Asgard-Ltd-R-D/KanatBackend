@@ -50,8 +50,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         var opt = options.Value;
         // removed auto_flush_* to avoid double-batching
         _connectionString =
-            $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};" +
-            $"auto_flush_rows={opt.BatchSize};auto_flush_interval={opt.BatchTimeoutMs};";
+            $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};";
     }
 
     // ----------- BackgroundService entry point -----------
@@ -72,66 +71,63 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     {
         ISender? sender = null;
         var buffer = new List<T>(_batchSize);
-        var logTicker = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        long lastFlushMs = sw.ElapsedMilliseconds;
+        long lastLogMs = sw.ElapsedMilliseconds;
+        const int LOG_PERIOD_MS = 10_000;
 
         try
         {
             sender = Sender.New(_connectionString);
 
-            while (!token.IsCancellationRequested)
+            await foreach (var packet in _channel.Reader.ReadAllAsync(token))
             {
-                // POC-style deadline batching: Block for first packet
+                // Block for first item to start a batch
                 var first = await _channel.Reader.ReadAsync(token);
                 buffer.Clear();
                 buffer.Add(first);
 
-                // Set deadline based on batch timeout
-                var deadline = DateTime.UtcNow.Add(_batchTimeout);
+                // Drain what's immediately available
+                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var more))
+                    buffer.Add(more);
 
-                // First, drain all immediately available packets up to batch size
-                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var item))
-                {
-                    buffer.Add(item);
-                }
+                // Set a deadline for soft-wait fill
+                long deadlineMs = sw.ElapsedMilliseconds + (long)_batchTimeout.TotalMilliseconds;
 
-                // If we still have room and time remains, wait for more packets until deadline
-                if (buffer.Count < _batchSize && DateTime.UtcNow < deadline)
+                // Soft-wait until deadline to pick up a few more items
+                while (buffer.Count < _batchSize)
                 {
-                    try
+                    var now = sw.ElapsedMilliseconds;
+                    var remainingMs = (int)(deadlineMs - now);
+                    if (remainingMs <= 0) break;
+
+                    // Timed wait for one more; if it arrives, drain fast-path items
+                    var readTask = _channel.Reader.ReadAsync(token).AsTask();
+                    var delayTask = Task.Delay(remainingMs, token);
+                    var completed = await Task.WhenAny(readTask, delayTask);
+                    if (completed == readTask)
                     {
-                        var remainingTime = deadline - DateTime.UtcNow;
-                        if (remainingTime > TimeSpan.Zero)
-                        {
-                            var readTask = _channel.Reader.ReadAsync(token).AsTask();
-                            var timeoutTask = Task.Delay(remainingTime, token);
-                            
-                            if (await Task.WhenAny(readTask, timeoutTask) == readTask)
-                            {
-                                buffer.Add(await readTask);
-                                
-                                // Drain more if available after getting one more
-                                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var additional))
-                                {
-                                    buffer.Add(additional);
-                                }
-                            }
-                        }
+                        buffer.Add(readTask.Result);
+                        while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var add))
+                            buffer.Add(add);
                     }
-                    catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                    else
                     {
-                        // Deadline timeout - flush what we have
+                        break; // deadline hit
                     }
                 }
 
-                // Flush the batch immediately (deadline reached or batch full)
+                // Flush the batch (full or deadline)
                 await FlushInternalAsync(sender, buffer, token);
+                lastFlushMs = sw.ElapsedMilliseconds;
 
-                if (await logTicker.WaitForNextTickAsync(token))
+                // Non-blocking periodic log
+                if (sw.ElapsedMilliseconds - lastLogMs >= LOG_PERIOD_MS)
                 {
                     var (flushed, failed) = GetStats();
-                    _logger.LogInformation(
-                        "[{Entity}] Worker {Worker} Stats: Flushed={Flushed}, Failed={Failed}",
-                        typeof(T).Name, workerId, flushed, failed);
+                    _logger.LogInformation("[{Entity}] Worker {Worker} Flushed={Flushed} Failed={Failed} BatchSize={Batch} TimeoutMs={Timeout}",
+                        typeof(T).Name, workerId, flushed, failed, _batchSize, (int)_batchTimeout.TotalMilliseconds);
+                    lastLogMs = sw.ElapsedMilliseconds;
                 }
             }
         }

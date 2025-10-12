@@ -30,6 +30,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     private long _packetsCaptured;
     private long _packetsParsed;
     private long _packetsDropped;
+    private long _backpressureEvents;
 
     private IDisposable? _subscription;
 
@@ -78,6 +79,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         Interlocked.Exchange(ref _packetsCaptured, 0);
         Interlocked.Exchange(ref _packetsParsed, 0);
         Interlocked.Exchange(ref _packetsDropped, 0);
+        Interlocked.Exchange(ref _backpressureEvents, 0);
 
         _logger.LogInformation("{Handler} unsubscribed", typeof(T).Name);
     }
@@ -86,6 +88,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         (Interlocked.Read(ref _packetsCaptured),
          Interlocked.Read(ref _packetsParsed),
          Interlocked.Read(ref _packetsDropped));
+    
+    public long GetBackpressureEvents() => Interlocked.Read(ref _backpressureEvents);
 
     #endregion
 
@@ -148,6 +152,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                         // Apply backpressure if channel is full
                         if (!_parsedChannel.Writer.TryWrite(parsed))
                         {
+                            Interlocked.Increment(ref _backpressureEvents);
                             await _parsedChannel.Writer.WriteAsync(parsed, token);
                         }
                         Interlocked.Increment(ref _packetsParsed);

@@ -113,16 +113,26 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             var table = batch[0].TableName;
             sender.Transaction(table);
 
-            // Sort batch by timestamp for O3 optimization
-            batch = [.. batch.OrderBy(e => e.Timestamp)];
-
+            // Pre-allocate buffer for GUID formatting to reduce allocations in hot loop
+            var guidBuffer = new char[32]; // GUID in "N" format is always 32 chars
+            
             for (int i = 0; i < batch.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 var e = batch[i];
                 var tsUtc = e.Timestamp.Kind == DateTimeKind.Utc ? e.Timestamp : DateTime.SpecifyKind(e.Timestamp, DateTimeKind.Utc);
 
-                sender.Symbol("id", e.Id.ToString("N"));
+                // Format GUID to reusable buffer to reduce allocations
+                if (e.Id.TryFormat(guidBuffer, out _, "N"))
+                {
+                    sender.Symbol("id", new string(guidBuffer));
+                }
+                else
+                {
+                    // Fallback to ToString if TryFormat fails (should never happen)
+                    sender.Symbol("id", e.Id.ToString("N"));
+                }
+                
                 e.WriteColumns(sender);
                 sender.At(tsUtc, ct);
             }

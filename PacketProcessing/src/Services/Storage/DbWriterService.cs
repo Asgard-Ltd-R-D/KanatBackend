@@ -41,10 +41,10 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
 
         var concurrency = configuration.GetSection("Concurrency");
         _batchSize = concurrency.GetValue<int>("BatchSize", 1000);
-        _batchTimeout = TimeSpan.FromMilliseconds(concurrency.GetValue<int>("BatchTimeoutMs", 100));
+        _batchTimeout = TimeSpan.FromMilliseconds(concurrency.GetValue<int>("BatchTimeoutMs", 30));
 
         var min = concurrency.GetValue<int>("MinWorkers", 2);
-        var max = concurrency.GetValue<int>("MaxWorkers", 8);
+        var max = concurrency.GetValue<int>("MaxWorkers", 5);
         _workerCount = Math.Clamp(Environment.ProcessorCount, min, max);
 
         var opt = options.Value;
@@ -79,14 +79,39 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         {
             sender = Sender.New(_connectionString);
 
-            await foreach (var packet in _channel.Reader.ReadAllAsync(token))
+            while (!token.IsCancellationRequested)
             {
-                buffer.Add(packet);
+                // Wait for data with timeout to check batch timeout condition
+                var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                timeoutCts.CancelAfter(_batchTimeout);
+                
+                try
+                {
+                    await _channel.Reader.WaitToReadAsync(timeoutCts.Token);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    // Timeout reached - flush if we have data
+                    if (buffer.Count > 0)
+                    {
+                        await FlushInternalAsync(sender, buffer, token);
+                        buffer.Clear();
+                        lastFlush = DateTime.UtcNow;
+                    }
+                    continue;
+                }
+                finally
+                {
+                    timeoutCts.Dispose();
+                }
 
-                // Drain aggressively up to batch size
-                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var more))
-                    buffer.Add(more);
+                // Drain all available packets up to batch size
+                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var packet))
+                {
+                    buffer.Add(packet);
+                }
 
+                // Flush if batch size reached or timeout exceeded
                 var timeExceeded = (DateTime.UtcNow - lastFlush) >= _batchTimeout;
                 var sizeExceeded = buffer.Count >= _batchSize;
 

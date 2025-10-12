@@ -49,18 +49,23 @@ public class DeviceService : IDeviceService
                 if (src is { Length: > 0 })
                 {
                     var buf = ArrayPool<byte>.Shared.Rent(src.Length);
-                    Buffer.BlockCopy(src, 0, buf, 0, src.Length);
+                    src.AsSpan().CopyTo(buf.AsSpan(0, src.Length));
                     var mem = new ReadOnlyMemory<byte>(buf, 0, src.Length);      
                                   
-                    try
+                    // Offload to thread pool to avoid blocking packet capture
+                    // This prevents slow observers from dropping packets at the OS level
+                    _ = Task.Run(() =>
                     {
-                        // Forward to specific observer
-                        observer.OnNext(new RawPacketEvent(dev.Name, mem));
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error notifying observer {Observer}", observer.GetType().Name);
-                    }
+                        try
+                        {
+                            // Forward to specific observer
+                            observer.OnNext(new RawPacketEvent(dev.Name, mem));
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error notifying observer {Observer}", observer.GetType().Name);
+                        }
+                    });
                 }
             };
             try

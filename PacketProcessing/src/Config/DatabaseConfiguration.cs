@@ -249,12 +249,12 @@ public record QuestDbConfiguration
     /// <summary>
     /// Max rows to buffer before flushing (auto_flush_rows)
     /// </summary>
-    public int BatchSize { get; init; } = 500;
+    public int BatchSize { get; init; } = 1000;
 
     /// <summary>
     /// Timeout (ms) before forcing flush even if batch not full (auto_flush_interval)
     /// </summary>
-    public int BatchTimeoutMs { get; init; } = 100;
+    public int BatchTimeoutMs { get; init; } = 30;
     
     /// <summary>
     /// Gets the QuestDB PostgreSQL connection string

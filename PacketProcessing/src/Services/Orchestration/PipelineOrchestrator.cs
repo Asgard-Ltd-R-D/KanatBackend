@@ -71,6 +71,20 @@ public class PipelineOrchestrator : IPipelineOrchestrator
         var motionStats = _motionHandler.GetStats();
         var safetyStats = _safetyHandler.GetStats();
         var onvifStats = _onvifHandler.GetStats();
-        return (motionStats.Captured + safetyStats.Captured + onvifStats.Captured, motionStats.Parsed + safetyStats.Parsed + onvifStats.Parsed, motionStats.Dropped + safetyStats.Dropped + onvifStats.Dropped);
+        
+        // Log backpressure events
+        var motionBackpressure = _motionHandler.GetBackpressureEvents();
+        var safetyBackpressure = _safetyHandler.GetBackpressureEvents();
+        var onvifBackpressure = _onvifHandler.GetBackpressureEvents();
+        
+        if (motionBackpressure > 0 || safetyBackpressure > 0 || onvifBackpressure > 0)
+        {
+            _logger.LogWarning("Backpressure detected - Motion: {Motion}, Safety: {Safety}, OnVIF: {OnVIF}", 
+                motionBackpressure, safetyBackpressure, onvifBackpressure);
+        }
+        
+        return (motionStats.Captured + safetyStats.Captured + onvifStats.Captured, 
+                motionStats.Parsed + safetyStats.Parsed + onvifStats.Parsed, 
+                motionStats.Dropped + safetyStats.Dropped + onvifStats.Dropped);
     }
 }

@@ -4,7 +4,7 @@ using PacketProcessing.DTOs.Data;
 
 namespace PacketProcessing.Hubs;
 
-public abstract class HubClient : Hub
+public class HubClient : Hub
 {
     private readonly ILogger<HubClient> _logger;
 

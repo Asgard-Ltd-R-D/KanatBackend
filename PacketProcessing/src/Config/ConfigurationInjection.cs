@@ -159,6 +159,13 @@ public class ConfigurationInjection
         builder.Services.AddSwaggerGen();
         builder.Services.AddControllers();
         
+        // Register SignalR for real-time data transmission
+        builder.Services.AddSignalR(options => {
+            options.EnableDetailedErrors = true;
+            options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+            options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+        });
+        
         // Configure routing to use lowercase URLs
         builder.Services.AddRouting(options => options.LowercaseUrls = true);
         
@@ -166,7 +173,7 @@ public class ConfigurationInjection
         builder.WebHost.ConfigureKestrel(options =>
         {
             options.Limits.MaxRequestBodySize = 200 * 1024 * 1024; // 200MB
-            options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(10);
+            options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(5);
             options.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(5);
         });
 
@@ -223,6 +230,9 @@ public class ConfigurationInjection
         }
         // Map simple health check endpoint
         app.MapHealthChecks("/health");
+        
+        // Map SignalR hub
+        app.MapHub<Hubs.HubClient>("/hub/packets");
         
         app.MapControllers();
     }

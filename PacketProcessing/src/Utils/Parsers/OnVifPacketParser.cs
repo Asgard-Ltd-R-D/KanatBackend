@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Xml.Linq;
 using PacketProcessing.Entities.Packet;
@@ -16,11 +17,12 @@ namespace PacketProcessing.Utils.Parsers
             };
 
         // Remember CMD MessageID → profile so RPT can map back (optional, but tiny)
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> MsgProfile =
+        private static readonly ConcurrentDictionary<string, string> MsgProfile =
             new(StringComparer.OrdinalIgnoreCase);
 
         public static OnVIFPacketEntity? Parse(ReadOnlySpan<byte> raw)
         {
+            Console.WriteLine($"Parsing OnVIF packet. Length: {raw.Length} bytes");
             if (raw.Length < 8) return null;
 
             // 1) Find HTTP header/body split anywhere (works for Ethernet/TCP frames too)
@@ -49,7 +51,7 @@ namespace PacketProcessing.Utils.Parsers
                 {
                     Id = Guid.NewGuid(),
                     Timestamp = DateTime.UtcNow,
-                    Type = true, // treat binary payloads as RPT by default
+                    IsCmd = true, // treat binary payloads as RPT by default
                     Description = "UNKNOWN",
                     Zoom = zoom,
                     Measurement = meas ?? 0f
@@ -135,6 +137,8 @@ namespace PacketProcessing.Utils.Parsers
                     var x = zoom?.Attribute("x")?.Value ?? zoom?.Attribute(XNamespace.None + "x")?.Value;
                     if (x != null && float.TryParse(x, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var z))
                         zoomVal = (float)Math.Round(z, 3);
+                    else
+                        zoomVal = -1;
                 }
 
                 // LRF measurement
@@ -143,7 +147,7 @@ namespace PacketProcessing.Utils.Parsers
                     var lrf = body.Descendants().FirstOrDefault(e => e.Name.LocalName.Equals("LRFMakeMeasurementResponse", StringComparison.OrdinalIgnoreCase));
                     var m = lrf?.Element("Measurement")?.Value ?? lrf?.Element(XNamespace.None + "Measurement")?.Value;
                     if (m != null)
-                        measVal = m == "[Error: 1001]" ? -1000f : (float)Math.Round(float.Parse(m, System.Globalization.CultureInfo.InvariantCulture), 3);
+                        measVal = m == "[Error: 1001]" ? -1 : (float)Math.Round(float.Parse(m, System.Globalization.CultureInfo.InvariantCulture), 3);
                 }
             }
 
@@ -151,7 +155,7 @@ namespace PacketProcessing.Utils.Parsers
             {
                 Id = Guid.NewGuid(),
                 Timestamp = DateTime.UtcNow,
-                Type = type == "RPT",       // true=report, false=command
+                IsCmd = type == "RPT",       // true=report, false=command
                 Description = description,
                 Zoom = zoomVal,
                 Measurement = measVal ?? 0f

@@ -23,6 +23,7 @@ public static class MotionPacketParser
     // OpCode -> Description map (from your Lua e_opcode)
     private static readonly Dictionary<ushort, string> OpCodeDescriptions = new()
     {
+        //Motion Commands
         {0x0101,"MOT_MerRegister"},
         {0x0102,"MOT_DerRegister"},
         {0x0103,"MOT_SrhRegister"},
@@ -61,6 +62,7 @@ public static class MotionPacketParser
         {0x0166,"MOT_SetMaxCurrent"},
         {0x0144,"MOT_SetMotionComplete"},
 
+        //Scan Commands
         {0x0400,"SCN_SetYawMin"},
         {0x0401,"SCN_SetYawMax"},
         {0x0402,"SCN_SetPitchMin"},
@@ -74,6 +76,7 @@ public static class MotionPacketParser
         {0x040D,"SCN_StartScanSnake"},
         {0x040E,"SCN_StartScanSquare"},
 
+        //Communication Commands
         {0x0700,"COM_Reboot"},
         {0x0702,"COM_Connect"},
         {0x0703,"COM_Disconnect"},
@@ -87,6 +90,7 @@ public static class MotionPacketParser
         {0x0719,"COM_SetComType"},
         {0x0713,"COM_SysState"},
 
+        //Stabilization Commands
         {0x0800,"STB_StabilizationOn"},
         {0x0801,"STB_StabilizationOff"},
         {0x0822,"STB_GetStabError"},
@@ -115,6 +119,7 @@ public static class MotionPacketParser
         {0x0851,"STB_GetRebalanceStatus"},
         {0x0D07,"STB_SaveStabilizationCfg"},
 
+        //Gimbal Commands
         {0x0FA0,"DG_SetSyncMode"},
         {0x0FA1,"DG_SetInnerMode"},
         {0x0FA2,"DG_IsSyncMode"},
@@ -145,14 +150,17 @@ public static class MotionPacketParser
         {0x0FC3,"DG_ResetNumBullets"},
         {0x0FC4,"DG_IsCapSnapReady"},
 
+        //LRF Commands
         {0x0300,"LRF_SetRange"},
         {0x0301,"LRF_GetRange"},
 
+        //Communication Commands
         {0x0C2D,"COM_GetPn"},
         {0x0C2F,"COM_GetSn"},
         {0x0C4A,"COM_GetFw"},
         {0x0C4C,"COM_GetHw"},
 
+        //Error Commands
         {0x0E01,"ERR_CaptureSystemRegister"},
         {0x0E02,"ERR_ClearErrors"},
         {0x0E03,"ERR_GetDriverErrorString"},
@@ -169,6 +177,7 @@ public static class MotionPacketParser
         {0x0E10,"ERR_GetHomingErrorString"},
         {0x0E12,"ERR_OperationRegister"},
 
+        //IP Commands
         {0x070A,"IP_SetControllerIP"},
         {0x070D,"IP_GetControllerIP"},
         {0x070B,"IP_SetControllerPort"},
@@ -177,6 +186,7 @@ public static class MotionPacketParser
 
         {0x0710,"IP_SaveIP"},
     };
+    private const string REPORT_IP = "132.8.7.125";
 
     /// <summary>
     /// Parses raw packet data into a MotionPacketEntity
@@ -189,81 +199,106 @@ public static class MotionPacketParser
     {
         try
         {
-            // Minimum: 2 (Start) +1 (Len) +1 (Group) +1 (Axis) +2 (Opcode) +1 (CS) = 8 bytes
-            if (rawPacket.Length < 8)
-                return null;
+            // --- Basic length sanity check ---
+            if (rawPacket.Length < 62) return null; // too small to contain motion payload
 
-            // StartByte exists but isn't used for entity fields; we can read it if you need validation.
-            ushort startByte = BinaryPrimitives.ReadUInt16BigEndian(rawPacket[..2]);
+            // --- Detect IPv4 header (with Ethernet prefix if present) ---
+            int ipStart = (rawPacket.Length >= 14 && ReadBE16(rawPacket.Slice(12, 2)) == 0x0800) ? 14 : 0;
+            if (rawPacket.Length < ipStart + 20 || (rawPacket[ipStart] >> 4) != 4) return null;
 
-            byte length = rawPacket[2];
-            byte groupId = rawPacket[3];
-            byte axisId  = rawPacket[4];
+            int ihl = (rawPacket[ipStart] & 0x0F) * 4;
+            if (ihl < 20 || rawPacket.Length < ipStart + ihl) return null;
 
-            // wire format is little-endian, swap to ReadUInt16LittleEndian here.
-            ushort op = BinaryPrimitives.ReadUInt16BigEndian(rawPacket.Slice(5, 2));
+            // --- Protocol check (expect TCP = 6) ---
+            if (rawPacket[ipStart + 9] != 6) return null;
 
-             // data_length = length - 4 (Group(1) + Axis(1) + Opcode(2))
-            int dataLen = length - 4;
-            if (dataLen < 0) return null;
+            // --- Extract Source IP (bytes 12–15 of IP header) ---
+            var srcIp = $"{rawPacket[ipStart + 12]}.{rawPacket[ipStart + 13]}.{rawPacket[ipStart + 14]}.{rawPacket[ipStart + 15]}";
 
-            // Compute where the checksum should be and validate bounds
-            int dataStart = 7;
-            int checksumIndex = dataStart + dataLen;
+            bool isReport = srcIp == REPORT_IP;
 
-            // Must have data + 1 checksum byte available
-            if (checksumIndex < 0 || checksumIndex > rawPacket.Length - 1) return null;
-            
-            int expectedMinLen = checksumIndex + 1;
-            if (rawPacket.Length < expectedMinLen)
-                return null;
+            // Axis + Opcode
+            byte axis = rawPacket[58];
+            ushort opCode = ReadBE16(rawPacket.Slice(59, 2));
+
+            string opDesc = OpCodeDescriptions.TryGetValue(opCode, out var desc) ? desc : "Unknown";
 
             float? floatValue = null;
 
-            // Read the float value, if the data length is 4
-            if (dataLen == 4)
+            // Extract float only if report packet
+            if (isReport)
             {
-                uint le = BinaryPrimitives.ReadUInt32LittleEndian(rawPacket.Slice(dataStart, 4));
-                floatValue = BitConverter.Int32BitsToSingle(unchecked((int)le));
-            }
+                bool isLrf = opDesc.StartsWith("LRF_", StringComparison.OrdinalIgnoreCase);
 
-            // Get the op code and description (cache opcode string to avoid allocation)
-            string opCodeStr;
-            if (!OpCodeStrings.TryGetValue(op, out opCodeStr!))
-            {
-                lock (_opCodeLock)
+                if (isLrf && rawPacket.Length >= 63)
                 {
-                    if (!OpCodeStrings.TryGetValue(op, out opCodeStr!))
-                    {
-                        opCodeStr = $"0x{op:X4}";
-                        OpCodeStrings[op] = opCodeStr;
-                    }
+                    // 16-bit IEEE754 half float → float32
+                    ushort half = BinaryPrimitives.ReadUInt16LittleEndian(rawPacket.Slice(61, 2));
+                    floatValue = HalfToSingle(half);
+                }
+                else if (rawPacket.Length >= 65)
+                {
+                    // 32-bit float little-endian
+                    uint le = BinaryPrimitives.ReadUInt32LittleEndian(rawPacket.Slice(61, 4));
+                    floatValue = BitConverter.Int32BitsToSingle(unchecked((int)le));
                 }
             }
-            string opDesc = OpCodeDescriptions.TryGetValue(op, out var desc) ? desc : "Unknown";
-
-            // Determine the type of the packet
-            bool type = dataLen == 4;
 
             return new MotionPacketEntity
             {
                 Id = Guid.NewGuid(),
                 Timestamp = DateTime.UtcNow,
-                Type = type,
-                OpCode = opCodeStr,
+                Axis = axis,
+                OpCode = $"0x{opCode:X4}",
                 OpCodeDescription = opDesc,
-                Axis = axisId,
-                FloatValue = floatValue
+                FloatValue = floatValue,
+                IsCmd = !isReport
             };
         }
         catch (Exception ex)
         {
-            // Only log detailed info in Debug mode to avoid expensive string operations
             if (_logger?.IsEnabled(LogLevel.Debug) ?? false)
-            {
                 _logger.LogDebug(ex, "Error parsing motion packet. Length: {Length} bytes", rawPacket.Length);
-            }
             return null;
         }
     }
+
+    // Convert IEEE-754 16-bit half float to single float
+    private static float HalfToSingle(ushort half)
+    {
+        uint sign = (uint)(half >> 15) & 0x00000001;
+        uint exp = (uint)(half >> 10) & 0x0000001F;
+        uint mant = (uint)half & 0x000003FF;
+
+        if (exp == 0)
+        {
+            if (mant == 0)
+                return BitConverter.Int32BitsToSingle((int)(sign << 31));
+            else
+            {
+                while ((mant & 0x00000400) == 0)
+                {
+                    mant <<= 1;
+                    exp--;
+                }
+                exp++;
+                mant &= ~0x00000400U;
+            }
+        }
+        else if (exp == 31)
+        {
+            if (mant == 0)
+                return BitConverter.Int32BitsToSingle((int)((sign << 31) | 0x7F800000));
+            else
+                return BitConverter.Int32BitsToSingle((int)((sign << 31) | 0x7F800000 | (mant << 13)));
+        }
+
+        exp = exp + (127 - 15);
+        mant = mant << 13;
+        uint bits = (sign << 31) | (exp << 23) | mant;
+        return BitConverter.Int32BitsToSingle((int)bits);
+    }
+
+    private static ushort ReadBE16(ReadOnlySpan<byte> s) =>
+        BinaryPrimitives.ReadUInt16BigEndian(s);
 }

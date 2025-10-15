@@ -20,6 +20,8 @@ public class DeviceService : IDeviceService
     public DeviceService(ILogger<DeviceService> logger)
     {
         _logger = logger;
+        
+        _logger.LogInformation("[DEVICE-SERVICE] Initialized - Available devices: {Count}", CaptureDeviceList.Instance.Count);
     }
 
     public ICollection<string> GetAvailableDeviceNames()

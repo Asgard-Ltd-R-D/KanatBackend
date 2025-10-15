@@ -51,123 +51,116 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         // removed auto_flush_* to avoid double-batching
         _connectionString =
             $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};";
+        
+        _logger.LogInformation(
+            "[DB-WRITER] {Entity} initialized with {Workers} workers, BatchSize={BatchSize}, Timeout={Timeout}ms",
+            typeof(T).Name, _workerCount, _batchSize, _batchTimeout.TotalMilliseconds);
     }
 
     // ----------- BackgroundService entry point -----------
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _logger.LogInformation("[DB-WRITER] {Entity} Starting {Workers} worker loops...", typeof(T).Name, _workerCount);
+        
         var workers = Enumerable.Range(0, _workerCount)
             .Select(i => Task.Factory.StartNew(
-                () => WorkerLoopAsync(i, stoppingToken),
-                stoppingToken,
-                TaskCreationOptions.LongRunning,
-                TaskScheduler.Default).Unwrap())
+                    () => WorkerLoopAsync(i, stoppingToken),
+                    stoppingToken,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default)
+                .Unwrap())
             .ToArray();
 
+        _logger.LogInformation("[DB-WRITER] {Entity} All {Workers} workers started", typeof(T).Name, _workerCount);
         return Task.WhenAll(workers);
     }
 
     private async Task WorkerLoopAsync(int workerId, CancellationToken token)
     {
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            ["Worker"] = workerId,
+            ["Entity"] = typeof(T).Name
+        });
+    
         ISender? sender = null;
         var buffer = new List<T>(_batchSize);
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        long lastFlushMs = sw.ElapsedMilliseconds;
+        DateTime? oldestInBufferUtc = null;
+
+        using var timer = new PeriodicTimer(_batchTimeout);
+        Task<bool> tickTask = timer.WaitForNextTickAsync(token).AsTask(); // single, reusable tick task
 
         try
         {
             sender = Sender.New(_connectionString);
 
-            while (!token.IsCancellationRequested)
+            while (!token.IsCancellationRequested) 
             {
-                // Wait for first packet with timeout to ensure periodic flushing
-                T first;
-                try
+                var dataAvailableTask = _channel.Reader.WaitToReadAsync(token).AsTask();
+
+                var completed = await Task.WhenAny(dataAvailableTask, tickTask);
+
+                if (completed == dataAvailableTask)
                 {
-                    var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                    timeoutCts.CancelAfter(_batchTimeout);
-                    
-                    try
-                    {
-                        await _channel.Reader.WaitToReadAsync(timeoutCts.Token);
-                        first = await _channel.Reader.ReadAsync(token);
-                    }
-                    catch (OperationCanceledException) when (!token.IsCancellationRequested)
-                    {
-                        // Timeout - flush any existing buffer
-                        if (buffer.Count > 0)
+                    // Channel signaled; may be false if completed
+                    if (dataAvailableTask.Result) {
+                        // Drain fast if more are available
+                        while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var more))
                         {
-                            await FlushInternalAsync(sender, buffer, token);
-                            var stats = GetStats();
-                            _logger.LogInformation(
-                                "[DB-WRITER] {Entity} Worker {Worker}: TIMEOUT FLUSH Batch=(Size:{BatchSize}) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed})",
-                                typeof(T).Name, workerId, buffer.Count, stats.Flushed, stats.Failed);
-                            buffer.Clear();
+                            buffer.Add(more);
+                            if (!oldestInBufferUtc.HasValue || more.Timestamp < oldestInBufferUtc.Value)
+                                oldestInBufferUtc = more.Timestamp;
                         }
-                        continue;
-                    }
-                    finally
-                    {
-                        timeoutCts.Dispose();
-                    }
-                }
-                catch (ChannelClosedException)
-                {
-                    break;
-                }
-                
-                buffer.Add(first);
 
-                // Drain what's immediately available
-                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var more))
-                    buffer.Add(more);
-
-                // Calculate deadline based on OLDEST packet timestamp (ensures 0.1s end-to-end)
-                var oldestPacketTime = first.Timestamp;
-                var deadlineUtc = oldestPacketTime.Add(_batchTimeout);
-                var now = DateTime.UtcNow;
-
-                // Soft-wait until deadline to pick up more items, but check packet age
-                while (buffer.Count < _batchSize && now < deadlineUtc)
-                {
-                    var remainingMs = (int)(deadlineUtc - now).TotalMilliseconds;
-                    if (remainingMs <= 0) break;  // Timeout exceeded
-
-                    // Timed wait for one more; if it arrives, drain fast-path items
-                    var readTask = _channel.Reader.ReadAsync(token).AsTask();
-                    var delayTask = Task.Delay(remainingMs, token);
-                    var completed = await Task.WhenAny(readTask, delayTask);
-                    if (completed == readTask)
-                    {
-                        buffer.Add(readTask.Result);
-                        while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var add))
-                            buffer.Add(add);
-                        
-                        // Update current time for next iteration
-                        now = DateTime.UtcNow;
+                        // Flush if full or latency cap reached
+                        if (buffer.Count >= _batchSize ||
+                            (oldestInBufferUtc.HasValue &&
+                                (DateTime.UtcNow - oldestInBufferUtc.Value) >= _batchTimeout))
+                        {
+                            await FlushInternalAsync(sender, buffer, workerId, oldestInBufferUtc, token);
+                            buffer.Clear();
+                            oldestInBufferUtc = null;
+                        }
                     }
                     else
                     {
-                        break; // deadline hit
+                        // Channel completed; break and final-drain below
+                        break;
                     }
                 }
 
-                // Calculate end-to-end latency for this batch
-                var batchLatencyMs = (DateTime.UtcNow - oldestPacketTime).TotalMilliseconds;
-                var batchSize = buffer.Count;
-                
-                // Flush the batch (full or deadline based on OLDEST packet age)
-                await FlushInternalAsync(sender, buffer, token);
-                lastFlushMs = sw.ElapsedMilliseconds;
+                else // tick fired
+                {
+                    var ticked = await tickTask; // will be true unless timer disposed
+                    if (!ticked) break; // safety; normally only false when timer disposed
 
-                // Log EVERY flush to see actual frequency and latency
-                var (totalFlushed, totalFailed) = GetStats();
-                _logger.LogInformation(
-                    "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed})",
-                    typeof(T).Name, workerId, batchSize, batchLatencyMs, totalFlushed, totalFailed);
+                    // Timer tick: if there is anything pending -> flush.
+                    if (buffer.Count > 0)
+                    {
+                        await FlushInternalAsync(sender, buffer, workerId, oldestInBufferUtc, token);
+                        buffer.Clear();
+                        oldestInBufferUtc = null;
+                    }
+                    
+                    // Start the next tick wait now that the previous completed
+                    tickTask = timer.WaitForNextTickAsync(token).AsTask();                
+                }
             }
         }
-        catch (OperationCanceledException) { /* shutdown */ }
+        catch (ChannelClosedException)
+        {
+            // Final drain after close
+            if (buffer.Count > 0 && sender is not null)
+                await FlushInternalAsync(sender, buffer, workerId, oldestInBufferUtc, token);
+                buffer.Clear();
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown requested — final flush
+            if (buffer.Count > 0 && sender is not null)
+                await FlushInternalAsync(sender, buffer, workerId, oldestInBufferUtc, token);
+                buffer.Clear();
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[{Entity}] Worker {Worker} crashed", typeof(T).Name, workerId);
@@ -175,38 +168,31 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         }
         finally
         {
-            if (buffer.Count > 0 && sender is not null)
-                await FlushInternalAsync(sender, buffer, token);
             sender?.Dispose();
         }
-    }
-
-    // ----------- IDbWriterService<T> Implementation -----------
-    public async Task FlushBatchAsync(CancellationToken ct = default)
-    {
-        using var sender = Sender.New(_connectionString);
-        var drained = new List<T>();
-        while (_channel.Reader.TryRead(out var item))
-            drained.Add(item);
-
-        if (drained.Count > 0)
-            await FlushInternalAsync(sender, drained, ct);
     }
 
     public (long Flushed, long Failed) GetStats() =>
         (Interlocked.Read(ref _flushedCount), Interlocked.Read(ref _failedCount));
 
     // ----------- Internal logic -----------
-    private async Task FlushInternalAsync(ISender sender, IReadOnlyList<T> batch, CancellationToken ct)
+    private async Task FlushInternalAsync(ISender sender, IReadOnlyList<T> batch, int workerId, DateTime? oldestInBufferUtc, CancellationToken ct)
     {
         if (batch.Count == 0) return;
+        
+        var batchSize = batch.Count;
+        var oldest = oldestInBufferUtc ?? DateTime.UtcNow;
+        var latencyMs = (DateTime.UtcNow - oldest).TotalMilliseconds;
 
         try
         {
             await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
             Interlocked.Add(ref _flushedCount, batch.Count);
-            _logger.LogDebug("Flushed {Count} packets of {Entity} into DB",
-                batch.Count, typeof(T).Name);
+            
+            var (totalFlushed, totalFailed) = GetStats();
+            _logger.LogInformation(
+                "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed})",
+                typeof(T).Name, workerId, batchSize, latencyMs, totalFlushed, totalFailed);
         }
         catch (Exception ex) when (ex is IOException || ex is SocketException || ex.GetType().Name.Contains("Ingress"))
         {
@@ -217,6 +203,11 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             {
                 await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
                 Interlocked.Add(ref _flushedCount, batch.Count);
+
+                var (totalFlushed, totalFailed) = GetStats();
+                _logger.LogInformation(
+                    "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed})",
+                    typeof(T).Name, workerId, batchSize, latencyMs, totalFlushed, totalFailed);
             }
             catch
             {

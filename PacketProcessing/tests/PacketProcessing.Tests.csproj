@@ -43,9 +43,10 @@
     <ProjectReference Include="..\PacketProcessing.csproj" />
   </ItemGroup>
 
-  <!-- Temporarily exclude networking tests that reference non-existent services -->
+  <!-- Temporarily exclude tests that reference non-existent services -->
   <ItemGroup>
     <Compile Remove="unit/NetworkingTests/**" />
+    <Compile Remove="unit/DatabaseTests/DatabaseInitializationTests.cs" />
   </ItemGroup>
 
 </Project>

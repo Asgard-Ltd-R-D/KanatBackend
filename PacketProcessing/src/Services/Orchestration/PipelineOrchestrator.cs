@@ -4,6 +4,7 @@ using PacketProcessing.Entities.Packet;
 using PacketProcessing.Services.Networking;
 using PacketProcessing.Services.Storage;
 using PacketProcessing.DTOs;
+using PacketProcessing.Utils.Constants;
 
 namespace PacketProcessing.Services.Orchestration;
 
@@ -23,6 +24,9 @@ public class PipelineOrchestrator : IPipelineOrchestrator
     private readonly IDbWriterService<MotionPacketEntity> _motionWriter;
     private readonly IDbWriterService<SafetyPacketEntity> _safetyWriter;
     private readonly IDbWriterService<OnVIFPacketEntity> _onvifWriter;
+
+    private States _currentState = States.Realtime;
+    private readonly object _stateLock = new();
 
     public PipelineOrchestrator(
         ILogger<PipelineOrchestrator> logger,
@@ -182,5 +186,23 @@ public class PipelineOrchestrator : IPipelineOrchestrator
         _onvifWriter.ResetStats();
         
         _logger.LogInformation("All pipeline statistics reset successfully");
+    }
+    
+    public States GetCurrentState()
+    {
+        lock (_stateLock)
+        {
+            return _currentState;
+        }
+    }
+    
+    public void SetState(States state)
+    {
+        lock (_stateLock)
+        {
+            var previousState = _currentState;
+            _currentState = state;
+            _logger.LogInformation("Pipeline state changed from {PreviousState} to {NewState}", previousState, state);
+        }
     }
 }

@@ -180,7 +180,37 @@ public class ConfigurationInjection
 
         // Register Swagger & API Controllers
         builder.Services.AddEndpointsApiExplorer();
-        builder.Services.AddSwaggerGen();
+        _ = builder.Services.AddSwaggerGen(options =>
+        {
+            options.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+            {
+                Title = "Kanat Packet Processing API",
+                Version = "v1",
+                Description = "API for real-time packet capture and playback analysis"
+            });
+
+            // Include XML comments if available
+            var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+            var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+            if (File.Exists(xmlPath))
+            {
+                options.IncludeXmlComments(xmlPath);
+            }
+
+            // Tag controllers by name
+            options.TagActionsBy(api =>
+            {
+                if (api.GroupName != null)
+                {
+                    return new[] { api.GroupName };
+                }
+
+                var controllerName = api.ActionDescriptor.RouteValues["controller"];
+                return new[] { controllerName ?? "Unknown" };
+            });
+
+            options.DocInclusionPredicate((name, api) => true);
+        });
         builder.Services.AddControllers();
         
         // Register SignalR for real-time data transmission

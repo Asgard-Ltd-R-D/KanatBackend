@@ -21,7 +21,7 @@ public sealed class OnVIFPacketMapper : IMapper<OnVIFPacketDto, OnVIFPacketEntit
         {
             Id = entity.Id,
             Timestamp = entity.Timestamp,
-            Type = entity.Type,
+            IsCmd = entity.IsCmd,
             Description = entity.Description,
             Zoom = entity.Zoom,
             Measurement = entity.Measurement
@@ -41,7 +41,7 @@ public sealed class OnVIFPacketMapper : IMapper<OnVIFPacketDto, OnVIFPacketEntit
         {
             Id = dto.Id,
             Timestamp = dto.Timestamp,
-            Type = dto.Type,
+            IsCmd = dto.IsCmd,
             Description = dto.Description,
             Zoom = dto.Zoom,
             Measurement = dto.Measurement

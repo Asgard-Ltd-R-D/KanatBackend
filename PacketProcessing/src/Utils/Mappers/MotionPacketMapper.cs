@@ -21,7 +21,7 @@ public sealed class MotionPacketMapper : IMapper<MotionPacketDto, MotionPacketEn
         {
             Id = entity.Id,
             Timestamp = entity.Timestamp,
-            Type = entity.Type,
+            IsCmd = entity.IsCmd,
             OpCode = entity.OpCode,
             OpCodeDescription = entity.OpCodeDescription,
             Axis = entity.Axis,
@@ -42,7 +42,7 @@ public sealed class MotionPacketMapper : IMapper<MotionPacketDto, MotionPacketEn
         {
             Id = dto.Id,
             Timestamp = dto.Timestamp,
-            Type = dto.Type,
+            IsCmd = dto.IsCmd,
             OpCode = dto.OpCode,
             OpCodeDescription = dto.OpCodeDescription,
             Axis = dto.Axis,

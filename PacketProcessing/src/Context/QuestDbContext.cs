@@ -66,7 +66,7 @@ public sealed class QuestDbContext
         CREATE TABLE IF NOT EXISTS motion_packets (
             timestamp TIMESTAMP,
             id        SYMBOL,
-            type      BOOLEAN,
+            isCmd      BOOLEAN,
             opCode    STRING,
             opCodeDescription STRING,
             axis      INT,
@@ -76,7 +76,7 @@ public sealed class QuestDbContext
         CREATE TABLE IF NOT EXISTS onvif_packets (
             timestamp   TIMESTAMP,
             id          SYMBOL,
-            type        BOOLEAN,
+            isCmd        BOOLEAN,
             description STRING,
             zoom        DOUBLE,
             measurement DOUBLE
@@ -85,7 +85,7 @@ public sealed class QuestDbContext
         CREATE TABLE IF NOT EXISTS safety_packets (
             timestamp         TIMESTAMP,
             id                SYMBOL,
-            type              BOOLEAN,
+            name              STRING,
             opCode            STRING,
             opCodeDescription STRING,
             state             STRING

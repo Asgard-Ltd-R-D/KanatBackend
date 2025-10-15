@@ -7,8 +7,8 @@ public class OnVIFPacketDto
 {
     public Guid Id { get; set; }
     public DateTime Timestamp { get; set; }
-    public bool Type { get; set; }
+    public bool IsCmd { get; set; }
     public string Description { get; set; } = string.Empty;
     public float? Zoom { get; set; }
-    public float Measurement { get; set; }
+    public float? Measurement { get; set; }
 }

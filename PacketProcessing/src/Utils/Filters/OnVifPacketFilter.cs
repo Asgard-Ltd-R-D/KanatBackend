@@ -14,7 +14,7 @@ public static class OnVifPacketFilter
             if (filters is null) return items.Select(item => new PlainDataDto
             {
                 Timestamp = item.Timestamp,
-                Value = item.Measurement
+                Value = item.Measurement ?? -1.0f
             });
 
             var filteredItems = items.Where(item => 
@@ -33,7 +33,7 @@ public static class OnVifPacketFilter
             return filteredItems.Select(item => new PlainDataDto
             {
                 Timestamp = item.Timestamp,
-                Value = item.Measurement
+                Value = item.Measurement ?? -1.0f
             });
         });
     }

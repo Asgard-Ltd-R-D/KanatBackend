@@ -7,7 +7,7 @@ public class MotionPacketDto
 {
     public Guid Id { get; set; }
     public DateTime Timestamp { get; set; }
-    public bool Type { get; set; }
+    public bool IsCmd { get; set; }
     public string OpCode { get; set; } = string.Empty;
     public string OpCodeDescription { get; set; } = string.Empty;
     public int Axis { get; set; }

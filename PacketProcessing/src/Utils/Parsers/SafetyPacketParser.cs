@@ -5,9 +5,6 @@ namespace PacketProcessing.Utils.Parsers
 {
     public static class SafetyPacketParser
     {
-        // Cache DO value strings to avoid allocations
-        private static readonly Dictionary<ushort, string> DoValueStrings = new();
-        private static readonly object _doValueLock = new();
         
         // DO maps (by destination IP)
         private static readonly IReadOnlyDictionary<ushort, string> DO_PBE = new Dictionary<ushort, string>
@@ -80,13 +77,20 @@ namespace PacketProcessing.Utils.Parsers
         string doDescr = (doMap != null && doMap.TryGetValue(doVal, out var name)) ? name : $"0x{doVal:X4}";
         string stDescr = STATE.TryGetValue(stVal, out var sname) ? sname : $"0x{stVal:X4}";
 
+        var dataPipeName = dstIp switch
+        {
+            "132.8.7.101" => "PBE",
+            "132.8.7.102" => "SBE",
+            _             => "Unknown"
+        };
+
         return new SafetyPacketEntity
         {
             Id = Guid.NewGuid(),
             Timestamp=DateTime.UtcNow, // The datetime will be override by the actual timestamp of the packet
-            Type = true,
-            OpCode = doDescr,
-            OpCodeDescription = doDescr,
+            Name = dataPipeName,
+            OpCode = $"0x{doVal:X4}", // HEX value of DO
+            OpCodeDescription = doDescr, // Description of DO
             State = stDescr
         };
     }

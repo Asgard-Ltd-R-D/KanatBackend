@@ -7,8 +7,8 @@ namespace PacketProcessing.Entities.Packet;
 [Table("motion_packets")]
 public class MotionPacketEntity : BasePacketEntity
 {
-    [Column("type")]
-    public required bool Type { get; set; }
+    [Column("isCmd")]
+    public required bool IsCmd { get; set; }
     
     [Column("opCode")]
     [StringLength(32)]
@@ -28,7 +28,7 @@ public class MotionPacketEntity : BasePacketEntity
     
     public override void WriteColumns(ISender sender)
     {
-        sender.Column("type", Type);
+        sender.Column("isCmd", IsCmd);
         sender.Column("opCode", OpCode);
         sender.Column("opCodeDescription", OpCodeDescription);
         sender.Column("axis", Axis);

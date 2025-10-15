@@ -208,6 +208,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                             batchDropped++;
                             continue;
                         }
+                        parsed.Timestamp = raw.Timestamp; // Override the timestamp to the actual timestamp of the packet
 
                         // Track timestamps for latency measurement
                         if (firstParsedTimestamp == null)
@@ -217,7 +218,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                         // Try fast path to parsed channel; otherwise await (true backpressure)
                         if (!_parsedChannel.Writer.TryWrite(parsed))
                         {
-                            parsed.Timestamp = raw.Timestamp; // Override the timestamp to the actual timestamp of the packet
                             Interlocked.Increment(ref _backpressureEvents);
                             batchBackpressure++;
                             await _parsedChannel.Writer.WriteAsync(parsed, token);

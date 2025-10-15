@@ -31,10 +31,25 @@ public static class PlainDataParser
     /// </summary>
     private static PlainDataDto ParseMotion(MotionPacketEntity motion)
     {
+        // Applicable for Motion Commands that have a float value
+        if (!motion.IsCmd && motion.FloatValue.HasValue) 
+            return new PlainDataDto
+            {
+                Timestamp = motion.Timestamp,
+                Value = motion.FloatValue.Value
+            };
+        // Applicable for Motion Commands that have no float value
+        if (motion.IsCmd)
+            return new PlainDataDto
+            {
+                Timestamp = motion.Timestamp,
+                Value = 1f
+            };
+        // Damaged packet
         return new PlainDataDto
         {
             Timestamp = motion.Timestamp,
-            Value = motion.FloatValue ?? 0f
+            Value = motion.FloatValue ?? -1f
         };
     }
 
@@ -48,7 +63,14 @@ public static class PlainDataParser
         return new PlainDataDto
         {
             Timestamp = safety.Timestamp,
-            Value = safety.Type ? 1f : 0f
+            Value = safety.State switch
+            {
+                "ON" => 1f,
+                "OFF" => 0f,
+                "PULSE" => 2f,
+                "BURST" => 3f,
+                _ => -1f
+            }
         };
     }
 
@@ -58,11 +80,24 @@ public static class PlainDataParser
     /// </summary>
     private static PlainDataDto ParseOnVIF(OnVIFPacketEntity onvif)
     {
-        return new PlainDataDto
-        {
-            Timestamp = onvif.Timestamp,
-            Value = onvif.Measurement
-        };
+        if (onvif.Zoom.HasValue)
+            return new PlainDataDto
+            {
+                Timestamp = onvif.Timestamp,
+                Value = onvif.Zoom.Value
+            };
+        else if (onvif.Measurement.HasValue)
+            return new PlainDataDto
+            {
+                Timestamp = onvif.Timestamp,
+                Value = onvif.Measurement.Value
+            };
+        else
+            return new PlainDataDto
+            {
+                Timestamp = onvif.Timestamp,
+                Value = -1.0f
+            };
     }
 }
 

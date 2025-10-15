@@ -7,8 +7,8 @@ namespace PacketProcessing.Entities.Packet;
 [Table("safety_packets")]
 public class SafetyPacketEntity : BasePacketEntity
 {
-    [Column("type")]
-    public required bool Type { get; set; }
+    [Column("name")]
+    public required string Name { get; set; }
     
     [Column("opCode")]
     [StringLength(32)]
@@ -26,7 +26,7 @@ public class SafetyPacketEntity : BasePacketEntity
     
     public override void WriteColumns(ISender sender)
     {
-        sender.Column("type", Type);
+        sender.Column("name", Name);
         sender.Column("opCode", OpCode);
         sender.Column("opCodeDescription", OpCodeDescription);
         sender.Column("state", State);

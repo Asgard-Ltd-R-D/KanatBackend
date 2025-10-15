@@ -8,7 +8,7 @@ namespace PacketProcessing.Entities.Packet;
 public class OnVIFPacketEntity : BasePacketEntity
 {
     [Column("type")]
-    public required bool Type { get; set; }
+    public required bool IsCmd { get; set; }
     
     [Column("description")]
     [StringLength(128)]
@@ -18,16 +18,24 @@ public class OnVIFPacketEntity : BasePacketEntity
     public float? Zoom { get; set; }
     
     [Column("measurement")]
-    public required float Measurement { get; set; }
+    public float? Measurement { get; set; }
 
     public override string TableName => "onvif_packets";
     
     public override void WriteColumns(ISender sender)
     {
-        sender.Column("type", Type);
+        sender.Column("isCmd", IsCmd);
         sender.Column("description", Description);
+        //Applicable for DAY/IR
         if (Zoom.HasValue)
             sender.Column("zoom", Zoom.Value);
-        sender.Column("measurement", Measurement);
+        else
+            sender.NullableColumn("zoom", float.NaN);
+
+        //Applicable for LRF/LRF
+        if (Measurement.HasValue)
+            sender.Column("measurement", Measurement.Value);
+        else
+            sender.NullableColumn("measurement", float.NaN);
     }
 }

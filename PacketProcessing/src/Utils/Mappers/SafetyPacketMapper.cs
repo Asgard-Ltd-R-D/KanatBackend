@@ -21,7 +21,7 @@ public sealed class SafetyPacketMapper : IMapper<SafetyPacketDto, SafetyPacketEn
         {
             Id = entity.Id,
             Timestamp = entity.Timestamp,
-            Type = entity.Type,
+            Name = entity.Name,
             OpCode = entity.OpCode,
             OpCodeDescription = entity.OpCodeDescription,
             State = entity.State
@@ -41,7 +41,7 @@ public sealed class SafetyPacketMapper : IMapper<SafetyPacketDto, SafetyPacketEn
         {
             Id = dto.Id,
             Timestamp = dto.Timestamp,
-            Type = dto.Type,
+            Name = dto.Name,
             OpCode = dto.OpCode,
             OpCodeDescription = dto.OpCodeDescription,
             State = dto.State

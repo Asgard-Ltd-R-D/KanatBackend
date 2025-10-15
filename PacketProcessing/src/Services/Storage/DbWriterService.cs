@@ -69,14 +69,18 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     {
         _logger.LogInformation("[DB-WRITER] {Entity} Starting {Workers} worker loops...", typeof(T).Name, _workerCount);
         
-        var workers = Enumerable.Range(0, _workerCount)
-            .Select(i => Task.Factory.StartNew(
-                    () => WorkerLoopAsync(i, stoppingToken),
-                    stoppingToken,
-                    TaskCreationOptions.LongRunning,
-                    TaskScheduler.Default)
-                .Unwrap())
-            .ToArray();
+        // Avoid LINQ allocations - use direct array allocation
+        var workers = new Task[_workerCount];
+        for (int i = 0; i < _workerCount; i++)
+        {
+            int workerId = i; // Capture variable for closure
+            workers[i] = Task.Factory.StartNew(
+                () => WorkerLoopAsync(workerId, stoppingToken),
+                stoppingToken,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default)
+            .Unwrap();
+        }
 
         _logger.LogInformation("[DB-WRITER] {Entity} All {Workers} workers started", typeof(T).Name, _workerCount);
         return Task.WhenAll(workers);
@@ -84,17 +88,19 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
 
     private async Task WorkerLoopAsync(int workerId, CancellationToken token)
     {
-        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        // Pre-allocate scope dictionary to avoid repeated allocations
+        var scopeState = new Dictionary<string, object>(2)
         {
             ["Worker"] = workerId,
             ["Entity"] = typeof(T).Name
-        });
+        };
+        using var scope = _logger.BeginScope(scopeState);
     
         ISender? sender = null;
         
-        // Use ArrayPool to reduce allocations - rent array slightly larger than batch size
-        T[]? rentedArray = null;
-        var buffer = new List<T>(_batchSize);
+        // Rent array from pool - allocate once, reuse throughout worker lifetime
+        var rentedArray = ArrayPool<T>.Shared.Rent(_batchSize);
+        int bufferCount = 0;
         DateTime? oldestInBufferUtc = null;
 
         using var timer = new PeriodicTimer(_batchTimeout);
@@ -114,21 +120,56 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
                 {
                     // Channel signaled; may be false if completed
                     if (dataAvailableTask.Result) {
-                        // Drain fast if more are available
-                        while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var more))
+                        // Aggressive draining: Read first item, then drain as many as possible
+                        // This minimizes context switches and maximizes throughput
+                        if (_channel.Reader.TryRead(out var firstItem))
                         {
-                            buffer.Add(more);
-                            if (!oldestInBufferUtc.HasValue || more.Timestamp < oldestInBufferUtc.Value)
-                                oldestInBufferUtc = more.Timestamp;
+                            rentedArray[bufferCount] = firstItem;
+                            bufferCount++;
+                            
+                            if (!oldestInBufferUtc.HasValue || firstItem.Timestamp < oldestInBufferUtc.Value)
+                                oldestInBufferUtc = firstItem.Timestamp;
+                            
+                            // Now drain remaining items without blocking
+                            // Loop unrolled for better performance - check 8 items at once
+                            while (bufferCount < _batchSize)
+                            {
+                                // Try to read in chunks for better cache performance
+                                int itemsToRead = Math.Min(8, _batchSize - bufferCount);
+                                int itemsRead = 0;
+                                
+                                for (int i = 0; i < itemsToRead; i++)
+                                {
+                                    if (_channel.Reader.TryRead(out var more))
+                                    {
+                                        rentedArray[bufferCount] = more;
+                                        bufferCount++;
+                                        itemsRead++;
+                                        
+                                        if (!oldestInBufferUtc.HasValue || more.Timestamp < oldestInBufferUtc.Value)
+                                            oldestInBufferUtc = more.Timestamp;
+                                    }
+                                    else
+                                    {
+                                        break;
+                                    }
+                                }
+                                
+                                // If we couldn't read any items, channel is temporarily empty
+                                if (itemsRead == 0)
+                                    break;
+                            }
                         }
 
                         // Flush if full or latency cap reached
-                        if (buffer.Count >= _batchSize ||
-                            (oldestInBufferUtc.HasValue &&
+                        if (bufferCount >= _batchSize ||
+                            (bufferCount > 0 && oldestInBufferUtc.HasValue &&
                                 (DateTime.UtcNow - oldestInBufferUtc.Value) >= _batchTimeout))
                         {
-                            await FlushInternalAsync(sender, buffer, workerId, oldestInBufferUtc, token);
-                            buffer.Clear();
+                            // Create ArraySegment view - zero-copy wrapper around filled portion
+                            var segment = new ArraySegment<T>(rentedArray, 0, bufferCount);
+                            await FlushInternalAsync(sender, segment, workerId, oldestInBufferUtc, token);
+                            bufferCount = 0;
                             oldestInBufferUtc = null;
                         }
                     }
@@ -145,10 +186,11 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
                     if (!ticked) break; // safety; normally only false when timer disposed
 
                     // Timer tick: if there is anything pending -> flush.
-                    if (buffer.Count > 0)
+                    if (bufferCount > 0)
                     {
-                        await FlushInternalAsync(sender, buffer, workerId, oldestInBufferUtc, token);
-                        buffer.Clear();
+                        var segment = new ArraySegment<T>(rentedArray, 0, bufferCount);
+                        await FlushInternalAsync(sender, segment, workerId, oldestInBufferUtc, token);
+                        bufferCount = 0;
                         oldestInBufferUtc = null;
                     }
                     
@@ -160,16 +202,22 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         catch (ChannelClosedException)
         {
             // Final drain after close
-            if (buffer.Count > 0 && sender is not null)
-                await FlushInternalAsync(sender, buffer, workerId, oldestInBufferUtc, token);
-                buffer.Clear();
+            if (bufferCount > 0 && sender is not null)
+            {
+                var segment = new ArraySegment<T>(rentedArray, 0, bufferCount);
+                await FlushInternalAsync(sender, segment, workerId, oldestInBufferUtc, token);
+                bufferCount = 0;
+            }
         }
         catch (OperationCanceledException)
         {
             // Shutdown requested — final flush
-            if (buffer.Count > 0 && sender is not null)
-                await FlushInternalAsync(sender, buffer, workerId, oldestInBufferUtc, token);
-                buffer.Clear();
+            if (bufferCount > 0 && sender is not null)
+            {
+                var segment = new ArraySegment<T>(rentedArray, 0, bufferCount);
+                await FlushInternalAsync(sender, segment, workerId, oldestInBufferUtc, token);
+                bufferCount = 0;
+            }
         }
         catch (Exception ex)
         {

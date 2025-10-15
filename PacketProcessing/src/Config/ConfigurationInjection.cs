@@ -181,7 +181,7 @@ public class ConfigurationInjection
     /// Configures all application middleware components
     /// </summary>
     /// <param name="app">The WebApplication instance</param>
-    public static async Task InjectMiddlewareAsync(WebApplication app)
+    public static void InjectMiddlewareAsync(WebApplication app)
     {
         // Global exception handler should be first
         app.UseGlobalExceptionHandler();

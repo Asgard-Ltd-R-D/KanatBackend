@@ -63,8 +63,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         _workerCount = Math.Clamp(Environment.ProcessorCount, min, max);
 
         _logger.LogInformation(
-            "{Handler} initialized with {Workers} workers",
-            typeof(T).Name, _workerCount);
+            "[HANDLER-SERVICE] {Handler} initialized with {Workers} workers (RawChannelCapacity:500K, ParsedChannelCapacity:{ParsedCap})",
+            typeof(T).Name, _workerCount, parsedChannel.Reader.CanCount ? "?" : "Bounded");
     }
 
     #region IHandlerService

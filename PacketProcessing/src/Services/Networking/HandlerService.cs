@@ -37,6 +37,11 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     private long _packetsDropped;
     private long _backpressureEvents;
     private long _packetsTransmitted;
+    private long _totalLatencyMs;
+    private long _latencyCount;
+    
+    // Channel counts (manual tracking since bounded channels don't support Reader.Count)
+    private long _rawChannelCount;
 
     private const int RAW_READ_BURST = 64; // Smaller burst for lower latency
 
@@ -101,16 +106,44 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         Interlocked.Exchange(ref _packetsParsed, 0);
         Interlocked.Exchange(ref _packetsDropped, 0);
         Interlocked.Exchange(ref _backpressureEvents, 0);
+        Interlocked.Exchange(ref _rawChannelCount, 0);
 
         _logger.LogInformation("{Handler} unsubscribed", typeof(T).Name);
     }
 
-    public (long Captured, long Parsed, long Dropped) GetStats() =>
-        (Interlocked.Read(ref _packetsCaptured),
-         Interlocked.Read(ref _packetsParsed),
-         Interlocked.Read(ref _packetsDropped));
+    public (long Captured, long Parsed, long Dropped, double AvgLatencyMs) GetStats()
+    {
+        var captured = Interlocked.Read(ref _packetsCaptured);
+        var parsed = Interlocked.Read(ref _packetsParsed);
+        var dropped = Interlocked.Read(ref _packetsDropped);
+        var totalLatency = Interlocked.Read(ref _totalLatencyMs);
+        var count = Interlocked.Read(ref _latencyCount);
+        var avgLatency = count > 0 ? (double)totalLatency / count : 0.0;
+        
+        return (captured, parsed, dropped, avgLatency);
+    }
     
     public long GetBackpressureEvents() => Interlocked.Read(ref _backpressureEvents);
+    
+    public int GetRawChannelCount()
+    {
+        var count = Interlocked.Read(ref _rawChannelCount);
+        return count >= 0 ? (int)count : 0;
+    }
+    
+    public void ResetStats()
+    {
+        Interlocked.Exchange(ref _packetsCaptured, 0);
+        Interlocked.Exchange(ref _packetsParsed, 0);
+        Interlocked.Exchange(ref _packetsDropped, 0);
+        Interlocked.Exchange(ref _backpressureEvents, 0);
+        Interlocked.Exchange(ref _packetsTransmitted, 0);
+        Interlocked.Exchange(ref _totalLatencyMs, 0);
+        Interlocked.Exchange(ref _latencyCount, 0);
+        // Note: rawChannelCount is not reset as it represents actual queue state
+        
+        _logger.LogInformation("{Handler} statistics reset", typeof(T).Name);
+    }
 
     #endregion
 
@@ -188,8 +221,13 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                 rawBatch.Add(first);
 
                 // ---- 2) Aggressively drain what's immediately available ----
+                Interlocked.Decrement(ref _rawChannelCount);
+                
                 while (rawBatch.Count < RAW_READ_BURST && _rawChannel.Reader.TryRead(out var more))
+                {
                     rawBatch.Add(more);
+                    Interlocked.Decrement(ref _rawChannelCount);
+                }
 
                 // ---- 3) Parse and forward ----
                 DateTime? firstParsedTimestamp = null;
@@ -253,6 +291,11 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
                         Interlocked.Increment(ref _packetsParsed);
                         batchParsed++;
+                        
+                        // Track latency (time from raw event to parsed)
+                        var latencyMs = (long)(DateTime.UtcNow - raw.Timestamp).TotalMilliseconds;
+                        Interlocked.Add(ref _totalLatencyMs, latencyMs);
+                        Interlocked.Increment(ref _latencyCount);
                     }
                     catch
                     {

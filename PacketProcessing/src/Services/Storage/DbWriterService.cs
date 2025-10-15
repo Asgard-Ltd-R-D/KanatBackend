@@ -27,6 +27,8 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
 
     private long _flushedCount;
     private long _failedCount;
+    private long _totalLatencyMs;
+    private long _latencyCount;
 
     public DbWriterService(
         ILogger<DbWriterService<T>> logger,
@@ -172,8 +174,33 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         }
     }
 
-    public (long Flushed, long Failed) GetStats() =>
-        (Interlocked.Read(ref _flushedCount), Interlocked.Read(ref _failedCount));
+    public (long Flushed, long Failed, double AvgLatencyMs) GetStats()
+    {
+        var flushed = Interlocked.Read(ref _flushedCount);
+        var failed = Interlocked.Read(ref _failedCount);
+        var totalLatency = Interlocked.Read(ref _totalLatencyMs);
+        var count = Interlocked.Read(ref _latencyCount);
+        var avgLatency = count > 0 ? (double)totalLatency / count : 0.0;
+        
+        return (flushed, failed, avgLatency);
+    }
+    
+    public int GetChannelCount()
+    {
+        // Channel count is calculated externally as (parsed - flushed)
+        // This method exists for interface compliance but isn't directly used
+        return 0;
+    }
+    
+    public void ResetStats()
+    {
+        Interlocked.Exchange(ref _flushedCount, 0);
+        Interlocked.Exchange(ref _failedCount, 0);
+        Interlocked.Exchange(ref _totalLatencyMs, 0);
+        Interlocked.Exchange(ref _latencyCount, 0);
+        
+        _logger.LogInformation("[DB-WRITER] {Entity} statistics reset", typeof(T).Name);
+    }
 
     // ----------- Internal logic -----------
     private async Task FlushInternalAsync(ISender sender, IReadOnlyList<T> batch, int workerId, DateTime? oldestInBufferUtc, CancellationToken ct)
@@ -189,10 +216,14 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
             Interlocked.Add(ref _flushedCount, batch.Count);
             
-            var (totalFlushed, totalFailed) = GetStats();
+            // Track latency
+            Interlocked.Add(ref _totalLatencyMs, (long)latencyMs);
+            Interlocked.Increment(ref _latencyCount);
+            
+            var stats = GetStats();
             _logger.LogInformation(
-                "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed})",
-                typeof(T).Name, workerId, batchSize, latencyMs, totalFlushed, totalFailed);
+                "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgLatency:{AvgLatency:F1}ms)",
+                typeof(T).Name, workerId, batchSize, latencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
         }
         catch (Exception ex) when (ex is IOException || ex is SocketException || ex.GetType().Name.Contains("Ingress"))
         {
@@ -203,11 +234,15 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             {
                 await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
                 Interlocked.Add(ref _flushedCount, batch.Count);
+                
+                // Track latency
+                Interlocked.Add(ref _totalLatencyMs, (long)latencyMs);
+                Interlocked.Increment(ref _latencyCount);
 
-                var (totalFlushed, totalFailed) = GetStats();
+                var stats = GetStats();
                 _logger.LogInformation(
-                    "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed})",
-                    typeof(T).Name, workerId, batchSize, latencyMs, totalFlushed, totalFailed);
+                    "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgLatency:{AvgLatency:F1}ms)",
+                    typeof(T).Name, workerId, batchSize, latencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
             }
             catch
             {

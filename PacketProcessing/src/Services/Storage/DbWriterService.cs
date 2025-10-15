@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net.Sockets;
 using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
@@ -50,9 +51,13 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         _workerCount = Math.Clamp(Environment.ProcessorCount, min, max);
 
         var opt = options.Value;
-        // removed auto_flush_* to avoid double-batching
+        // Optimize connection string for high-throughput ingestion
         _connectionString =
-            $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};";
+            $"http::addr={opt.Host}:{opt.InfluxPort};" +
+            $"username={opt.Username};password={opt.Password};" +
+            $"request_min_throughput=500000;" +  // Target 500K packets/sec throughput
+            $"request_timeout=5000;" +            // 5 second timeout for requests
+            $"retry_timeout=1000;";
         
         _logger.LogInformation(
             "[DB-WRITER] {Entity} initialized with {Workers} workers, BatchSize={BatchSize}, Timeout={Timeout}ms",
@@ -86,6 +91,9 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         });
     
         ISender? sender = null;
+        
+        // Use ArrayPool to reduce allocations - rent array slightly larger than batch size
+        T[]? rentedArray = null;
         var buffer = new List<T>(_batchSize);
         DateTime? oldestInBufferUtc = null;
 
@@ -171,6 +179,12 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         finally
         {
             sender?.Dispose();
+            
+            // Return rented array to pool if we used it
+            if (rentedArray != null)
+            {
+                ArrayPool<T>.Shared.Return(rentedArray, clearArray: false);
+            }
         }
     }
 

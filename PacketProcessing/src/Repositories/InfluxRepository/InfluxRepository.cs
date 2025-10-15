@@ -60,9 +60,9 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             sender.At(tsUtc, ct);
 
             // Commit the transaction
-            await sender.CommitAsync(ct).ConfigureAwait(false);
+            await sender.CommitAsync(ct);
             
-            _logger.LogInformation("Successfully wrote packet of type {EntityType} with ID {Id} to table {Table}", 
+            _logger.LogDebug("Successfully wrote packet of type {EntityType} with ID {Id} to table {Table}", 
                 typeof(T).Name, entity.Id, table);
         } 
         catch (Exception ex)
@@ -138,8 +138,8 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             }
 
             // Commit the entire batch transaction
-            await sender.CommitAsync(ct).ConfigureAwait(false);
-            _logger.LogInformation("Successfully wrote batch of packets of type {EntityType} to table {Table}", typeof(T).Name, table);
+            await sender.CommitAsync(ct);
+            _logger.LogDebug("Successfully wrote batch of packets of type {EntityType} to table {Table}", typeof(T).Name, table);
         } 
         catch (Exception ex)
         {

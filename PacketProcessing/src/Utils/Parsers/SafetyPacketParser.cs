@@ -35,88 +35,61 @@ namespace PacketProcessing.Utils.Parsers
             { 0x0003, "BURST" }
         };
 
-        public static SafetyPacketEntity? Parse(ReadOnlySpan<byte> raw)
+    public static SafetyPacketEntity? Parse(ReadOnlySpan<byte> raw)
+    {
+        if (raw.Length < 42) return null; // Other UDP packet that is not Safety PDU
+
+        // --- Detect IPv4 header (with Ethernet prefix if present) ---
+        int ipStart = (raw.Length >= 14 && ReadBE16(raw.Slice(12, 2)) == 0x0800) ? 14 : 0;
+        if (raw.Length < ipStart + 20 || (raw[ipStart] >> 4) != 4) return null;
+
+        int ihl = (raw[ipStart] & 0x0F) * 4;
+        if (ihl < 20 || raw.Length < ipStart + ihl) return null;
+
+        if (raw[ipStart + 9] != 17) return null; // not UDP
+
+        // --- Destination IP ---
+        var dstIp = $"{raw[ipStart + 16]}.{raw[ipStart + 17]}.{raw[ipStart + 18]}.{raw[ipStart + 19]}";
+
+        // --- UDP header ---
+        int udpStart = ipStart + ihl;
+        if (raw.Length < udpStart + 8) return null;
+
+        ushort udpLen = ReadBE16(raw.Slice(udpStart + 4, 2));
+        if (udpLen < 8) return null;
+
+        int payloadStart = udpStart + 8;
+        int payloadLen = Math.Min(udpLen - 8, raw.Length - payloadStart);
+        if (payloadLen < 4) return null; // at least enough for DO + STATE
+
+        // --- Extract DO (4 bytes from end) and STATE (last 2 bytes) ---
+        int doOffset = payloadStart + payloadLen - 4;
+        int stateOffset = payloadStart + payloadLen - 2;
+
+        ushort doVal = ReadBE16(raw.Slice(doOffset, 2));
+        ushort stVal = ReadBE16(raw.Slice(stateOffset, 2));
+
+        // --- Map DO/STATE ---
+        IReadOnlyDictionary<ushort, string>? doMap = dstIp switch
         {
-            if (raw.Length < 20) return null;
+            "132.8.7.101" => DO_PBE,
+            "132.8.7.102" => DO_SBE,
+            _             => null
+        };
 
-            // --- Find IPv4 header (with or without Ethernet) ---
-            int ipStart;
-            if (raw.Length >= 14 && ReadBE16(raw.Slice(12, 2)) == 0x0800) // Ethernet + IPv4
-                ipStart = 14;
-            else if (raw.Length >= 20 && (raw[0] >> 4) == 4)              // Raw IPv4
-                ipStart = 0;
-            else
-                return null;
+        string doDescr = (doMap != null && doMap.TryGetValue(doVal, out var name)) ? name : $"0x{doVal:X4}";
+        string stDescr = STATE.TryGetValue(stVal, out var sname) ? sname : $"0x{stVal:X4}";
 
-            if (raw.Length < ipStart + 20) return null;
-
-            int ihl = (raw[ipStart] & 0x0F) * 4;
-            if (ihl < 20 || raw.Length < ipStart + ihl) return null;
-
-            if (raw[ipStart + 9] != 17) return null; // UDP only
-
-            // Destination IP (for DO map choice)
-            var dstIp = $"{raw[ipStart + 16]}.{raw[ipStart + 17]}.{raw[ipStart + 18]}.{raw[ipStart + 19]}";
-
-            // --- UDP header ---
-            int udpStart = ipStart + ihl;
-            if (raw.Length < udpStart + 8) return null;
-
-            ushort udpLen = ReadBE16(raw.Slice(udpStart + 4, 2));
-            if (udpLen < 8) return null;
-
-            int payloadStart = udpStart + 8;
-            int available = raw.Length - payloadStart;
-            int payloadLen = Math.Min(udpLen - 8, available);
-            if (payloadLen < 20) return null;
-
-            // --- Safety PDU is the last 20 bytes of the UDP payload ---
-            var pdu = raw.Slice(payloadStart + payloadLen - 20, 20);
-
-            // Offsets in the 20-byte PDU
-            // 16..17 = DO (BE), 18..19 = STATE (BE)
-            ushort doVal = ReadBE16(pdu.Slice(16, 2));
-            ushort stVal = ReadBE16(pdu.Slice(18, 2));
-
-            // Choose DO map by destination IP
-            IReadOnlyDictionary<ushort, string>? doMap = dstIp switch
-            {
-                "132.8.7.101" => DO_PBE,
-                "132.8.7.102" => DO_SBE,
-                "127.0.0.1"   => DO_SBE, // convenient local fallback
-                _             => null
-            };
-
-            string doDescr = (doMap != null && doMap.TryGetValue(doVal, out var name)) ? name : $"0x{doVal:X4}";
-            string stDescr = STATE.TryGetValue(stVal, out var sname) ? sname : $"0x{stVal:X4}";
-
-            // Type: true for PBE, false otherwise (match your earlier convention)
-            bool type = dstIp == "132.8.7.101";
-
-            // Cache DO value string to avoid repeated ToString allocations
-            string doValStr;
-            if (!DoValueStrings.TryGetValue(doVal, out doValStr!))
-            {
-                lock (_doValueLock)
-                {
-                    if (!DoValueStrings.TryGetValue(doVal, out doValStr!))
-                    {
-                        doValStr = doVal.ToString();
-                        DoValueStrings[doVal] = doValStr;
-                    }
-                }
-            }
-
-            return new SafetyPacketEntity
-            {
-                Id = Guid.NewGuid(),
-                Timestamp = DateTime.UtcNow,
-                Type = type,
-                OpCode = doValStr,
-                OpCodeDescription = doDescr,
-                State = stDescr
-            };
-        }
+        return new SafetyPacketEntity
+        {
+            Id = Guid.NewGuid(),
+            Timestamp=DateTime.UtcNow, // The datetime will be override by the actual timestamp of the packet
+            Type = true,
+            OpCode = doDescr,
+            OpCodeDescription = doDescr,
+            State = stDescr
+        };
+    }
 
         private static ushort ReadBE16(ReadOnlySpan<byte> s) =>
             BinaryPrimitives.ReadUInt16BigEndian(s);

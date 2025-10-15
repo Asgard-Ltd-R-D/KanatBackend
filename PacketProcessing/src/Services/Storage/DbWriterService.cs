@@ -44,14 +44,13 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         _batchTimeout = TimeSpan.FromMilliseconds(concurrency.GetValue<int>("BatchTimeoutMs", 30));
 
         var min = concurrency.GetValue<int>("MinWorkers", 2);
-        var max = concurrency.GetValue<int>("MaxWorkers", 5);
+        var max = concurrency.GetValue<int>("MaxWorkers", 8);
         _workerCount = Math.Clamp(Environment.ProcessorCount, min, max);
 
         var opt = options.Value;
         // removed auto_flush_* to avoid double-batching
         _connectionString =
-            $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};" +
-            $"auto_flush_rows={opt.BatchSize};auto_flush_interval={opt.BatchTimeoutMs};";
+            $"http::addr={opt.Host}:{opt.InfluxPort};username={opt.Username};password={opt.Password};";
     }
 
     // ----------- BackgroundService entry point -----------
@@ -72,7 +71,8 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     {
         ISender? sender = null;
         var buffer = new List<T>(_batchSize);
-        var logTicker = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        long lastFlushMs = sw.ElapsedMilliseconds;
 
         try
         {
@@ -80,59 +80,91 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
 
             while (!token.IsCancellationRequested)
             {
-                // POC-style deadline batching: Block for first packet
-                var first = await _channel.Reader.ReadAsync(token);
-                buffer.Clear();
-                buffer.Add(first);
-
-                // Set deadline based on batch timeout
-                var deadline = DateTime.UtcNow.Add(_batchTimeout);
-
-                // First, drain all immediately available packets up to batch size
-                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var item))
+                // Wait for first packet with timeout to ensure periodic flushing
+                T first;
+                try
                 {
-                    buffer.Add(item);
-                }
-
-                // If we still have room and time remains, wait for more packets until deadline
-                if (buffer.Count < _batchSize && DateTime.UtcNow < deadline)
-                {
+                    var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    timeoutCts.CancelAfter(_batchTimeout);
+                    
                     try
                     {
-                        var remainingTime = deadline - DateTime.UtcNow;
-                        if (remainingTime > TimeSpan.Zero)
-                        {
-                            var readTask = _channel.Reader.ReadAsync(token).AsTask();
-                            var timeoutTask = Task.Delay(remainingTime, token);
-                            
-                            if (await Task.WhenAny(readTask, timeoutTask) == readTask)
-                            {
-                                buffer.Add(await readTask);
-                                
-                                // Drain more if available after getting one more
-                                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var additional))
-                                {
-                                    buffer.Add(additional);
-                                }
-                            }
-                        }
+                        await _channel.Reader.WaitToReadAsync(timeoutCts.Token);
+                        first = await _channel.Reader.ReadAsync(token);
                     }
                     catch (OperationCanceledException) when (!token.IsCancellationRequested)
                     {
-                        // Deadline timeout - flush what we have
+                        // Timeout - flush any existing buffer
+                        if (buffer.Count > 0)
+                        {
+                            await FlushInternalAsync(sender, buffer, token);
+                            var stats = GetStats();
+                            _logger.LogInformation(
+                                "[DB-WRITER] {Entity} Worker {Worker}: TIMEOUT FLUSH Batch=(Size:{BatchSize}) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed})",
+                                typeof(T).Name, workerId, buffer.Count, stats.Flushed, stats.Failed);
+                            buffer.Clear();
+                        }
+                        continue;
+                    }
+                    finally
+                    {
+                        timeoutCts.Dispose();
+                    }
+                }
+                catch (ChannelClosedException)
+                {
+                    break;
+                }
+                
+                buffer.Add(first);
+
+                // Drain what's immediately available
+                while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var more))
+                    buffer.Add(more);
+
+                // Calculate deadline based on OLDEST packet timestamp (ensures 0.1s end-to-end)
+                var oldestPacketTime = first.Timestamp;
+                var deadlineUtc = oldestPacketTime.Add(_batchTimeout);
+                var now = DateTime.UtcNow;
+
+                // Soft-wait until deadline to pick up more items, but check packet age
+                while (buffer.Count < _batchSize && now < deadlineUtc)
+                {
+                    var remainingMs = (int)(deadlineUtc - now).TotalMilliseconds;
+                    if (remainingMs <= 0) break;  // Timeout exceeded
+
+                    // Timed wait for one more; if it arrives, drain fast-path items
+                    var readTask = _channel.Reader.ReadAsync(token).AsTask();
+                    var delayTask = Task.Delay(remainingMs, token);
+                    var completed = await Task.WhenAny(readTask, delayTask);
+                    if (completed == readTask)
+                    {
+                        buffer.Add(readTask.Result);
+                        while (buffer.Count < _batchSize && _channel.Reader.TryRead(out var add))
+                            buffer.Add(add);
+                        
+                        // Update current time for next iteration
+                        now = DateTime.UtcNow;
+                    }
+                    else
+                    {
+                        break; // deadline hit
                     }
                 }
 
-                // Flush the batch immediately (deadline reached or batch full)
+                // Calculate end-to-end latency for this batch
+                var batchLatencyMs = (DateTime.UtcNow - oldestPacketTime).TotalMilliseconds;
+                var batchSize = buffer.Count;
+                
+                // Flush the batch (full or deadline based on OLDEST packet age)
                 await FlushInternalAsync(sender, buffer, token);
+                lastFlushMs = sw.ElapsedMilliseconds;
 
-                if (await logTicker.WaitForNextTickAsync(token))
-                {
-                    var (flushed, failed) = GetStats();
-                    _logger.LogInformation(
-                        "[{Entity}] Worker {Worker} Stats: Flushed={Flushed}, Failed={Failed}",
-                        typeof(T).Name, workerId, flushed, failed);
-                }
+                // Log EVERY flush to see actual frequency and latency
+                var (totalFlushed, totalFailed) = GetStats();
+                _logger.LogInformation(
+                    "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed})",
+                    typeof(T).Name, workerId, batchSize, batchLatencyMs, totalFlushed, totalFailed);
             }
         }
         catch (OperationCanceledException) { /* shutdown */ }
@@ -173,7 +205,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         {
             await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
             Interlocked.Add(ref _flushedCount, batch.Count);
-            _logger.LogInformation("Flushed {Count} packets of {Entity} into DB",
+            _logger.LogDebug("Flushed {Count} packets of {Entity} into DB",
                 batch.Count, typeof(T).Name);
         }
         catch (Exception ex) when (ex is IOException || ex is SocketException || ex.GetType().Name.Contains("Ingress"))

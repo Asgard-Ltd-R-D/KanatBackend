@@ -44,6 +44,7 @@ public class DeviceService : IDeviceService
             dev.OnPacketArrival += (s, e) =>
             {
                 var raw = e.GetPacket();
+                var timestamp = e.GetPacket().Timeval.Date; // The timestamp is the actual captured timestamp of the packet
                 var src = raw?.Data;
 
                 if (src is { Length: > 0 })
@@ -59,7 +60,7 @@ public class DeviceService : IDeviceService
                         try
                         {
                             // Forward to specific observer
-                            observer.OnNext(new RawPacketEvent(dev.Name, mem));
+                            observer.OnNext(new RawPacketEvent(dev.Name, mem, timestamp));
                         }
                         catch (Exception ex)
                         {
@@ -77,10 +78,10 @@ public class DeviceService : IDeviceService
                 */
                 DeviceConfiguration config = new()
                 {
-                    Mode = DeviceModes.Promiscuous,
-                    ReadTimeout = 10000,
-                    // KernelBufferSize only supported on Linux, not macOS
-                    KernelBufferSize = OperatingSystem.IsLinux() ? 1024 * 1024 * 128 : null
+                    Mode = DeviceModes.Promiscuous, // Promiscuous mode for highest throughput
+                    ReadTimeout = 10, // 10ms timeout for packet arrival
+                    KernelBufferSize = OperatingSystem.IsLinux() ? 1024 * 1024 * 128 : null, // KernelBufferSize only supported on Linux, not macOS
+                    Immediate = true // Immediate mode for lowest latency
                 };
 
                 dev.Open(config);

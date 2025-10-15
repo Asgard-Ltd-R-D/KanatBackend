@@ -32,6 +32,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     private long _packetsDropped;
     private long _backpressureEvents;
 
+    private const int RAW_READ_BURST = 64; // Smaller burst for lower latency
+
     private IDisposable? _subscription;
 
     public HandlerService(
@@ -43,12 +45,13 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         _logger = logger;
         _parsedChannel = parsedChannel;
 
-        // bounded channel for raw events with increased capacity and backpressure
+        // bounded channel for raw events with increased capacity
+        // Wait mode ensures no packets are dropped (capture may block if processing too slow)
         _rawChannel = Channel.CreateBounded<RawPacketEvent>(
             new BoundedChannelOptions(500_000) { 
                 SingleReader = false,  // Multiple workers read
                 SingleWriter = false,  // DeviceService may write from multiple threads via Task.Run
-                FullMode = BoundedChannelFullMode.Wait 
+                FullMode = BoundedChannelFullMode.Wait  // Block to guarantee delivery
             });
 
         _protocol = configuration.GetValue<string>($"{dataPipeName}:Network:Protocol") ?? "";
@@ -103,11 +106,19 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     {
         Interlocked.Increment(ref _packetsCaptured);
 
-        // Block if channel is full (backpressure to capture)
-        if (!_rawChannel.Writer.TryWrite(evt))
-        {
-            _rawChannel.Writer.WriteAsync(evt).AsTask().GetAwaiter();
-        }
+        // Try fast path first
+        if (_rawChannel.Writer.TryWrite(evt))
+            return;
+
+        // Channel full - Wait mode will block to guarantee delivery
+        Interlocked.Increment(ref _backpressureEvents);
+        
+        // This blocks until space available (guarantees packet is written)
+        _rawChannel.Writer
+            .WriteAsync(evt, CancellationToken.None)
+            .AsTask()
+            .GetAwaiter()
+            .GetResult();
     }
 
     public void OnError(Exception error) =>
@@ -138,43 +149,102 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
     private async Task WorkerLoopAsync(int workerId, CancellationToken token)
     {
+        // Reuse buffers to avoid per-iteration allocs
+        var rawBatch = new List<RawPacketEvent>(RAW_READ_BURST);
+        
         try
         {
-            await foreach (var raw in _rawChannel.Reader.ReadAllAsync(token))
+            while (!token.IsCancellationRequested)
             {
-                ArraySegment<byte> segment = default;
+                rawBatch.Clear();
+                int batchParsed = 0;
+                int batchDropped = 0;
+                int batchBackpressure = 0;
+
+                // ---- 1) Block for first item (start a mini-batch) ----
+                RawPacketEvent first;
                 try
                 {
-                    var parsed = Parse(raw.Data.Span);
+                    first = await _rawChannel.Reader.ReadAsync(token);
+                }
+                catch (ChannelClosedException)
+                {
+                    break; // upstream completed
+                }
+                rawBatch.Add(first);
 
-                    if (parsed is null)
+                // ---- 2) Aggressively drain what's immediately available ----
+                while (rawBatch.Count < RAW_READ_BURST && _rawChannel.Reader.TryRead(out var more))
+                    rawBatch.Add(more);
+
+                // ---- 3) Parse and forward ----
+                DateTime? firstParsedTimestamp = null;
+                DateTime? lastParsedTimestamp = null;
+                
+                for (int i = 0; i < rawBatch.Count; i++)
+                {
+                    var raw = rawBatch[i];
+                    ArraySegment<byte> segment = default;
+                    try
                     {
-                        Interlocked.Increment(ref _packetsDropped);
-                    }
-                    else
-                    {
-                        // Apply backpressure if channel is full
+                        var parsed = Parse(raw.Data.Span);
+                        if (parsed is null)
+                        {
+                            Interlocked.Increment(ref _packetsDropped);
+                            batchDropped++;
+                            continue;
+                        }
+
+                        // Track timestamps for latency measurement
+                        if (firstParsedTimestamp == null)
+                            firstParsedTimestamp = parsed.Timestamp;
+                        lastParsedTimestamp = parsed.Timestamp;
+
+                        // Try fast path to parsed channel; otherwise await (true backpressure)
                         if (!_parsedChannel.Writer.TryWrite(parsed))
                         {
+                            parsed.Timestamp = raw.Timestamp; // Override the timestamp to the actual timestamp of the packet
                             Interlocked.Increment(ref _backpressureEvents);
+                            batchBackpressure++;
                             await _parsedChannel.Writer.WriteAsync(parsed, token);
                         }
+
                         Interlocked.Increment(ref _packetsParsed);
+                        batchParsed++;
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref _packetsDropped);
+                        batchDropped++;
+                    }
+                    finally
+                    {
+                        // Return pooled memory *after* processing is done
+                        if (MemoryMarshal.TryGetArray(raw.Data, out segment) && segment.Array is not null)
+                            ArrayPool<byte>.Shared.Return(segment.Array);
                     }
                 }
-                catch (Exception ex)
+
+                // ---- 4) Log every parsing batch with stats ----
+                var totalCaptured = Interlocked.Read(ref _packetsCaptured);
+                var totalParsed = Interlocked.Read(ref _packetsParsed);
+                var totalDropped = Interlocked.Read(ref _packetsDropped);
+                var totalBackpressure = Interlocked.Read(ref _backpressureEvents);
+                
+                // Calculate parsing latency from this batch
+                var parsingLatencyMs = 0.0;
+                if (batchParsed > 0 && lastParsedTimestamp.HasValue)
                 {
-                    Interlocked.Increment(ref _packetsDropped);
-                    _logger.LogError(ex, "Worker {Worker} failed to parse packet", workerId);
+                    // Measure actual time from packet creation to being sent to DB writer
+                    parsingLatencyMs = (DateTime.UtcNow - lastParsedTimestamp.Value).TotalMilliseconds;
                 }
-                finally
-                {
-                    // Return pooled memory after all processing is complete
-                    if (MemoryMarshal.TryGetArray(raw.Data, out segment))
-                        ArrayPool<byte>.Shared.Return(segment.Array!);
-                }
+                
+                _logger.LogInformation(
+                    "[PARSER] {Entity} Worker {Worker}: Batch=(Parsed:{BatchParsed} Dropped:{BatchDropped} BP:{BatchBP} Latency:{Latency:F1}ms) Total=(Captured:{TotalCaptured} Parsed:{TotalParsed} Dropped:{TotalDropped} BP:{TotalBP})",
+                    typeof(T).Name, workerId, batchParsed, batchDropped, batchBackpressure, parsingLatencyMs, totalCaptured, totalParsed, totalDropped, totalBackpressure);
             }
         }
+
         catch (OperationCanceledException) { }
     }
 

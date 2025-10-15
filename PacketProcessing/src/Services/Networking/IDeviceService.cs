@@ -8,7 +8,8 @@ namespace PacketProcessing.Services.Networking;
 /// </summary>
 /// <param name="DeviceName"></param>
 /// <param name="Data"></param>
-public record RawPacketEvent(string DeviceName, ReadOnlyMemory<byte> Data);
+/// <param name="Timestamp"></param>
+public record RawPacketEvent(string DeviceName, ReadOnlyMemory<byte> Data, DateTime Timestamp);
 
 
 public interface IDeviceService : IObservable<RawPacketEvent>

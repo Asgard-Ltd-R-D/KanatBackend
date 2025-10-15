@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.DTOs;
 using PacketProcessing.Services.Orchestration;
+using PacketProcessing.Services.Networking;
 
 namespace PacketProcessing.Controllers;
 
@@ -14,13 +15,16 @@ public class CaptureController : ControllerBase
 {
     private readonly ILogger<CaptureController> _logger;
     private readonly IPipelineOrchestrator _orchestrator;
+    private readonly IDeviceService _deviceService;
 
     public CaptureController(
         ILogger<CaptureController> logger,
-        IPipelineOrchestrator orchestrator)
+        IPipelineOrchestrator orchestrator,
+        IDeviceService deviceService)
     {
         _logger = logger;
         _orchestrator = orchestrator;
+        _deviceService = deviceService;
     }
 
     /// <summary>
@@ -64,20 +68,57 @@ public class CaptureController : ControllerBase
     }
 
     /// <summary>
-    /// Gets the status of all devices.
+    /// Gets the telemetry status of all devices.
     /// </summary>
     [HttpGet("status")]
-    public ActionResult<ResponseResult<object>> GetDevicesStatus()
+    public ActionResult<ResponseResult<TelemetryDto>> GetDevicesStatus()
     {
         try
         {
-            var statuses = _orchestrator.GetStats();
-            return Ok(ResponseResult<object>.SuccessResult(statuses));
+            var telemetry = _orchestrator.GetStats();
+            return Ok(ResponseResult<TelemetryDto>.SuccessResult(telemetry));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get device statuses");
-            return StatusCode(500, ResponseResult<object>.ServerErrorResult("Failed to get device statuses"));
+            _logger.LogError(ex, "Failed to get telemetry status");
+            return StatusCode(500, ResponseResult<TelemetryDto>.ServerErrorResult("Failed to get telemetry status"));
+        }
+    }
+
+    /// <summary>
+    /// Gets the list of available network devices.
+    /// </summary>
+    [HttpGet("devices")]
+    public ActionResult<ResponseResult<ICollection<string>>> GetAvailableDevices()
+    {
+        try
+        {
+            var devices = _deviceService.GetAvailableDeviceNames();
+            return Ok(ResponseResult<ICollection<string>>.SuccessResult(devices));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get available devices");
+            return StatusCode(500, ResponseResult<ICollection<string>>.ServerErrorResult("Failed to get available devices"));
+        }
+    }
+
+    /// <summary>
+    /// Resets all statistics counters to zero.
+    /// </summary>
+    [HttpPost("reset")]
+    public ActionResult<ResponseResult> ResetStatistics()
+    {
+        try
+        {
+            _orchestrator.ResetStats();
+            _logger.LogInformation("Statistics reset requested via API");
+            return Ok(ResponseResult.SuccessResult());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to reset statistics");
+            return StatusCode(500, ResponseResult.ServerErrorResult("Failed to reset statistics"));
         }
     }
 }

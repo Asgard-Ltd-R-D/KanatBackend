@@ -20,5 +20,21 @@ public interface IHandlerService<T> : IObserver<RawPacketEvent>
     /// <summary>
     /// Gets statistics about processed packets.
     /// </summary>
-    (long Captured, long Parsed, long Dropped) GetStats();
+    (long Captured, long Parsed, long Dropped, double AvgLatencyMs) GetStats();
+    
+    /// <summary>
+    /// Gets the number of backpressure events.
+    /// </summary>
+    long GetBackpressureEvents();
+    
+    /// <summary>
+    /// Gets the current count of items in the raw channel (capture -> parse) if available.
+    /// Returns -1 if count is not available.
+    /// </summary>
+    int GetRawChannelCount();
+    
+    /// <summary>
+    /// Resets all statistics counters to zero.
+    /// </summary>
+    void ResetStats();
 }

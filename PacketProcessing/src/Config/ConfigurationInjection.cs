@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.SignalR;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Services.Networking;
 using System.Threading.Channels;
@@ -78,13 +79,23 @@ public class ConfigurationInjection
             });
         });
 
+        // === SignalR Hub Client ===
+        // Register HubClient singleton for transmitting data to connected clients
+        builder.Services.AddSingleton<Hubs.HubClient>(sp =>
+        {
+            var hubContext = sp.GetRequiredService<IHubContext<Hubs.PacketHub>>();
+            var logger = sp.GetRequiredService<ILogger<Hubs.HubClient>>();
+            return new Hubs.HubClient(hubContext, logger);
+        });
+
         // === Handlers ===
         builder.Services.AddSingleton<HandlerService<MotionPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<HandlerService<MotionPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
-            return new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", logger, channel, cfg);
+            var hubClient = sp.GetRequiredService<Hubs.HubClient>();
+            return new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", logger, channel, cfg, hubClient);
         });
 
         builder.Services.AddSingleton<HandlerService<SafetyPacketEntity>>(sp =>
@@ -92,7 +103,8 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<HandlerService<SafetyPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
-            return new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", logger, channel, cfg);
+            var hubClient = sp.GetRequiredService<Hubs.HubClient>();
+            return new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", logger, channel, cfg, hubClient);
         });
 
         builder.Services.AddSingleton<HandlerService<OnVIFPacketEntity>>(sp =>
@@ -100,14 +112,16 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<HandlerService<OnVIFPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
-            return new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", logger, channel, cfg);
+            var hubClient = sp.GetRequiredService<Hubs.HubClient>();
+            return new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", logger, channel, cfg, hubClient);
         });
 
         // === Configuration ===
         builder.Services.Configure<QuestDbConfiguration>(config.GetSection("Database"));
 
         // === Writers ===
-        builder.Services.AddSingleton<IHostedService>(sp =>
+        // Register each writer as singleton, then expose as both IDbWriterService and IHostedService
+        builder.Services.AddSingleton<DbWriterService<MotionPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<DbWriterService<MotionPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
@@ -116,8 +130,10 @@ public class ConfigurationInjection
             var config = sp.GetRequiredService<IConfiguration>();
             return new DbWriterService<MotionPacketEntity>(logger, channel, repository, options, config);
         });
+        builder.Services.AddSingleton<IDbWriterService<MotionPacketEntity>>(sp => 
+            sp.GetRequiredService<DbWriterService<MotionPacketEntity>>());
         
-        builder.Services.AddSingleton<IHostedService>(sp =>
+        builder.Services.AddSingleton<DbWriterService<SafetyPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<DbWriterService<SafetyPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
@@ -126,8 +142,10 @@ public class ConfigurationInjection
             var config = sp.GetRequiredService<IConfiguration>();
             return new DbWriterService<SafetyPacketEntity>(logger, channel, repository, options, config);
         });
+        builder.Services.AddSingleton<IDbWriterService<SafetyPacketEntity>>(sp => 
+            sp.GetRequiredService<DbWriterService<SafetyPacketEntity>>());
         
-        builder.Services.AddSingleton<IHostedService>(sp =>
+        builder.Services.AddSingleton<DbWriterService<OnVIFPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<DbWriterService<OnVIFPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
@@ -136,8 +154,14 @@ public class ConfigurationInjection
             var config = sp.GetRequiredService<IConfiguration>();
             return new DbWriterService<OnVIFPacketEntity>(logger, channel, repository, options, config);
         });
+        builder.Services.AddSingleton<IDbWriterService<OnVIFPacketEntity>>(sp => 
+            sp.GetRequiredService<DbWriterService<OnVIFPacketEntity>>());
 
-        // === Handlers as hosted background services ===
+        // === Register Writers and Handlers as hosted background services ===
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<DbWriterService<MotionPacketEntity>>());
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<DbWriterService<SafetyPacketEntity>>());
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<DbWriterService<OnVIFPacketEntity>>());
+        
         builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HandlerService<MotionPacketEntity>>());
         builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HandlerService<SafetyPacketEntity>>());
         builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HandlerService<OnVIFPacketEntity>>());
@@ -195,6 +219,10 @@ public class ConfigurationInjection
 
         // Enable CORS Middleware
         CorsConfiguration.ConfigureCorsMiddleware(app);
+        
+        // Serve static files (telemetry dashboard)
+        app.UseDefaultFiles();
+        app.UseStaticFiles();
 
         // Use Middleware (e.g., Swagger, HTTPS Redirection)
         if (!app.Environment.IsProduction())
@@ -220,6 +248,10 @@ public class ConfigurationInjection
 
         // Enable CORS Middleware
         CorsConfiguration.ConfigureCorsMiddleware(app);
+        
+        // Serve static files (telemetry dashboard)
+        app.UseDefaultFiles();
+        app.UseStaticFiles();
 
         // Use Middleware (e.g., Swagger, HTTPS Redirection)
         if (!app.Environment.IsProduction())
@@ -232,7 +264,7 @@ public class ConfigurationInjection
         app.MapHealthChecks("/health");
         
         // Map SignalR hub
-        app.MapHub<Hubs.HubClient>("/hub/packets");
+        app.MapHub<Hubs.PacketHub>("/hub/packets");
         
         app.MapControllers();
     }

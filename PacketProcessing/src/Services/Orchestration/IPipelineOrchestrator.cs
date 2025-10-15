@@ -1,3 +1,5 @@
+using PacketProcessing.DTOs;
+
 namespace PacketProcessing.Services.Orchestration;
 
 /// <summary>
@@ -22,5 +24,10 @@ public interface IPipelineOrchestrator
     /// <summary>
     /// Get statistics about the pipeline.
     /// </summary>
-    (long Captured, long Parsed, long Dropped) GetStats();
+    TelemetryDto GetStats();
+    
+    /// <summary>
+    /// Reset all statistics counters to zero.
+    /// </summary>
+    void ResetStats();
 }

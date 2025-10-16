@@ -1,6 +1,6 @@
 using PacketProcessing.Utils.Enums;
 
-namespace PacketProcessing.Utils.Records;
+namespace PacketProcessing.Utils.Parsers.MotionUtilities;
 
 /// <summary>
 /// Record for motion packets
@@ -8,4 +8,4 @@ namespace PacketProcessing.Utils.Records;
 /// <param name="Type">The type of the motion packet</param>
 /// <param name="OpCodeDescription">The description of the motion packet</param>
 /// <param name="Value">The value of the motion packet</param>
-public record MotionRecord(MotionValueTypes ValueType,string OpCodeDescription,float Value);
+public record MotionRecord(string OpCodeDescription, ValueTypes Send, ValueTypes Return);

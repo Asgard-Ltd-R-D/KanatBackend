@@ -14,7 +14,6 @@ public sealed class QuestDbContext
     public NpgsqlDataSource DataSource { get; }
     public string ConnectionString { get; }
 
-    [Obsolete]
     public QuestDbContext(IConfiguration cfg, ILogger<QuestDbContext> log)
     {
         _log = log;

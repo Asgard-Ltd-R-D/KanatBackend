@@ -99,9 +99,8 @@ public static class MotionPacketParser
                 : (ushort)0;
 
             // --- Data Section, can be varying length depending on the opcode ---
-            ReadOnlySpan<byte> captureData = tcpPayload.Length > 9
-                ? tcpPayload[7..^1] // Slice from 7 to the second last byte (checksum)
-                : [];
+            ReadOnlySpan<byte> captureData = tcpPayload[7..^1]; // Slice from 7 to the second last byte (checksum)
+       
 
             var opDesc = MotionCommands.MotionRecords.TryGetValue(opCode, out var desc) ? desc.OpCodeDescription : null;
             if (opDesc == null)
@@ -149,7 +148,8 @@ public static class MotionPacketParser
                 {
                     ValueTypes.UInt8 => rawPacket[0], // uint8
                     ValueTypes.UInt16BE => BinaryPrimitives.ReadUInt16BigEndian(rawPacket), // uint16
-                    ValueTypes.UInt32BE => BinaryPrimitives.ReadUInt32BigEndian(rawPacket), // 32-bit float big-endian
+                    ValueTypes.UInt32BE => BinaryPrimitives.ReadUInt32BigEndian(rawPacket), // 32-bit integer in big-endian format
+                    ValueTypes.Float32BE => BinaryPrimitives.ReadSingleBigEndian(rawPacket), // 32-bit float in big-endian format
                     ValueTypes.None => 1d, // return 1d, which means the packet has been appeared but the value is not available
                     _ => double.NaN, // None of the value type is matching the opcode return NaN and drop the packet
                 };
@@ -160,7 +160,8 @@ public static class MotionPacketParser
                 {
                     ValueTypes.UInt8 => rawPacket[0], // uint8
                     ValueTypes.UInt16BE => BinaryPrimitives.ReadUInt16BigEndian(rawPacket), // uint16
-                    ValueTypes.UInt32BE => BinaryPrimitives.ReadUInt32BigEndian(rawPacket), // 32-bit float big-endian
+                    ValueTypes.UInt32BE => BinaryPrimitives.ReadUInt32BigEndian(rawPacket), // 32-bit integer in big-endian format
+                    ValueTypes.Float32BE => BinaryPrimitives.ReadSingleBigEndian(rawPacket), // 32-bit float in big-endian format
                     ValueTypes.None => 1d, // return 1d, which means the packet has been appeared but the value is not available
                     _ => double.NaN, // None of the value type is matching the opcode return NaN and drop the packet
                 };

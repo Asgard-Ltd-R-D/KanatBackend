@@ -4,7 +4,7 @@ namespace PacketProcessing.Utils.Parsers.MotionUtilities;
 
 public static class MotionCommands
 {
-    public static readonly Dictionary<ushort, MotionRecord> MotionRecords = new()
+    public static readonly Dictionary<int, MotionRecord> MotionRecords = new()
     {
         // Get data commands
         { 0x0106, new MotionRecord("MOT_GetMotorCurrent", ValueTypes.None, ValueTypes.Float32BE) },

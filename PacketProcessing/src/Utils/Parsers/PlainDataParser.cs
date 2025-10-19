@@ -27,29 +27,29 @@ public static class PlainDataParser
 
     /// <summary>
     /// Parse MotionPacketEntity to PlainDataDto
-    /// Uses FloatValue as the value, defaults to 0 if null
+    /// Uses Value as the value, defaults to 0 if null
     /// </summary>
     private static PlainDataDto ParseMotion(MotionPacketEntity motion)
     {
         // Applicable for Motion Commands that have a float value
-        if (!motion.IsCmd && motion.FloatValue.HasValue) 
+        if (!motion.IsCmd && motion.Value.HasValue) 
             return new PlainDataDto
             {
                 Timestamp = motion.Timestamp,
-                Value = motion.FloatValue.Value
+                Value = motion.Value.Value
             };
         // Applicable for Motion Commands that have no float value
         if (motion.IsCmd)
             return new PlainDataDto
             {
                 Timestamp = motion.Timestamp,
-                Value = 1f
+                Value = 1d
             };
         // Damaged packet
         return new PlainDataDto
         {
             Timestamp = motion.Timestamp,
-            Value = motion.FloatValue ?? -1f
+            Value = motion.Value ?? -1d
         };
     }
 
@@ -65,11 +65,11 @@ public static class PlainDataParser
             Timestamp = safety.Timestamp,
             Value = safety.State switch
             {
-                "ON" => 1f,
-                "OFF" => 0f,
-                "PULSE" => 2f,
-                "BURST" => 3f,
-                _ => -1f
+                "ON" => 1d,
+                "OFF" => 0d,
+                "PULSE" => 2d,
+                "BURST" => 3d,
+                _ => -1d
             }
         };
     }
@@ -96,7 +96,7 @@ public static class PlainDataParser
             return new PlainDataDto
             {
                 Timestamp = onvif.Timestamp,
-                Value = -1.0f
+                Value = -1.0d
             };
     }
 }

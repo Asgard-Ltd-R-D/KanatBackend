@@ -274,7 +274,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                                 {
                                     try
                                     {
-                                        var dto = PlainDataParser.Parse(parsed);
+                                        var dto = PlainDataConverter.Convert(parsed);
                                         if (dto != null)
                                         {
                                             await _hubClient.TransmitDataAsync(dto, typeof(T).Name);

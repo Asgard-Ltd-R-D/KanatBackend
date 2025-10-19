@@ -8,19 +8,19 @@ namespace PacketProcessing.Utils.Parsers;
 /// Parser for converting packet entities to PlainDataDto
 /// Extracts timestamp and a single numeric value from each packet type
 /// </summary>
-public static class PlainDataParser
+public static class PlainDataConverter
 {
     /// <summary>
     /// Parse a single entity into PlainDataDto
     /// Uses type-specific logic to extract the numeric value
     /// </summary>
-    public static PlainDataDto? Parse<T>(T entity) where T : BasePacketEntity
+    public static PlainDataDto? Convert<T>(T entity) where T : BasePacketEntity
     {
         return entity switch
         {
-            MotionPacketEntity motion => ParseMotion(motion),
-            SafetyPacketEntity safety => ParseSafety(safety),
-            OnVIFPacketEntity onvif => ParseOnVIF(onvif),
+            MotionPacketEntity motion => ConvertMotion(motion),
+            SafetyPacketEntity safety => ConvertSafety(safety),
+            OnVIFPacketEntity onvif => ConvertOnVIF(onvif),
             _ => null
         };
     }
@@ -29,7 +29,7 @@ public static class PlainDataParser
     /// Parse MotionPacketEntity to PlainDataDto
     /// Uses Value as the value, defaults to 0 if null
     /// </summary>
-    private static PlainDataDto ParseMotion(MotionPacketEntity motion)
+    private static PlainDataDto ConvertMotion(MotionPacketEntity motion)
     {
         // Applicable for Motion Commands that have a float value
         if (!motion.IsCmd && motion.Value.HasValue) 
@@ -58,7 +58,7 @@ public static class PlainDataParser
     /// Uses Type as the value (true=1, false=0)
     /// Alternative: could parse State string to numeric value
     /// </summary>
-    private static PlainDataDto ParseSafety(SafetyPacketEntity safety)
+    private static PlainDataDto ConvertSafety(SafetyPacketEntity safety)
     {
         return new PlainDataDto
         {
@@ -78,7 +78,7 @@ public static class PlainDataParser
     /// Parse OnVIFPacketEntity to PlainDataDto
     /// Uses Measurement as the value
     /// </summary>
-    private static PlainDataDto ParseOnVIF(OnVIFPacketEntity onvif)
+    private static PlainDataDto ConvertOnVIF(OnVIFPacketEntity onvif)
     {
         if (onvif.Zoom.HasValue)
             return new PlainDataDto

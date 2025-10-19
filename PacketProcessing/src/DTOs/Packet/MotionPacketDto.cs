@@ -11,5 +11,5 @@ public class MotionPacketDto
     public string OpCode { get; set; } = string.Empty;
     public string OpCodeDescription { get; set; } = string.Empty;
     public int Axis { get; set; }
-    public float? FloatValue { get; set; }
+    public double? Value { get; set; }
 }

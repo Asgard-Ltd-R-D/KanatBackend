@@ -22,7 +22,7 @@ public class MotionPacketEntity : BasePacketEntity
     public required int Axis { get; set; }
     
     [Column("floatValue")]
-    public float? FloatValue { get; set; }
+    public double? Value { get; set; }
 
     public override string TableName => "motion_packets";
     
@@ -32,7 +32,7 @@ public class MotionPacketEntity : BasePacketEntity
         sender.Column("opCode", OpCode);
         sender.Column("opCodeDescription", OpCodeDescription);
         sender.Column("axis", Axis);
-        if (FloatValue.HasValue) sender.Column("floatValue", FloatValue.Value);
-        else sender.NullableColumn("floatValue", float.NaN);
+        if (Value.HasValue) sender.Column("value", Value.Value);
+        else sender.NullableColumn("value", double.NaN);
     }
 }

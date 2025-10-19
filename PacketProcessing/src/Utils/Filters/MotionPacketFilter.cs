@@ -14,7 +14,7 @@ public static class MotionPacketFilter
             if (filters is null) return items.Select(item => new PlainDataDto
             {
                 Timestamp = item.Timestamp,
-                Value = item.FloatValue ?? 0.0f
+                Value = item.Value ?? 0.0d
             });
 
             var filteredItems = items.Where(item => 
@@ -33,7 +33,7 @@ public static class MotionPacketFilter
             return filteredItems.Select(item => new PlainDataDto
             {
                 Timestamp = item.Timestamp,
-                Value = item.FloatValue ?? 0.0f
+                Value = item.Value ?? 0.0d
             });
         });
     }

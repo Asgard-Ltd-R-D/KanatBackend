@@ -5,8 +5,6 @@ using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using PacketProcessing.Entities;
-using QuestDB.Senders;
 
 namespace PacketProcessing.Context;
 
@@ -70,13 +68,13 @@ public sealed class QuestDbContext
             opCode    STRING,
             opCodeDescription STRING,
             axis      INT,
-            floatValue DOUBLE
+            value DOUBLE
         ) TIMESTAMP(timestamp) PARTITION BY DAY WAL;
 
         CREATE TABLE IF NOT EXISTS onvif_packets (
             timestamp   TIMESTAMP,
             id          SYMBOL,
-            isCmd        BOOLEAN,
+            isCmd       BOOLEAN,
             description STRING,
             zoom        DOUBLE,
             measurement DOUBLE

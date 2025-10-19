@@ -25,7 +25,7 @@ public sealed class MotionPacketMapper : IMapper<MotionPacketDto, MotionPacketEn
             OpCode = entity.OpCode,
             OpCodeDescription = entity.OpCodeDescription,
             Axis = entity.Axis,
-            FloatValue = entity.FloatValue
+            Value = entity.Value
         };
     }
 
@@ -46,7 +46,7 @@ public sealed class MotionPacketMapper : IMapper<MotionPacketDto, MotionPacketEn
             OpCode = dto.OpCode,
             OpCodeDescription = dto.OpCodeDescription,
             Axis = dto.Axis,
-            FloatValue = dto.FloatValue
+            Value = dto.Value
         };
     }
 }

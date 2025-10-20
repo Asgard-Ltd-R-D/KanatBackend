@@ -26,6 +26,7 @@ public class SafetyPacketEntity : BasePacketEntity
     
     public override void WriteColumns(ISender sender)
     {
+        sender.Column("isCmd", IsCmd);
         sender.Column("name", Name);
         sender.Column("opCode", OpCode);
         sender.Column("opCodeDescription", OpCodeDescription);

@@ -8,6 +8,7 @@ public class SafetyPacketDto
     public Guid Id { get; set; }
     public DateTime Timestamp { get; set; }
     public string Name { get; set; } = string.Empty;
+    public bool IsCmd { get; set; } = true;
     public string OpCode { get; set; } = string.Empty;
     public string OpCodeDescription { get; set; } = string.Empty;
     public string State { get; set; } = string.Empty;

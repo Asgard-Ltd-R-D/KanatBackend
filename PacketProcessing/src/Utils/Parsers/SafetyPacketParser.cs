@@ -88,6 +88,7 @@ namespace PacketProcessing.Utils.Parsers
         {
             Id = Guid.NewGuid(),
             Timestamp=DateTime.UtcNow, // The datetime will be override by the actual timestamp of the packet
+            IsCmd = true,
             Name = dataPipeName,
             OpCode = $"0x{doVal:X4}", // HEX value of DO
             OpCodeDescription = doDescr, // Description of DO

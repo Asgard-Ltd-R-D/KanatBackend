@@ -82,6 +82,7 @@ public sealed class QuestDbContext
         CREATE TABLE IF NOT EXISTS safety_packets (
             timestamp         TIMESTAMP,
             id                SYMBOL,
+            isCmd             BOOLEAN,
             name              STRING,
             opCode            STRING,
             opCodeDescription STRING,

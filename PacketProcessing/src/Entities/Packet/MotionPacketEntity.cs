@@ -7,9 +7,6 @@ namespace PacketProcessing.Entities.Packet;
 [Table("motion_packets")]
 public class MotionPacketEntity : BasePacketEntity
 {
-    [Column("isCmd")]
-    public required bool IsCmd { get; set; }
-    
     [Column("opCode")]
     [StringLength(32)]
     public required string OpCode { get; set; }

@@ -41,6 +41,7 @@ public sealed class SafetyPacketMapper : IMapper<SafetyPacketDto, SafetyPacketEn
         {
             Id = dto.Id,
             Timestamp = dto.Timestamp,
+            IsCmd = dto.IsCmd,
             Name = dto.Name,
             OpCode = dto.OpCode,
             OpCodeDescription = dto.OpCodeDescription,

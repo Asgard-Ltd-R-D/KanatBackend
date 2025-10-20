@@ -6,10 +6,7 @@ namespace PacketProcessing.Entities.Packet;
 
 [Table("onvif_packets")]
 public class OnVIFPacketEntity : BasePacketEntity
-{
-    [Column("type")]
-    public required bool IsCmd { get; set; }
-    
+{   
     [Column("description")]
     [StringLength(128)]
     public required string Description { get; set; }

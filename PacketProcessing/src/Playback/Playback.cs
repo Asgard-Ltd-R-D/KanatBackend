@@ -185,18 +185,18 @@ public sealed class Playback<T> : IDisposable where T : BasePacketEntity
         }
 
         // filter the raw items using the provided filters
-        var filtered = await FilterMapper.MapAsync(raw, _filters).ConfigureAwait(false);
-        if (filtered is null) return 0;
+        // var filtered = await FilterMapper.MapAsync(raw, _filters).ConfigureAwait(false);
+        // if (filtered is null) return 0;
         
         // enumerate directly into the provided array
-        var i = 0;
-        foreach (var item in filtered)
-        {
-            if (i >= buffer.Length || _cancellationTokenSource.Token.IsCancellationRequested) break;
-            buffer[i++] = item;
-        }
+        // var i = 0;
+        // foreach (var item in filtered)
+        // {
+        //     if (i >= buffer.Length || _cancellationTokenSource.Token.IsCancellationRequested) break;
+        //     buffer[i++] = item;
+        // }
 
-        return i;
+        return 0;
     }
 
     private TVal GetFilter<TVal>(string key, TVal fallback)

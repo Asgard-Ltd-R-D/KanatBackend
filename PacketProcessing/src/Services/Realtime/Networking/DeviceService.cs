@@ -175,7 +175,7 @@ public class DeviceService : IDeviceService
     {
         ArgumentNullException.ThrowIfNull(observer);
         _observers.TryAdd(observer, 0);
-        return new ConcurrentUnsubscriber<RawPacketEvent>(_observers, observer);
+        return new ConcurrentUnsubscriber<RawPacketEvent, byte>(_observers, observer);
     }
 
     #endregion

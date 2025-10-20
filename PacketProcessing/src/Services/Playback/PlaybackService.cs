@@ -6,6 +6,7 @@ using PacketProcessing.Entities.Packet;
 using PacketProcessing.Repositories.InfluxRepository;
 using PacketProcessing.Services.Transmission;
 using PacketProcessing.Utils.Enums;
+using PacketProcessing.Utils.Observers;
 
 namespace PacketProcessing.Services.Playback;
 
@@ -13,12 +14,12 @@ namespace PacketProcessing.Services.Playback;
 /// Service for managing playback of historical data streams from the database
 /// Fetches packets and sends them to TransmissionService for delivery to clients
 /// </summary>
-public class PlaybackService : IPlaybackService
+public class PlaybackService : IPlaybackService, IObservable<BasePacketEntity>
 {
     #region Fields
 
     private readonly ILogger<PlaybackService> _logger;
-    private readonly ITransmissionService _transmissionService;
+    private readonly ITransmissionService? _transmissionService;
     private readonly IInfluxRepositoryFactory _repoFactory;
     private readonly ConcurrentDictionary<string, PlaybackState> _activePlaybacks = new();
 
@@ -42,51 +43,47 @@ public class PlaybackService : IPlaybackService
 
     #region IPlaybackService Implementation
 
-    public async Task StartPlaybackAsync(StreamRequest request)
+    /// <summary>
+    /// Starts playback for a stream request
+    /// Note: StreamRequest should be registered to TransmissionService BEFORE calling this method
+    /// This method only fetches packets and sends them to TransmissionService.OnNext()
+    /// </summary>
+    public Task StartPlaybackAsync(StreamRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-
-        if (!request.IsPlayback)
-        {
-            _logger.LogWarning("Cannot start playback for non-playback StreamRequest");
-            return;
-        }
 
         var key = request.SubscriptionKey;
 
         if (_activePlaybacks.ContainsKey(key))
         {
             _logger.LogWarning("Playback already active for key: {Key}", key);
-            return;
+            return Task.CompletedTask;
         }
 
-        try
+        // Validate playback request has required fields
+        if (!request.StartTimestamp.HasValue || !request.EndTimestamp.HasValue)
         {
-            // Register stream in transmission service
-            await _transmissionService.RegisterStreamAsync(request);
-            
-            // Start playback task
-            var cts = new CancellationTokenSource();
-            var task = request.DataPipe switch
-            {
-                DataPipes.Motion => PlaybackDataAsync<MotionPacketEntity>(request, cts.Token),
-                DataPipes.Onvif => PlaybackDataAsync<OnVIFPacketEntity>(request, cts.Token),
-                DataPipes.Safety => PlaybackDataAsync<SafetyPacketEntity>(request, cts.Token),
-                _ => throw new ArgumentException($"Unsupported DataPipe: {request.DataPipe}")
-            };
+            throw new ArgumentException("Playback request must have StartTimestamp and EndTimestamp");
+        }
 
-            var state = new PlaybackState(request, cts, task);
-            _activePlaybacks.TryAdd(key, state);
-            
-            _logger.LogInformation(
-                "Started playback: {DataPipe}.{Method} [{Start} to {End}]",
-                request.DataPipe, request.MethodName, request.StartTimestamp, request.EndTimestamp);
-        }
-        catch (Exception ex)
+        // Start playback task - fetches packets and sends them to TransmissionService
+        var cts = new CancellationTokenSource();
+        var task = request.DataPipe switch
         {
-            _logger.LogError(ex, "Error starting playback for key: {Key}", key);
-            throw;
-        }
+            DataPipes.Motion => PlaybackDataAsync<MotionPacketEntity>(request, cts.Token),
+            DataPipes.Onvif => PlaybackDataAsync<OnVIFPacketEntity>(request, cts.Token),
+            DataPipes.Safety => PlaybackDataAsync<SafetyPacketEntity>(request, cts.Token),
+            _ => throw new ArgumentException($"Unsupported DataPipe: {request.DataPipe}")
+        };
+
+        var state = new PlaybackState(request, cts, task);
+        _activePlaybacks.TryAdd(key, state);
+        
+        _logger.LogInformation(
+            "Playback started: {DataPipe}.{Method} [{Start} to {End}]",
+            request.DataPipe, request.MethodName, request.StartTimestamp, request.EndTimestamp);
+
+        return Task.CompletedTask;
     }
 
     public async Task StopPlaybackAsync(StreamRequest request)
@@ -110,8 +107,6 @@ public class PlaybackService : IPlaybackService
             catch (Exception ex) { _logger.LogError(ex, "Error waiting for playback task"); }
             
             state.Cts.Dispose();
-            
-            await _transmissionService.UnregisterStreamAsync(request);
             
             _logger.LogInformation("Stopped playback: {Key}", key);
         }
@@ -148,15 +143,8 @@ public class PlaybackService : IPlaybackService
     private async Task PlaybackDataAsync<T>(StreamRequest request, CancellationToken ct) where T : BasePacketEntity
     {
         var repo = _repoFactory.Get<T>();
-        
-        if (!request.StartTimestamp.HasValue || !request.EndTimestamp.HasValue)
-        {
-            _logger.LogWarning("Playback request missing timestamps");
-            return;
-        }
-        
-        var current = request.StartTimestamp.Value;
-        var endTimestamp = request.EndTimestamp.Value;
+        var current = request.StartTimestamp!.Value;
+        var endTimestamp = request.EndTimestamp!.Value;
         
         _logger.LogInformation(
             "Starting playback fetch: {DataPipe}.{Method} [{Start} to {End}]",
@@ -179,7 +167,7 @@ public class PlaybackService : IPlaybackService
                     if (ct.IsCancellationRequested) break;
                     
                     // Send to appropriate observer method based on type
-                    SendPacketToTransmission(packet);
+                    _transmissionService?.OnNext(packet);
                 }
 
                 _logger.LogDebug(
@@ -211,23 +199,10 @@ public class PlaybackService : IPlaybackService
         }
     }
 
-    private void SendPacketToTransmission<T>(T packet) where T : BasePacketEntity
+    public IDisposable Subscribe(IObserver<BasePacketEntity> observer)
     {
-        switch (packet)
-        {
-            case MotionPacketEntity motion:
-                ((IObserver<MotionPacketEntity>)_transmissionService).OnNext(motion);
-                break;
-            case SafetyPacketEntity safety:
-                ((IObserver<SafetyPacketEntity>)_transmissionService).OnNext(safety);
-                break;
-            case OnVIFPacketEntity onvif:
-                ((IObserver<OnVIFPacketEntity>)_transmissionService).OnNext(onvif);
-                break;
-            default:
-                _logger.LogWarning("Unknown packet type: {Type}", packet.GetType().Name);
-                break;
-        }
+        ArgumentNullException.ThrowIfNull(observer);
+        return new Unsubscriber<BasePacketEntity>([observer], observer);
     }
 
     #endregion

@@ -5,13 +5,15 @@ using Microsoft.Extensions.Configuration;
 using PacketProcessing.Entities;
 using PacketProcessing.Utils.Parsers;
 using PacketProcessing.Utils.Filters;
-using PacketProcessing.Config;
 using System.Runtime.InteropServices;
 using System.Buffers;
-using PacketProcessing.Hubs;
+using System.Collections.Concurrent;
+using PacketProcessing.Utils.Observers;
+using PacketProcessing.Services.Transmission;
+using PacketProcessing.DTOs.Stream;
 namespace PacketProcessing.Services.Realtime.Networking;
 
-public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserver<RawPacketEvent>
+public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserver<RawPacketEvent>, IObservable<BasePacketEntity>
     where T : BasePacketEntity
 {
     private readonly ILogger<HandlerService<T>> _logger;
@@ -19,6 +21,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     // Device filters
     private readonly string _protocol;
     private readonly IEnumerable<string> _ips;
+
+    private readonly ITransmissionService? _transmissionService;
 
     // Channels
     private readonly Channel<RawPacketEvent> _rawChannel; // device -> handler
@@ -48,13 +52,15 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
     public HandlerService(
         string dataPipeName,
+        ITransmissionService transmissionService,
         ILogger<HandlerService<T>> logger,
         Channel<T> parsedChannel,
         IConfiguration configuration)
     {
         _logger = logger;
         _parsedChannel = parsedChannel;
-
+        _transmissionService = transmissionService;
+        
         // bounded channel for raw events with increased capacity
         // Wait mode ensures no packets are dropped (capture may block if processing too slow)
         _rawChannel = Channel.CreateBounded<RawPacketEvent>(
@@ -236,14 +242,18 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                     try
                     {
                         var parsed = Parse(raw.Data.Span);
+
                         if (parsed is null)
                         {
                             Interlocked.Increment(ref _packetsDropped);
                             batchDropped++;
                             continue;
                         }
+
                         parsed.Timestamp = raw.Timestamp; // Override the timestamp to the actual timestamp of the packet
 
+                        _transmissionService?.OnNext(parsed);
+    
                         // Track timestamps for latency measurement
                         if (firstParsedTimestamp == null)
                             firstParsedTimestamp = parsed.Timestamp;
@@ -308,5 +318,11 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         if (raw.IsEmpty) return null;
         try { return ParseMapper.Map<T>(raw); }
         catch { return null; }
+    }
+
+    public IDisposable Subscribe(IObserver<BasePacketEntity> observer)
+    {
+        ArgumentNullException.ThrowIfNull(observer);
+        return new Unsubscriber<BasePacketEntity>([observer], observer);
     }
 }

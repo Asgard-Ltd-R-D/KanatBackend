@@ -95,7 +95,7 @@ public class ConfigurationInjection
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             
-            var handler = new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", logger, channel, cfg);
+            var handler = new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", transmissionService, logger, channel, cfg);
             
             // Register real-time stream for this data pipe
             transmissionService.RegisterStreamAsync(new DTOs.Stream.StreamRequest
@@ -114,7 +114,7 @@ public class ConfigurationInjection
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             
-            var handler = new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", logger, channel, cfg);
+            var handler = new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", transmissionService, logger, channel, cfg);
             
             // Register real-time stream for this data pipe
             transmissionService.RegisterStreamAsync(new DTOs.Stream.StreamRequest
@@ -133,7 +133,7 @@ public class ConfigurationInjection
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             
-            var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", logger, channel, cfg);
+            var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", transmissionService, logger, channel, cfg);
             
             // Register real-time stream for this data pipe
             transmissionService.RegisterStreamAsync(new DTOs.Stream.StreamRequest

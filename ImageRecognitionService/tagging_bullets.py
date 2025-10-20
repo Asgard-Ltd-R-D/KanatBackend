@@ -1,0 +1,328 @@
+import cv2
+import numpy as np
+import pandas as pd
+from ultralytics import YOLO
+from datetime import timedelta
+from collections import defaultdict
+import os
+import argparse
+import random
+
+# === CONFIG ===
+MODEL_PATH          = './trained_models/kanat_model10_v.2.0/weights/best.pt'
+VIDEO_PATH          = './videos/test_video.mp4'
+OUTPUT_DIR          = './video_output'
+EXCEL_OUTPUT        = os.path.join(OUTPUT_DIR, 'bullet_results.xlsx')
+IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
+TARGET_SIZE_CM      = 18
+
+# Clustering / suppression params
+CLUSTER_FACTOR      = 0.75   # fraction of bullet-box diagonal
+MIN_CLUSTER_DIST    = 10     # px minimum cluster radius
+IOU_SUPPRESS_THRESH = 0.2    # suppress if IoU > 0.2
+global OVERLAP_THRESHOLD
+OVERLAP_THRESHOLD =0.5   # 50% overlap threshold for duplicate detection
+global MIN_CONFIDENCE
+MIN_CONFIDENCE      = 0.6    # minimum confidence for bullet detection
+
+# Annotation styling
+OUTER_RADIUS = 12
+OUTER_THICK  = 2
+INNER_RADIUS = 4
+MEAN_RADIUS  = 8
+MEAN_THICK   = 2
+RECT_THICK   = 2
+FONT_SCALE   = 0.7
+TEXT_THICK   = 2
+
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# === GLOBALS ===
+target_color_map = {}  # target_id → BGR color
+clusters         = []  # each: dict(center, radius, box, row)
+detected_bullets = []  # list of all detected bullet bounding boxes
+
+# === HELPERS ===
+
+def time_str_to_seconds(ts):
+    h, m, s = map(int, ts.split(':'))
+    return h*3600 + m*60 + s
+
+def get_center(box):
+    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+    return np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+
+def compute_iou(a, b):
+    x1, y1, x2, y2 = a.xyxy[0].cpu().numpy()
+    X1, Y1, X2, Y2 = b.xyxy[0].cpu().numpy()
+    xi1, yi1 = max(x1, X1), max(y1, Y1)
+    xi2, yi2 = min(x2, X2), min(y2, Y2)
+    iw, ih   = max(0, xi2 - xi1), max(0, yi2 - yi1)
+    inter    = iw * ih
+    areaA    = (x2 - x1) * (y2 - y1)
+    areaB    = (X2 - X1) * (Y2 - Y1)
+    return inter / (areaA + areaB - inter + 1e-6)
+
+def compute_overlap_percentage(box_a, box_b):
+    """
+    Calculate the overlap percentage between two bounding boxes.
+    Returns the percentage of overlap relative to the smaller box area.
+    """
+    x1, y1, x2, y2 = box_a.xyxy[0].cpu().numpy()
+    X1, Y1, X2, Y2 = box_b.xyxy[0].cpu().numpy()
+    
+    # Calculate intersection
+    xi1, yi1 = max(x1, X1), max(y1, Y1)
+    xi2, yi2 = min(x2, X2), min(y2, Y2)
+    
+    if xi2 <= xi1 or yi2 <= yi1:
+        return 0.0  # No overlap
+    
+    intersection_area = (xi2 - xi1) * (yi2 - yi1)
+    area_a = (x2 - x1) * (y2 - y1)
+    area_b = (X2 - X1) * (Y2 - Y1)
+    
+    # Return overlap percentage relative to the smaller box
+    smaller_area = min(area_a, area_b)
+    return intersection_area / smaller_area if smaller_area > 0 else 0.0
+
+def is_duplicate_bullet(new_box, existing_bullets, threshold=OVERLAP_THRESHOLD):
+    """
+    Check if a new bullet detection overlaps significantly with existing bullets.
+    Returns True if the new bullet overlaps more than threshold% with any existing bullet.
+    """
+    new_center = get_center(new_box)
+    
+    for i, existing_box in enumerate(existing_bullets):
+        # Check overlap percentage
+        overlap_pct = compute_overlap_percentage(new_box, existing_box)
+        if overlap_pct > threshold:
+            print(f"[DEBUG] Overlap detected: {overlap_pct*100:.1f}% with existing bullet {i+1}")
+            return True
+        
+        # Also check center distance as additional safety
+        existing_center = get_center(existing_box)
+        distance = np.linalg.norm(new_center - existing_center)
+        if distance < 20:  # If centers are very close, likely same bullet
+            print(f"[DEBUG] Close center detected: {distance:.1f}px distance with existing bullet {i+1}")
+            return True
+    
+    return False
+
+def annotate(img, ctr, mean_range_cm, unused, tgt_box, tid, dist_cm, scale, tgt_ctr):
+    # bullet
+    cv2.circle(img, tuple(ctr.astype(int)), OUTER_RADIUS, (0,0,255), OUTER_THICK)
+    cv2.circle(img, tuple(ctr.astype(int)), INNER_RADIUS, (0,0,255), -1)
+    
+    # Display mean range information
+    cv2.putText(
+        img,
+        f"Range: {dist_cm:.1f}cm",
+        tuple((ctr + np.array([OUTER_RADIUS, -OUTER_RADIUS])).astype(int)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        FONT_SCALE,
+        (255,0,0),
+        TEXT_THICK
+    )
+    
+    # Display mean range if available
+    if mean_range_cm > 0:
+        cv2.putText(
+            img,
+            f"Mean: {mean_range_cm:.1f}cm",
+            tuple((ctr + np.array([OUTER_RADIUS, -OUTER_RADIUS + 20])).astype(int)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            FONT_SCALE,
+            (0,255,0),
+            TEXT_THICK
+        )
+    
+    # target box & label
+    x1, y1, x2, y2 = tgt_box.xyxy[0].cpu().numpy().astype(int)
+    col = target_color_map[tid]
+    cv2.rectangle(img, (x1, y1), (x2, y2), col, RECT_THICK)
+    cv2.putText(
+        img,
+        f"T{tid}",
+        (x1 + 5, y1 - 5),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        FONT_SCALE,
+        col,
+        TEXT_THICK
+    )
+
+# === MAIN PROCESS ===
+
+def process_video(start, end):
+    cap    = cv2.VideoCapture(VIDEO_PATH)
+    fps    = cap.get(cv2.CAP_PROP_FPS)
+    startF = int(time_str_to_seconds(start) * fps)
+    endF   = int(time_str_to_seconds(end)   * fps)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, startF)
+
+    model = YOLO(MODEL_PATH)
+    # For each target ID, track all hit centers to compute relative means over time
+    target_hits = defaultdict(list)
+    bullet_id   = 0
+
+    # Frame loop
+    try:
+        frame_idx = startF
+        while cap.isOpened() and frame_idx < endF:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            results = model(frame)[0]
+            boxes   = results.boxes
+            tgts    = [b for b in boxes if int(b.cls[0]) == 2]
+            blts    = [b for b in boxes if int(b.cls[0]) == 1]
+
+            if not tgts:
+                frame_idx += 1
+                continue
+
+            # assign target IDs/colors
+            tgt_centers = [get_center(t) for t in tgts]
+            sorted_idx  = sorted(enumerate(tgt_centers), key=lambda x: (x[1][1], x[1][0]))
+            tid_map     = {orig: i+1 for i,(orig,_) in enumerate(sorted_idx)}
+            if not target_color_map:
+                target_color_map.update({tid: [random.randint(0,255) for _ in range(3)]
+                                         for tid in tid_map.values()})
+
+            # cm-per-pixel from first target
+            w, h    = tgts[0].xywh[0][2:].cpu().numpy()
+            scale   = TARGET_SIZE_CM / ((w + h) / 2)
+
+            # process each bullet detection
+            for b in blts:
+                # Check confidence threshold
+                if b.conf[0] < MIN_CONFIDENCE:
+                    print(f"[INFO] Skipping low confidence detection: {b.conf[0]:.2f} < {MIN_CONFIDENCE}")
+                    continue
+                
+                ctr = get_center(b)
+                
+                # Check for overlap with existing bullets (strict threshold)
+                if is_duplicate_bullet(b, detected_bullets, OVERLAP_THRESHOLD):
+                    print(f"[INFO] Skipping duplicate bullet detection (overlap > {OVERLAP_THRESHOLD*100}%)")
+                    continue
+                
+                # Additional check: ensure minimum distance from all existing bullet centers
+                min_distance = float('inf')
+                for existing_bullet in detected_bullets:
+                    existing_center = get_center(existing_bullet)
+                    dist = np.linalg.norm(ctr - existing_center)
+                    min_distance = min(min_distance, dist)
+                
+                if min_distance < 30:  # If too close to any existing bullet
+                    print(f"[INFO] Skipping bullet - too close to existing bullet ({min_distance:.1f}px)")
+                    continue
+                
+                # determine cluster radius for this box
+                diag   = np.hypot(*b.xywh[0][2:].cpu().numpy())
+                radius = max(diag * CLUSTER_FACTOR, MIN_CLUSTER_DIST)
+
+                # check existing clusters (additional safety check)
+                duplicate = False
+                for cl in clusters:
+                    if np.linalg.norm(ctr - cl['center']) < cl['radius'] or \
+                       compute_iou(cl['box'], b) > IOU_SUPPRESS_THRESH:
+                        # update cluster center
+                        cl['center'] = (cl['center'] * cl['count'] + ctr) / (cl['count'] + 1)
+                        cl['count'] += 1
+                        cl['box']    = b
+                        duplicate    = True
+                        break
+                if duplicate:
+                    continue
+
+                # new unique bullet → build metadata row
+                # assign to nearest target
+                dists   = [np.linalg.norm(ctr - tc) for tc in tgt_centers]
+                ni      = int(np.argmin(dists))
+                tid     = tid_map[ni]
+                dist_cm = dists[ni] * scale
+
+                # update relative-hit lists for mean range calculation
+                target_hits[tid].append(ctr)
+                
+                # Calculate mean range (distance) to target center
+                target_center = tgt_centers[ni]
+                distances_to_target = []
+                for hit_center in target_hits[tid]:
+                    dist_px = np.linalg.norm(hit_center - target_center)
+                    dist_cm_hit = dist_px * scale
+                    distances_to_target.append(dist_cm_hit)
+                
+                mean_range_cm = np.mean(distances_to_target)
+
+                # annotate & save snapshot
+                bullet_id += 1
+                ts_str     = str(timedelta(seconds=int(frame_idx / fps)))
+                out_img    = frame.copy()
+                annotate(out_img, ctr, mean_range_cm, 0, tgts[ni], tid, dist_cm, scale, tgt_centers[ni])  # Using mean_range_cm instead of mx_cm, my_cm
+                snap_path  = IMAGE_SAVE_TEMPLATE.format(id=bullet_id)
+                cv2.imwrite(snap_path, out_img)
+
+                # record cluster → only one row per bullet
+                row = {
+                    "Bullet ID": bullet_id,
+                    "Center X": int(ctr[0]),
+                    "Center Y": int(ctr[1]),
+                    "Mean Range to Target (cm)": round(mean_range_cm, 2),
+                    "Dist to Target (cm)": round(dist_cm, 2),
+                    "Target ID": tid,
+                    "Timestamp": ts_str,
+                    "Snapshot": snap_path
+                }
+                clusters.append({
+                    'center': ctr,
+                    'radius': radius,
+                    'box': b,
+                    'count': 1,
+                    'row': row
+                })
+                
+                # Add to detected bullets list for future overlap checking
+                detected_bullets.append(b)
+                print(f"[INFO] New bullet detected: ID {bullet_id}, Target {tid}, Distance {dist_cm:.1f}cm")
+
+            frame_idx += 1
+
+    except KeyboardInterrupt:
+        print("\n[INFO] Interrupted by user — cleaning up…")
+
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+
+    # gather rows, exactly one per cluster
+    rows = [cl['row'] for cl in clusters]
+    pd.DataFrame(rows).to_excel(EXCEL_OUTPUT, index=False)
+    print(f"[INFO] → {len(rows)} bullets saved (unique clusters) to {EXCEL_OUTPUT}")
+
+
+# === ENTRY POINT ===
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser("Video Bullet Detection with YOLOv11")
+    p.add_argument("--start", required=True, help="Start HH:MM:SS")
+    p.add_argument("--end",   required=True, help="End   HH:MM:SS")
+    p.add_argument("--iou", type=float, default=0.5, 
+                   help="Overlap threshold for duplicate detection (default: 0.5)")
+    p.add_argument("--confidence", type=float, default=0.6,
+                   help="Minimum confidence for bullet detection (default: 0.6)")
+    args = p.parse_args()
+    
+    # Update global thresholds if provided
+    if args.iou != 0.5:  # Compare with default value
+        OVERLAP_THRESHOLD = args.iou
+    print(f"[INFO] Using overlap threshold: {OVERLAP_THRESHOLD*100}%")
+    
+    if args.confidence != 0.6:
+        MIN_CONFIDENCE = args.confidence
+        print(f"[INFO] Using confidence threshold: {MIN_CONFIDENCE}")
+    
+    process_video(args.start, args.end)

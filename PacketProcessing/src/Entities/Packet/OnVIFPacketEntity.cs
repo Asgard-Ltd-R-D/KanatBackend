@@ -9,10 +9,10 @@ public class OnVIFPacketEntity : BasePacketEntity
 {   
     
     [Column("zoom")]
-    public float? Zoom { get; set; }
+    public double? Zoom { get; set; }
     
     [Column("measurement")]
-    public float? Measurement { get; set; }
+    public double? Measurement { get; set; }
 
     public override string TableName => "onvif_packets";
     
@@ -24,12 +24,12 @@ public class OnVIFPacketEntity : BasePacketEntity
         if (Zoom.HasValue)
             sender.Column("zoom", Zoom.Value);
         else
-            sender.NullableColumn("zoom", float.NaN);
+            sender.NullableColumn("zoom", double.NaN);
 
         //Applicable for LRF/LRF
         if (Measurement.HasValue)
             sender.Column("measurement", Measurement.Value);
         else
-            sender.NullableColumn("measurement", float.NaN);
+            sender.NullableColumn("measurement", double.NaN);
     }
 }

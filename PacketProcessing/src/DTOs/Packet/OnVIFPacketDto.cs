@@ -9,6 +9,6 @@ public class OnVIFPacketDto
     public DateTime Timestamp { get; set; }
     public bool IsCmd { get; set; }
     public string Description { get; set; } = string.Empty;
-    public float? Zoom { get; set; }
-    public float? Measurement { get; set; }
+    public double? Zoom { get; set; }
+    public double? Measurement { get; set; }
 }

@@ -9,4 +9,16 @@ public static class Constants {
 
     public static readonly string REALTIME_METHOD_NAME = "OnReceive";
     public static readonly string PLAYBACK_METHOD_NAME = "OnPlayback";
+
+    // ONVIF constants
+    public const string ONVIF_REPORT_IP="132.8.7.121";
+    public const string ONVIF_XML_DAY="day";
+    public const string ONVIF_XML_NIGHT="night_combined";
+    public const string ONVIF_XML_LRF="laser_range_finder";
+
+    // OnVIF packet descriptions
+    public const string ONVIF_FOV_REQ="FOV_REQ";
+    public const string ONVIF_FOV_STS="FOV_STS";
+    public const string ONVIF_LRF_REQ="LRF_REQ";
+    public const string ONVIF_LRF_STS="LRF_STS";
 }

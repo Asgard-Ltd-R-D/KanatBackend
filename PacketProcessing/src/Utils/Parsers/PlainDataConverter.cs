@@ -80,24 +80,38 @@ public static class PlainDataConverter
     /// </summary>
     private static PlainDataDto ConvertOnVIF(OnVIFPacketEntity onvif)
     {
-        if (onvif.Zoom.HasValue)
-            return new PlainDataDto
-            {
-                Timestamp = onvif.Timestamp,
-                Value = onvif.Zoom.Value
-            };
-        else if (onvif.Measurement.HasValue)
-            return new PlainDataDto
-            {
-                Timestamp = onvif.Timestamp,
-                Value = onvif.Measurement.Value
-            };
-        else
-            return new PlainDataDto
-            {
-                Timestamp = onvif.Timestamp,
-                Value = -1.0d
-            };
+        switch (onvif.Description)
+        {
+            case Constants.Constants.ONVIF_FOV_REQ:
+                return new PlainDataDto
+                {
+                    Timestamp = onvif.Timestamp,
+                    Value = 1.0d
+                };
+            case Constants.Constants.ONVIF_FOV_STS:
+                return new PlainDataDto
+                {
+                    Timestamp = onvif.Timestamp,
+                    Value = onvif.Zoom ?? -1.0d
+                };
+            case Constants.Constants.ONVIF_LRF_REQ:
+                return new PlainDataDto
+                {
+                    Timestamp = onvif.Timestamp,
+                    Value = 1.0d
+                };
+            case Constants.Constants.ONVIF_LRF_STS:
+                return new PlainDataDto
+                {
+                    Timestamp = onvif.Timestamp,
+                    Value = onvif.Measurement ?? -1.0d
+                };
+        }
+        return new PlainDataDto
+        {
+            Timestamp = onvif.Timestamp,
+            Value = -1.0d
+        };
     }
 }
 

@@ -2,10 +2,11 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Net;
 using System.Text;
+using System.Xml.Linq;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Utils.Exceptions;
-using static PacketProcessing.Utils.Parsers.OnvifUtilities.OnVifPacketParserUtilities;
+using static PacketProcessing.Utils.Parsers.HttpXmlReassembler;
 
 namespace PacketProcessing.Utils.Parsers
 {
@@ -24,7 +25,7 @@ namespace PacketProcessing.Utils.Parsers
 
         private const string REPORT_IP = "132.8.7.1";
 
-        private static readonly HashSet<string> ProfileTokens = ["day", "night_combined"];
+        private static readonly HashSet<string> ProfileTokens = new(StringComparer.OrdinalIgnoreCase) { "day", "night_combined" };
 
         /// <summary>
         /// Parses a single ONVIF HTTP SOAP message from a raw packet (Ethernet frame).
@@ -38,7 +39,7 @@ namespace PacketProcessing.Utils.Parsers
                 // Assemble the complete HTTP body
                 // Throws ParserStreamNotCompletedException if the stream is not complete
                 // Returns the complete HTTP body as ReadOnlyMemory<byte>
-                var soapBody = AssembleCompleteHttpBody(rawPacket); 
+                XDocument soapBody = AssembleXmlOrThrow(rawPacket);
 
                 // --- Check if the packet is long enough to contain an Ethernet + IP + TCP/CapTrack Data Payload ---
                 if (rawPacket.Length < 54)
@@ -49,16 +50,16 @@ namespace PacketProcessing.Utils.Parsers
 
                 // --- Get the source IP address, if it's the report IP, then it's a command, otherwise it's a report ---
                 var isCmd = false;
-                if (TryGetSrcIp(soapBody.Span, out string src))
+                if (TryGetSrcIp(rawPacket, out string src))
                 {
                     isCmd = src != REPORT_IP;
                 }
 
                 // If the profile token is present, then it's a FOV_REQ 
-                if (TryExtractProfileToken(soapBody.Span, out string token))
+                if (TryExtractProfileToken(soapBody, out string token))
                 {
-                    // If token exist in map, then it must be "day" or "night_combined"
-                    if (ProfileTokens.TryGetValue(token, out var value))
+                    // If token exist in set, then it must be "day" or "night_combined"
+                    if (ProfileTokens.Contains(token))
                     {
                         return new OnVIFPacketEntity {
                             Id = Guid.NewGuid(),
@@ -72,7 +73,7 @@ namespace PacketProcessing.Utils.Parsers
                 }
 
                 // If the zoom is present, then it's a FOV_STS
-                else if (TryExtractZoomX(soapBody.Span, out float zoom)) {
+                else if (TryExtractZoomX(soapBody, out float zoom)) {
                     return new OnVIFPacketEntity {
                         Id = Guid.NewGuid(),
                         Timestamp = DateTime.UtcNow,
@@ -84,7 +85,7 @@ namespace PacketProcessing.Utils.Parsers
                 }
 
                 // Token not in map, check if LRF
-                else if (TryExtractGetPower(soapBody.Span, out string power)) 
+                else if (TryExtractGetPower(soapBody, out string power)) 
                 {
                     // If power is laster_range_finder, then it's a LRF_REQ
                     if (power == "laster_range_finder")
@@ -101,7 +102,7 @@ namespace PacketProcessing.Utils.Parsers
                 }
 
                 // If power is not laster_range_finder, then it's a LRF_STS
-                else if (TryExtractMeasurement(soapBody.Span, out float measurement))
+                else if (TryExtractMeasurement(soapBody, out float measurement))
                 {
                     return new OnVIFPacketEntity {
                         Id = Guid.NewGuid(),
@@ -161,99 +162,51 @@ namespace PacketProcessing.Utils.Parsers
         }
 
         // Try to extract <ProfileToken>day</ProfileToken> value (string) if present.
-        private static bool TryExtractProfileToken(ReadOnlySpan<byte> soapBody, out string token)
+        private static bool TryExtractProfileToken(XDocument soapBody, out string token)
         {
             token = string.Empty;
-            var s = Encoding.UTF8.GetString(soapBody);
-
-            var tokenIdx = s.IndexOf("<ProfileToken", StringComparison.OrdinalIgnoreCase);
-            if (tokenIdx < 0) return false;
-
-            var tokenStart = s.IndexOf("\"", tokenIdx, StringComparison.OrdinalIgnoreCase);
-            if (tokenStart < 0) return false;
-
-            var tokenEnd = s.IndexOf("\"", tokenStart + 1, StringComparison.OrdinalIgnoreCase);
-            if (tokenEnd < 0) return false;
-
-            token = s.Substring(tokenStart + 1, tokenEnd - tokenStart - 1);
+            var profileToken = soapBody.Descendants().FirstOrDefault(e => e.Name.LocalName == "ProfileToken");
+            if (profileToken == null) return false;
+            token = profileToken.Value;
             return true;
         }
 
         // Try to extract <tt:Zoom x="0.123" ...> value (float) if present.
-        private static bool TryExtractZoomX(ReadOnlySpan<byte> soapBody, out float value)
+        private static bool TryExtractZoomX(XDocument soapBody, out float value)
         {
             value = default;
-            var s = Encoding.UTF8.GetString(soapBody);
-
-            var zoomIdx = s.IndexOf("<tt:Zoom", StringComparison.OrdinalIgnoreCase);
-            if (zoomIdx < 0) return false;
-
-            var xIdx = s.IndexOf("x=", zoomIdx, StringComparison.OrdinalIgnoreCase);
-            if (xIdx < 0) return false;
-
-            var xStart = s.IndexOf("\"", xIdx, StringComparison.OrdinalIgnoreCase);
-            if (xStart < 0) return false;
-            
-            var xEnd = s.IndexOf("\"", xStart + 1, StringComparison.OrdinalIgnoreCase);
-            if (xEnd < 0) return false;
-
-            var num = s.Substring(xStart + 1, xEnd - xStart - 1);
-            if (float.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out var f))
-            {
-                value = f;
-                return true;
-            }
-
-            return false;
+            var zoom = soapBody.Descendants().FirstOrDefault(e => e.Name.LocalName == "Zoom");
+            if (zoom == null) return false;
+            var xAttr = zoom.Attribute("x")?.Value;
+            if (string.IsNullOrEmpty(xAttr)) return false;
+            return float.TryParse(xAttr, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
         }
 
         // Try to extract <Measurement ...> value (float) if present.
-        private static bool TryExtractMeasurement(ReadOnlySpan<byte> soapBody, out float value)
+        private static bool TryExtractMeasurement(XDocument soapBody, out float value)
         {
             value = default;
-            var s = Encoding.UTF8.GetString(soapBody);
-
-            var measurementIdx = s.IndexOf("<Measurement", StringComparison.OrdinalIgnoreCase);
-            if (measurementIdx < 0) return false;
-
-            var measurementStart = s.IndexOf("\"", measurementIdx, StringComparison.OrdinalIgnoreCase);
-            if (measurementStart < 0) return false;
-
-            var measurementEnd = s.IndexOf("\"", measurementStart + 1, StringComparison.OrdinalIgnoreCase);
-            if (measurementEnd < 0) return false;
-
-            if (s.Substring(measurementStart + 1, measurementEnd - measurementStart - 1) == "[Error: 1001]")
+            var measurement = soapBody.Descendants().FirstOrDefault(e => e.Name.LocalName == "Measurement");
+            if (measurement == null) return false;
+            var measText = measurement.Value;
+            
+            // Handle error sentinel [Error: 1001] → -1000
+            if (measText.IndexOf("Error", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                value = -1000;
+                value = -1000f;
                 return true;
             }
-
-            if (float.TryParse(s.AsSpan(measurementStart + 1, measurementEnd - measurementStart - 1),
-                NumberStyles.Float, CultureInfo.InvariantCulture, out var f) && !float.IsNaN(f) && !float.IsInfinity(f))
-            {
-                value = f;
-                return true;
-            }
-
-            return false;
+            
+            return float.TryParse(measText, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
         }
 
-        // Try to extract <tt:Power ...> value (float) if present.
-        private static bool TryExtractGetPower(ReadOnlySpan<byte> soapBody, out string value)
+        // Try to extract <tt:Power ...> value (string) if present.
+        private static bool TryExtractGetPower(XDocument soapBody, out string value)
         {
             value = string.Empty;
-            var s = Encoding.UTF8.GetString(soapBody);
-
-            var powerIdx = s.IndexOf("<name", StringComparison.OrdinalIgnoreCase);
-            if (powerIdx < 0) return false;
-
-            var nameStart = s.IndexOf("\"", powerIdx, StringComparison.OrdinalIgnoreCase);
-            if (nameStart < 0) return false;
-
-            var nameEnd = s.IndexOf("\"", nameStart + 1, StringComparison.OrdinalIgnoreCase);
-            if (nameEnd < 0) return false;
-
-            value = s.Substring(nameStart + 1, nameEnd - nameStart - 1);
+            var power = soapBody.Descendants().FirstOrDefault(e => e.Name.LocalName == "Power");
+            if (power == null) return false;
+            value = power.Attribute("name")?.Value ?? string.Empty;
             return true;
         }
     }

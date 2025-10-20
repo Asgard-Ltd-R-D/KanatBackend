@@ -1,4 +1,5 @@
 using PacketProcessing.DTOs.Stream;
+using PacketProcessing.Entities;
 using PacketProcessing.Entities.Packet;
 
 namespace PacketProcessing.Services.Transmission;
@@ -7,10 +8,7 @@ namespace PacketProcessing.Services.Transmission;
 /// Transmission service that observes packet streams and transmits them to SignalR clients
 /// Supports both real-time and playback modes
 /// </summary>
-public interface ITransmissionService : 
-    IObserver<MotionPacketEntity>, 
-    IObserver<SafetyPacketEntity>, 
-    IObserver<OnVIFPacketEntity>
+public interface ITransmissionService : IObserver<BasePacketEntity>
 {
     /// <summary>
     /// Register a stream request for transmission

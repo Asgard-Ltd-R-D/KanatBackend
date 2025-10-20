@@ -159,32 +159,14 @@ public class TransmissionService : ITransmissionService
 
     #region IObserver Implementations
 
-    void IObserver<MotionPacketEntity>.OnNext(MotionPacketEntity packet)
+    public void OnNext(BasePacketEntity packet)
         => ProcessPacketAsync(packet).GetAwaiter().GetResult();
 
-    void IObserver<MotionPacketEntity>.OnError(Exception error)
-        => _logger.LogError(error, "Error in Motion packet stream");
+    public void OnError(Exception error)
+        => _logger.LogError(error, "Error in packet stream");
 
-    void IObserver<MotionPacketEntity>.OnCompleted()
-        => _logger.LogInformation("Motion packet stream completed");
-
-    void IObserver<SafetyPacketEntity>.OnNext(SafetyPacketEntity packet)
-        => ProcessPacketAsync(packet).GetAwaiter().GetResult();
-
-    void IObserver<SafetyPacketEntity>.OnError(Exception error)
-        => _logger.LogError(error, "Error in Safety packet stream");
-
-    void IObserver<SafetyPacketEntity>.OnCompleted()
-        => _logger.LogInformation("Safety packet stream completed");
-
-    void IObserver<OnVIFPacketEntity>.OnNext(OnVIFPacketEntity packet)
-        => ProcessPacketAsync(packet).GetAwaiter().GetResult();
-
-    void IObserver<OnVIFPacketEntity>.OnError(Exception error)
-        => _logger.LogError(error, "Error in OnVIF packet stream");
-
-    void IObserver<OnVIFPacketEntity>.OnCompleted()
-        => _logger.LogInformation("OnVIF packet stream completed");
+    public void OnCompleted()
+        => _logger.LogInformation("Packet stream completed");
 
     #endregion
 }

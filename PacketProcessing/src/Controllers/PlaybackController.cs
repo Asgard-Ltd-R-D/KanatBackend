@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using PacketProcessing.DTOs;
-using PacketProcessing.Services.Orchestration;
+using PacketProcessing.Services;
 
 namespace PacketProcessing.Controllers;
 
@@ -15,16 +15,16 @@ public class PlaybackController : ControllerBase
 {
     private readonly ILogger<PlaybackController> _logger;
     private readonly IConfiguration _configuration;
-    private readonly IPipelineOrchestrator _orchestrator;
+    private readonly IStateManager _stateManager;
 
     public PlaybackController(
         ILogger<PlaybackController> logger,
         IConfiguration configuration,
-        IPipelineOrchestrator orchestrator)
+        IStateManager stateManager)
     {
         _logger = logger;
         _configuration = configuration;
-        _orchestrator = orchestrator;
+        _stateManager = stateManager;
     }
 
     /// <summary>
@@ -38,7 +38,7 @@ public class PlaybackController : ControllerBase
             var status = new
             {
                 Message = "Playback functionality coming soon",
-                CurrentState = _orchestrator.GetCurrentState().ToString()
+                CurrentState = _stateManager.CurrentState.ToString()
             };
             
             return Ok(ResponseResult<object>.SuccessResult(status));

@@ -1,4 +1,4 @@
-namespace PacketProcessing.Services.Networking;
+namespace PacketProcessing.Services.Realtime.Networking;
 
 /// <summary>
 /// Generic handler interface for processing packets.

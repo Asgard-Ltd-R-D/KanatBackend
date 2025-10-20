@@ -10,6 +10,6 @@ public class SafetyPacketDto
     public string Name { get; set; } = string.Empty;
     public bool IsCmd { get; set; } = true;
     public string OpCode { get; set; } = string.Empty;
-    public string OpCodeDescription { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
     public string State { get; set; } = string.Empty;
 }

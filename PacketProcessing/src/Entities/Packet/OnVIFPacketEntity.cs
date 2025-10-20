@@ -7,9 +7,6 @@ namespace PacketProcessing.Entities.Packet;
 [Table("onvif_packets")]
 public class OnVIFPacketEntity : BasePacketEntity
 {   
-    [Column("description")]
-    [StringLength(128)]
-    public required string Description { get; set; }
     
     [Column("zoom")]
     public float? Zoom { get; set; }

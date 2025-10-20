@@ -2,7 +2,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.DTOs.Packet;
-using PacketProcessing.Services.Networking;
+using PacketProcessing.Services.Realtime.Networking;
 using PacketProcessing.Utils.Observers;
 using SharpPcap;
 using SharpPcap.LibPcap;

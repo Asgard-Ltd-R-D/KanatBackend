@@ -61,22 +61,22 @@ public sealed class QuestDbContext
         const string tableList = "'motion_packets','onvif_packets','safety_packets'";
         var ddl = """
         CREATE TABLE IF NOT EXISTS motion_packets (
-            timestamp TIMESTAMP,
-            id        SYMBOL,
-            isCmd      BOOLEAN,
-            opCode    STRING,
-            opCodeDescription STRING,
-            axis      INT,
-            value DOUBLE
+            timestamp       TIMESTAMP,
+            id              SYMBOL,
+            isCmd           BOOLEAN,
+            opCode          STRING,
+            description     STRING,
+            axis            INT,
+            value           DOUBLE
         ) TIMESTAMP(timestamp) PARTITION BY DAY WAL;
 
         CREATE TABLE IF NOT EXISTS onvif_packets (
-            timestamp   TIMESTAMP,
-            id          SYMBOL,
-            isCmd       BOOLEAN,
-            description STRING,
-            zoom        DOUBLE,
-            measurement DOUBLE
+            timestamp          TIMESTAMP,
+            id                 SYMBOL,
+            isCmd              BOOLEAN,
+            description        STRING,
+            zoom               DOUBLE,
+            measurement        DOUBLE
         ) TIMESTAMP(timestamp) PARTITION BY DAY WAL;
 
         CREATE TABLE IF NOT EXISTS safety_packets (
@@ -85,7 +85,7 @@ public sealed class QuestDbContext
             isCmd             BOOLEAN,
             name              STRING,
             opCode            STRING,
-            opCodeDescription STRING,
+            description       STRING,
             state             STRING
         ) TIMESTAMP(timestamp) PARTITION BY DAY WAL;
         """;
@@ -95,7 +95,16 @@ public sealed class QuestDbContext
         var before = await conn.ExecuteScalarAsync<long>(
             new CommandDefinition($"SELECT count(*) FROM information_schema.tables WHERE table_name IN ({tableList})", cancellationToken: ct));
 
-        await conn.ExecuteAsync(new CommandDefinition(ddl, cancellationToken: ct));
+        try
+        {
+            _log.LogDebug("Executing DDL to create QuestDB tables...");
+            await conn.ExecuteAsync(new CommandDefinition(ddl, cancellationToken: ct));
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Failed to create QuestDB tables. DDL: {DDL}", ddl);
+            throw;
+        }
 
         var after = await conn.ExecuteScalarAsync<long>(
             new CommandDefinition($"SELECT count(*) FROM information_schema.tables WHERE table_name IN ({tableList})", cancellationToken: ct));

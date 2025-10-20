@@ -9,7 +9,7 @@ using PacketProcessing.Config;
 using System.Runtime.InteropServices;
 using System.Buffers;
 using PacketProcessing.Hubs;
-namespace PacketProcessing.Services.Networking;
+namespace PacketProcessing.Services.Realtime.Networking;
 
 public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserver<RawPacketEvent>
     where T : BasePacketEntity
@@ -27,7 +27,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     private readonly int _workerCount;
     
     // Hub transmission
-    private readonly HubClient? _hubClient;
     private readonly TimeSpan _transmissionInterval;
     private DateTime _lastTransmissionTime;
 
@@ -51,12 +50,10 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         string dataPipeName,
         ILogger<HandlerService<T>> logger,
         Channel<T> parsedChannel,
-        IConfiguration configuration,
-        HubClient? hubClient = null)
+        IConfiguration configuration)
     {
         _logger = logger;
         _parsedChannel = parsedChannel;
-        _hubClient = hubClient;
 
         // bounded channel for raw events with increased capacity
         // Wait mode ensures no packets are dropped (capture may block if processing too slow)
@@ -81,9 +78,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         _lastTransmissionTime = DateTime.UtcNow;
 
         _logger.LogInformation(
-            "[HANDLER-SERVICE] {Handler} initialized with {Workers} workers (RawChannelCapacity:500K, ParsedChannelCapacity:{ParsedCap}, HubTransmission:{HubEnabled} every {IntervalMs}ms)",
-            typeof(T).Name, _workerCount, parsedChannel.Reader.CanCount ? "?" : "Bounded", 
-            _hubClient != null, _transmissionInterval.TotalMilliseconds);
+            "[HANDLER-SERVICE] {Handler} initialized with {Workers} workers (RawChannelCapacity:500K, ParsedChannelCapacity:{ParsedCap}, every {IntervalMs}ms",
+            typeof(T).Name, _workerCount, parsedChannel.Reader.CanCount ? "?" : "Bounded", _transmissionInterval.TotalMilliseconds);
     }
 
     #region IHandlerService
@@ -259,34 +255,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                             Interlocked.Increment(ref _backpressureEvents);
                             batchBackpressure++;
                             await _parsedChannel.Writer.WriteAsync(parsed, token);
-                        }
-                        
-                        // Transmit to hub if interval elapsed (non-blocking, fire and forget)
-                        if (_hubClient != null)
-                        {
-                            var now = DateTime.UtcNow;
-                            if ((now - _lastTransmissionTime) >= _transmissionInterval)
-                            {
-                                _lastTransmissionTime = now;
-                                
-                                // Parse to PlainDataDto and transmit (async, non-blocking)
-                                _ = Task.Run(async () =>
-                                {
-                                    try
-                                    {
-                                        var dto = PlainDataConverter.Convert(parsed);
-                                        if (dto != null)
-                                        {
-                                            await _hubClient.TransmitDataAsync(dto, typeof(T).Name);
-                                            Interlocked.Increment(ref _packetsTransmitted);
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogWarning(ex, "[HANDLER-SERVICE] Hub transmission failed");
-                                    }
-                                }, token);
-                            }
                         }
 
                         Interlocked.Increment(ref _packetsParsed);

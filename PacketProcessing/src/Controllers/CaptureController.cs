@@ -2,8 +2,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using PacketProcessing.DTOs;
-using PacketProcessing.Services.Orchestration;
-using PacketProcessing.Services.Networking;
+using PacketProcessing.Services;
+using PacketProcessing.Services.Realtime.Networking;
 
 namespace PacketProcessing.Controllers;
 
@@ -16,18 +16,18 @@ public class CaptureController : ControllerBase
 {
     private readonly ILogger<CaptureController> _logger;
     private readonly IConfiguration _configuration;
-    private readonly IPipelineOrchestrator _orchestrator;
+    private readonly IStateManager _stateManager;
     private readonly IDeviceService _deviceService;
 
     public CaptureController(
         ILogger<CaptureController> logger,
         IConfiguration configuration,
-        IPipelineOrchestrator orchestrator,
+        IStateManager stateManager,
         IDeviceService deviceService)
     {
         _logger = logger;
         _configuration = configuration;
-        _orchestrator = orchestrator;
+        _stateManager = stateManager;
         _deviceService = deviceService;
     }
 
@@ -39,7 +39,7 @@ public class CaptureController : ControllerBase
     {
         try
         {
-            await _orchestrator.StartAsync(ct, deviceName);
+            await _stateManager.Realtime.StartAsync(ct, deviceName);
             _logger.LogInformation("Started pipeline orchestrator for {DeviceName}", deviceName);
 
             return Ok(ResponseResult.SuccessResult());
@@ -59,7 +59,7 @@ public class CaptureController : ControllerBase
     {
         try
         {
-            await _orchestrator.StopAsync(ct);
+            await _stateManager.Realtime.StopAsync(ct);
             _logger.LogInformation("Stopped pipeline orchestrator");
 
             return Ok(ResponseResult.SuccessResult());
@@ -79,7 +79,7 @@ public class CaptureController : ControllerBase
     {
         try
         {
-            var telemetry = _orchestrator.GetStats();
+            var telemetry = _stateManager.Realtime.GetStats();
             return Ok(ResponseResult<TelemetryDto>.SuccessResult(telemetry));
         }
         catch (Exception ex)
@@ -115,7 +115,7 @@ public class CaptureController : ControllerBase
     {
         try
         {
-            _orchestrator.ResetStats();
+            _stateManager.Realtime.ResetStats();
             _logger.LogInformation("Statistics reset requested via API");
             return Ok(ResponseResult.SuccessResult());
         }

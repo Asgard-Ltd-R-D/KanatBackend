@@ -10,11 +10,7 @@ public class MotionPacketEntity : BasePacketEntity
     [Column("opCode")]
     [StringLength(32)]
     public required string OpCode { get; set; }
-    
-    [Column("opCodeDescription")]
-    [StringLength(128)]
-    public required string OpCodeDescription { get; set; }
-    
+
     [Column("axis")]
     public required int Axis { get; set; }
     
@@ -27,7 +23,7 @@ public class MotionPacketEntity : BasePacketEntity
     {
         sender.Column("isCmd", IsCmd);
         sender.Column("opCode", OpCode);
-        sender.Column("opCodeDescription", OpCodeDescription);
+        sender.Column("description", Description);
         sender.Column("axis", Axis);
         if (Value.HasValue) sender.Column("value", Value.Value);
         else sender.NullableColumn("value", double.NaN);

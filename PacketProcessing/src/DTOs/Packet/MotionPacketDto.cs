@@ -9,7 +9,7 @@ public class MotionPacketDto
     public DateTime Timestamp { get; set; }
     public bool IsCmd { get; set; }
     public string OpCode { get; set; } = string.Empty;
-    public string OpCodeDescription { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
     public int Axis { get; set; }
     public double? Value { get; set; }
 }

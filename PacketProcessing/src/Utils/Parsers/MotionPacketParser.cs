@@ -126,7 +126,7 @@ public static class MotionPacketParser
                 Timestamp = DateTime.UtcNow,
                 Axis = axisId,
                 OpCode = $"0x{opCode:X4}",
-                OpCodeDescription = opDesc,
+                Description = opDesc,
                 Value = value,
                 IsCmd = !isReport
             };

@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.DTOs;
-using PacketProcessing.Services.Orchestration;
+using PacketProcessing.Services;
+using PacketProcessing.Utils.Enums;
 using PacketProcessing.Utils.Constants;
 
 namespace PacketProcessing.Controllers;
@@ -14,14 +15,14 @@ namespace PacketProcessing.Controllers;
 public class StateController : ControllerBase
 {
     private readonly ILogger<StateController> _logger;
-    private readonly IPipelineOrchestrator _orchestrator;
+    private readonly IStateManager _stateManager;
 
     public StateController(
         ILogger<StateController> logger,
-        IPipelineOrchestrator orchestrator)
+        IStateManager stateManager)
     {
         _logger = logger;
-        _orchestrator = orchestrator;
+        _stateManager = stateManager;
     }
 
     /// <summary>
@@ -40,7 +41,7 @@ public class StateController : ControllerBase
                 return BadRequest(ResponseResult.ErrorResult(errorMessage));
             }
 
-            var currentState = _orchestrator.GetCurrentState();
+            var currentState = _stateManager.CurrentState;
             
             // Check if already in the target state
             if (currentState == targetState)
@@ -56,7 +57,7 @@ public class StateController : ControllerBase
             }
 
             // Change the state
-            _orchestrator.SetState(targetState);
+            _stateManager.SetState(targetState);
             _logger.LogInformation("State changed from {CurrentState} to {NewState}", currentState, targetState);
             
             return Ok(ResponseResult.SuccessResult());
@@ -76,7 +77,7 @@ public class StateController : ControllerBase
     {
         try
         {
-            var currentState = _orchestrator.GetCurrentState();
+            var currentState = _stateManager.CurrentState;
             return Ok(ResponseResult<string>.SuccessResult(currentState.ToString()));
         }
         catch (Exception ex)
@@ -91,7 +92,7 @@ public class StateController : ControllerBase
         // Validate Realtime to Playback transition
         if (currentState == States.Realtime && targetState == States.Playback)
         {
-            var telemetry = _orchestrator.GetStats();
+            var telemetry = _stateManager.Realtime.GetStats();
             if (telemetry.Captured > 0 && telemetry.Captured > telemetry.Flushed)
             {
                 return (false, "Cannot switch to Playback mode while capture may be active. Please ensure capture is stopped.");

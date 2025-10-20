@@ -1,6 +1,6 @@
 using PacketProcessing.Entities;
 
-namespace PacketProcessing.Services.Storage;
+namespace PacketProcessing.Services.Realtime.Storage;
 
 /// <summary>
 /// Consumes parsed packets from a channel and writes them to QuestDB.

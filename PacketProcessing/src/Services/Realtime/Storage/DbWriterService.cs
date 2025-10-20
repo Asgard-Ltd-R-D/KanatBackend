@@ -11,7 +11,7 @@ using QuestDB;
 using Microsoft.Extensions.Configuration;
 using PacketProcessing.Config;
 
-namespace PacketProcessing.Services.Storage;
+namespace PacketProcessing.Services.Realtime.Storage;
 
 /// <summary>
 /// Dedicated service that consumes from channel and flushes batches into QuestDB.

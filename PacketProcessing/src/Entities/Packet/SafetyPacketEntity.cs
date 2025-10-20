@@ -14,10 +14,6 @@ public class SafetyPacketEntity : BasePacketEntity
     [StringLength(32)]
     public required string OpCode { get; set; }
     
-    [Column("opCodeDescription")]
-    [StringLength(128)]
-    public required string OpCodeDescription { get; set; }
-    
     [Column("state")]
     [StringLength(64)]
     public required string State { get; set; }
@@ -29,7 +25,7 @@ public class SafetyPacketEntity : BasePacketEntity
         sender.Column("isCmd", IsCmd);
         sender.Column("name", Name);
         sender.Column("opCode", OpCode);
-        sender.Column("opCodeDescription", OpCodeDescription);
+        sender.Column("description", Description);
         sender.Column("state", State);
     }
 }

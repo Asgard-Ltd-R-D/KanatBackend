@@ -8,13 +8,16 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.SignalR;
 using PacketProcessing.Entities.Packet;
-using PacketProcessing.Services.Networking;
+using PacketProcessing.Services.Realtime.Networking;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.Repositories.InfluxRepository;
 using Microsoft.Extensions.Options;
-using PacketProcessing.Services.Storage;
-using PacketProcessing.Services.Orchestration;
+using PacketProcessing.Services.Realtime.Storage;
+using PacketProcessing.Services.Realtime;
+using PacketProcessing.Services.Transmission;
+using PacketProcessing.Services.Playback;
+using PacketProcessing.Services;
 
 /// <summary>
 /// Configuration and Dependency Injection Manager
@@ -79,14 +82,10 @@ public class ConfigurationInjection
             });
         });
 
-        // === SignalR Hub Client ===
-        // Register HubClient singleton for transmitting data to connected clients
-        builder.Services.AddSingleton<Hubs.HubClient>(sp =>
-        {
-            var hubContext = sp.GetRequiredService<IHubContext<Hubs.PacketHub>>();
-            var logger = sp.GetRequiredService<ILogger<Hubs.HubClient>>();
-            return new Hubs.HubClient(hubContext, logger);
-        });
+        // === Transmission & Playback Services (register before handlers) ===
+        builder.Services.AddSingleton<IInfluxRepositoryFactory, InfluxRepositoryFactory>();
+        builder.Services.AddSingleton<ITransmissionService, TransmissionService>();
+        builder.Services.AddSingleton<IPlaybackService, PlaybackService>();
 
         // === Handlers ===
         builder.Services.AddSingleton<HandlerService<MotionPacketEntity>>(sp =>
@@ -94,8 +93,18 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<HandlerService<MotionPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
-            var hubClient = sp.GetRequiredService<Hubs.HubClient>();
-            return new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", logger, channel, cfg, hubClient);
+            var transmissionService = sp.GetRequiredService<ITransmissionService>();
+            
+            var handler = new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", logger, channel, cfg);
+            
+            // Register real-time stream for this data pipe
+            transmissionService.RegisterStreamAsync(new DTOs.Stream.StreamRequest
+            {
+                DataPipe = Utils.Enums.DataPipes.Motion,
+                MethodName = "MotionStream"
+            }).Wait();
+            
+            return handler;
         });
 
         builder.Services.AddSingleton<HandlerService<SafetyPacketEntity>>(sp =>
@@ -103,8 +112,18 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<HandlerService<SafetyPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
-            var hubClient = sp.GetRequiredService<Hubs.HubClient>();
-            return new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", logger, channel, cfg, hubClient);
+            var transmissionService = sp.GetRequiredService<ITransmissionService>();
+            
+            var handler = new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", logger, channel, cfg);
+            
+            // Register real-time stream for this data pipe
+            transmissionService.RegisterStreamAsync(new DTOs.Stream.StreamRequest
+            {
+                DataPipe = Utils.Enums.DataPipes.Safety,
+                MethodName = "SafetyStream"
+            }).Wait();
+            
+            return handler;
         });
 
         builder.Services.AddSingleton<HandlerService<OnVIFPacketEntity>>(sp =>
@@ -112,8 +131,18 @@ public class ConfigurationInjection
             var logger = sp.GetRequiredService<ILogger<HandlerService<OnVIFPacketEntity>>>();
             var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
-            var hubClient = sp.GetRequiredService<Hubs.HubClient>();
-            return new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", logger, channel, cfg, hubClient);
+            var transmissionService = sp.GetRequiredService<ITransmissionService>();
+            
+            var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", logger, channel, cfg);
+            
+            // Register real-time stream for this data pipe
+            transmissionService.RegisterStreamAsync(new DTOs.Stream.StreamRequest
+            {
+                DataPipe = Utils.Enums.DataPipes.Onvif,
+                MethodName = "OnvifStream"
+            }).Wait();
+            
+            return handler;
         });
 
         // === Configuration ===
@@ -166,8 +195,11 @@ public class ConfigurationInjection
         builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HandlerService<SafetyPacketEntity>>());
         builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HandlerService<OnVIFPacketEntity>>());
 
-        // === Orchestrator ===
-        builder.Services.AddSingleton<IPipelineOrchestrator, PipelineOrchestrator>();
+        // === Realtime Service ===
+        builder.Services.AddSingleton<IRealtimeService, RealtimeService>();
+
+        // === State Manager ===
+        builder.Services.AddSingleton<IStateManager, StateManager>();
 
         // Device service
         builder.Services.AddSingleton<IDeviceService, DeviceService>();
@@ -294,7 +326,7 @@ public class ConfigurationInjection
         app.MapHealthChecks("/health");
         
         // Map SignalR hub
-        app.MapHub<Hubs.PacketHub>("/hub/packets");
+        app.MapHub<Hubs.HubContext>("/hub/packets");
         
         app.MapControllers();
     }

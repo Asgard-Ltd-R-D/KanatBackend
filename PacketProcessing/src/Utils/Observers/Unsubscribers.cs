@@ -46,4 +46,29 @@ namespace PacketProcessing.Utils.Observers
             _observers.TryRemove(_observer, out _);
         }
     }
+
+    /// <summary>
+    /// Variant for nested ConcurrentDictionary structures.
+    /// Used when tracking multiple subscriptions per observer.
+    /// </summary>
+    /// <typeparam name="T">Event type observed</typeparam>
+    /// <typeparam name="TKey">Type of the subscription key</typeparam>
+    public sealed class NestedConcurrentUnsubscriber<T, TKey> : IDisposable where TKey : notnull
+    {
+        private readonly ConcurrentDictionary<IObserver<T>, ConcurrentDictionary<TKey, byte>> _map;
+        private readonly IObserver<T> _observer;
+
+        public NestedConcurrentUnsubscriber(
+            ConcurrentDictionary<IObserver<T>, ConcurrentDictionary<TKey, byte>> map,
+            IObserver<T> observer)
+        {
+            _map = map ?? throw new ArgumentNullException(nameof(map));
+            _observer = observer ?? throw new ArgumentNullException(nameof(observer));
+        }
+
+        public void Dispose()
+        {
+            _map.TryRemove(_observer, out _);
+        }
+    }
 }

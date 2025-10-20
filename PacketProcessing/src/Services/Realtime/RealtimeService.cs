@@ -1,19 +1,19 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using PacketProcessing.Entities.Packet;
-using PacketProcessing.Services.Networking;
-using PacketProcessing.Services.Storage;
+using PacketProcessing.Services.Realtime.Networking;
+using PacketProcessing.Services.Realtime.Storage;
 using PacketProcessing.DTOs;
-using PacketProcessing.Utils.Constants;
+using PacketProcessing.Utils.Enums;
 
-namespace PacketProcessing.Services.Orchestration;
+namespace PacketProcessing.Services.Realtime;
 
 /// <summary>
-/// Coordinates handlers and writers for all data pipes.
+/// Real-time service that coordinates handlers and writers for all data pipes
 /// </summary>
-public class PipelineOrchestrator : IPipelineOrchestrator
+public class RealtimeService : IRealtimeService
 {
-    private readonly ILogger<PipelineOrchestrator> _logger;
+    private readonly ILogger<RealtimeService> _logger;
     private readonly IConfiguration _config;
     private readonly IDeviceService _deviceService;
 
@@ -25,11 +25,8 @@ public class PipelineOrchestrator : IPipelineOrchestrator
     private readonly IDbWriterService<SafetyPacketEntity> _safetyWriter;
     private readonly IDbWriterService<OnVIFPacketEntity> _onvifWriter;
 
-    private States _currentState = States.Realtime;
-    private readonly object _stateLock = new();
-
-    public PipelineOrchestrator(
-        ILogger<PipelineOrchestrator> logger,
+    public RealtimeService(
+        ILogger<RealtimeService> logger,
         IConfiguration config,
         IDeviceService deviceService,
         HandlerService<MotionPacketEntity> motionHandler,
@@ -52,32 +49,24 @@ public class PipelineOrchestrator : IPipelineOrchestrator
 
     public async Task StartAsync(CancellationToken cancellationToken, string deviceName)
     {
-        _logger.LogInformation("Pipeline Orchestrator starting...");
+        _logger.LogInformation("Realtime service starting...");
 
-        await _motionHandler.SubscribeToDeviceAsync(
-            _deviceService,
-            deviceName);
+        await _motionHandler.SubscribeToDeviceAsync(_deviceService, deviceName);
+        await _safetyHandler.SubscribeToDeviceAsync(_deviceService, deviceName);
+        await _onvifHandler.SubscribeToDeviceAsync(_deviceService, deviceName);
 
-        await _safetyHandler.SubscribeToDeviceAsync(
-            _deviceService,
-            deviceName);
-
-        await _onvifHandler.SubscribeToDeviceAsync(
-            _deviceService,
-            deviceName);
-
-        _logger.LogInformation("Pipeline Orchestrator initialized all handlers.");
+        _logger.LogInformation("Realtime service initialized all handlers");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Pipeline Orchestrator stopping...");
+        _logger.LogInformation("Realtime service stopping...");
 
         await _motionHandler.UnsubscribeAsync(_deviceService);
         await _safetyHandler.UnsubscribeAsync(_deviceService);
         await _onvifHandler.UnsubscribeAsync(_deviceService);
 
-        _logger.LogInformation("Pipeline Orchestrator stopped.");
+        _logger.LogInformation("Realtime service stopped");
     }
 
     public TelemetryDto GetStats()
@@ -187,22 +176,5 @@ public class PipelineOrchestrator : IPipelineOrchestrator
         
         _logger.LogInformation("All pipeline statistics reset successfully");
     }
-    
-    public States GetCurrentState()
-    {
-        lock (_stateLock)
-        {
-            return _currentState;
-        }
-    }
-    
-    public void SetState(States state)
-    {
-        lock (_stateLock)
-        {
-            var previousState = _currentState;
-            _currentState = state;
-            _logger.LogInformation("Pipeline state changed from {PreviousState} to {NewState}", previousState, state);
-        }
-    }
 }
+

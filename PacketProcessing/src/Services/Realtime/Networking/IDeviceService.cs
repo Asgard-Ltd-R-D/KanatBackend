@@ -1,7 +1,7 @@
 
 using PacketProcessing.DTOs.Packet;
 
-namespace PacketProcessing.Services.Networking;
+namespace PacketProcessing.Services.Realtime.Networking;
 
 /// <summary>
 /// Event for a raw packet from a device

@@ -91,7 +91,7 @@ namespace PacketProcessing.Utils.Parsers
             IsCmd = true,
             Name = dataPipeName,
             OpCode = $"0x{doVal:X4}", // HEX value of DO
-            OpCodeDescription = doDescr, // Description of DO
+            Description = doDescr, // Description of DO
             State = stDescr
         };
     }

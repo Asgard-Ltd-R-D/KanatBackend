@@ -68,9 +68,9 @@ public class TransmissionService : ITransmissionService
             // Find all matching stream requests
             var matchingStreams = _registeredStreams.Values
                 .Where(stream => stream.MatchesPacket(packet))
-                .ToList();
+                .FirstOrDefault();
 
-            if (matchingStreams.Count == 0)
+            if (matchingStreams == null)
                 return;
 
             // Convert packet to PlainDataDto
@@ -82,28 +82,17 @@ public class TransmissionService : ITransmissionService
             }
 
             // Send to SignalR for each matching stream
-            foreach (var stream in matchingStreams)
-            {
-                var data = new PlainDataDto
-                {
-                    Timestamp = plainData.Timestamp,
-                    Value = plainData.Value,
-                    DataPipe = stream.DataPipe,
-                    MethodName = packet.Description
-                };
+            var methodName = matchingStreams.IsPlayback 
+                ? Constants.PLAYBACK_METHOD_NAME 
+                : Constants.REALTIME_METHOD_NAME;
 
-                var methodName = stream.IsPlayback 
-                    ? Constants.PLAYBACK_METHOD_NAME 
-                    : Constants.REALTIME_METHOD_NAME;
+            await SendToClientsAsync(methodName, plainData);
 
-                await SendToClientsAsync(methodName, data);
-
-                _logger.LogDebug(
-                    "Transmitted {Mode} packet: {DataPipe}.{Method} at {Timestamp}",
-                    stream.IsPlayback ? "Playback" : "Realtime",
-                    data.DataPipe, data.MethodName, data.Timestamp);
-            }
-        }
+            _logger.LogDebug(
+                "Transmitted {Mode} packet: {DataPipe}.{Method} at {Timestamp}",
+                matchingStreams.IsPlayback ? "Playback" : "Realtime",
+                plainData.DataPipe, plainData.MethodName, plainData.Timestamp);
+    }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing packet");

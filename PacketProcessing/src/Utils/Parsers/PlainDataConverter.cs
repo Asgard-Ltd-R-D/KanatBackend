@@ -36,20 +36,26 @@ public static class PlainDataConverter
             return new PlainDataDto
             {
                 Timestamp = motion.Timestamp,
-                Value = motion.Value.Value
+                Value = motion.Value.Value,
+                DataPipe = Enums.DataPipes.Motion,
+                MethodName = motion.Description
             };
         // Applicable for Motion Commands that have no float value
         if (motion.IsCmd)
             return new PlainDataDto
             {
                 Timestamp = motion.Timestamp,
-                Value = 1d
+                Value = 1d,
+                DataPipe = Enums.DataPipes.Motion,
+                MethodName = motion.Description
             };
         // Damaged packet
         return new PlainDataDto
         {
             Timestamp = motion.Timestamp,
-            Value = motion.Value ?? -1d
+            Value = motion.Value ?? -1d,
+            DataPipe = Enums.DataPipes.Motion,
+            MethodName = motion.Description
         };
     }
 
@@ -70,7 +76,9 @@ public static class PlainDataConverter
                 "PULSE" => 2d,
                 "BURST" => 3d,
                 _ => -1d
-            }
+            },
+            DataPipe = Enums.DataPipes.Safety,
+            MethodName = safety.Description
         };
     }
 
@@ -86,31 +94,41 @@ public static class PlainDataConverter
                 return new PlainDataDto
                 {
                     Timestamp = onvif.Timestamp,
-                    Value = 1.0d
+                    Value = 1.0d,
+                    DataPipe = Enums.DataPipes.Onvif,
+                    MethodName = onvif.Description
                 };
             case Constants.Constants.ONVIF_FOV_STS:
                 return new PlainDataDto
                 {
                     Timestamp = onvif.Timestamp,
-                    Value = onvif.Zoom ?? -1.0d
+                    Value = onvif.Zoom ?? -1.0d,
+                    DataPipe = Enums.DataPipes.Onvif,
+                    MethodName = onvif.Description
                 };
             case Constants.Constants.ONVIF_LRF_REQ:
                 return new PlainDataDto
                 {
                     Timestamp = onvif.Timestamp,
-                    Value = 1.0d
+                    Value = 1.0d,
+                    DataPipe = Enums.DataPipes.Onvif,
+                    MethodName = onvif.Description
                 };
             case Constants.Constants.ONVIF_LRF_STS:
                 return new PlainDataDto
                 {
                     Timestamp = onvif.Timestamp,
-                    Value = onvif.Measurement ?? -1.0d
+                    Value = onvif.Measurement ?? -1.0d,
+                    DataPipe = Enums.DataPipes.Onvif,
+                    MethodName = onvif.Description
                 };
         }
         return new PlainDataDto
         {
             Timestamp = onvif.Timestamp,
-            Value = -1.0d
+            Value = -1.0d,
+            DataPipe = Enums.DataPipes.Onvif,
+            MethodName = onvif.Description
         };
     }
 }

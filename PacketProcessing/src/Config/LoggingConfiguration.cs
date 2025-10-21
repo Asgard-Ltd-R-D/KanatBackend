@@ -8,7 +8,7 @@ public class LoggingConfiguration
     public static void ConfigureLogging(WebApplicationBuilder builder)
     {
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
+            .ReadFrom.Configuration(builder.Configuration)
             .WriteTo.Console()
             .WriteTo.File(
                 $"logs/packet-processing-{DateTime.UtcNow:yyyy-MM-dd}.txt",

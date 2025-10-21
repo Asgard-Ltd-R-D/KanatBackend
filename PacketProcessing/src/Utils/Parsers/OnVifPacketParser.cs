@@ -13,24 +13,24 @@ namespace PacketProcessing.Utils.Parsers
     /// Extracts: IsCmd, Description (CMD/RPT verb), Zoom (0.xxx for DAY/IR), Measurement (LRF or -1000 on error).
     /// Works directly on a captured TCP payload that includes HTTP headers + SOAP body.
     /// </summary>
-    public static class OnVifPacketParser
+    public class OnVifPacketParser
     {
-        private static ILogger? _logger;
-        public static void SetLogger(ILogger logger)
+        private readonly ILogger<OnVifPacketParser> _logger;
+        public OnVifPacketParser(ILogger<OnVifPacketParser> logger)
         {
             _logger = logger;
         }
 
-        private static readonly StreamReassembler _streamReassembler = new();
+        private readonly StreamReassembler _streamReassembler = new();
 
-        private static readonly HashSet<string> DayIRTokens = new(StringComparer.OrdinalIgnoreCase) { Constants.Constants.ONVIF_XML_DAY, Constants.Constants.ONVIF_XML_NIGHT};
+        private readonly HashSet<string> DayIRTokens = new(StringComparer.OrdinalIgnoreCase) { Constants.Constants.ONVIF_XML_DAY, Constants.Constants.ONVIF_XML_NIGHT};
 
         /// <summary>
         /// Parses a single ONVIF HTTP SOAP message from a raw packet (Ethernet frame).
         /// Handles TCP stream reassembly for fragmented HTTP messages.
         /// Returns null if the buffer doesn't look like an ONVIF SOAP request/response.
         /// </summary>
-        public static OnVIFPacketEntity? Parse(ReadOnlySpan<byte> rawPacket)
+        public OnVIFPacketEntity? Parse(ReadOnlySpan<byte> rawPacket)
         {
             try{
 
@@ -45,7 +45,7 @@ namespace PacketProcessing.Utils.Parsers
                 var data = tcpSection.PayloadData;
 
                 if (data.Length==0){
-                    _logger?.LogDebug("OnVIF packet is too short to contain any data");
+                    _logger.LogDebug("OnVIF packet is too short to contain any data");
                     return null;
                 }
 
@@ -54,7 +54,7 @@ namespace PacketProcessing.Utils.Parsers
                 string? body = _streamReassembler.TryReassembleXml(ipSrc, tcpSrc, ipDst, tcpDst);
 
                 if (body==null){
-                    _logger?.LogDebug("OnVIF packet is not completed yet, waiting for more packets");
+                    _logger.LogDebug("OnVIF packet is not completed yet, waiting for more packets");
                     throw new ParserStreamNotCompletedException("OnVIF packet is not completed yet");
                 }
                 // On this point onwards is guaranteed that the string is structured as an XML document
@@ -131,14 +131,14 @@ namespace PacketProcessing.Utils.Parsers
             }
             catch (Exception ex)
             {
-                if (_logger?.IsEnabled(LogLevel.Debug) ?? false)
+                if (_logger.IsEnabled(LogLevel.Debug))
                     _logger.LogDebug(ex, "Error parsing motion packet. Length: {Length} bytes", rawPacket.Length);
                 return null;
             }
         }
 
         // Try to extract <ProfileToken>day</ProfileToken> value (string) if present.
-        private static bool TryExtractProfileToken(XDocument soapBody, out string token)
+        private bool TryExtractProfileToken(XDocument soapBody, out string token)
         {
             token = string.Empty;
             var profileToken = soapBody.Descendants().FirstOrDefault(e => e.Name.LocalName == "ProfileToken");
@@ -148,7 +148,7 @@ namespace PacketProcessing.Utils.Parsers
         }
 
         // Try to extract <tt:Zoom x="0.123" ...> value (float) if present.
-        private static bool TryExtractZoomX(XDocument xmlBody, out double value)
+        private bool TryExtractZoomX(XDocument xmlBody, out double value)
         {
             value = default;
             var zoom = xmlBody.Descendants().FirstOrDefault(e => e.Name.LocalName == "Zoom");
@@ -159,7 +159,7 @@ namespace PacketProcessing.Utils.Parsers
         }
 
         // Try to extract <Measurement ...> value (float) if present.
-        private static bool TryExtractMeasurement(XDocument xmlBody, out double value)
+        private bool TryExtractMeasurement(XDocument xmlBody, out double value)
         {
             value = default;
             var measurement = xmlBody.Descendants().FirstOrDefault(e => e.Name.LocalName == "Measurement");
@@ -177,7 +177,7 @@ namespace PacketProcessing.Utils.Parsers
         }
 
         // Try to extract <tt:Power ...> value (string) if present.
-        private static bool TryExtractGetPower(XDocument xmlBody, out string value)
+        private bool TryExtractGetPower(XDocument xmlBody, out string value)
         {
             value = string.Empty;
             var power = xmlBody.Descendants().FirstOrDefault(e => e.Name.LocalName == "Power");

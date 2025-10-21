@@ -7,10 +7,8 @@ using PacketProcessing.Utils.Parsers;
 using PacketProcessing.Utils.Filters;
 using System.Runtime.InteropServices;
 using System.Buffers;
-using System.Collections.Concurrent;
 using PacketProcessing.Utils.Observers;
 using PacketProcessing.Services.Transmission;
-using PacketProcessing.DTOs.Stream;
 namespace PacketProcessing.Services.Realtime.Networking;
 
 public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserver<RawPacketEvent>, IObservable<BasePacketEntity>
@@ -32,7 +30,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     
     // Hub transmission
     private readonly TimeSpan _transmissionInterval;
-    private DateTime _lastTransmissionTime;
 
     // Stats
     private long _packetsCaptured;
@@ -50,16 +47,20 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
     private IDisposable? _subscription;
 
+    private readonly ParseMapper _parseMapper;
+
     public HandlerService(
         string dataPipeName,
         ITransmissionService transmissionService,
         ILogger<HandlerService<T>> logger,
         Channel<T> parsedChannel,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ParseMapper parseMapper)
     {
         _logger = logger;
         _parsedChannel = parsedChannel;
         _transmissionService = transmissionService;
+        _parseMapper = parseMapper;
         
         // bounded channel for raw events with increased capacity
         // Wait mode ensures no packets are dropped (capture may block if processing too slow)
@@ -81,7 +82,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         // Hub transmission configuration
         _transmissionInterval = TimeSpan.FromMilliseconds(
             configuration.GetValue<int>("HubTransmission:IntervalMs", 30));
-        _lastTransmissionTime = DateTime.UtcNow;
 
         _logger.LogInformation(
             "[HANDLER-SERVICE] {Handler} initialized with {Workers} workers (RawChannelCapacity:500K, ParsedChannelCapacity:{ParsedCap}, every {IntervalMs}ms",
@@ -313,10 +313,10 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
     #endregion
 
-    private static T? Parse(ReadOnlySpan<byte> raw)
+    private T? Parse(ReadOnlySpan<byte> raw)
     {
         if (raw.IsEmpty) return null;
-        try { return ParseMapper.Map<T>(raw); }
+        try { return _parseMapper.Map<T>(raw); }
         catch { return null; }
     }
 

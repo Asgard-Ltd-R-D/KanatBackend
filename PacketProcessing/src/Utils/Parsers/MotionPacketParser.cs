@@ -9,12 +9,11 @@ namespace PacketProcessing.Utils.Parsers;
 /// <summary>
 /// Parser for Motion packets using TCP/CapTrack protocol
 /// </summary>
-public static class MotionPacketParser
+public class MotionPacketParser
 {
-    private static ILogger? _logger;
+    private readonly ILogger<MotionPacketParser> _logger;
 
-   
-    public static void SetLogger(ILogger logger)
+    public MotionPacketParser(ILogger<MotionPacketParser> logger)
     {
         _logger = logger;
     }
@@ -32,14 +31,14 @@ public static class MotionPacketParser
     /// </summary>
     /// <param name="rawPacket">Raw packet bytes</param>
     /// <returns>Parsed MotionPacketEntity or null if parsing fails</returns>
-    public static MotionPacketEntity? Parse(ReadOnlySpan<byte> rawPacket)
+    public MotionPacketEntity? Parse(ReadOnlySpan<byte> rawPacket)
     {
         try
         {
             // --- Check if the packet is long enough to contain an Ethernet + IP + TCP/CapTrack Data Payload ---
             if (rawPacket.Length < 54)
             {
-                _logger?.LogWarning("Packet too short to contain an Ethernet + IP + TCP/CapTrack Data Payload. Raw Packet Length: {RawPacketLength}", rawPacket.Length);
+                _logger.LogWarning("Packet too short to contain an Ethernet + IP + TCP/CapTrack Data Payload. Raw Packet Length: {RawPacketLength}", rawPacket.Length);
                 return null;
             }
 
@@ -69,7 +68,7 @@ public static class MotionPacketParser
             int tcpPayloadStart = tcpStart + tcpHeaderLen;
             if (tcpPayloadStart >= rawPacket.Length)
             {
-                _logger?.LogDebug("No TCP payload (start={Start}, total={Total})", tcpPayloadStart, rawPacket.Length);
+                _logger.LogDebug("No TCP payload (start={Start}, total={Total})", tcpPayloadStart, rawPacket.Length);
                 return null;
             }
 
@@ -77,11 +76,11 @@ public static class MotionPacketParser
             ReadOnlySpan<byte> tcpPayload = rawPacket[tcpPayloadStart..];
 
             int payloadLen = tcpPayload.Length;
-            _logger?.LogDebug("TCP payload starts at {TcpPayloadStart}, length = {PayloadLen} bytes", tcpPayloadStart, payloadLen);
+            _logger.LogDebug("TCP payload starts at {TcpPayloadStart}, length = {PayloadLen} bytes", tcpPayloadStart, payloadLen);
 
             if (payloadLen < 7)
             {
-                _logger?.LogDebug("Payload too small ({Len} bytes), dropping packet", payloadLen);
+                _logger.LogDebug("Payload too small ({Len} bytes), dropping packet", payloadLen);
                 return null;
             }
 
@@ -105,18 +104,18 @@ public static class MotionPacketParser
             var opDesc = MotionCommands.MotionRecords.TryGetValue(opCode, out var desc) ? desc.OpCodeDescription : null;
             if (opDesc == null)
             {
-                _logger?.LogDebug("Unknown opcode: {opCode}, dropping packet", opCode);
+                _logger.LogDebug("Unknown opcode: {opCode}, dropping packet", opCode);
                 return null;
             }
             double? value = DecodeValue(captureData, opCode, !isReport);
 
             if (value.HasValue)
             {
-                _logger?.LogDebug("Parsed Motion Packet → Axis: {Axis}, Opcode: {opCode} ({opDesc}), Value: {Value}, IsCmd: {IsCmd}", axisId, opCode, opDesc, value, !isReport);
+                _logger.LogDebug("Parsed Motion Packet → Axis: {Axis}, Opcode: {opCode} ({opDesc}), Value: {Value}, IsCmd: {IsCmd}", axisId, opCode, opDesc, value, !isReport);
             }
             else
             {
-                _logger?.LogDebug("Parsed Motion Packet → Axis: {Axis}, Opcode: {opCode} ({opDesc}), IsCmd: {IsCmd}, has no value, dropping packet", axisId, opCode, opDesc, !isReport);
+                _logger.LogDebug("Parsed Motion Packet → Axis: {Axis}, Opcode: {opCode} ({opDesc}), IsCmd: {IsCmd}, has no value, dropping packet", axisId, opCode, opDesc, !isReport);
                 return null;
             }
 
@@ -133,12 +132,12 @@ public static class MotionPacketParser
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Error parsing motion packet. Exception: {ExceptionMessage}, Length: {Length} bytes, dropping packet", ex.Message, rawPacket.Length);
+            _logger.LogError(ex, "Error parsing motion packet. Exception: {ExceptionMessage}, Length: {Length} bytes, dropping packet", ex.Message, rawPacket.Length);
             return null;
         }
     }
 
-    private static double DecodeValue(ReadOnlySpan<byte> rawPacket, int opCode, bool isCmd)
+    private double DecodeValue(ReadOnlySpan<byte> rawPacket, int opCode, bool isCmd)
     {       
         if (MotionCommands.MotionRecords.TryGetValue(opCode, out var motionRecord))
         {

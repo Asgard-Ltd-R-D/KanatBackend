@@ -1,6 +1,7 @@
 using PacketProcessing.DTOs.Data;
 using PacketProcessing.Entities;
 using PacketProcessing.Entities.Packet;
+using PacketProcessing.Utils.Enums;
 
 namespace PacketProcessing.Utils.Parsers;
 
@@ -37,7 +38,7 @@ public static class PlainDataConverter
             {
                 Timestamp = motion.Timestamp,
                 Value = motion.Value.Value,
-                DataPipe = Enums.DataPipes.Motion,
+                DataPipe = DataPipes.Motion,
                 MethodName = motion.Description
             };
         // Applicable for Motion Commands that have no float value
@@ -46,7 +47,7 @@ public static class PlainDataConverter
             {
                 Timestamp = motion.Timestamp,
                 Value = 1d,
-                DataPipe = Enums.DataPipes.Motion,
+                DataPipe = DataPipes.Motion,
                 MethodName = motion.Description
             };
         // Damaged packet
@@ -54,7 +55,7 @@ public static class PlainDataConverter
         {
             Timestamp = motion.Timestamp,
             Value = motion.Value ?? -1d,
-            DataPipe = Enums.DataPipes.Motion,
+            DataPipe = DataPipes.Motion,
             MethodName = motion.Description
         };
     }
@@ -77,7 +78,7 @@ public static class PlainDataConverter
                 "BURST" => 3d,
                 _ => -1d
             },
-            DataPipe = Enums.DataPipes.Safety,
+            DataPipe = DataPipes.Safety,
             MethodName = safety.Description
         };
     }
@@ -95,7 +96,7 @@ public static class PlainDataConverter
                 {
                     Timestamp = onvif.Timestamp,
                     Value = 1.0d,
-                    DataPipe = Enums.DataPipes.Onvif,
+                    DataPipe = DataPipes.OnVIF,
                     MethodName = onvif.Description
                 };
             case Constants.Constants.ONVIF_FOV_STS:
@@ -103,7 +104,7 @@ public static class PlainDataConverter
                 {
                     Timestamp = onvif.Timestamp,
                     Value = onvif.Zoom ?? -1.0d,
-                    DataPipe = Enums.DataPipes.Onvif,
+                    DataPipe = DataPipes.OnVIF,
                     MethodName = onvif.Description
                 };
             case Constants.Constants.ONVIF_LRF_REQ:
@@ -111,7 +112,7 @@ public static class PlainDataConverter
                 {
                     Timestamp = onvif.Timestamp,
                     Value = 1.0d,
-                    DataPipe = Enums.DataPipes.Onvif,
+                    DataPipe = DataPipes.OnVIF,
                     MethodName = onvif.Description
                 };
             case Constants.Constants.ONVIF_LRF_STS:
@@ -119,7 +120,7 @@ public static class PlainDataConverter
                 {
                     Timestamp = onvif.Timestamp,
                     Value = onvif.Measurement ?? -1.0d,
-                    DataPipe = Enums.DataPipes.Onvif,
+                    DataPipe = DataPipes.OnVIF,
                     MethodName = onvif.Description
                 };
         }
@@ -127,7 +128,7 @@ public static class PlainDataConverter
         {
             Timestamp = onvif.Timestamp,
             Value = -1.0d,
-            DataPipe = Enums.DataPipes.Onvif,
+            DataPipe = DataPipes.OnVIF,
             MethodName = onvif.Description
         };
     }

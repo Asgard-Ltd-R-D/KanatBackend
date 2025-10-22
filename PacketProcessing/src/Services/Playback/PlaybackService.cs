@@ -48,7 +48,7 @@ public class PlaybackService : IPlaybackService, IObservable<BasePacketEntity>
     /// Note: StreamRequest should be registered to TransmissionService BEFORE calling this method
     /// This method only fetches packets and sends them to TransmissionService.OnNext()
     /// </summary>
-    public Task StartPlaybackAsync(StreamRequest request)
+    public Task StartPlaybackAsync(StreamRequestDto request)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -61,17 +61,17 @@ public class PlaybackService : IPlaybackService, IObservable<BasePacketEntity>
         }
 
         // Validate playback request has required fields
-        if (!request.StartTimestamp.HasValue || !request.EndTimestamp.HasValue)
-        {
-            throw new ArgumentException("Playback request must have StartTimestamp and EndTimestamp");
-        }
+        // if (!request.StartTimestamp.HasValue || !request.EndTimestamp.HasValue)
+        // {
+        //     throw new ArgumentException("Playback request must have StartTimestamp and EndTimestamp");
+        // }
 
         // Start playback task - fetches packets and sends them to TransmissionService
         var cts = new CancellationTokenSource();
         var task = request.DataPipe switch
         {
             DataPipes.Motion => PlaybackDataAsync<MotionPacketEntity>(request, cts.Token),
-            DataPipes.Onvif => PlaybackDataAsync<OnVIFPacketEntity>(request, cts.Token),
+            DataPipes.OnVIF => PlaybackDataAsync<OnVIFPacketEntity>(request, cts.Token),
             DataPipes.Safety => PlaybackDataAsync<SafetyPacketEntity>(request, cts.Token),
             _ => throw new ArgumentException($"Unsupported DataPipe: {request.DataPipe}")
         };
@@ -79,14 +79,14 @@ public class PlaybackService : IPlaybackService, IObservable<BasePacketEntity>
         var state = new PlaybackState(request, cts, task);
         _activePlaybacks.TryAdd(key, state);
         
-        _logger.LogInformation(
-            "Playback started: {DataPipe}.{Method} [{Start} to {End}]",
-            request.DataPipe, request.MethodName, request.StartTimestamp, request.EndTimestamp);
+        // _logger.LogInformation(
+        //     "Playback started: {DataPipe}.{Method} [{Start} to {End}]",
+        //     request.DataPipe, request.Description, request.StartTimestamp, request.EndTimestamp);
 
         return Task.CompletedTask;
     }
 
-    public async Task StopPlaybackAsync(StreamRequest request)
+    public async Task StopPlaybackAsync(StreamRequestDto request)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -131,7 +131,7 @@ public class PlaybackService : IPlaybackService, IObservable<BasePacketEntity>
         _logger.LogInformation("All playbacks stopped");
     }
 
-    public ICollection<StreamRequest> GetActivePlaybacks()
+    public ICollection<StreamRequestDto> GetActivePlaybacks()
     {
         return [.. _activePlaybacks.Values.Select(s => s.Request)];
     }
@@ -140,63 +140,64 @@ public class PlaybackService : IPlaybackService, IObservable<BasePacketEntity>
 
     #region Private Helpers
 
-    private async Task PlaybackDataAsync<T>(StreamRequest request, CancellationToken ct) where T : BasePacketEntity
+    private async Task PlaybackDataAsync<T>(StreamRequestDto request, CancellationToken ct) where T : BasePacketEntity
     {
-        var repo = _repoFactory.Get<T>();
-        var current = request.StartTimestamp!.Value;
-        var endTimestamp = request.EndTimestamp!.Value;
+        await Task.CompletedTask;
+        // var repo = _repoFactory.Get<T>();
+        // var current = request.StartTimestamp!.Value;
+        // var endTimestamp = request.EndTimestamp!.Value;
         
-        _logger.LogInformation(
-            "Starting playback fetch: {DataPipe}.{Method} [{Start} to {End}]",
-            request.DataPipe, request.MethodName, current, endTimestamp);
+        // _logger.LogInformation(
+        //     "Starting playback fetch: {DataPipe}.{Method} [{Start} to {End}]",
+        //     request.DataPipe, request.Description, current, endTimestamp);
 
-        try
-        {
-            while (!ct.IsCancellationRequested && current < endTimestamp)
-            {
-                var next = current.AddMilliseconds(request.IntervalMs);
-                if (next > endTimestamp) next = endTimestamp;
+        // try
+        // {
+        //     while (!ct.IsCancellationRequested && current < endTimestamp)
+        //     {
+        //         var next = current.AddMilliseconds(request.IntervalMs);
+        //         if (next > endTimestamp) next = endTimestamp;
 
-                // Fetch packets from database
-                var packets = await repo.GetPaginatedFromQuestDbAsyncWithInterval(
-                    current, next, request.IntervalMs, OrderBy.Asc, 1, 1000);
+        //         // Fetch packets from database
+        //         var packets = await repo.GetPaginatedFromQuestDbAsyncWithInterval(
+        //             current, next, request.IntervalMs, OrderBy.Asc, 1, 1000);
 
-                // Send each packet to TransmissionService
-                foreach (var packet in packets)
-                {
-                    if (ct.IsCancellationRequested) break;
+        //         // Send each packet to TransmissionService
+        //         foreach (var packet in packets)
+        //         {
+        //             if (ct.IsCancellationRequested) break;
                     
-                    // Send to appropriate observer method based on type
-                    _transmissionService?.OnNext(packet);
-                }
+        //             // Send to appropriate observer method based on type
+        //             _transmissionService?.OnNext(packet);
+        //         }
 
-                _logger.LogDebug(
-                    "Fetched and sent {Count} packets [{DataPipe}.{Method}]",
-                    packets.Count(), request.DataPipe, request.MethodName);
+        //         _logger.LogDebug(
+        //             "Fetched and sent {Count} packets [{DataPipe}.{Method}]",
+        //             packets.Count(), request.DataPipe, request.Description);
 
-                current = next;
-                if (current < endTimestamp && !ct.IsCancellationRequested)
-                    await Task.Delay(request.IntervalMs, ct);
-            }
+        //         current = next;
+        //         if (current < endTimestamp && !ct.IsCancellationRequested)
+        //             await Task.Delay(request.IntervalMs, ct);
+        //     }
             
-            _logger.LogInformation(
-                "Playback fetch completed: {DataPipe}.{Method}",
-                request.DataPipe, request.MethodName);
-        }
-        catch (OperationCanceledException)
-        {
-            _logger.LogInformation(
-                "Playback fetch cancelled: {DataPipe}.{Method}",
-                request.DataPipe, request.MethodName);
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex,
-                "Playback fetch error: {DataPipe}.{Method}",
-                request.DataPipe, request.MethodName);
-            throw;
-        }
+        //     _logger.LogInformation(
+        //         "Playback fetch completed: {DataPipe}.{Method}",
+        //         request.DataPipe, request.Description);
+        // }
+        // catch (OperationCanceledException)
+        // {
+        //     _logger.LogInformation(
+        //         "Playback fetch cancelled: {DataPipe}.{Method}",
+        //         request.DataPipe, request.Description);
+        //     throw;
+        // }
+        // catch (Exception ex)
+        // {
+        //     _logger.LogError(ex,
+        //         "Playback fetch error: {DataPipe}.{Method}",
+        //         request.DataPipe, request.Description);
+        //     throw;
+        // }
     }
 
     public IDisposable Subscribe(IObserver<BasePacketEntity> observer)
@@ -212,7 +213,7 @@ public class PlaybackService : IPlaybackService, IObservable<BasePacketEntity>
 /// State of an active playback stream
 /// </summary>
 internal sealed record PlaybackState(
-    StreamRequest Request,
+    StreamRequestDto Request,
     CancellationTokenSource Cts,
     Task Task
 );

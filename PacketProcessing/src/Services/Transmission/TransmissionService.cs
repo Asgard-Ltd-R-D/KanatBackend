@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using PacketProcessing.DTOs.Data;
 using PacketProcessing.DTOs.Stream;
 using PacketProcessing.Entities;
-using PacketProcessing.Entities.Packet;
 using PacketProcessing.Hubs;
 using PacketProcessing.Utils.Constants;
 using PacketProcessing.Utils.Parsers;
@@ -20,15 +19,15 @@ public class TransmissionService : ITransmissionService
     #region Fields
 
     private readonly ILogger<TransmissionService> _logger;
-    private readonly IHubContext<HubContext> _hubContext;
+    private readonly IHubContext<CustomHub> _hubContext;
+    private readonly ConcurrentDictionary<string, string> _streamKeyToConnectionIdDict = new();
 
-    private readonly ConcurrentDictionary<string, StreamRequest> _registeredStreams = new();
 
     #endregion
 
     #region Constructor
     
-    public TransmissionService(ILogger<TransmissionService> logger, IHubContext<HubContext> hubContext)
+    public TransmissionService(ILogger<TransmissionService> logger, IHubContext<CustomHub> hubContext)
     {
         _logger = logger;
         _hubContext = hubContext;
@@ -38,40 +37,66 @@ public class TransmissionService : ITransmissionService
 
     #region Public API
 
-    public Task RegisterStreamAsync(StreamRequest request)
+    public async Task RegisterStreamAsync(StreamRequestDto request, string connectionId)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(connectionId);
+
+        var key = request.SubscriptionKey;
+
+        if (_streamKeyToConnectionIdDict.TryAdd(key, connectionId))
+        {
+            _logger.LogInformation(
+                "Client {ConnectionId} registered on stream {Key}",
+                connectionId, key);
+        }
+        else
+        {
+            _logger.LogInformation("Client {ConnectionId} already registered on stream {Key}, ignoring registration", connectionId, key);
+        }
+        await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, request);
+
+        _logger.LogInformation("Sent ack to client {ConnectionId} for stream registration: {Key}", connectionId, key);
+
+    }
+    
+    public async Task DeregisterStreamAsync(StreamRequestDto request)
     {
         ArgumentNullException.ThrowIfNull(request);
 
         var key = request.SubscriptionKey;
-
-        if (_registeredStreams.TryAdd(key, request))
+        var toBeRemovedConnectionId = _streamKeyToConnectionIdDict.TryGetValue(key, out var connectionId) ? connectionId : null;
+        if (toBeRemovedConnectionId == null)
         {
-            var mode = request.IsPlayback ? "Playback" : "Realtime";
-            _logger.LogInformation(
-                "{Mode} stream registered: {Key} [{DataPipe}.{Method}]",
-                mode, key, request.DataPipe, request.MethodName);
+            _logger.LogWarning("Stream not found for deregistration: {Key}, ignoring deregistration", key);
+            return;
+        }
+
+        if (_streamKeyToConnectionIdDict.TryRemove(key, out _))
+        {
+            _logger.LogInformation("Client {ConnectionId} unregistered from stream {Key}", toBeRemovedConnectionId, key);
         }
         else
         {
-            _logger.LogWarning("Stream already registered: {Key}", key);
+            _logger.LogWarning("Client {ConnectionId} not found for deregistration: {Key}, ignoring deregistration", toBeRemovedConnectionId, key);
         }
 
-        return Task.CompletedTask;
+        await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, request);
+
+        _logger.LogInformation("Sent ack to client {ConnectionId} for stream deregistration: {Key}", toBeRemovedConnectionId, key);
     }
 
-        #region Private Helpers
+    #region Private Helpers
 
-    private async Task ProcessPacketAsync(BasePacketEntity packet)
+    private async Task DecideToTransmitAsync(BasePacketEntity packet)
     {
         try
         {
-            // Find all matching stream requests
-            var matchingStreams = _registeredStreams.Values
-                .Where(stream => stream.MatchesPacket(packet))
-                .FirstOrDefault();
-
-            if (matchingStreams == null)
+            // Find the connection ID for the packet, if doesn't exist it means that the packet is not registered for any connection
+            var existingConnectionId = _streamKeyToConnectionIdDict.TryGetValue(packet.GetSubscriptionKey(), out var connectionId) ? connectionId : null;
+            if (existingConnectionId == null)
                 return;
+
 
             // Convert packet to PlainDataDto
             var plainData = PlainDataConverter.Convert(packet);
@@ -80,30 +105,24 @@ public class TransmissionService : ITransmissionService
                 _logger.LogWarning("Failed to convert packet to PlainData");
                 return;
             }
-
-            // Send to SignalR for each matching stream
-            var methodName = matchingStreams.IsPlayback 
-                ? Constants.PLAYBACK_METHOD_NAME 
-                : Constants.REALTIME_METHOD_NAME;
-
-            await SendToClientsAsync(methodName, plainData);
+            await SendToClientPacketAsync(existingConnectionId, Constants.SIGNALR_ON_RECEIVE_PACKET, plainData);
 
             _logger.LogDebug(
-                "Transmitted {Mode} packet: {DataPipe}.{Method} at {Timestamp}",
-                matchingStreams.IsPlayback ? "Playback" : "Realtime",
+                "Transmitted packet to client {ConnectionId}: {DataPipe}.{Method} at {Timestamp}",
+                existingConnectionId,
                 plainData.DataPipe, plainData.MethodName, plainData.Timestamp);
     }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing packet");
+            _logger.LogError(ex, "Error Transmitting packet");
         }
     }
 
-    private async Task SendToClientsAsync(string methodName, PlainDataDto data)
+    private async Task SendToClientPacketAsync(string connectionId, string methodName, PlainDataDto data)
     {
         try
         {
-            await _hubContext.Clients.All.SendAsync(methodName, data);
+            await _hubContext.Clients.Client(connectionId).SendAsync(methodName, data);
         }
         catch (Exception ex)
         {
@@ -113,35 +132,24 @@ public class TransmissionService : ITransmissionService
 
     #endregion
 
-    public Task UnregisterStreamAsync(StreamRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var key = request.SubscriptionKey;
-
-        if (_registeredStreams.TryRemove(key, out _))
-        {
-            _logger.LogInformation("Stream unregistered: {Key}", key);
-        }
-        else
-        {
-            _logger.LogWarning("Stream not found for unregistration: {Key}", key);
-        }
-
-        return Task.CompletedTask;
-    }
-
     public Task UnregisterAllStreamsAsync()
     {
-        var count = _registeredStreams.Count;
-        _registeredStreams.Clear();
-        _logger.LogInformation("All streams unregistered ({Count} total)", count);
+        var count = _streamKeyToConnectionIdDict.Count;
+        _streamKeyToConnectionIdDict.Clear();
+        _logger.LogInformation("All clients unregistered from all streams ({Count} total)", count);
         return Task.CompletedTask;
     }
 
-    public ICollection<StreamRequest> GetRegisteredStreams()
+    public Task DeregisterFromAllStreamsAsync(string connectionId)
     {
-        return [.. _registeredStreams.Values];
+        _streamKeyToConnectionIdDict.Where(kvp => kvp.Value == connectionId).ToList().ForEach(kvp => _streamKeyToConnectionIdDict.TryRemove(kvp.Key, out _));
+        _logger.LogInformation("Client {ConnectionId} unregistered from all streams", connectionId);
+        return Task.CompletedTask;
+    }
+
+    public ICollection<StreamRequestDto> GetRegisteredStreams()
+    {
+        throw new NotImplementedException();
     }
 
     #endregion
@@ -149,13 +157,14 @@ public class TransmissionService : ITransmissionService
     #region IObserver Implementations
 
     public void OnNext(BasePacketEntity packet)
-        => ProcessPacketAsync(packet).GetAwaiter().GetResult();
+        => DecideToTransmitAsync(packet).GetAwaiter().GetResult();
 
     public void OnError(Exception error)
         => _logger.LogError(error, "Error in packet stream");
 
     public void OnCompleted()
         => _logger.LogInformation("Packet stream completed");
+
 
     #endregion
 }

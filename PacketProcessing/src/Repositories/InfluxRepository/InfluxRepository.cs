@@ -345,15 +345,17 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
         }
     }
 
-    public async Task ClearPacketsByRangeAsync(long start, long end)
+    public async Task ClearPacketsByRangeAsync(DateTime start, DateTime end)
     {
         try
         {
             var table = QuestDbContext.GetTableName<T>();
             var sql = $"DELETE FROM {table} WHERE timestamp >= @start AND timestamp <= @end";
+
             await using var conn = await _questDb.OpenPgAsync();
+            
             await conn.ExecuteAsync(sql, new { start = start, end = end });
-            _logger.LogInformation("Successfully cleared packets of type {EntityType} from QuestDB between {Start} and {End}", typeof(T).Name, start, end);
+            _logger.LogInformation("Successfully cleared packets of type {EntityType} from QuestDB between {Start:u} and {End:u}", typeof(T).Name, start, end);
         }
         catch (Exception ex)
         {

@@ -249,18 +249,22 @@ public class RangeService : IRangeService
         }
     }
 
-    public async Task<bool> ClearPacketsAsync(long start, long end)
+    public async Task<bool> ClearPacketsAsync(DateTime start, DateTime end)
     {
         try
         {
-            _logger.LogInformation("Clear packets requested for range {Start} to {End}", start, end);
+            // Normalize to UTC for QuestDB
+            var startUtc = start.Kind == DateTimeKind.Utc ? start : DateTime.SpecifyKind(start, DateTimeKind.Utc);
+            var endUtc = end.Kind == DateTimeKind.Utc ? end : DateTime.SpecifyKind(end, DateTimeKind.Utc);
+
+            _logger.LogInformation("Clear packets requested for range {Start:u} to {End:u}", startUtc, endUtc);
             
             var motionRepo = _influxFactory.Get<MotionPacketEntity>();
             var safetyRepo = _influxFactory.Get<SafetyPacketEntity>();
             var onvifRepo = _influxFactory.Get<OnVIFPacketEntity>();
-            await motionRepo.ClearPacketsByRangeAsync(start, end);
-            await safetyRepo.ClearPacketsByRangeAsync(start, end);
-            await onvifRepo.ClearPacketsByRangeAsync(start, end);
+            await motionRepo.ClearPacketsByRangeAsync(startUtc, endUtc);
+            await safetyRepo.ClearPacketsByRangeAsync(startUtc, endUtc);
+            await onvifRepo.ClearPacketsByRangeAsync(startUtc, endUtc);
             
             return true;
         }

@@ -80,5 +80,5 @@ public interface IInfluxRepository<T> where T : BasePacketEntity
     /// <param name="start">The start timestamp for the query range</param>
     /// <param name="end">The end timestamp for the query range</param>
     /// <returns>A task representing the asynchronous operation</returns>
-    Task ClearPacketsByRangeAsync(long start, long end);
+    Task ClearPacketsByRangeAsync(DateTime start, DateTime end);
 }

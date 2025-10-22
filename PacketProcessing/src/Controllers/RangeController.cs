@@ -479,10 +479,10 @@ public class RangeController : ControllerBase
     /// <summary>
     /// Clears packets within a time range (to be implemented in repository).
     /// </summary>
-    /// <param name="start">Start timestamp</param>
-    /// <param name="end">End timestamp</param>
+    /// <param name="start">Start timestamp (ISO-8601, assumed UTC if with 'Z')</param>
+    /// <param name="end">End timestamp (ISO-8601, assumed UTC if with 'Z')</param>
     [HttpDelete("packets/clear")]
-    public async Task<ActionResult<ResponseResult<string>>> ClearPacketsAsync([FromQuery] long start, [FromQuery] long end)
+    public async Task<ActionResult<ResponseResult<string>>> ClearPacketsAsync([FromQuery] DateTime start, [FromQuery] DateTime end)
     {
         try
         {
@@ -492,7 +492,7 @@ public class RangeController : ControllerBase
                 return BadRequest(ResponseResult<string>.ErrorResult("Failed to clear packets"));
             }
             
-            return Ok(ResponseResult<string>.SuccessResult("Packet clearing will be implemented in repository"));
+            return Ok(ResponseResult<string>.SuccessResult("Packets cleared for the requested time range"));
         }
         catch (Exception ex)
         {

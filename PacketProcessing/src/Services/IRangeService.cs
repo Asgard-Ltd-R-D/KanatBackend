@@ -82,6 +82,6 @@ public interface IRangeService
     /// <param name="start">Start timestamp</param>
     /// <param name="end">End timestamp</param>
     /// <returns>Result message</returns>
-    Task<bool> ClearPacketsAsync(long start, long end);
+    Task<bool> ClearPacketsAsync(DateTime start, DateTime end);
 }
 

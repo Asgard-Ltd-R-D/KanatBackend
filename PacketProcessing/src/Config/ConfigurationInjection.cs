@@ -106,15 +106,12 @@ public class ConfigurationInjection
             
             var handler = new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", transmissionService, logger, channel, cfg, parseMapper);
             
-            // Register real-time stream for this data pipe
-            transmissionService.RegisterStreamAsync(new DTOs.Stream.StreamRequest
-            {
-                DataPipe = Utils.Enums.DataPipes.Motion,
-                MethodName = "MotionStream"
-            }).Wait();
-            
             return handler;
         });
+        
+        // Register interface mapping for RealtimeService
+        builder.Services.AddSingleton<IHandlerService<MotionPacketEntity>>(sp => 
+            sp.GetRequiredService<HandlerService<MotionPacketEntity>>());
 
         builder.Services.AddSingleton<HandlerService<SafetyPacketEntity>>(sp =>
         {
@@ -125,15 +122,12 @@ public class ConfigurationInjection
             var parseMapper = sp.GetRequiredService<ParseMapper>();
             var handler = new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", transmissionService, logger, channel, cfg, parseMapper);
             
-            // Register real-time stream for this data pipe
-            transmissionService.RegisterStreamAsync(new DTOs.Stream.StreamRequest
-            {
-                DataPipe = Utils.Enums.DataPipes.Safety,
-                MethodName = "SafetyStream"
-            }).Wait();
-            
             return handler;
         });
+        
+        // Register interface mapping for RealtimeService
+        builder.Services.AddSingleton<IHandlerService<SafetyPacketEntity>>(sp => 
+            sp.GetRequiredService<HandlerService<SafetyPacketEntity>>());
 
         builder.Services.AddSingleton<HandlerService<OnVIFPacketEntity>>(sp =>
         {
@@ -145,15 +139,12 @@ public class ConfigurationInjection
             
             var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", transmissionService, logger, channel, cfg, parseMapper);
             
-            // Register real-time stream for this data pipe
-            transmissionService.RegisterStreamAsync(new DTOs.Stream.StreamRequest
-            {
-                DataPipe = Utils.Enums.DataPipes.Onvif,
-                MethodName = "OnvifStream"
-            }).Wait();
-            
             return handler;
         });
+        
+        // Register interface mapping for RealtimeService
+        builder.Services.AddSingleton<IHandlerService<OnVIFPacketEntity>>(sp => 
+            sp.GetRequiredService<HandlerService<OnVIFPacketEntity>>());
 
         // === Configuration ===
         builder.Services.Configure<QuestDbConfiguration>(config.GetSection("Database"));

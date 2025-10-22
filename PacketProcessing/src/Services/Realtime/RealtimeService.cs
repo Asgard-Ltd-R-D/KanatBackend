@@ -29,9 +29,9 @@ public class RealtimeService : IRealtimeService
         ILogger<RealtimeService> logger,
         IConfiguration config,
         IDeviceService deviceService,
-        HandlerService<MotionPacketEntity> motionHandler,
-        HandlerService<SafetyPacketEntity> safetyHandler,
-        HandlerService<OnVIFPacketEntity> onvifHandler,
+        IHandlerService<MotionPacketEntity> motionHandler,
+        IHandlerService<SafetyPacketEntity> safetyHandler,
+        IHandlerService<OnVIFPacketEntity> onvifHandler,
         IDbWriterService<MotionPacketEntity> motionWriter,
         IDbWriterService<SafetyPacketEntity> safetyWriter,
         IDbWriterService<OnVIFPacketEntity> onvifWriter)

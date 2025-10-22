@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using PacketProcessing.Utils.Enums;
 using QuestDB.Senders;
 
 namespace PacketProcessing.Entities.Packet;
@@ -27,5 +28,10 @@ public class SafetyPacketEntity : BasePacketEntity
         sender.Column("opCode", OpCode);
         sender.Column("description", Description);
         sender.Column("state", State);
+    }
+
+    public override string GetSubscriptionKey()
+    {
+        return $"{DataPipes.Safety}|{Description}|{IsCmd}".ToLower();
     }
 }

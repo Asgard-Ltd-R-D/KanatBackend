@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using PacketProcessing.Utils.Constants;
 using PacketProcessing.Utils.Enums;
 using QuestDB.Senders;
 

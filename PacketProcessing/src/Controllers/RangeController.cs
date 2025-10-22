@@ -39,37 +39,30 @@ public class RangeController : ControllerBase
     /// <summary>
     /// Changes the application mode between Realtime and Playback.
     /// </summary>
-    /// <param name="mode">The target mode (realtime or playback)</param>
+    /// <param name="mode">The target mode</param>
     [HttpPut("mode/{mode}")]
-    public ActionResult<ResponseResult> ChangeMode(string mode)
+    public ActionResult<ResponseResult> ChangeMode(States mode)
     {
         try
         {
-            // Parse the mode
-            if (!Enum.TryParse<States>(mode, true, out var targetMode))
-            {
-                var errorMessage = $"Invalid mode: {mode}. Valid modes are: Realtime, Playback";
-                return BadRequest(ResponseResult.ErrorResult(errorMessage));
-            }
-
             var currentMode = _rangeService.CurrentMode;
             
             // Check if already in the target mode
-            if (currentMode == targetMode)
+            if (currentMode == mode)
             {
                 return Ok(ResponseResult.SuccessResult());
             }
 
             // Validate the mode transition
-            var validationResult = ValidateModeTransition(currentMode, targetMode);
+            var validationResult = ValidateModeTransition(currentMode, mode);
             if (!validationResult.IsValid)
             {
                 return BadRequest(ResponseResult.ErrorResult(validationResult.ErrorMessage));
             }
 
             // Change the mode
-            _rangeService.SetMode(targetMode);
-            _logger.LogInformation("Mode changed from {CurrentMode} to {NewMode}", currentMode, targetMode);
+            _rangeService.SetMode(mode);
+            _logger.LogInformation("Mode changed from {CurrentMode} to {NewMode}", currentMode, mode);
             
             return Ok(ResponseResult.SuccessResult());
         }
@@ -160,24 +153,6 @@ public class RangeController : ControllerBase
     }
 
     /// <summary>
-    /// Gets the telemetry status of all devices.
-    /// </summary>
-    [HttpGet("realtime/status")]
-    public ActionResult<ResponseResult<TelemetryDto>> GetDevicesStatus()
-    {
-        try
-        {
-            var telemetry = _rangeService.Realtime.GetStats();
-            return Ok(ResponseResult<TelemetryDto>.SuccessResult(telemetry));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get telemetry status");
-            return StatusCode(500, ResponseResult<TelemetryDto>.ServerErrorResult("Failed to get telemetry status"));
-        }
-    }
-
-    /// <summary>
     /// Gets the list of available network devices.
     /// </summary>
     [HttpGet("realtime/devices")]
@@ -196,14 +171,32 @@ public class RangeController : ControllerBase
     }
 
     /// <summary>
-    /// Resets all statistics counters to zero.
+    /// Gets the status of the current mode.
     /// </summary>
-    [HttpPost("realtime/reset")]
+    [HttpGet("status")]
+    public ActionResult<ResponseResult<object>> GetStatus()
+    {
+        try
+        {
+            var status = _rangeService.GetCurrentModeStatus();
+            return Ok(ResponseResult<object>.SuccessResult(status));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get status");
+            return StatusCode(500, ResponseResult<object>.ServerErrorResult("Failed to get status"));
+        }
+    }
+
+    /// <summary>
+    /// Resets statistics for the current mode.
+    /// </summary>
+    [HttpPost("reset")]
     public ActionResult<ResponseResult> ResetStatistics()
     {
         try
         {
-            _rangeService.Realtime.ResetStats();
+            _rangeService.ResetCurrentModeStatistics();
             _logger.LogInformation("Statistics reset requested via API");
             return Ok(ResponseResult.SuccessResult());
         }
@@ -214,111 +207,17 @@ public class RangeController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Gets the current configuration settings.
-    /// </summary>
-    [HttpGet("realtime/config")]
-    public ActionResult<ResponseResult<object>> GetConfiguration()
-    {
-        try
-        {
-            var config = new
-            {
-                Environment = _configuration["ASPNETCORE_ENVIRONMENT"] ?? "Unknown",
-                Concurrency = new
-                {
-                    MinWorkers = _configuration.GetValue<int>("Concurrency:MinWorkers"),
-                    MaxWorkers = _configuration.GetValue<int>("Concurrency:MaxWorkers"),
-                    BatchSize = _configuration.GetValue<int>("Concurrency:BatchSize"),
-                    BatchTimeoutMs = _configuration.GetValue<int>("Concurrency:BatchTimeoutMs")
-                },
-                DataPipes = new
-                {
-                    MotionCapture = new
-                    {
-                        Channel = new
-                        {
-                            Members = _configuration.GetValue<int>("DataPipes:MotionCapture:Channel:Members")
-                        },
-                        Network = new
-                        {
-                            Protocol = _configuration.GetValue<string>("DataPipes:MotionCapture:Network:Protocol"),
-                            IPs = _configuration.GetSection("DataPipes:MotionCapture:Network:IPs").Get<string[]>()
-                        }
-                    },
-                    SafetyCapture = new
-                    {
-                        Channel = new
-                        {
-                            Members = _configuration.GetValue<int>("DataPipes:SafetyCapture:Channel:Members")
-                        },
-                        Network = new
-                        {
-                            Protocol = _configuration.GetValue<string>("DataPipes:SafetyCapture:Network:Protocol"),
-                            IPs = _configuration.GetSection("DataPipes:SafetyCapture:Network:IPs").Get<string[]>()
-                        }
-                    },
-                    OnVIFCapture = new
-                    {
-                        Channel = new
-                        {
-                            Members = _configuration.GetValue<int>("DataPipes:OnVIFCapture:Channel:Members")
-                        },
-                        Network = new
-                        {
-                            Protocol = _configuration.GetValue<string>("DataPipes:OnVIFCapture:Network:Protocol"),
-                            IPs = _configuration.GetSection("DataPipes:OnVIFCapture:Network:IPs").Get<string[]>()
-                        }
-                    }
-                },
-                HubTransmission = new
-                {
-                    IntervalMs = _configuration.GetValue<int>("HubTransmission:IntervalMs", 30)
-                }
-            };
-            
-            return Ok(ResponseResult<object>.SuccessResult(config));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get configuration");
-            return StatusCode(500, ResponseResult<object>.ServerErrorResult("Failed to get configuration"));
-        }
-    }
-
     #endregion
 
     #region Playback
 
-    /// <summary>
-    /// Gets the playback status.
-    /// </summary>
-    [HttpGet("playback/status")]
-    public ActionResult<ResponseResult<object>> GetPlaybackStatus()
-    {
-        try
-        {
-            var status = new
-            {
-                Message = "Playback functionality coming soon",
-                CurrentMode = _rangeService.CurrentMode.ToString()
-            };
-            
-            return Ok(ResponseResult<object>.SuccessResult(status));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get playback status");
-            return StatusCode(500, ResponseResult<object>.ServerErrorResult("Failed to get playback status"));
-        }
-    }
 
     /// <summary>
     /// Sets the playback pace (speed multiplier).
     /// </summary>
     /// <param name="pace">The playback pace multiplier (e.g., 1.0 = normal speed, 2.0 = double speed)</param>
-    [HttpPut("playback/pace")]
-    public ActionResult<ResponseResult> SetPlaybackPace([FromBody] double pace)
+    [HttpPut("playback/pace/{pace}")]
+    public ActionResult<ResponseResult> SetPlaybackPace(double pace)
     {
         try
         {
@@ -368,12 +267,31 @@ public class RangeController : ControllerBase
     }
 
     /// <summary>
+    /// Creates a new range.
+    /// </summary>
+    /// <param name="dto">The range data to create</param>
+    [HttpPost("ranges")]
+    public async Task<ActionResult<ResponseResult<RangeDto>>> CreateRangeAsync([FromBody] RangeDto dto)
+    {
+        try
+        {
+            var createdDto = await _rangeService.CreateRangeAsync(dto);
+            return Ok(ResponseResult<RangeDto>.SuccessResult(createdDto));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create range");
+            return StatusCode(500, ResponseResult<RangeDto>.ServerErrorResult("Failed to create range"));
+        }
+    }
+
+    /// <summary>
     /// Gets all ranges with pagination.
     /// </summary>
     /// <param name="page">Page number (1-based)</param>
     /// <param name="pageSize">Number of items per page</param>
     [HttpGet("ranges")]
-    public async Task<ActionResult<ResponseResult<PaginatedResult<RangeDto>>>> GetAllRangesPaginated(
+    public async Task<ActionResult<ResponseResult<PaginatedResult<RangeDto>>>> GetAllRangesPaginatedAsync(
         [FromQuery] int page = 1, 
         [FromQuery] int pageSize = 1000)
     {
@@ -394,7 +312,7 @@ public class RangeController : ControllerBase
     /// </summary>
     [HttpGet("ranges/all")]
     [DevelopmentOnly]
-    public async Task<ActionResult<ResponseResult<IEnumerable<RangeDto>>>> GetAllRanges()
+    public async Task<ActionResult<ResponseResult<IEnumerable<RangeDto>>>> GetAllRangesAsync()
     {
         try
         {
@@ -462,7 +380,7 @@ public class RangeController : ControllerBase
     /// </summary>
     [HttpDelete("ranges/all")]
     [DevelopmentOnly]
-    public async Task<ActionResult<ResponseResult<int>>> DeleteAll()
+    public async Task<ActionResult<ResponseResult<int>>> DeleteAllAsync()
     {
         try
         {

@@ -1,5 +1,5 @@
-using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using PacketProcessing.Utils.Constants;
 using QuestDB.Senders;
 
 namespace PacketProcessing.Entities.Packet;
@@ -14,7 +14,7 @@ public class OnVIFPacketEntity : BasePacketEntity
     [Column("measurement")]
     public double? Measurement { get; set; }
 
-    public override string TableName => "onvif_packets";
+    public override string TableName => Constants.ONVIF_PACKETS_TAG;
     
     public override void WriteColumns(ISender sender)
     {

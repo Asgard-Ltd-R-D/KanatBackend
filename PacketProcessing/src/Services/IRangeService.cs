@@ -35,6 +35,13 @@ public interface IRangeService
     // Range Operations
     
     /// <summary>
+    /// Creates a new range
+    /// </summary>
+    /// <param name="dto">The range data to create</param>
+    /// <returns>The created range DTO</returns>
+    Task<RangeDto> CreateRangeAsync(RangeDto dto);
+    
+    /// <summary>
     /// Gets a range by ID
     /// </summary>
     /// <param name="id">The range ID</param>
@@ -83,5 +90,16 @@ public interface IRangeService
     /// <param name="end">End timestamp</param>
     /// <returns>Result message</returns>
     Task<bool> ClearPacketsAsync(DateTime start, DateTime end);
+    
+    /// <summary>
+    /// Gets the status of the current mode
+    /// </summary>
+    /// <returns>Status information for the current mode</returns>
+    object GetCurrentModeStatus();
+    
+    /// <summary>
+    /// Resets statistics for the current mode
+    /// </summary>
+    void ResetCurrentModeStatistics();
 }
 

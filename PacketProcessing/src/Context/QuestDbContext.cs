@@ -5,6 +5,7 @@ using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using PacketProcessing.Utils.Constants;
 
 namespace PacketProcessing.Context;
 
@@ -58,9 +59,14 @@ public sealed class QuestDbContext
     /// <summary>Just run IF NOT EXISTS DDL as a single batch. Returns true if table count increased.</summary>
     public async Task<bool> EnsureDatabaseAsync(CancellationToken ct = default)
     {
-        const string tableList = "'motion_packets','onvif_packets','safety_packets'";
-        var ddl = """
-        CREATE TABLE IF NOT EXISTS motion_packets (
+        const string tableList = $"""
+            '{Constants.MOTION_PACKETS_TAG}',
+            '{Constants.ONVIF_PACKETS_TAG}',
+            '{Constants.SAFETY_PACKETS_TAG}'
+        """;
+
+        var ddl = $"""
+        CREATE TABLE IF NOT EXISTS {Constants.MOTION_PACKETS_TAG} (
             timestamp       TIMESTAMP,
             id              SYMBOL,
             isCmd           BOOLEAN,
@@ -70,7 +76,7 @@ public sealed class QuestDbContext
             value           DOUBLE
         ) TIMESTAMP(timestamp) PARTITION BY DAY WAL;
 
-        CREATE TABLE IF NOT EXISTS onvif_packets (
+        CREATE TABLE IF NOT EXISTS {Constants.ONVIF_PACKETS_TAG} (
             timestamp          TIMESTAMP,
             id                 SYMBOL,
             isCmd              BOOLEAN,
@@ -79,7 +85,7 @@ public sealed class QuestDbContext
             measurement        DOUBLE
         ) TIMESTAMP(timestamp) PARTITION BY DAY WAL;
 
-        CREATE TABLE IF NOT EXISTS safety_packets (
+        CREATE TABLE IF NOT EXISTS {Constants.SAFETY_PACKETS_TAG} (
             timestamp         TIMESTAMP,
             id                SYMBOL,
             isCmd             BOOLEAN,

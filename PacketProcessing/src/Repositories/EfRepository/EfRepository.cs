@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.Context;
+using PacketProcessing.DTOs;
 using PacketProcessing.Entities;
 using PacketProcessing.Utils.Enums;
 
@@ -206,6 +207,38 @@ public class EfRepository<T> : IEfRepository<T> where T : BaseEntity
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error counting entities of type {EntityType}", typeof(T).Name);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Gets paginated entities and total count
+    /// </summary>
+    /// <param name="page">Page number (1-based)</param>
+    /// <param name="pageSize">Items per page</param>
+    /// <returns>PaginatedResult of entities</returns>
+    public async Task<PaginatedResult<T>> GetPaginatedAsync(int page, int pageSize)
+    {
+        try
+        {
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 10;
+
+            _logger.LogDebug("Retrieving paginated entities of type {EntityType} (page: {Page}, size: {Size})", typeof(T).Name, page, pageSize);
+
+            var skip = (page - 1) * pageSize;
+
+            // For stable ordering and pagination, order by Timestamp desc then Id
+            var query = _context.Set<T>().OrderByDescending(e => e.Timestamp).ThenBy(e => e.Id);
+
+            var items = await query.Skip(skip).Take(pageSize).ToListAsync();
+            var total = await _context.Set<T>().CountAsync();
+
+            return PaginatedResult<T>.Create(items, page, pageSize, total);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving paginated entities of type {EntityType}", typeof(T).Name);
             throw;
         }
     }

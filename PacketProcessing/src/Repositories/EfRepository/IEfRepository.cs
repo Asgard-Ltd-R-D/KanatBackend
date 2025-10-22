@@ -1,4 +1,5 @@
 using PacketProcessing.Entities;
+using PacketProcessing.DTOs;
 using PacketProcessing.Utils.Enums;
 
 namespace PacketProcessing.Repositories.EfRepository;
@@ -53,4 +54,12 @@ public interface IEfRepository<T> where T : BaseEntity
     /// </summary>
     /// <returns>Total count of entities</returns>
     Task<int> CountAsync();
+
+    /// <summary>
+    /// Gets paginated entities and total count
+    /// </summary>
+    /// <param name="page">Page number (1-based)</param>
+    /// <param name="pageSize">Items per page</param>
+    /// <returns>PaginatedResult of entities</returns>
+    Task<PaginatedResult<T>> GetPaginatedAsync(int page, int pageSize);
 }

@@ -8,6 +8,7 @@ using PacketProcessing.Repositories.InfluxRepository;
 using PacketProcessing.Services.Playback;
 using PacketProcessing.Services.Realtime;
 using PacketProcessing.Utils.Enums;
+using PacketProcessing.Utils.Mappers;
 
 namespace PacketProcessing.Services;
 
@@ -73,6 +74,34 @@ public class RangeService : IRangeService
 
     #region Range Operations
 
+    public async Task<RangeDto> CreateRangeAsync(RangeDto dto)
+    {
+        try
+        {
+            var repository = _efFactory.Get<RangeEntity>();
+            
+            // Create entity with auto-generated ID and timestamp
+            var entity = new RangeEntity
+            {
+                Id = Guid.NewGuid(),
+                Timestamp = DateTime.UtcNow,
+                Start = dto.Start,
+                End = dto.End,
+                Description = dto.Description.Trim()
+            };
+
+            var createdEntity = await repository.AddAsync(entity);
+            _logger.LogInformation("Created range with ID {Id}", createdEntity.Id);
+
+            return RangeMapper.ToDto(createdEntity);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating range");
+            throw;
+        }
+    }
+
     public async Task<RangeDto?> GetRangeByIdAsync(Guid id)
     {
         try
@@ -86,14 +115,7 @@ public class RangeService : IRangeService
                 return null;
             }
 
-            return new RangeDto
-            {
-                Id = range.Id,
-                Timestamp = range.Timestamp,
-                Start = range.Start,
-                End = range.End,
-                Description = range.Description
-            };
+            return RangeMapper.ToDto(range);
         }
         catch (Exception ex)
         {
@@ -107,28 +129,13 @@ public class RangeService : IRangeService
         try
         {
             var repository = _efFactory.Get<RangeEntity>();
-            var pagination = new PaginationParameters { Page = page, PageSize = pageSize }.Normalize();
-            
-            var ranges = await repository.GetAllAsync(
-                skip: pagination.GetSkip(), 
-                take: pagination.GetTake());
-            
-            var totalCount = await repository.CountAsync();
-            
-            var dtos = ranges.Select(r => new RangeDto
-            {
-                Id = r.Id,
-                Timestamp = r.Timestamp,
-                Start = r.Start,
-                End = r.End,
-                Description = r.Description
-            });
+            var normalized = new PaginationParameters { Page = page, PageSize = pageSize }.Normalize();
 
-            return PaginatedResult<RangeDto>.Create(
-                dtos, 
-                pagination.Page, 
-                pagination.PageSize, 
-                totalCount);
+            var result = await repository.GetPaginatedAsync(normalized.Page, normalized.PageSize);
+
+            var dtoItems = result.Items.Select(RangeMapper.ToDto);
+
+            return PaginatedResult<RangeDto>.Create(dtoItems, result.Page, result.PageSize, result.TotalCount);
         }
         catch (Exception ex)
         {
@@ -144,14 +151,7 @@ public class RangeService : IRangeService
             var repository = _efFactory.Get<RangeEntity>();
             var ranges = await repository.GetAllAsync();
             
-            var dtos = ranges.Select(r => new RangeDto
-            {
-                Id = r.Id,
-                Timestamp = r.Timestamp,
-                Start = r.Start,
-                End = r.End,
-                Description = r.Description
-            });
+            var dtos = ranges.Select(RangeMapper.ToDto);
 
             _logger.LogDebug("Retrieved {Count} ranges", dtos.Count());
             return dtos;
@@ -176,22 +176,15 @@ public class RangeService : IRangeService
                 return null;
             }
 
-            existingRange.Start = dto.Start;
-            existingRange.End = dto.End;
-            existingRange.Description = dto.Description;
+            if (dto.Start != existingRange.Start) existingRange.Start = dto.Start;
+            if (dto.End != existingRange.End) existingRange.End = dto.End;
+            if (dto.Description != existingRange.Description) existingRange.Description = dto.Description;
 
             await repository.UpdateAsync(existingRange);
             
             _logger.LogInformation("Range {Id} updated successfully", id);
 
-            return new RangeDto
-            {
-                Id = existingRange.Id,
-                Timestamp = existingRange.Timestamp,
-                Start = existingRange.Start,
-                End = existingRange.End,
-                Description = existingRange.Description
-            };
+            return RangeMapper.ToDto(existingRange);
         }
         catch (Exception ex)
         {
@@ -253,7 +246,6 @@ public class RangeService : IRangeService
     {
         try
         {
-            // Normalize to UTC for QuestDB
             var startUtc = start.Kind == DateTimeKind.Utc ? start : DateTime.SpecifyKind(start, DateTimeKind.Utc);
             var endUtc = end.Kind == DateTimeKind.Utc ? end : DateTime.SpecifyKind(end, DateTimeKind.Utc);
 
@@ -272,6 +264,32 @@ public class RangeService : IRangeService
         {
             _logger.LogError(ex, "Error clearing packets for range {Start} to {End}", start, end);
             throw;
+        }
+    }
+
+    public object GetCurrentModeStatus()
+    {
+        return _currentMode switch
+        {
+            States.Realtime => Realtime.GetStats(),
+            States.Playback => new { Message = "Playback functionality coming soon", CurrentMode = _currentMode.ToString() },
+            _ => throw new InvalidOperationException($"Unknown mode: {_currentMode}")
+        };
+    }
+
+    public void ResetCurrentModeStatistics()
+    {
+        switch (_currentMode)
+        {
+            case States.Realtime:
+                Realtime.ResetStats();
+                _logger.LogInformation("Statistics reset requested for Realtime mode");
+                break;
+            case States.Playback:
+                _logger.LogInformation("Statistics reset requested for Playback mode (not implemented)");
+                break;
+            default:
+                throw new InvalidOperationException($"Unknown mode: {_currentMode}");
         }
     }
 

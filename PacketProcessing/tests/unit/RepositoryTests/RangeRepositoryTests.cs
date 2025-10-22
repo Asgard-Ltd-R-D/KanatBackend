@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 using PacketProcessing.Config;
 using PacketProcessing.Context;
 using PacketProcessing.Entities.Range;
-using PacketProcessing.Repositories;
+using PacketProcessing.Repositories.EfRepository;
 using Xunit;
 
 namespace PacketProcessing.Tests.unit.RepositoryTests;
@@ -17,10 +17,10 @@ public class RangeRepositoryTests : IDisposable
 {
     private readonly ServiceProvider _serviceProvider;
     private readonly PostgresDbContext _dbContext;
-    private readonly IRangeRepository<RangeEntity> _rangeRepository;
-    private readonly IRangeRepository<EventEntity> _eventRepository;
-    private readonly IRangeRepository<TargetEntity> _targetRepository;
-    private readonly IRangeRepository<HitEntity> _hitRepository;
+    private readonly IEfRepository<RangeEntity> _rangeRepository;
+    private readonly IEfRepository<EventEntity> _eventRepository;
+    private readonly IEfRepository<TargetEntity> _targetRepository;
+    private readonly IEfRepository<HitEntity> _hitRepository;
 
     public RangeRepositoryTests()
     {
@@ -52,14 +52,17 @@ public class RangeRepositoryTests : IDisposable
         // Configure database services
         DatabaseConfiguration.ConfigureServices(services, configuration);
         
+        // Register EF repositories
+        services.AddScoped(typeof(IEfRepository<>), typeof(EfRepository<>));
+        
         _serviceProvider = services.BuildServiceProvider();
         _dbContext = _serviceProvider.GetRequiredService<PostgresDbContext>();
         
         // Get repositories
-        _rangeRepository = _serviceProvider.GetRequiredService<IRangeRepository<RangeEntity>>();
-        _eventRepository = _serviceProvider.GetRequiredService<IRangeRepository<EventEntity>>();
-        _targetRepository = _serviceProvider.GetRequiredService<IRangeRepository<TargetEntity>>();
-        _hitRepository = _serviceProvider.GetRequiredService<IRangeRepository<HitEntity>>();
+        _rangeRepository = _serviceProvider.GetRequiredService<IEfRepository<RangeEntity>>();
+        _eventRepository = _serviceProvider.GetRequiredService<IEfRepository<EventEntity>>();
+        _targetRepository = _serviceProvider.GetRequiredService<IEfRepository<TargetEntity>>();
+        _hitRepository = _serviceProvider.GetRequiredService<IEfRepository<HitEntity>>();
         
         // Ensure database and tables are ready
         _dbContext.EnsureDatabaseAsync().GetAwaiter().GetResult();

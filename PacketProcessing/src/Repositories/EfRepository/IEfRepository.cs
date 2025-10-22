@@ -39,4 +39,18 @@ public interface IEfRepository<T> where T : BaseEntity
     /// <param name="id">The entity ID to delete</param>
     /// <returns>True if the entity was deleted, false if not found</returns>
     Task<bool> DeleteAsync(Guid id);
+    
+    /// <summary>
+    /// Gets all entities
+    /// </summary>
+    /// <param name="skip">Number of items to skip (for pagination)</param>
+    /// <param name="take">Number of items to take (for pagination)</param>
+    /// <returns>Collection of entities</returns>
+    Task<IEnumerable<T>> GetAllAsync(int? skip = null, int? take = null);
+    
+    /// <summary>
+    /// Gets the total count of entities
+    /// </summary>
+    /// <returns>Total count of entities</returns>
+    Task<int> CountAsync();
 }

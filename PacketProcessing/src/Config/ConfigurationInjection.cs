@@ -19,6 +19,7 @@ using PacketProcessing.Services.Transmission;
 using PacketProcessing.Services.Playback;
 using PacketProcessing.Services;
 using PacketProcessing.Utils.Parsers;
+using PacketProcessing.Repositories.EfRepository;
 
 /// <summary>
 /// Configuration and Dependency Injection Manager
@@ -207,8 +208,12 @@ public class ConfigurationInjection
         // === Realtime Service ===
         builder.Services.AddSingleton<IRealtimeService, RealtimeService>();
 
-        // === State Manager ===
-        builder.Services.AddSingleton<IStateManager, StateManager>();
+        // === Repository Factories ===
+        builder.Services.AddScoped(typeof(IEfRepository<>), typeof(EfRepository<>));
+        builder.Services.AddScoped<IEfRepositoryFactory, EfRepositoryFactory>();
+
+        // === Range Service ===
+        builder.Services.AddSingleton<IRangeService, RangeService>();
 
         // Device service
         builder.Services.AddSingleton<IDeviceService, DeviceService>();

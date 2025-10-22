@@ -69,7 +69,7 @@ window.addEventListener('load', () => {
 // === STATE MANAGEMENT ===
 async function loadCurrentState() {
     try {
-        const response = await fetch('http://localhost:10901/api/v1/state');
+        const response = await fetch('http://localhost:10901/api/v1/range/mode');
         
         if (response.ok) {
             const result = await response.json();
@@ -295,7 +295,7 @@ function updateDashboardTitle() {
 // === DEVICE MANAGEMENT ===
 async function loadAvailableDevices() {
     try {
-        const response = await fetch('http://localhost:10901/api/v1/capture/devices');
+        const response = await fetch('http://localhost:10901/api/v1/range/realtime/devices');
         
         if (!response.ok) {
             logMessage('Failed to load available devices', 'error');
@@ -339,8 +339,8 @@ async function switchMode(mode) {
     try {
         logMessage(`Switching to ${mode} mode...`, 'info');
         
-        // Call backend API to change state
-        const response = await fetch(`http://localhost:10901/api/v1/state/${mode}`, {
+        // Call backend API to change mode
+        const response = await fetch(`http://localhost:10901/api/v1/range/mode/${mode}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
@@ -350,7 +350,7 @@ async function switchMode(mode) {
         const result = await response.json();
         
         if (response.ok) {
-            logMessage(`State changed to ${mode} successfully`, 'success');
+            logMessage(`Mode changed to ${mode} successfully`, 'success');
             
             // Navigate to appropriate page
             if (mode === 'playback') {
@@ -391,7 +391,7 @@ async function startCapture() {
     try {
         logMessage(`Starting capture on device: ${deviceName}...`, 'info');
         
-        const response = await fetch(`http://localhost:10901/api/v1/capture/start/${encodeURIComponent(deviceName)}`, {
+        const response = await fetch(`http://localhost:10901/api/v1/range/realtime/start/${encodeURIComponent(deviceName)}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -417,7 +417,7 @@ async function stopCapture() {
     try {
         logMessage('Stopping capture...', 'info');
         
-        const response = await fetch('http://localhost:10901/api/v1/capture/stop', {
+        const response = await fetch('http://localhost:10901/api/v1/range/realtime/stop', {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json'
@@ -492,8 +492,8 @@ async function checkQuestDbHealth() {
 async function checkPostgresHealth() {
     try {
         // PostgreSQL port 5432 is not HTTP, so we check if we can query through API
-        // We'll use the capture/status endpoint as a proxy since it queries the database
-        const response = await fetch('http://localhost:10901/api/v1/capture/status', {
+        // We'll use the realtime/status endpoint as a proxy since it queries the database
+        const response = await fetch('http://localhost:10901/api/v1/range/realtime/status', {
             method: 'GET',
             cache: 'no-cache'
         });
@@ -516,7 +516,7 @@ async function resetStats() {
         logMessage('Resetting statistics...', 'info');
         
         // Call backend to reset server-side statistics
-        const response = await fetch('http://localhost:10901/api/v1/capture/reset', {
+        const response = await fetch('http://localhost:10901/api/v1/range/realtime/reset', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -592,7 +592,7 @@ async function refreshStats() {
     }
     
     try {
-        const response = await fetch('http://localhost:10901/api/v1/capture/status');
+        const response = await fetch('http://localhost:10901/api/v1/range/realtime/status');
         
         if (!response.ok) {
             return;
@@ -829,7 +829,7 @@ function clearLogs() {
 // === CONFIGURATION DISPLAY ===
 async function loadConfiguration() {
     try {
-        const response = await fetch('http://localhost:10901/api/v1/capture/config');
+        const response = await fetch('http://localhost:10901/api/v1/range/realtime/config');
         
         if (!response.ok) {
             document.getElementById('configDisplay').innerHTML = '<p style="color: #f44336;">Failed to load configuration</p>';

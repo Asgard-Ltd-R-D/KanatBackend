@@ -67,8 +67,8 @@
             try {
                 console.log(`Switching to ${mode} mode...`);
                 
-                // Call backend API to change state
-                const response = await fetch(`http://localhost:10901/api/v1/state/${mode}`, {
+                // Call backend API to change mode
+                const response = await fetch(`http://localhost:10901/api/v1/range/mode/${mode}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'

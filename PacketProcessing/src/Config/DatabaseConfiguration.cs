@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using PacketProcessing.Context;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Entities.Range;
-using PacketProcessing.Repositories;
+using PacketProcessing.Repositories.EfRepository;
 using PacketProcessing.Repositories.InfluxRepository;
 
 namespace PacketProcessing.Config;
@@ -82,7 +82,7 @@ public class DatabaseConfiguration
     }
 
     /// <summary>
-    /// Configures all repository services (packet and range) to the service collection
+    /// Configures all repository services to the service collection
     /// </summary>
     /// <param name="services">The service collection</param>
     /// <param name="configuration">The configuration</param>
@@ -90,9 +90,32 @@ public class DatabaseConfiguration
     {
         // Register packet repositories (QuestDB)
         ConfigurePacketRepositories(services, configuration);
-        
-        // Register range repositories (PostgreSQL/EF Core)
         ConfigureRangeRepositories(services, configuration);
+    }
+
+    private static void ConfigureRangeRepositories(IServiceCollection services, IConfiguration configuration)
+    {
+        // Register range repositories (PostgreSQL)
+        services.AddSingleton<IEfRepository<RangeEntity>>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<EfRepository<RangeEntity>>>();
+            var dbContext = sp.GetRequiredService<PostgresDbContext>();
+            return new EfRepository<RangeEntity>(dbContext, logger);
+        });
+
+        services.AddSingleton<IEfRepository<EventEntity>>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<EfRepository<EventEntity>>>();
+            var dbContext = sp.GetRequiredService<PostgresDbContext>();
+            return new EfRepository<EventEntity>(dbContext, logger);
+        });
+
+        services.AddSingleton<IEfRepository<TargetEntity>>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<EfRepository<TargetEntity>>>();
+            var dbContext = sp.GetRequiredService<PostgresDbContext>();
+            return new EfRepository<TargetEntity>(dbContext, logger);
+        });
     }
     
     /// <summary>
@@ -120,43 +143,6 @@ public class DatabaseConfiguration
             var logger = sp.GetRequiredService<ILogger<InfluxRepository<SafetyPacketEntity>>>();
             var questDbContext = sp.GetRequiredService<QuestDbContext>();
             return new InfluxRepository<SafetyPacketEntity>(logger, questDbContext);
-        });
-    }
-    
-    /// <summary>
-    /// Configures range repository services to the service collection
-    /// </summary>
-    /// <param name="services">The service collection</param>
-    /// <param name="configuration">The configuration</param>
-    private static void ConfigureRangeRepositories(IServiceCollection services, IConfiguration configuration)
-    {
-        // Register specific range repositories for convenience
-        services.AddScoped<IRangeRepository<RangeEntity>>(sp =>
-        {
-            var context = sp.GetRequiredService<PostgresDbContext>();
-            var logger = sp.GetRequiredService<ILogger<RangeRepository<RangeEntity>>>();
-            return new RangeRepository<RangeEntity>(context, logger);
-        });
-        
-        services.AddScoped<IRangeRepository<EventEntity>>(sp =>
-        {
-            var context = sp.GetRequiredService<PostgresDbContext>();
-            var logger = sp.GetRequiredService<ILogger<RangeRepository<EventEntity>>>();
-            return new RangeRepository<EventEntity>(context, logger);
-        });
-        
-        services.AddScoped<IRangeRepository<TargetEntity>>(sp =>
-        {
-            var context = sp.GetRequiredService<PostgresDbContext>();
-            var logger = sp.GetRequiredService<ILogger<RangeRepository<TargetEntity>>>();
-            return new RangeRepository<TargetEntity>(context, logger);
-        });
-        
-        services.AddScoped<IRangeRepository<HitEntity>>(sp =>
-        {
-            var context = sp.GetRequiredService<PostgresDbContext>();
-            var logger = sp.GetRequiredService<ILogger<RangeRepository<HitEntity>>>();
-            return new RangeRepository<HitEntity>(context, logger);
         });
     }
 }

@@ -73,4 +73,12 @@ public interface IInfluxRepository<T> where T : BasePacketEntity
     /// <exception cref="ArgumentNullException">Thrown when sender is null</exception>
     /// <exception cref="ArgumentException">Thrown when batch is empty</exception>
     Task WriteBatchQuestDbAsync(ISender sender, IReadOnlyList<T> batch, CancellationToken ct = default);
+
+    /// <summary>
+    /// Clears packets of the specified type from QuestDB within a specified time range
+    /// </summary>
+    /// <param name="start">The start timestamp for the query range</param>
+    /// <param name="end">The end timestamp for the query range</param>
+    /// <returns>A task representing the asynchronous operation</returns>
+    Task ClearPacketsByRangeAsync(long start, long end);
 }

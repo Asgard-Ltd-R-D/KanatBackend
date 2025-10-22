@@ -151,4 +151,62 @@ public class EfRepository<T> : IEfRepository<T> where T : BaseEntity
             throw;
         }
     }
+    
+    /// <summary>
+    /// Gets all entities
+    /// </summary>
+    /// <param name="skip">Number of items to skip (for pagination)</param>
+    /// <param name="take">Number of items to take (for pagination)</param>
+    /// <returns>Collection of entities</returns>
+    public async Task<IEnumerable<T>> GetAllAsync(int? skip = null, int? take = null)
+    {
+        try
+        {
+            _logger.LogDebug("Retrieving entities of type {EntityType} (skip: {Skip}, take: {Take})", typeof(T).Name, skip, take);
+            
+            IQueryable<T> query = _context.Set<T>();
+            
+            if (skip.HasValue)
+            {
+                query = query.Skip(skip.Value);
+            }
+            
+            if (take.HasValue)
+            {
+                query = query.Take(take.Value);
+            }
+            
+            var result = await query.ToListAsync();
+            
+            _logger.LogDebug("Retrieved {Count} entities of type {EntityType}", result.Count, typeof(T).Name);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving entities of type {EntityType}", typeof(T).Name);
+            throw;
+        }
+    }
+    
+    /// <summary>
+    /// Gets the total count of entities
+    /// </summary>
+    /// <returns>Total count of entities</returns>
+    public async Task<int> CountAsync()
+    {
+        try
+        {
+            _logger.LogDebug("Counting entities of type {EntityType}", typeof(T).Name);
+            
+            var count = await _context.Set<T>().CountAsync();
+            
+            _logger.LogDebug("Found {Count} entities of type {EntityType}", count, typeof(T).Name);
+            return count;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error counting entities of type {EntityType}", typeof(T).Name);
+            throw;
+        }
+    }
 }

@@ -11,13 +11,13 @@ public interface IPlaybackService
     /// Starts playback stream for the given request
     /// </summary>
     /// <param name="request">The stream request configuration</param>
-    Task StartPlaybackAsync(StreamRequest request);
+    Task StartPlaybackAsync(StreamRequestDto request);
     
     /// <summary>
     /// Stops playback stream for the given request
     /// </summary>
     /// <param name="request">The stream request to stop</param>
-    Task StopPlaybackAsync(StreamRequest request);
+    Task StopPlaybackAsync(StreamRequestDto request);
     
     /// <summary>
     /// Stops all active playback streams
@@ -27,5 +27,5 @@ public interface IPlaybackService
     /// <summary>
     /// Gets all active playback streams
     /// </summary>
-    ICollection<StreamRequest> GetActivePlaybacks();
+    ICollection<StreamRequestDto> GetActivePlaybacks();
 }

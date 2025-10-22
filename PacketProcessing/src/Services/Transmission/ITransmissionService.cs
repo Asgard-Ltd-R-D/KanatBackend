@@ -13,20 +13,20 @@ public interface ITransmissionService : IObserver<BasePacketEntity>
     /// <summary>
     /// Register a stream request for transmission
     /// </summary>
-    Task RegisterStreamAsync(StreamRequest request);
+    Task RegisterStreamAsync(StreamRequestDto request, string connectionId);
     
     /// <summary>
-    /// Unregister a stream request
+    /// Deregister a stream request
     /// </summary>
-    Task UnregisterStreamAsync(StreamRequest request);
-    
+    Task DeregisterStreamAsync(StreamRequestDto request);
+
+    /// <summary>
+    /// Unregister a stream request by connection ID
+    /// </summary>
+    Task DeregisterFromAllStreamsAsync(string connectionId);
+
     /// <summary>
     /// Unregister all stream requests
     /// </summary>
     Task UnregisterAllStreamsAsync();
-    
-    /// <summary>
-    /// Get all registered stream requests
-    /// </summary>
-    ICollection<StreamRequest> GetRegisteredStreams();
 }

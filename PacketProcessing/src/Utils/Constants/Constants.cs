@@ -7,8 +7,8 @@ public static class Constants {
     public static readonly int DEFAULT_BATCH_TIMEOUT_MS = 100;
     public static readonly int DEFAULT_PACKET_SAMPLE_MS = 30;
 
-    public static readonly string REALTIME_METHOD_NAME = "OnReceive";
-    public static readonly string PLAYBACK_METHOD_NAME = "OnPlayback";
+    public const string SIGNALR_ON_RECEIVE_PACKET = "OnReceivePacket";
+    public const string SIGNALR_ACK = "Ack";
 
     // ONVIF constants
     public const string ONVIF_REPORT_IP="132.8.7.121";

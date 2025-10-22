@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using PacketProcessing.Utils.Constants;
+using PacketProcessing.Utils.Enums;
 using QuestDB.Senders;
 
 namespace PacketProcessing.Entities.Packet;
@@ -28,5 +28,10 @@ public class MotionPacketEntity : BasePacketEntity
         sender.Column("axis", Axis);
         if (Value.HasValue) sender.Column("value", Value.Value);
         else sender.NullableColumn("value", double.NaN);
+    }
+
+    public override string GetSubscriptionKey()
+    {
+        return $"{DataPipes.Motion}|{Description}|{IsCmd}|{Axis}".ToLower();
     }
 }

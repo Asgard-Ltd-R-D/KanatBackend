@@ -6,7 +6,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.SignalR;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Services.Realtime.Networking;
 using System.Threading.Channels;
@@ -138,7 +137,6 @@ public class ConfigurationInjection
             var parseMapper = sp.GetRequiredService<ParseMapper>();
             
             var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", transmissionService, logger, channel, cfg, parseMapper);
-            
             return handler;
         });
         
@@ -331,7 +329,7 @@ public class ConfigurationInjection
         app.MapHealthChecks("/health");
         
         // Map SignalR hub
-        app.MapHub<Hubs.HubContext>("/hub/packets");
+        app.MapHub<Hubs.CustomHub>("/hub/packets");
         
         app.MapControllers();
     }

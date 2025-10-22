@@ -1,5 +1,5 @@
 using System.ComponentModel.DataAnnotations.Schema;
-using PacketProcessing.Utils.Constants;
+using PacketProcessing.Utils.Enums;
 using QuestDB.Senders;
 
 namespace PacketProcessing.Entities.Packet;
@@ -31,5 +31,10 @@ public class OnVIFPacketEntity : BasePacketEntity
             sender.Column("measurement", Measurement.Value);
         else
             sender.NullableColumn("measurement", double.NaN);
+    }
+
+    public override string GetSubscriptionKey()
+    {
+        return $"{DataPipes.OnVIF}|{Description}|{IsCmd}".ToLower();
     }
 }

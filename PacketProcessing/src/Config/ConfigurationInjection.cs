@@ -213,7 +213,7 @@ public class ConfigurationInjection
         builder.Services.AddScoped<IEfRepositoryFactory, EfRepositoryFactory>();
 
         // === Range Service ===
-        builder.Services.AddSingleton<IRangeService, RangeService>();
+        builder.Services.AddScoped<IRangeService, RangeService>();
 
         // Device service
         builder.Services.AddSingleton<IDeviceService, DeviceService>();

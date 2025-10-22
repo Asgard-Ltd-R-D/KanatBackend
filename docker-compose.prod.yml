@@ -37,7 +37,6 @@ services:
       - POSTGRES_PASSWORD=postgres
     volumes:
       - postgres_data_prod:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d pdb"]

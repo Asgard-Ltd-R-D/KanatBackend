@@ -19,6 +19,8 @@ using PacketProcessing.Services.Playback;
 using PacketProcessing.Services;
 using PacketProcessing.Utils.Parsers;
 using PacketProcessing.Repositories.EfRepository;
+using System.Text.Json.Serialization;
+using PacketProcessing.Utils.Enums;
 
 /// <summary>
 /// Configuration and Dependency Injection Manager
@@ -241,18 +243,24 @@ public class ConfigurationInjection
                 }
 
                 var controllerName = api.ActionDescriptor.RouteValues["controller"];
-                return new[] { controllerName ?? "Unknown" };
+                return [controllerName ?? "Unknown"];
             });
 
             options.DocInclusionPredicate((name, api) => true);
         });
-        builder.Services.AddControllers();
+        builder.Services.AddControllers().AddJsonOptions(options => {
+            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter<DataPipes>());
+        });
+        builder.Services.AddRouting(options => options.LowercaseUrls = true);
+
         
         // Register SignalR for real-time data transmission
         builder.Services.AddSignalR(options => {
             options.EnableDetailedErrors = true;
             options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
             options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+        }).AddJsonProtocol(options => {
+            options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter<DataPipes>());
         });
         
         // Configure routing to use lowercase URLs

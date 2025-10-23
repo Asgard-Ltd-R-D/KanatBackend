@@ -1,12 +1,6 @@
 namespace PacketProcessing.Utils.Constants;
 
 public static class Constants {
-    public static readonly int DEFAULT_MIN_WORKERS = 4;
-    public static readonly int DEFAULT_MAX_WORKERS = 16;
-    public static readonly int DEFAULT_BATCH_SIZE = 500;
-    public static readonly int DEFAULT_BATCH_TIMEOUT_MS = 100;
-    public static readonly int DEFAULT_PACKET_SAMPLE_MS = 30;
-
     public const string SIGNALR_ON_RECEIVE_PACKET = "OnReceivePacket";
     public const string SIGNALR_ACK = "Ack";
 
@@ -22,7 +16,7 @@ public static class Constants {
     public const string ONVIF_LRF_REQ="LRF_REQ";
     public const string ONVIF_LRF_STS="LRF_STS";
 
-    // Datapipes tags
+    // Data pipes names
     public const string MOTION_PACKETS_TAG = "motion_packets";
     public const string ONVIF_PACKETS_TAG = "onvif_packets";
     public const string SAFETY_PACKETS_TAG = "safety_packets";

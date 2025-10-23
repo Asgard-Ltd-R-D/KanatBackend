@@ -356,3 +356,24 @@ canvas {
 .badge-warning { background: #ff9800; color: white; }
 .badge-info { background: #2196f3; color: white; }
 
+/* Console Access Buttons */
+.btn-console {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    width: 100%;
+    margin-bottom: 8px;
+    text-align: left;
+}
+
+.btn-console:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+}
+

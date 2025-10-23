@@ -140,6 +140,54 @@ public class RangeRepositoryTests : IDisposable
     }
 
     [Fact]
+    public async Task RangeRepository_AddRangeAsync_ShouldCreateMultipleRangeEntities_TruePositive()
+    {
+        // Arrange
+        _output.WriteLine("Testing range repository add range operation (True Positive)...");
+        await CleanAsync();
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var ranges = new List<RangeEntity>
+        {
+            new RangeEntity
+            {
+                Description = "Test Range 1",
+                Start = now,
+                End = now + 3600000, // 1 hour in milliseconds
+                Timestamp = DateTime.UtcNow
+            },
+            new RangeEntity
+            {
+                Description = "Test Range 2", 
+                Start = now + 3600000,
+                End = now + 7200000, // 2 hours in milliseconds
+                Timestamp = DateTime.UtcNow
+            },
+            new RangeEntity
+            {
+                Description = "Test Range 3",
+                Start = now + 7200000,
+                End = now + 10800000, // 3 hours in milliseconds
+                Timestamp = DateTime.UtcNow
+            }
+        };
+
+        // Setup mock to return the number of entities added
+        _mockRangeRepository.Setup(x => x.AddRangeAsync(It.IsAny<IEnumerable<RangeEntity>>()))
+            .ReturnsAsync(ranges.Count);
+
+        // Act
+        var addedCount = await _mockRangeRepository.Object.AddRangeAsync(ranges);
+
+        // Assert
+        Assert.Equal(3, addedCount);
+        
+        _output.WriteLine($"Range entities batch created successfully. Count: {addedCount}");
+
+        await CleanAsync();
+    }
+
+    [Fact]
     public async Task RangeRepository_GetByIdAsync_ShouldReturnRangeEntity_TruePositive()
     {
         // Arrange

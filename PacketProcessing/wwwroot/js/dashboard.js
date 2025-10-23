@@ -20,12 +20,26 @@ let stats = {
     safetyCaptured: 0,
     onvifCaptured: 0,
     hubReceived: 0,
-    hubMotion: 0,
-    hubSafety: 0,
-    hubOnvif: 0,
     parseRate: 0,
     flushRate: 0
 };
+
+// Throughput tracking
+let lastStats = {
+    captured: 0,
+    parsed: 0,
+    flushed: 0,
+    timestamp: Date.now()
+};
+
+let throughput = {
+    capturedPps: 0,
+    parsedPps: 0,
+    flushedPps: 0
+};
+
+let lastChartUpdate = 0;
+const CHART_UPDATE_INTERVAL = 1000; // Update charts at most once per second
 
 // Charts data
 let throughputData = {
@@ -63,7 +77,6 @@ window.addEventListener('load', () => {
         }
         window.scrollTo({ top: 0, behavior: 'instant' });
     }, 100);
-    setInterval(refreshStats, 2000);
     
     // Automatically connect to SignalR
     logMessage('Dashboard loaded. Connecting to SignalR automatically...', 'info');
@@ -203,8 +216,8 @@ async function connectHub() {
         return;
     }
     
-    const hubUrl = 'http://localhost:10901/hub/packets';
-    logMessage(`Connecting to SignalR hub: ${hubUrl}`, 'info');
+    const hubUrl = 'http://localhost:10901/hubs/telemetry';
+    logMessage(`Connecting to Telemetry hub: ${hubUrl}`, 'info');
     
     // Show connecting state
     updateSignalRStatus();
@@ -215,17 +228,109 @@ async function connectHub() {
         .configureLogging(signalR.LogLevel.Information)
         .build();
 
-    connection.on('OnReceive', (methodName, data) => {
-        stats.hubReceived++;
+    connection.on('telemetry:update', (telemetryData) => {
+        // Calculate throughput rates
+        var now = Date.now();
+        const deltaTime = (now - lastStats.timestamp) / 1000; // seconds
         
-        if (methodName === 'MotionPacketEntity') stats.hubMotion++;
-        else if (methodName === 'SafetyPacketEntity') stats.hubSafety++;
-        else if (methodName === 'OnVIFPacketEntity') stats.hubOnvif++;
+        // Calculate rates if we have enough time difference (minimum 0.1 seconds)
+        if (deltaTime >= 0.1 && lastStats.timestamp > 0) {
+            const capturedDelta = Math.max(0, telemetryData.captured - lastStats.captured);
+            const parsedDelta = Math.max(0, telemetryData.parsed - lastStats.parsed);
+            const flushedDelta = Math.max(0, telemetryData.flushed - lastStats.flushed);
+            
+            // Calculate new rates
+            const newCapturedPps = Math.round(capturedDelta / deltaTime);
+            const newParsedPps = Math.round(parsedDelta / deltaTime);
+            const newFlushedPps = Math.round(flushedDelta / deltaTime);
+            
+            // Apply smoothing (exponential moving average)
+            const alpha = 0.3; // Smoothing factor
+            throughput.capturedPps = Math.round(throughput.capturedPps * (1 - alpha) + newCapturedPps * alpha);
+            throughput.parsedPps = Math.round(throughput.parsedPps * (1 - alpha) + newParsedPps * alpha);
+            throughput.flushedPps = Math.round(throughput.flushedPps * (1 - alpha) + newFlushedPps * alpha);
+        }
         
-        updateHubStats();
+        // Update last stats for next calculation
+        lastStats = {
+            captured: telemetryData.captured || 0,
+            parsed: telemetryData.parsed || 0,
+            flushed: telemetryData.flushed || 0,
+            timestamp: now
+        };
         
-        // Log to SignalR packet log with full packet data
-        logSignalRPacket(methodName, data);
+        // Update stats with real-time telemetry data
+        stats.captured = telemetryData.captured || 0;
+        stats.parsed = telemetryData.parsed || 0;
+        stats.dropped = telemetryData.dropped || 0;
+        stats.flushed = telemetryData.flushed || 0;
+        stats.failed = telemetryData.failed || 0;
+        stats.backpressure = telemetryData.backpressure || 0;
+        stats.avgLatency = telemetryData.avgLatency || 0;
+        stats.motionCaptured = telemetryData.motionCaptured || 0;
+        stats.safetyCaptured = telemetryData.safetyCaptured || 0;
+        stats.onvifCaptured = telemetryData.onvifCaptured || 0;
+        
+        // Update channel stats if available
+        if (telemetryData.motionRawChannel || telemetryData.safetyRawChannel || telemetryData.onvifRawChannel ||
+            telemetryData.motionParsedChannel || telemetryData.safetyParsedChannel || telemetryData.onvifParsedChannel) {
+            updateChannelStats(
+                telemetryData.motionRawChannel,
+                telemetryData.safetyRawChannel,
+                telemetryData.onvifRawChannel,
+                telemetryData.motionParsedChannel,
+                telemetryData.safetyParsedChannel,
+                telemetryData.onvifParsedChannel
+            );
+        }
+        
+        // Update UI with real-time data
+        updateTelemetryStats();
+        
+        // Update charts with throttling (at most once per second)
+        const currentTime = Date.now();
+        if (currentTime - lastChartUpdate >= CHART_UPDATE_INTERVAL) {
+            const chartTime = new Date();
+            const timeLabel = chartTime.toLocaleTimeString();
+            
+            // Update throughput chart
+            throughputData.labels.push(timeLabel);
+            throughputData.captured.push(throughput.capturedPps);
+            throughputData.parsed.push(throughput.parsedPps);
+            throughputData.flushed.push(throughput.flushedPps);
+            
+            // Keep only last 20 data points
+            if (throughputData.labels.length > 20) {
+                throughputData.labels.shift();
+                throughputData.captured.shift();
+                throughputData.parsed.shift();
+                throughputData.flushed.shift();
+            }
+            
+            if (throughputChart) {
+                throughputChart.update('none'); // Update without animation for performance
+            }
+            
+            // Update latency chart
+            if (stats.avgLatency > 0) {
+                latencyData.labels.push(timeLabel);
+                latencyData.values.push(stats.avgLatency);
+                
+                if (latencyData.labels.length > 20) {
+                    latencyData.labels.shift();
+                    latencyData.values.shift();
+                }
+                
+                if (latencyChart) {
+                    latencyChart.update('none'); // Update without animation for performance
+                }
+            }
+            
+            lastChartUpdate = currentTime;
+        }
+        
+        // Log telemetry update with throughput info
+        logMessage(`Telemetry updated: Captured=${stats.captured}, Parsed=${stats.parsed}, Flushed=${stats.flushed}, Rates: ${throughput.capturedPps}/${throughput.parsedPps}/${throughput.flushedPps} pps, DeltaTime=${deltaTime.toFixed(2)}s`, 'info');
     });
 
     connection.onclose((error) => {
@@ -519,16 +624,14 @@ async function checkQuestDbHealth() {
 
 async function checkPostgresHealth() {
     try {
-        // PostgreSQL port 5432 is not HTTP, so we check if we can query through API
-        // We'll use the status endpoint as a proxy since it queries the database
-        const response = await fetch('http://localhost:10901/api/v1/range/status', {
+        // Use the health endpoint to check if API can connect to databases
+        const response = await fetch('http://localhost:10901/health', {
             method: 'GET',
             cache: 'no-cache'
         });
         
-        
         if (response.ok) {
-            // If API can return stats, it means it can connect to databases
+            // If API health check passes, assume PostgreSQL is accessible
             if (!postgresConnected) {
                 logMessage('PostgreSQL health check: Healthy', 'success');
             }
@@ -594,6 +697,11 @@ async function resetStats() {
             timestamp: Date.now()
         };
         
+        // Reset throughput rates
+        throughput.capturedPps = 0;
+        throughput.parsedPps = 0;
+        throughput.flushedPps = 0;
+        
         // Clear charts
         throughputData.labels = [];
         throughputData.captured = [];
@@ -606,10 +714,7 @@ async function resetStats() {
         latencyChart.update();
         
         // Update UI
-        updateCaptureStats();
-        updateParseStats();
-        updateDbStats();
-        updateHubStats();
+        updateTelemetryStats();
         
         logMessage('All statistics reset to zero (frontend and backend)', 'success');
     } catch (err) {
@@ -617,109 +722,8 @@ async function resetStats() {
     }
 }
 
-// === API POLLING ===
-let lastStats = {
-    captured: 0,
-    parsed: 0,
-    flushed: 0,
-    timestamp: Date.now()
-};
-
-// Initialize stats properly on first load
-let isFirstLoad = true;
-
-async function refreshStats() {
-    // Only refresh stats if API is healthy
-    if (!apiConnected) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('http://localhost:10901/api/v1/range/status');
-        
-        if (!response.ok) {
-            return;
-        }
-        
-        const result = await response.json();
-        
-        // Extract data from ResponseResult wrapper
-        const data = result.data || result;
-        
-        // Calculate deltas for rate
-        const now = Date.now();
-        const deltaTime = (now - lastStats.timestamp) / 1000; // seconds
-        
-        // Initialize deltas to 0
-        let capturedDelta = 0;
-        let parsedDelta = 0;
-        let flushedDelta = 0;
-        
-        // Avoid division by zero and negative values, and handle first load
-        if (deltaTime > 0 && !isFirstLoad) {
-            capturedDelta = Math.max(0, Math.round((data.captured - lastStats.captured) / deltaTime));
-            parsedDelta = Math.max(0, Math.round((data.parsed - lastStats.parsed) / deltaTime));
-            flushedDelta = Math.max(0, Math.round((data.flushed - lastStats.flushed) / deltaTime));
-            
-            // Store calculated rates in stats object
-            stats.parseRate = parsedDelta;
-            stats.flushRate = flushedDelta;
-        } else if (isFirstLoad) {
-            // On first load, set rates to 0
-            stats.parseRate = 0;
-            stats.flushRate = 0;
-            isFirstLoad = false;
-        }
-        
-        lastStats = {
-            captured: data.captured || 0,
-            parsed: data.parsed || 0,
-            flushed: data.flushed || 0,
-            timestamp: now
-        };
-        
-        // Update stats
-        stats.captured = data.captured || 0;
-        stats.parsed = data.parsed || 0;
-        stats.dropped = data.dropped || 0;
-        stats.flushed = data.flushed || 0;
-        stats.failed = data.failed || 0;
-        stats.backpressure = data.backpressure || 0;
-        stats.avgLatency = data.avgLatency || 0;
-        stats.motionCaptured = data.motionCaptured || 0;
-        stats.safetyCaptured = data.safetyCaptured || 0;
-        stats.onvifCaptured = data.onvifCaptured || 0;
-        
-        updateCaptureStats();
-        updateParseStats();
-        updateDbStats();
-        
-        // Debug: Log full data and channel data to console
-        console.log('Full response data:', data);
-        
-        // Handle both PascalCase (C#) and camelCase (JavaScript) property names
-        const motionRaw = data.motionRawChannel || data.MotionRawChannel;
-        const safetyRaw = data.safetyRawChannel || data.SafetyRawChannel;
-        const onvifRaw = data.onvifRawChannel || data.OnvifRawChannel;
-        const motionParsed = data.motionParsedChannel || data.MotionParsedChannel;
-        const safetyParsed = data.safetyParsedChannel || data.SafetyParsedChannel;
-        const onvifParsed = data.onvifParsedChannel || data.OnvifParsedChannel;
-        
-        console.log('Channel data extracted:', {
-            motionRaw, safetyRaw, onvifRaw,
-            motionParsed, safetyParsed, onvifParsed
-        });
-        
-        updateChannelStats(
-            motionRaw, safetyRaw, onvifRaw,
-            motionParsed, safetyParsed, onvifParsed
-        );
-        updateChart(capturedDelta, parsedDelta, flushedDelta, data.avgLatency || 0);
-        
-    } catch (err) {
-        console.error('Failed to fetch stats:', err);
-    }
-}
+// === REAL-TIME TELEMETRY ===
+// Note: API polling removed - now using real-time telemetry via SignalR TelemetryHub
 
 // === UI UPDATES ===
 function updateConnectionStatus() {
@@ -770,11 +774,38 @@ function updateDbStats() {
     document.getElementById('avgLatency').textContent = avgLatency.toFixed(1);
 }
 
+function updateTelemetryStats() {
+    // Update capture stats
+    document.getElementById('totalCaptured').textContent = stats.captured.toLocaleString();
+    document.getElementById('motionCaptured').textContent = stats.motionCaptured.toLocaleString();
+    document.getElementById('safetyCaptured').textContent = stats.safetyCaptured.toLocaleString();
+    document.getElementById('onvifCaptured').textContent = stats.onvifCaptured.toLocaleString();
+    
+    // Update parse stats
+    document.getElementById('totalParsed').textContent = stats.parsed.toLocaleString();
+    document.getElementById('totalDropped').textContent = stats.dropped.toLocaleString();
+    document.getElementById('backpressure').textContent = stats.backpressure.toLocaleString();
+    
+    // Update DB stats
+    document.getElementById('totalFlushed').textContent = stats.flushed.toLocaleString();
+    document.getElementById('totalFailed').textContent = stats.failed.toLocaleString();
+    document.getElementById('avgLatency').textContent = stats.avgLatency.toFixed(1);
+    
+    // Update throughput rates (packets per second)
+    document.getElementById('parseRate').textContent = throughput.parsedPps.toLocaleString();
+    document.getElementById('flushRate').textContent = throughput.flushedPps.toLocaleString();
+    
+    // Add captured throughput rate if element exists
+    const capturedRateElement = document.getElementById('capturedRate');
+    if (capturedRateElement) {
+        capturedRateElement.textContent = throughput.capturedPps.toLocaleString();
+    }
+    
+}
+
 function updateHubStats() {
-    document.getElementById('hubPacketsReceived').textContent = stats.hubReceived.toLocaleString();
-    document.getElementById('hubMotion').textContent = stats.hubMotion.toLocaleString();
-    document.getElementById('hubSafety').textContent = stats.hubSafety.toLocaleString();
-    document.getElementById('hubOnvif').textContent = stats.hubOnvif.toLocaleString();
+    // This function is now handled by updateTelemetryStats()
+    updateTelemetryStats();
 }
 
 function updateChannelStats(motionRaw, safetyRaw, onvifRaw, motionParsed, safetyParsed, onvifParsed) {
@@ -850,35 +881,9 @@ function logMessage(message, type = 'info') {
     }
 }
 
-function logSignalRPacket(packetType, data) {
-    const signalrLogsDiv = document.getElementById('signalrLogs');
-    const logEntry = document.createElement('div');
-    logEntry.className = 'log-entry log-success';
-    
-    const timestamp = new Date().toLocaleTimeString() + '.' + 
-                      new Date().getMilliseconds().toString().padStart(3, '0');
-    
-    // Format packet data nicely
-    const packetInfo = JSON.stringify(data, null, 2);
-    logEntry.innerHTML = `<strong>[${timestamp}] ${packetType}</strong><pre style="margin: 5px 0; padding: 5px; background: #2a2a2a; border-radius: 3px; font-size: 11px; overflow-x: auto;">${packetInfo}</pre>`;
-    
-    signalrLogsDiv.insertBefore(logEntry, signalrLogsDiv.firstChild);
-    
-    // Keep only last 50 SignalR packet logs
-    while (signalrLogsDiv.children.length > 50) {
-        signalrLogsDiv.removeChild(signalrLogsDiv.lastChild);
-    }
-    
-    // Also log a simple summary to system logs
-    const valueStr = data.value !== undefined ? data.value.toFixed(2) : 
-                   data.Value !== undefined ? data.Value.toFixed(2) : 
-                   'N/A';
-    logMessage(`SignalR Packet: ${packetType} | Value: ${valueStr}`, 'success');
-}
 
 function clearLogs() {
     document.getElementById('logs').innerHTML = '';
-    document.getElementById('signalrLogs').innerHTML = '';
     logMessage('All logs cleared', 'info');
 }
 

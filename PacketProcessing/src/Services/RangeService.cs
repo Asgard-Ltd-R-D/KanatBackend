@@ -289,15 +289,6 @@ public class RangeService : IRangeService
         }
     }
 
-    public object GetCurrentModeStatus()
-    {
-        return _currentMode switch
-        {
-            States.Realtime => Realtime.GetStats(),
-            States.Playback => new { Message = "Playback functionality coming soon", CurrentMode = _currentMode.ToString() },
-            _ => throw new InvalidOperationException($"Unknown mode: {_currentMode}")
-        };
-    }
 
     public void ResetCurrentModeStatistics()
     {

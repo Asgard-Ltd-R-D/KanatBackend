@@ -9,12 +9,14 @@ using System.Runtime.InteropServices;
 using System.Buffers;
 using PacketProcessing.Utils.Observers;
 using PacketProcessing.Services.Transmission;
+using PacketProcessing.Telemetry;
 namespace PacketProcessing.Services.Realtime.Networking;
 
 public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserver<RawPacketEvent>, IObservable<BasePacketEntity>
     where T : BasePacketEntity
 {
     private readonly ILogger<HandlerService<T>> _logger;
+    private readonly ITelemetryService _telemetryService;
 
     // Device filters
     private readonly string _protocol;
@@ -55,12 +57,14 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         ILogger<HandlerService<T>> logger,
         Channel<T> parsedChannel,
         IConfiguration configuration,
-        ParseMapper parseMapper)
+        ParseMapper parseMapper,
+        ITelemetryService telemetryService)
     {
         _logger = logger;
         _parsedChannel = parsedChannel;
         _transmissionService = transmissionService;
         _parseMapper = parseMapper;
+        _telemetryService = telemetryService;
         
         // bounded channel for raw events with increased capacity
         // Wait mode ensures no packets are dropped (capture may block if processing too slow)
@@ -154,6 +158,16 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     public void OnNext(RawPacketEvent evt)
     {
         Interlocked.Increment(ref _packetsCaptured);
+        
+        // Update telemetry service based on packet type
+        if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
+            _telemetryService.IncrementMotionCaptured();
+        else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
+            _telemetryService.IncrementSafetyCaptured();
+        else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
+            _telemetryService.IncrementOnvifCaptured();
+        
+        _telemetryService.IncrementCaptured();
 
         // Try fast path first
         if (_rawChannel.Writer.TryWrite(evt))
@@ -161,6 +175,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
         // Channel full - Wait mode will block to guarantee delivery
         Interlocked.Increment(ref _backpressureEvents);
+        _telemetryService.IncrementBackpressure();
         
         // This blocks until space available (guarantees packet is written)
         _rawChannel.Writer
@@ -246,6 +261,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                         if (parsed is null)
                         {
                             Interlocked.Increment(ref _packetsDropped);
+                            _telemetryService.IncrementDropped();
                             batchDropped++;
                             continue;
                         }
@@ -263,21 +279,25 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                         if (!_parsedChannel.Writer.TryWrite(parsed))
                         {
                             Interlocked.Increment(ref _backpressureEvents);
+                            _telemetryService.IncrementBackpressure();
                             batchBackpressure++;
                             await _parsedChannel.Writer.WriteAsync(parsed, token);
                         }
 
                         Interlocked.Increment(ref _packetsParsed);
+                        _telemetryService.IncrementParsed();
                         batchParsed++;
                         
                         // Track latency (time from raw event to parsed)
                         var latencyMs = (long)(DateTime.UtcNow - raw.Timestamp).TotalMilliseconds;
                         Interlocked.Add(ref _totalLatencyMs, latencyMs);
                         Interlocked.Increment(ref _latencyCount);
+                        _telemetryService.UpdateLatency(latencyMs);
                     }
                     catch
                     {
                         Interlocked.Increment(ref _packetsDropped);
+                        _telemetryService.IncrementDropped();
                         batchDropped++;
                     }
                     finally

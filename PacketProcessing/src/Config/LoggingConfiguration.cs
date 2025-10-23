@@ -14,6 +14,9 @@ public class LoggingConfiguration
             .MinimumLevel.Override("Microsoft", LogEventLevel.Information)
             .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
             .MinimumLevel.Override("System", LogEventLevel.Warning)
+            .Filter.ByExcluding(logEvent => 
+                logEvent.Properties.ContainsKey("RequestPath") && 
+                logEvent.Properties["RequestPath"].ToString().Contains("/health"))
             .WriteTo.Console(
                 outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss}] [{Level:u3}]: {Message:lj}{NewLine}{Exception}"
             )

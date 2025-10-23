@@ -110,6 +110,10 @@
                 <span class="metric-label">OnVIF Captured</span>
                 <span class="metric-value" id="onvifCaptured">0</span>
             </div>
+            <div class="metric">
+                <span class="metric-label">Capture Rate</span>
+                <span class="metric-value"><span id="capturedRate">0</span> <span style="font-size:12px">pps</span></span>
+            </div>
         </div>
         
         <!-- Parse Statistics -->
@@ -154,26 +158,6 @@
             </div>
         </div>
         
-        <!-- SignalR Statistics -->
-        <div class="card">
-            <h3>SignalR Real-Time</h3>
-            <div class="metric">
-                <span class="metric-label">Packets Received</span>
-                <span class="metric-value good" id="hubPacketsReceived">0</span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">Motion Packets</span>
-                <span class="metric-value" id="hubMotion">0</span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">Safety Packets</span>
-                <span class="metric-value" id="hubSafety">0</span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">OnVIF Packets</span>
-                <span class="metric-value" id="hubOnvif">0</span>
-            </div>
-        </div>
     </div>
     
     <!-- Channel Statistics - Raw (Capture -> Parse) -->
@@ -318,12 +302,6 @@
     
     <!-- SignalR Packet Log -->
     <div id="signalr-log"></div>
-    <div class="log-container">
-        <div class="log-header">
-            <h3 style="color: #4fc3f7; margin: 0;">SIGNALR PACKET LOG (Real-time packets)</h3>
-        </div>
-        <div class="log-content" id="signalrLogs"></div>
-    </div>
 
     <!-- System Logs -->
     <div id="system-log"></div>

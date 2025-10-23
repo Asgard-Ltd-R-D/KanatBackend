@@ -8,6 +8,7 @@ using PacketProcessing.Services;
 using PacketProcessing.Services.Realtime.Networking;
 using PacketProcessing.Utils.Enums;
 using Microsoft.AspNetCore.Http;
+using PacketProcessing.Telemetry;
 
 namespace PacketProcessing.Controllers;
 
@@ -22,17 +23,20 @@ public class RangeController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly IRangeService _rangeService;
     private readonly IDeviceService _deviceService;
+    private readonly ITelemetryService _telemetryService;
 
     public RangeController(
         ILogger<RangeController> logger,
         IConfiguration configuration,
         IRangeService rangeService,
-        IDeviceService deviceService)
+        IDeviceService deviceService,
+        ITelemetryService telemetryService)
     {
         _logger = logger;
         _configuration = configuration;
         _rangeService = rangeService;
         _deviceService = deviceService;
+        _telemetryService = telemetryService;
     }
 
     #region Mode Management
@@ -102,11 +106,7 @@ public class RangeController : ControllerBase
         // Validate Realtime to Playback transition
         if (currentMode == States.Realtime && targetMode == States.Playback)
         {
-            var telemetry = _rangeService.Realtime.GetStats();
-            if (telemetry.Captured > 0 && telemetry.Captured > telemetry.Flushed)
-            {
-                return (false, "Cannot switch to Playback mode while capture may be active. Please ensure capture is stopped.");
-            }
+            // The mode transition is allowed without checking statistics
         }
         
         // TODO: Add validation for Playback to Realtime when playback is implemented
@@ -182,28 +182,9 @@ public class RangeController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Gets the status of the current mode.
-    /// </summary>
-    [HttpGet("status")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<object>))]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<object>))]
-    public ActionResult<ResponseResult<object>> GetStatus()
-    {
-        try
-        {
-            var status = _rangeService.GetCurrentModeStatus();
-            return Ok(ResponseResult<object>.SuccessResult(status));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get status");
-            return StatusCode(500, ResponseResult<object>.ServerErrorResult("Failed to get status"));
-        }
-    }
 
     /// <summary>
-    /// Resets statistics for the current mode.
+    /// Resets statistics for the current mode and telemetry service.
     /// </summary>
     [HttpPost("reset")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
@@ -213,6 +194,7 @@ public class RangeController : ControllerBase
         try
         {
             _rangeService.ResetCurrentModeStatistics();
+            _telemetryService.Reset();
             _logger.LogInformation("Statistics reset requested via API");
             return Ok(ResponseResult.SuccessResult());
         }

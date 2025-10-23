@@ -10,6 +10,7 @@ using QuestDB.Senders;
 using QuestDB;
 using Microsoft.Extensions.Configuration;
 using PacketProcessing.Config;
+using PacketProcessing.Telemetry;
 
 namespace PacketProcessing.Services.Realtime.Storage;
 
@@ -25,6 +26,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     private readonly int _batchSize;
     private readonly TimeSpan _batchTimeout;
     private readonly int _workerCount;
+    private readonly ITelemetryService _telemetryService;
 
     private long _flushedCount;
     private long _failedCount;
@@ -36,11 +38,13 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         Channel<T> channel,
         IInfluxRepository<T> repository,
         IOptions<QuestDbConfiguration> options,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ITelemetryService telemetryService)
     {
         _logger = logger;
         _channel = channel;
         _repository = repository;
+        _telemetryService = telemetryService;
 
         var concurrency = configuration.GetSection("Concurrency");
         _batchSize = concurrency.GetValue<int>("BatchSize", 1000);
@@ -277,10 +281,12 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         {
             await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
             Interlocked.Add(ref _flushedCount, batch.Count);
+            _telemetryService.IncrementFlushed(batch.Count);
             
             // Track latency
             Interlocked.Add(ref _totalLatencyMs, (long)latencyMs);
             Interlocked.Increment(ref _latencyCount);
+            _telemetryService.UpdateLatency(latencyMs);
             
             var stats = GetStats();
             _logger.LogInformation(
@@ -296,6 +302,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             {
                 await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
                 Interlocked.Add(ref _flushedCount, batch.Count);
+                _telemetryService.IncrementFlushed(batch.Count);
                 
                 // Track latency
                 Interlocked.Add(ref _totalLatencyMs, (long)latencyMs);
@@ -309,12 +316,14 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             catch
             {
                 Interlocked.Add(ref _failedCount, batch.Count);
+                _telemetryService.IncrementFailed(batch.Count);
                 throw;
             }
         }
         catch (Exception ex)
         {
             Interlocked.Add(ref _failedCount, batch.Count);
+            _telemetryService.IncrementFailed(batch.Count);
             _logger.LogError(ex, "Batch insert failed for {Entity}", typeof(T).Name);
         }
     }

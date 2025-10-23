@@ -22,6 +22,7 @@ using PacketProcessing.Utils.Parsers;
 using PacketProcessing.Repositories.EfRepository;
 using System.Text.Json.Serialization;
 using PacketProcessing.Utils.Enums;
+using Microsoft.AspNetCore.Http;
 
 /// <summary>
 /// Configuration and Dependency Injection Manager
@@ -105,8 +106,9 @@ public class ConfigurationInjection
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             var parseMapper = sp.GetRequiredService<ParseMapper>();
+            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
             
-            var handler = new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", transmissionService, logger, channel, cfg, parseMapper);
+            var handler = new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", transmissionService, logger, channel, cfg, parseMapper, telemetryService);
             
             return handler;
         });
@@ -122,7 +124,8 @@ public class ConfigurationInjection
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             var parseMapper = sp.GetRequiredService<ParseMapper>();
-            var handler = new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", transmissionService, logger, channel, cfg, parseMapper);
+            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
+            var handler = new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", transmissionService, logger, channel, cfg, parseMapper, telemetryService);
             
             return handler;
         });
@@ -138,8 +141,9 @@ public class ConfigurationInjection
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             var parseMapper = sp.GetRequiredService<ParseMapper>();
+            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
             
-            var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", transmissionService, logger, channel, cfg, parseMapper);
+            var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", transmissionService, logger, channel, cfg, parseMapper, telemetryService);
             return handler;
         });
         
@@ -159,7 +163,8 @@ public class ConfigurationInjection
             var repository = sp.GetRequiredService<IInfluxRepository<MotionPacketEntity>>();
             var options = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var config = sp.GetRequiredService<IConfiguration>();
-            return new DbWriterService<MotionPacketEntity>(logger, channel, repository, options, config);
+            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
+            return new DbWriterService<MotionPacketEntity>(logger, channel, repository, options, config, telemetryService);
         });
         builder.Services.AddSingleton<IDbWriterService<MotionPacketEntity>>(sp => 
             sp.GetRequiredService<DbWriterService<MotionPacketEntity>>());
@@ -171,7 +176,8 @@ public class ConfigurationInjection
             var repository = sp.GetRequiredService<IInfluxRepository<SafetyPacketEntity>>();
             var options = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var config = sp.GetRequiredService<IConfiguration>();
-            return new DbWriterService<SafetyPacketEntity>(logger, channel, repository, options, config);
+            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
+            return new DbWriterService<SafetyPacketEntity>(logger, channel, repository, options, config, telemetryService);
         });
         builder.Services.AddSingleton<IDbWriterService<SafetyPacketEntity>>(sp => 
             sp.GetRequiredService<DbWriterService<SafetyPacketEntity>>());
@@ -183,7 +189,8 @@ public class ConfigurationInjection
             var repository = sp.GetRequiredService<IInfluxRepository<OnVIFPacketEntity>>();
             var options = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var config = sp.GetRequiredService<IConfiguration>();
-            return new DbWriterService<OnVIFPacketEntity>(logger, channel, repository, options, config);
+            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
+            return new DbWriterService<OnVIFPacketEntity>(logger, channel, repository, options, config, telemetryService);
         });
         builder.Services.AddSingleton<IDbWriterService<OnVIFPacketEntity>>(sp => 
             sp.GetRequiredService<DbWriterService<OnVIFPacketEntity>>());
@@ -299,8 +306,35 @@ public class ConfigurationInjection
             options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter<DataPipes>());
         });
         
+        
         // Register ConnectionManager for SignalR
         builder.Services.AddSingleton<Hubs.ConnectionManager.IConnectionManager, Hubs.ConnectionManager.ConnectionManager>();
+        
+        // Register TelemetryBroadcaster first
+        builder.Services.AddSingleton<Telemetry.TelemetryBroadcasterOptions>(provider =>
+        {
+            var configuration = provider.GetRequiredService<IConfiguration>();
+            return new Telemetry.TelemetryBroadcasterOptions
+            {
+                Enabled = configuration.GetValue<bool>("Telemetry:Enabled", true),
+                MaxPushRateHz = configuration.GetValue<double>("Telemetry:MaxPushRateHz", 10.0),
+                MinIntervalMs = configuration.GetValue<int>("Telemetry:MinIntervalMs", 100)
+            };
+        });
+        
+        // Register TelemetryBroadcaster as singleton
+        builder.Services.AddSingleton<Telemetry.TelemetryBroadcaster>();
+        
+        // Register Telemetry Service with broadcaster dependency
+        builder.Services.AddSingleton<Telemetry.ITelemetryService>(provider =>
+        {
+            var broadcaster = provider.GetRequiredService<Telemetry.TelemetryBroadcaster>();
+            return new Telemetry.TelemetryService(broadcaster);
+        });
+        
+        // Register TelemetryBroadcaster as hosted service
+        builder.Services.AddHostedService<Telemetry.TelemetryBroadcaster>(provider =>
+            provider.GetRequiredService<Telemetry.TelemetryBroadcaster>());
         
         // Configure routing to use lowercase URLs
         builder.Services.AddRouting(options => options.LowercaseUrls = true);
@@ -328,12 +362,8 @@ public class ConfigurationInjection
     {
         // Global exception handler should be first
         app.UseGlobalExceptionHandler();
-
-        // Enable CORS Middleware
-        CorsConfiguration.ConfigureCorsMiddleware(app);
         
-        // Serve static files (telemetry dashboard)
-        app.UseDefaultFiles();
+        // Serve static files (telemetry dashboard) only at specific paths
         app.UseStaticFiles();
 
         // Use Middleware (e.g., Swagger, HTTPS Redirection)
@@ -357,14 +387,25 @@ public class ConfigurationInjection
     {
         // Global exception handler should be first
         app.UseGlobalExceptionHandler();
-
-
-        // Enable CORS Middleware
-        CorsConfiguration.ConfigureCorsMiddleware(app);
         
-        // Serve static files (telemetry dashboard)
-        app.UseDefaultFiles();
+        // Serve static files (telemetry dashboard) only at specific paths
         app.UseStaticFiles();
+        
+        // Map dashboard to specific path instead of root
+        app.MapGet("/dashboard", async context =>
+        {
+            var filePath = Path.Combine(app.Environment.WebRootPath, "index.html");
+            if (File.Exists(filePath))
+            {
+                context.Response.ContentType = "text/html";
+                await context.Response.SendFileAsync(filePath);
+            }
+            else
+            {
+                context.Response.StatusCode = 404;
+                await context.Response.WriteAsync("Dashboard not found");
+            }
+        });
 
         // Use Middleware (e.g., Swagger, HTTPS Redirection)
         if (!app.Environment.IsProduction())
@@ -376,8 +417,9 @@ public class ConfigurationInjection
         // Map simple health check endpoint
         app.MapHealthChecks("/health");
         
-        // Map SignalR hub
+        // Map SignalR hubs
         app.MapHub<Hubs.CustomHub>("/hub/packets");
+        app.MapHub<Telemetry.TelemetryHub>("/hubs/telemetry");
         
         app.MapControllers();
     }

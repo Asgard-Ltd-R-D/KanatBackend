@@ -92,12 +92,6 @@ public interface IRangeService
     Task<bool> ClearPacketsAsync(DateTime start, DateTime end);
     
     /// <summary>
-    /// Gets the status of the current mode
-    /// </summary>
-    /// <returns>Status information for the current mode</returns>
-    object GetCurrentModeStatus();
-    
-    /// <summary>
     /// Resets statistics for the current mode
     /// </summary>
     void ResetCurrentModeStatistics();

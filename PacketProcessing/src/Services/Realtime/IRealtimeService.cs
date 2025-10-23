@@ -23,11 +23,6 @@ public interface IRealtimeService
     Task StopAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// Get statistics about the pipeline
-    /// </summary>
-    TelemetryDto GetStats();
-    
-    /// <summary>
     /// Reset all statistics counters to zero
     /// </summary>
     void ResetStats();

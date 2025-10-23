@@ -6,7 +6,7 @@ using QuestDB.Senders;
 
 namespace PacketProcessing.Entities.Packet;
 
-[Table("safety_packets")]
+[Table(Constants.SAFETY_PACKETS_TAG)]
 public class SafetyPacketEntity : BasePacketEntity
 {
     [Column("name")]

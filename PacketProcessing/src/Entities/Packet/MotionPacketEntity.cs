@@ -6,7 +6,7 @@ using QuestDB.Senders;
 
 namespace PacketProcessing.Entities.Packet;
 
-[Table("motion_packets")]
+[Table(Constants.MOTION_PACKETS_TAG)]
 public class MotionPacketEntity : BasePacketEntity
 {
     [Column("opCode")]
@@ -16,7 +16,7 @@ public class MotionPacketEntity : BasePacketEntity
     [Column("axis")]
     public required int Axis { get; set; }
     
-    [Column("floatValue")]
+    [Column("value")]
     public double? Value { get; set; }
 
     public override string TableName => Constants.MOTION_PACKETS_TAG;

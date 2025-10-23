@@ -5,7 +5,7 @@ using QuestDB.Senders;
 
 namespace PacketProcessing.Entities.Packet;
 
-[Table("onvif_packets")]
+[Table(Constants.ONVIF_PACKETS_TAG)]
 public class OnVIFPacketEntity : BasePacketEntity
 {   
     

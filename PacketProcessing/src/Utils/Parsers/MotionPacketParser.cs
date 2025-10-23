@@ -12,12 +12,12 @@ namespace PacketProcessing.Utils.Parsers;
 public class MotionPacketParser
 {
     private readonly ILogger<MotionPacketParser> _logger;
+    private const string REPORT_IP = "132.8.7.125";
 
     public MotionPacketParser(ILogger<MotionPacketParser> logger)
     {
         _logger = logger;
     }
-    private const string REPORT_IP = "132.8.7.125";
 
     /// <summary>
     /// Parses raw packet data into a MotionPacketEntity by following these conventions:
@@ -35,89 +35,71 @@ public class MotionPacketParser
     {
         try
         {
-            // --- Check if the packet is long enough to contain an Ethernet + IP + TCP/CapTrack Data Payload ---
-            if (rawPacket.Length < 54)
+            // --- Try to locate the real IPv4 header start dynamically ---
+            int ipStart = -1;
+            for (int i = 0; i < Math.Min(32, rawPacket.Length - 20); i++)
             {
-                _logger.LogWarning("Packet too short to contain an Ethernet + IP + TCP/CapTrack Data Payload. Raw Packet Length: {RawPacketLength}", rawPacket.Length);
-                return null;
+                // IPv4 header signature: 0x45 (version=4, IHL=5)
+                if (rawPacket[i] == 0x45 && rawPacket.Length > i + 20)
+                {
+                    ipStart = i;
+                    break;
+                }
             }
 
-            // Ethernet → IP start calculation
-            int ipStart = (rawPacket.Length >= 14 && BinaryPrimitives.ReadUInt16BigEndian(rawPacket.Slice(12, 2)) == 0x0800) ? 14 : 0;
+            ReadOnlySpan<byte> payload;
+            string? srcIp = null;
 
-            // IPv4 sanity check
-            if (rawPacket.Length < ipStart + 20 || (rawPacket[ipStart] >> 4) != 4)
-                return null;
-
-            // IP header length calculation
-            int ipHeaderLen = (rawPacket[ipStart] & 0x0F) * 4;
-            if (ipHeaderLen < 20 || rawPacket.Length < ipStart + ipHeaderLen)
-                return null;
-
-            // TCP start calculation
-            int tcpStart = ipStart + ipHeaderLen;
-            if (rawPacket.Length < tcpStart + 20)
-                return null;
-
-            // TCP header length calculation
-            int tcpHeaderLen = ((rawPacket[tcpStart + 12] >> 4) & 0x0F) * 4;
-            if (tcpHeaderLen < 20)
-                tcpHeaderLen = 20;
-
-            // TCP payload start calculation
-            int tcpPayloadStart = tcpStart + tcpHeaderLen;
-            if (tcpPayloadStart >= rawPacket.Length)
+            if (ipStart >= 0 && rawPacket.Length >= ipStart + 40)
             {
-                _logger.LogDebug("No TCP payload (start={Start}, total={Total})", tcpPayloadStart, rawPacket.Length);
-                return null;
-            }
-
-            // Extract the TCP payload
-            ReadOnlySpan<byte> tcpPayload = rawPacket[tcpPayloadStart..];
-
-            int payloadLen = tcpPayload.Length;
-            _logger.LogDebug("TCP payload starts at {TcpPayloadStart}, length = {PayloadLen} bytes", tcpPayloadStart, payloadLen);
-
-            if (payloadLen < 7)
-            {
-                _logger.LogDebug("Payload too small ({Len} bytes), dropping packet", payloadLen);
-                return null;
-            }
-
-            // --- Source IP ---
-            var srcIp = $"{rawPacket[ipStart + 12]}.{rawPacket[ipStart + 13]}.{rawPacket[ipStart + 14]}.{rawPacket[ipStart + 15]}";
-            bool isReport = srcIp == REPORT_IP;
-
-            // --- Packet fields with safety checks ---
-            byte length = tcpPayload.Length >= 3 ? tcpPayload[2] : (byte)0;
-            byte axisId = tcpPayload.Length >= 5 ? tcpPayload[4] : (byte)0;
-
-            // Opcode extraction, high opcode and low opcode combined into one ushort
-            ushort opCode = tcpPayload.Length >= 7
-                ? BinaryPrimitives.ReadUInt16BigEndian(tcpPayload.Slice(5, 2))
-                : (ushort)0;
-
-            // --- Data Section, can be varying length depending on the opcode ---
-            ReadOnlySpan<byte> captureData = tcpPayload[7..^1]; // Slice from 7 to the second last byte (checksum)
-       
-
-            var opDesc = MotionCommands.MotionRecords.TryGetValue(opCode, out var desc) ? desc.OpCodeDescription : null;
-            if (opDesc == null)
-            {
-                _logger.LogDebug("Unknown opcode: {opCode}, dropping packet", opCode);
-                return null;
-            }
-            double? value = DecodeValue(captureData, opCode, !isReport);
-
-            if (value.HasValue)
-            {
-                _logger.LogDebug("Parsed Motion Packet → Axis: {Axis}, Opcode: {opCode} ({opDesc}), Value: {Value}, IsCmd: {IsCmd}", axisId, opCode, opDesc, value, !isReport);
+                _logger.LogTrace("Detected IPv4 header at offset {Offset}", ipStart);
+                payload = ExtractTcpPayload(rawPacket, ipStart, out srcIp);
+                if (payload.IsEmpty)
+                {
+                    _logger.LogDebug("Failed to extract TCP payload from framed packet (ipStart={Start})", ipStart);
+                    return null;
+                }
             }
             else
             {
-                _logger.LogDebug("Parsed Motion Packet → Axis: {Axis}, Opcode: {opCode} ({opDesc}), IsCmd: {IsCmd}, has no value, dropping packet", axisId, opCode, opDesc, !isReport);
+                // No IPv4 signature detected → assume plain TCP payload (simulator)
+                _logger.LogTrace("No IPv4 header found; assuming plain TCP payload.");
+                payload = rawPacket;
+            }
+
+            if (payload.Length < 7)
+            {
+                _logger.LogDebug("Payload too small ({Len} bytes), dropping packet.", payload.Length);
                 return null;
             }
+
+            bool isReport = srcIp == REPORT_IP;
+
+            // --- Field extraction ---
+            byte length = payload.Length >= 3 ? payload[2] : (byte)0;
+            byte axisId = payload.Length >= 5 ? payload[4] : (byte)0;
+            // Opcode extraction, high opcode and low opcode combined into one ushort
+            ushort opCode = payload.Length >= 7
+                ? BinaryPrimitives.ReadUInt16BigEndian(payload.Slice(5, 2))
+                : (ushort)0;
+
+            if (!MotionCommands.MotionRecords.TryGetValue(opCode, out var record))
+            {
+                _logger.LogDebug("Unknown opcode: 0x{OpCode:X4}, dropping packet.", opCode);
+                return null;
+            }
+            // --- Data Section, can be varying length depending on the opcode ---
+            ReadOnlySpan<byte> captureData = payload.Length > 8 ? payload[7..^1] : [];
+            double value = DecodeValue(captureData, opCode, !isReport);
+            if (double.IsNaN(value))
+            {
+                _logger.LogDebug("Opcode 0x{OpCode:X4} has no decodable value, dropping packet.", opCode);
+                return null;
+            }
+
+            _logger.LogDebug(
+                "Parsed Motion Packet → Axis={Axis}, Opcode=0x{Op:X4} ({Desc}), Value={Val}, IsCmd={IsCmd}",
+                axisId, opCode, record.OpCodeDescription, value, !isReport);
 
             return new MotionPacketEntity
             {
@@ -125,47 +107,52 @@ public class MotionPacketParser
                 Timestamp = DateTime.UtcNow,
                 Axis = axisId,
                 OpCode = $"0x{opCode:X4}",
-                Description = opDesc,
+                Description = record.OpCodeDescription,
                 Value = value,
                 IsCmd = !isReport
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error parsing motion packet. Exception: {ExceptionMessage}, Length: {Length} bytes, dropping packet", ex.Message, rawPacket.Length);
+            _logger.LogError(ex, "Error parsing motion packet ({Length} bytes)", rawPacket.Length);
             return null;
         }
     }
 
-    private double DecodeValue(ReadOnlySpan<byte> rawPacket, int opCode, bool isCmd)
-    {       
-        if (MotionCommands.MotionRecords.TryGetValue(opCode, out var motionRecord))
+    // --- Extract TCP payload given the starting offset of the IPv4 header ---
+    private static ReadOnlySpan<byte> ExtractTcpPayload(ReadOnlySpan<byte> raw, int ipStart, out string srcIp)
+    {
+        srcIp = string.Empty;
+
+        // Calculate IP header length
+        int ipHeaderLen = (raw[ipStart] & 0x0F) * 4;
+        if (raw.Length < ipStart + ipHeaderLen + 20) return [];
+
+        int tcpStart = ipStart + ipHeaderLen;
+        int tcpHeaderLen = ((raw[tcpStart + 12] >> 4) & 0x0F) * 4;
+        int tcpPayloadStart = tcpStart + tcpHeaderLen;
+        if (tcpPayloadStart >= raw.Length) return ReadOnlySpan<byte>.Empty;
+
+        srcIp = $"{raw[ipStart + 12]}.{raw[ipStart + 13]}.{raw[ipStart + 14]}.{raw[ipStart + 15]}";
+        return raw[tcpPayloadStart..];
+    }
+
+    // --- Decode value according to opcode metadata ---
+    private double DecodeValue(ReadOnlySpan<byte> data, int opCode, bool isCmd)
+    {
+        if (!MotionCommands.MotionRecords.TryGetValue(opCode, out var motionRecord))
+            return double.NaN;
+
+        var vt = isCmd ? motionRecord.Send : motionRecord.Return;
+
+        return vt switch
         {
-            if (isCmd)
-            {
-                return motionRecord.Send switch
-                {
-                    ValueTypes.UInt8 => rawPacket[0], // uint8
-                    ValueTypes.UInt16BE => BinaryPrimitives.ReadUInt16BigEndian(rawPacket), // uint16
-                    ValueTypes.UInt32BE => BinaryPrimitives.ReadUInt32BigEndian(rawPacket), // 32-bit integer in big-endian format
-                    ValueTypes.Float32BE => BinaryPrimitives.ReadSingleBigEndian(rawPacket), // 32-bit float in big-endian format
-                    ValueTypes.None => 1d, // return 1d, which means the packet has been appeared but the value is not available
-                    _ => double.NaN, // None of the value type is matching the opcode return NaN and drop the packet
-                };
-            }
-            else
-            {
-                return motionRecord.Return switch
-                {
-                    ValueTypes.UInt8 => rawPacket[0], // uint8
-                    ValueTypes.UInt16BE => BinaryPrimitives.ReadUInt16BigEndian(rawPacket), // uint16
-                    ValueTypes.UInt32BE => BinaryPrimitives.ReadUInt32BigEndian(rawPacket), // 32-bit integer in big-endian format
-                    ValueTypes.Float32BE => BinaryPrimitives.ReadSingleBigEndian(rawPacket), // 32-bit float in big-endian format
-                    ValueTypes.None => 1d, // return 1d, which means the packet has been appeared but the value is not available
-                    _ => double.NaN, // None of the value type is matching the opcode return NaN and drop the packet
-                };
-            }
-        }
-        return double.NaN;
+            ValueTypes.UInt8     => data.Length >= 1 ? data[0] : double.NaN,
+            ValueTypes.UInt16BE  => data.Length >= 2 ? BinaryPrimitives.ReadUInt16BigEndian(data) : double.NaN, //uint16
+            ValueTypes.UInt32BE  => data.Length >= 4 ? BinaryPrimitives.ReadUInt32BigEndian(data) : double.NaN, //32-bit integer in big-endian format
+            ValueTypes.Float32BE => data.Length >= 4 ? BinaryPrimitives.ReadSingleBigEndian(data) : double.NaN, //32-bit float in big-endian format
+            ValueTypes.None      => 1d, // return 1d, which means the packet has been appeared but the value is not available
+            _                    => double.NaN //None of the value type is matching the opcode return NaN and drop the packet
+        };
     }
 }

@@ -79,18 +79,6 @@ if (questDbConfig != null)
         questDbConfig.GetPostgresConnectionString().Replace("Password=quest", "Password=***"));
 }
 
-// Log capture configuration
-var captureMode = configuration["Capture:Mode"];
-var readTimeoutMs = configuration["Capture:ReadTimeoutMs"];
-var kernelBufferMb = configuration["Capture:KernelBufferMb"];
-var logEveryMs = configuration["Capture:LogEveryMs"];
-
-logger.LogInformation("=== CAPTURE CONFIGURATION ===");
-logger.LogInformation("Capture Mode: {CaptureMode}", captureMode);
-logger.LogInformation("Read Timeout: {ReadTimeoutMs}ms", readTimeoutMs);
-logger.LogInformation("Kernel Buffer: {KernelBufferMb}MB", kernelBufferMb);
-logger.LogInformation("Log Interval: {LogEveryMs}ms", logEveryMs);
-
 logger.LogInformation("=== APPLICATION READY ===");
 
 /// <summary>

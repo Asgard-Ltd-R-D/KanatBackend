@@ -1,0 +1,1253 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Kanat Packet Processing API",
+    "version": "v1",
+    "description": "API for real-time packet capture and playback analysis",
+    "contact": {
+      "name": "Kanat Development Team"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://localhost:7001",
+      "description": "Development server"
+    },
+    {
+      "url": "https://localhost:5001",
+      "description": "Production server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Range Management",
+      "description": "Operations for managing range mode, realtime services, and playback"
+    },
+    {
+      "name": "Range Status",
+      "description": "Operations for getting system status, devices, and resetting statistics"
+    },
+    {
+      "name": "Range Repository",
+      "description": "CRUD operations for range entities"
+    },
+    {
+      "name": "Packet Repository",
+      "description": "Operations for managing packet data"
+    },
+    {
+      "name": "Development",
+      "description": "Development-only endpoints for testing and debugging"
+    },
+    {
+      "name": "SignalR Hub",
+      "description": "Real-time SignalR hub endpoints for packet data transmission"
+    }
+  ],
+  "paths": {
+    "/api/v1/range/mode/{mode}": {
+      "put": {
+        "tags": ["Range Management"],
+        "summary": "Change application mode",
+        "description": "Changes the application mode between Realtime and Playback with validation",
+        "operationId": "ChangeMode",
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["Realtime", "Playback"]
+            },
+            "description": "The target mode to switch to"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mode changed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                },
+                "example": {
+                  "success": true,
+                  "data": null,
+                  "errorMessage": null,
+                  "statusCode": 200,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid mode transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Cannot switch to Playback mode while capture may be active. Please ensure capture is stopped.",
+                  "statusCode": 400,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/mode": {
+      "get": {
+        "tags": ["Range Management"],
+        "summary": "Get current mode",
+        "description": "Gets the current application mode",
+        "operationId": "GetMode",
+        "responses": {
+          "200": {
+            "description": "Current mode retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultString"
+                },
+                "example": {
+                  "success": true,
+                  "data": "Realtime",
+                  "errorMessage": null,
+                  "statusCode": 200,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultString"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/realtime/start/{deviceName}": {
+      "post": {
+        "tags": ["Range Management"],
+        "summary": "Start realtime services",
+        "description": "Starts all realtime capture services for the specified device",
+        "operationId": "StartAllServices",
+        "parameters": [
+          {
+            "name": "deviceName",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Name of the network device to start capture on",
+            "example": "eth0"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Services started successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to start services",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/realtime/stop": {
+      "delete": {
+        "tags": ["Range Management"],
+        "summary": "Stop realtime services",
+        "description": "Stops all realtime capture services",
+        "operationId": "StopAllServices",
+        "responses": {
+          "200": {
+            "description": "Services stopped successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to stop services",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/playback/pace/{pace}": {
+      "put": {
+        "tags": ["Range Management"],
+        "summary": "Set playback pace",
+        "description": "Sets the playback pace (speed multiplier)",
+        "operationId": "SetPlaybackPace",
+        "parameters": [
+          {
+            "name": "pace",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double",
+              "minimum": 0.1
+            },
+            "description": "Playback pace multiplier (e.g., 1.0 = normal speed, 2.0 = double speed)",
+            "example": 1.5
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Playback pace set successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid pace value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Pace must be greater than 0",
+                  "statusCode": 400,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to set playback pace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/realtime/devices": {
+      "get": {
+        "tags": ["Range Status"],
+        "summary": "Get available devices",
+        "description": "Gets the list of available network devices for packet capture",
+        "operationId": "GetAvailableDevices",
+        "responses": {
+          "200": {
+            "description": "Available devices retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultStringArray"
+                },
+                "example": {
+                  "success": true,
+                  "data": ["eth0", "wlan0", "lo"],
+                  "errorMessage": null,
+                  "statusCode": 200,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to get available devices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultStringArray"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/status": {
+      "get": {
+        "tags": ["Range Status"],
+        "summary": "Get system status",
+        "description": "Gets the status of the current mode and system",
+        "operationId": "GetStatus",
+        "responses": {
+          "200": {
+            "description": "Status retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultObject"
+                },
+                "example": {
+                  "success": true,
+                  "data": {
+                    "mode": "Realtime",
+                    "isActive": true,
+                    "captured": 1250,
+                    "processed": 1200,
+                    "errors": 5
+                  },
+                  "errorMessage": null,
+                  "statusCode": 200,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to get status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultObject"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/reset": {
+      "post": {
+        "tags": ["Range Status"],
+        "summary": "Reset statistics",
+        "description": "Resets statistics for the current mode",
+        "operationId": "ResetStatistics",
+        "responses": {
+          "200": {
+            "description": "Statistics reset successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to reset statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/ranges": {
+      "get": {
+        "tags": ["Range Repository"],
+        "summary": "Get ranges (paginated)",
+        "description": "Gets all ranges with pagination support",
+        "operationId": "GetAllRangesPaginated",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number (1-based)"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 1000
+            },
+            "description": "Number of items per page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ranges retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultPaginatedRange"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to get ranges",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultPaginatedRange"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Range Repository"],
+        "summary": "Create range",
+        "description": "Creates a new range",
+        "operationId": "CreateRange",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RangeDto"
+              },
+              "example": {
+                "id": "00000000-0000-0000-0000-000000000000",
+                "timestamp": "2024-01-15T10:30:00Z",
+                "start": 1000,
+                "end": 2000,
+                "description": "Test range session"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Range created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to create range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/ranges/{id}": {
+      "get": {
+        "tags": ["Range Repository"],
+        "summary": "Get range by ID",
+        "description": "Gets a specific range by its ID",
+        "operationId": "GetRangeById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The range ID",
+            "example": "123e4567-e89b-12d3-a456-426614174000"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Range retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Range not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Range not found",
+                  "statusCode": 404,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to get range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["Range Repository"],
+        "summary": "Update range",
+        "description": "Updates an existing range by ID",
+        "operationId": "UpdateRangeById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The range ID",
+            "example": "123e4567-e89b-12d3-a456-426614174000"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Range updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Range not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to update range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Range Repository"],
+        "summary": "Delete range",
+        "description": "Deletes a range by ID",
+        "operationId": "DeleteRangeById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The range ID",
+            "example": "123e4567-e89b-12d3-a456-426614174000"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Range deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Range not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to delete range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/packets/clear": {
+      "delete": {
+        "tags": ["Packet Repository"],
+        "summary": "Clear packets",
+        "description": "Clears packets within a specified time range",
+        "operationId": "ClearPackets",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Start timestamp (ISO-8601, assumed UTC if with 'Z')",
+            "example": "2024-01-15T00:00:00Z"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "End timestamp (ISO-8601, assumed UTC if with 'Z')",
+            "example": "2024-01-15T23:59:59Z"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Packets cleared successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultString"
+                },
+                "example": {
+                  "success": true,
+                  "data": "Packets cleared for the requested time range",
+                  "errorMessage": null,
+                  "statusCode": 200,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Failed to clear packets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultString"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultString"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/range/dev/ranges/all": {
+      "get": {
+        "tags": ["Development"],
+        "summary": "Get all ranges (Development only)",
+        "description": "Gets all ranges without pagination. Only available in development environment.",
+        "operationId": "GetAllRanges",
+        "responses": {
+          "200": {
+            "description": "All ranges retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRangeArray"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not available in non-development environment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to get all ranges",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRangeArray"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Development"],
+        "summary": "Delete all ranges (Development only)",
+        "description": "Deletes all ranges. Only available in development environment.",
+        "operationId": "DeleteAllRanges",
+        "responses": {
+          "200": {
+            "description": "All ranges deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultInteger"
+                },
+                "example": {
+                  "success": true,
+                  "data": 5,
+                  "errorMessage": null,
+                  "statusCode": 200,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not available in non-development environment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to delete all ranges",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultInteger"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/hub/packets": {
+      "get": {
+        "tags": ["SignalR Hub"],
+        "summary": "SignalR Hub Connection",
+        "description": "WebSocket endpoint for real-time packet data transmission and playback control",
+        "operationId": "SignalRHubConnection",
+        "parameters": [
+          {
+            "name": "access_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional access token for authentication"
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols - WebSocket connection established"
+          },
+          "400": {
+            "description": "Bad Request - Invalid connection request"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication"
+          }
+        }
+      }
+    },
+    "/hub/packets/negotiate": {
+      "post": {
+        "tags": ["SignalR Hub"],
+        "summary": "SignalR Hub Negotiation",
+        "description": "Negotiates the SignalR connection parameters",
+        "operationId": "SignalRHubNegotiate",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "protocol": {
+                    "type": "string",
+                    "description": "SignalR protocol version"
+                  },
+                  "version": {
+                    "type": "integer",
+                    "description": "Protocol version number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Negotiation successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectionId": {
+                      "type": "string",
+                      "description": "Unique connection identifier"
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "WebSocket connection URL"
+                    },
+                    "accessToken": {
+                      "type": "string",
+                      "description": "Access token for the connection"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ResponseResult": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Indicates whether the operation was successful"
+          },
+          "data": {
+            "type": "object",
+            "nullable": true,
+            "description": "The data payload (null if operation failed)"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message (null if operation succeeded)"
+          },
+          "statusCode": {
+            "type": "integer",
+            "description": "HTTP status code"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the response"
+          }
+        },
+        "required": ["success", "statusCode", "timestamp"]
+      },
+      "ResponseResultString": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Indicates whether the operation was successful"
+          },
+          "data": {
+            "type": "string",
+            "nullable": true,
+            "description": "The string data payload"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message (null if operation succeeded)"
+          },
+          "statusCode": {
+            "type": "integer",
+            "description": "HTTP status code"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the response"
+          }
+        },
+        "required": ["success", "statusCode", "timestamp"]
+      },
+      "ResponseResultStringArray": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Indicates whether the operation was successful"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "description": "The array of strings data payload"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message (null if operation succeeded)"
+          },
+          "statusCode": {
+            "type": "integer",
+            "description": "HTTP status code"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the response"
+          }
+        },
+        "required": ["success", "statusCode", "timestamp"]
+      },
+      "ResponseResultObject": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Indicates whether the operation was successful"
+          },
+          "data": {
+            "type": "object",
+            "nullable": true,
+            "description": "The object data payload"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message (null if operation succeeded)"
+          },
+          "statusCode": {
+            "type": "integer",
+            "description": "HTTP status code"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the response"
+          }
+        },
+        "required": ["success", "statusCode", "timestamp"]
+      },
+      "ResponseResultInteger": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Indicates whether the operation was successful"
+          },
+          "data": {
+            "type": "integer",
+            "nullable": true,
+            "description": "The integer data payload"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message (null if operation succeeded)"
+          },
+          "statusCode": {
+            "type": "integer",
+            "description": "HTTP status code"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the response"
+          }
+        },
+        "required": ["success", "statusCode", "timestamp"]
+      },
+      "RangeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the range"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the range was created"
+          },
+          "start": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start position or time of the range"
+          },
+          "end": {
+            "type": "integer",
+            "format": "int64",
+            "description": "End position or time of the range"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the range"
+          }
+        },
+        "required": ["id", "timestamp", "start", "end", "description"]
+      },
+      "ResponseResultRange": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Indicates whether the operation was successful"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RangeDto",
+            "nullable": true,
+            "description": "The range data payload"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message (null if operation succeeded)"
+          },
+          "statusCode": {
+            "type": "integer",
+            "description": "HTTP status code"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the response"
+          }
+        },
+        "required": ["success", "statusCode", "timestamp"]
+      },
+      "ResponseResultRangeArray": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Indicates whether the operation was successful"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RangeDto"
+            },
+            "nullable": true,
+            "description": "The array of ranges data payload"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message (null if operation succeeded)"
+          },
+          "statusCode": {
+            "type": "integer",
+            "description": "HTTP status code"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the response"
+          }
+        },
+        "required": ["success", "statusCode", "timestamp"]
+      },
+      "PaginatedResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RangeDto"
+            },
+            "description": "The collection of items for the current page"
+          },
+          "page": {
+            "type": "integer",
+            "description": "Current page number (1-based)"
+          },
+          "pageSize": {
+            "type": "integer",
+            "description": "Number of items per page"
+          },
+          "totalCount": {
+            "type": "integer",
+            "description": "Total number of items across all pages"
+          },
+          "totalPages": {
+            "type": "integer",
+            "description": "Total number of pages"
+          },
+          "hasPreviousPage": {
+            "type": "boolean",
+            "description": "Indicates if there is a previous page"
+          },
+          "hasNextPage": {
+            "type": "boolean",
+            "description": "Indicates if there is a next page"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the response"
+          }
+        },
+        "required": ["items", "page", "pageSize", "totalCount", "totalPages", "hasPreviousPage", "hasNextPage", "timestamp"]
+      },
+      "StreamRequestDto": {
+        "type": "object",
+        "properties": {
+          "dataPipe": {
+            "type": "string",
+            "enum": ["Motion", "OnVIF", "Safety"],
+            "description": "Data pipe type (always required)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the method hex code/ opcode (e.g. 'MOT_GetMotorCurrent', 'FOV_REQ', 'DO3_FIRE1', 'LRF_STS', 'MOT_GetMotorSpeed', 'LRF_REQ', 'DG_SetSyncMode', 'DG_SetInnerMode', 'DG_IsSyncMode', 'DG_IsInnerMode', 'DG_GetPosDiff', 'DG_CTC', 'DG_GetCTCoffset', 'DG_IsBoresightEn', 'DG_GetBoresightOffset', 'DG_SetBallisticOffset')"
+          },
+          "isCmd": {
+            "type": "boolean",
+            "nullable": true,
+            "default": false,
+            "description": "Whether the method is a CMD or a RPT"
+          },
+          "axis": {
+            "type": "integer",
+            "nullable": true,
+            "default": 0,
+            "description": "Axis of the motion packet specifically to MOT_* commands, for other data pipes and other motion commands, this will be ignored."
+          },
+          "subscriptionKey": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Subscription key for the stream request, this is used to identify the stream request and to filter the packets."
+          }
+        },
+        "required": ["dataPipe", "description"]
+      },
+      "ResponseResultPaginatedRange": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Indicates whether the operation was successful"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PaginatedResult",
+            "nullable": true,
+            "description": "The paginated ranges data payload"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message (null if operation succeeded)"
+          },
+          "statusCode": {
+            "type": "integer",
+            "description": "HTTP status code"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the response"
+          }
+        },
+        "required": ["success", "statusCode", "timestamp"]
+      }
+    }
+  }
+}

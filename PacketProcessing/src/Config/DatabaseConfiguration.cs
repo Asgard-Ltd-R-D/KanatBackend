@@ -129,6 +129,9 @@ public class DatabaseConfiguration
     /// </summary>
     private static void ConfigurePacketRepositories(IServiceCollection services, IConfiguration configuration)
     {
+        // Register Influx Repository Factory
+        services.AddScoped<IInfluxRepositoryFactory, InfluxRepositoryFactory>();
+        
         // Register specific packet repositories for convenience
         services.AddSingleton<IInfluxRepository<MotionPacketEntity>>(sp =>
         {

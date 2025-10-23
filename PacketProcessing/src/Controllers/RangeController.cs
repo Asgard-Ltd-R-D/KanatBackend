@@ -7,6 +7,7 @@ using PacketProcessing.DTOs.Range;
 using PacketProcessing.Services;
 using PacketProcessing.Services.Realtime.Networking;
 using PacketProcessing.Utils.Enums;
+using Microsoft.AspNetCore.Http;
 
 namespace PacketProcessing.Controllers;
 
@@ -310,7 +311,7 @@ public class RangeController : ControllerBase
     /// <summary>
     /// Gets all ranges (Development only).
     /// </summary>
-    [HttpGet("ranges/all")]
+    [HttpGet("dev/ranges/all")]
     [DevelopmentOnly]
     public async Task<ActionResult<ResponseResult<IEnumerable<RangeDto>>>> GetAllRangesAsync()
     {
@@ -378,7 +379,7 @@ public class RangeController : ControllerBase
     /// <summary>
     /// Deletes all ranges (Development only).
     /// </summary>
-    [HttpDelete("ranges/all")]
+    [HttpDelete("dev/ranges/all")]
     [DevelopmentOnly]
     public async Task<ActionResult<ResponseResult<int>>> DeleteAllAsync()
     {

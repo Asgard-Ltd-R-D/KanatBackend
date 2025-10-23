@@ -3,12 +3,14 @@ using Microsoft.Extensions.Logging;
 using PacketProcessing.DTOs.Stream;
 using PacketProcessing.Hubs.ConnectionManager;
 using PacketProcessing.Services.Transmission;
+using SignalRSwaggerGen.Attributes;
 
 namespace PacketProcessing.Hubs;
 
 /// <summary>
 /// SignalR Hub for real-time packet data transmission and playback control
 /// </summary>
+[SignalRHub]
 public class CustomHub : Hub
 {
     private readonly ILogger<CustomHub> _logger;

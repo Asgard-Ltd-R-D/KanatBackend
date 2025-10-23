@@ -21,6 +21,10 @@ using PacketProcessing.Utils.Parsers;
 using PacketProcessing.Repositories.EfRepository;
 using System.Text.Json.Serialization;
 using PacketProcessing.Utils.Enums;
+using SignalRSwaggerGen;
+// TODO: Fix OpenAPI references
+// using Microsoft.OpenApi.Readers;
+// using Microsoft.OpenApi.Models;
 
 /// <summary>
 /// Configuration and Dependency Injection Manager
@@ -234,19 +238,54 @@ public class ConfigurationInjection
                 options.IncludeXmlComments(xmlPath);
             }
 
-            // Tag controllers by name
+            // Define Swagger tags
             options.TagActionsBy(api =>
             {
-                if (api.GroupName != null)
-                {
-                    return new[] { api.GroupName };
-                }
-
                 var controllerName = api.ActionDescriptor.RouteValues["controller"];
+                var actionName = api.ActionDescriptor.RouteValues["action"];
+                var routeTemplate = api.ActionDescriptor.AttributeRouteInfo?.Template;
+                
+                // Check if this is a dev-only endpoint
+                if (api.ActionDescriptor.EndpointMetadata.Any(m => m is DevelopmentOnlyAttribute))
+                {
+                    return ["Development"];
+                }
+                
+                // Group by functionality for Range controller
+                if (controllerName == "Range")
+                {
+                    return routeTemplate switch
+                    {
+                        // Range Mode: mode operations
+                        var route when route != null && route.Contains("mode") => ["Range Management"],
+                        
+                        // Range Status: devices, status, reset
+                        var route when route != null && (route.Contains("devices") || route.Contains("status") || route.Contains("reset")) => ["Range Status"],
+                        
+                        // Range Repository: range/ranges operations
+                        var route when route != null && (route.Contains("ranges") || route.Contains("range")) => ["Range Repository"],
+                        
+                        // Packet Repository: packet operations
+                        var route when route != null && route.Contains("packets") => ["Packet Repository"],
+                        
+                        // Realtime operations: start/stop
+                        var route when route != null && (route.Contains("realtime/start") || route.Contains("realtime/stop")) => ["Range Management"],
+                        
+                        // Playback operations
+                        var route when route != null && route.Contains("playback") => ["Range Management"],
+                        
+                        _ => ["Range Management"]
+                    };
+                }
+                
                 return [controllerName ?? "Unknown"];
             });
 
+            // Add tag descriptions
             options.DocInclusionPredicate((name, api) => true);
+            
+            // Configure SignalR Swagger Generation
+            options.AddSignalRSwaggerGen();
         });
         builder.Services.AddControllers().AddJsonOptions(options => {
             options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter<DataPipes>());

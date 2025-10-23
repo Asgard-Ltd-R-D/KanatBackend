@@ -5,7 +5,7 @@ using PacketProcessing.Entities.Range;
 
 namespace PacketProcessing.Context;
 
-public sealed class PostgresDbContext : DbContext
+public class PostgresDbContext : DbContext
 {
     private readonly ILogger<PostgresDbContext> _logger;
     

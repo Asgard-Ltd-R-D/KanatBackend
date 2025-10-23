@@ -9,7 +9,7 @@ using PacketProcessing.Utils.Constants;
 
 namespace PacketProcessing.Context;
 
-public sealed class QuestDbContext
+public class QuestDbContext
 {
     private readonly ILogger<QuestDbContext> _log;
     public NpgsqlDataSource DataSource { get; }

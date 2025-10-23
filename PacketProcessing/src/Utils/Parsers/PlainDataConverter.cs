@@ -36,7 +36,7 @@ public static class PlainDataConverter
         if (!motion.IsCmd && motion.Value.HasValue) 
             return new PlainDataDto
             {
-                Timestamp = motion.Timestamp,
+                Timestamp = new DateTimeOffset(motion.Timestamp).ToUnixTimeMilliseconds(),
                 Value = motion.Value.Value,
                 DataPipe = DataPipes.Motion,
                 MethodName = motion.Description
@@ -45,7 +45,7 @@ public static class PlainDataConverter
         if (motion.IsCmd)
             return new PlainDataDto
             {
-                Timestamp = motion.Timestamp,
+                Timestamp = new DateTimeOffset(motion.Timestamp).ToUnixTimeMilliseconds(),
                 Value = 1d,
                 DataPipe = DataPipes.Motion,
                 MethodName = motion.Description
@@ -53,7 +53,7 @@ public static class PlainDataConverter
         // Damaged packet
         return new PlainDataDto
         {
-            Timestamp = motion.Timestamp,
+            Timestamp = new DateTimeOffset(motion.Timestamp).ToUnixTimeMilliseconds(),
             Value = motion.Value ?? -1d,
             DataPipe = DataPipes.Motion,
             MethodName = motion.Description
@@ -69,7 +69,7 @@ public static class PlainDataConverter
     {
         return new PlainDataDto
         {
-            Timestamp = safety.Timestamp,
+            Timestamp = new DateTimeOffset(safety.Timestamp).ToUnixTimeMilliseconds(),
             Value = safety.State switch
             {
                 "ON" => 1d,
@@ -94,7 +94,7 @@ public static class PlainDataConverter
             case Constants.Constants.ONVIF_FOV_REQ:
                 return new PlainDataDto
                 {
-                    Timestamp = onvif.Timestamp,
+                    Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
                     Value = 1.0d,
                     DataPipe = DataPipes.OnVIF,
                     MethodName = onvif.Description
@@ -102,7 +102,7 @@ public static class PlainDataConverter
             case Constants.Constants.ONVIF_FOV_STS:
                 return new PlainDataDto
                 {
-                    Timestamp = onvif.Timestamp,
+                    Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
                     Value = onvif.Zoom ?? -1.0d,
                     DataPipe = DataPipes.OnVIF,
                     MethodName = onvif.Description
@@ -110,7 +110,7 @@ public static class PlainDataConverter
             case Constants.Constants.ONVIF_LRF_REQ:
                 return new PlainDataDto
                 {
-                    Timestamp = onvif.Timestamp,
+                    Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
                     Value = 1.0d,
                     DataPipe = DataPipes.OnVIF,
                     MethodName = onvif.Description
@@ -118,7 +118,7 @@ public static class PlainDataConverter
             case Constants.Constants.ONVIF_LRF_STS:
                 return new PlainDataDto
                 {
-                    Timestamp = onvif.Timestamp,
+                    Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
                     Value = onvif.Measurement ?? -1.0d,
                     DataPipe = DataPipes.OnVIF,
                     MethodName = onvif.Description
@@ -126,7 +126,7 @@ public static class PlainDataConverter
         }
         return new PlainDataDto
         {
-            Timestamp = onvif.Timestamp,
+            Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
             Value = -1.0d,
             DataPipe = DataPipes.OnVIF,
             MethodName = onvif.Description

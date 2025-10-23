@@ -5,7 +5,7 @@ namespace PacketProcessing.DTOs.Data;
 
 public class PlainDataDto
 {
-    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    public long Timestamp { get; set; } = new DateTimeOffset(DateTime.UtcNow).ToUnixTimeMilliseconds();
     public double Value { get; set; } = 0.0d;
     
     [property: JsonConverter(typeof(JsonStringEnumConverter))]

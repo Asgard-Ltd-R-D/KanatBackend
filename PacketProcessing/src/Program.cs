@@ -19,16 +19,26 @@ var app = builder.Build();
 /// </summary>
 var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
 var dbLogger = loggerFactory.CreateLogger("DatabaseMigrationHelper");
-try
+
+// Check if database initialization should be skipped (e.g., for testing)
+var skipDatabaseInitialization = app.Configuration.GetValue<bool>("SkipDatabaseInitialization");
+if (skipDatabaseInitialization)
 {
-    dbLogger.LogInformation("Starting database initialization and migration...");
-    await DatabaseMigrationHelper.EnsureDatabasesUpToDateAsync(app);
-    dbLogger.LogInformation("Database initialization and migration completed successfully!");
+    dbLogger.LogInformation("Skipping database initialization (SkipDatabaseInitialization is true)");
 }
-catch (Exception ex)
+else
 {
-    dbLogger.LogError(ex, "Database initialization and migration failed!");
-    throw;
+    try
+    {
+        dbLogger.LogInformation("Starting database initialization and migration...");
+        await DatabaseMigrationHelper.EnsureDatabasesUpToDateAsync(app);
+        dbLogger.LogInformation("Database initialization and migration completed successfully!");
+    }
+    catch (Exception ex)
+    {
+        dbLogger.LogError(ex, "Database initialization and migration failed!");
+        throw;
+    }
 }
 
 /// <summary>

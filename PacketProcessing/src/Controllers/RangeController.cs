@@ -42,6 +42,9 @@ public class RangeController : ControllerBase
     /// </summary>
     /// <param name="mode">The target mode</param>
     [HttpPut("mode/{mode}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
+    [ProducesResponseType(StatusCodes.Status400BadRequest, Type = typeof(ResponseResult))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
     public ActionResult<ResponseResult> ChangeMode(States mode)
     {
         try
@@ -78,6 +81,8 @@ public class RangeController : ControllerBase
     /// Gets the current application mode.
     /// </summary>
     [HttpGet("mode")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<string>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<string>))]
     public ActionResult<ResponseResult<string>> GetMode()
     {
         try
@@ -117,6 +122,8 @@ public class RangeController : ControllerBase
     /// Starts all realtime capture services.
     /// </summary>
     [HttpPost("realtime/start/{deviceName}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
     public async Task<ActionResult<ResponseResult>> StartAllServices(string deviceName, CancellationToken ct)
     {
         try
@@ -137,6 +144,8 @@ public class RangeController : ControllerBase
     /// Stops all realtime capture services.
     /// </summary>
     [HttpDelete("realtime/stop")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
     public async Task<ActionResult<ResponseResult>> StopAllServices(CancellationToken ct)
     {
         try
@@ -157,6 +166,8 @@ public class RangeController : ControllerBase
     /// Gets the list of available network devices.
     /// </summary>
     [HttpGet("realtime/devices")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<ICollection<string>>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<ICollection<string>>))]
     public ActionResult<ResponseResult<ICollection<string>>> GetAvailableDevices()
     {
         try
@@ -175,6 +186,8 @@ public class RangeController : ControllerBase
     /// Gets the status of the current mode.
     /// </summary>
     [HttpGet("status")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<object>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<object>))]
     public ActionResult<ResponseResult<object>> GetStatus()
     {
         try
@@ -193,6 +206,8 @@ public class RangeController : ControllerBase
     /// Resets statistics for the current mode.
     /// </summary>
     [HttpPost("reset")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
     public ActionResult<ResponseResult> ResetStatistics()
     {
         try
@@ -218,6 +233,9 @@ public class RangeController : ControllerBase
     /// </summary>
     /// <param name="pace">The playback pace multiplier (e.g., 1.0 = normal speed, 2.0 = double speed)</param>
     [HttpPut("playback/pace/{pace}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
+    [ProducesResponseType(StatusCodes.Status400BadRequest, Type = typeof(ResponseResult))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
     public ActionResult<ResponseResult> SetPlaybackPace(double pace)
     {
         try
@@ -248,6 +266,9 @@ public class RangeController : ControllerBase
     /// </summary>
     /// <param name="id">The range ID</param>
     [HttpGet("ranges/{id}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<RangeDto>))]
+    [ProducesResponseType(StatusCodes.Status404NotFound, Type = typeof(ResponseResult<RangeDto>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<RangeDto>))]
     public async Task<ActionResult<ResponseResult<RangeDto>>> GetRangeByIdAsync(Guid id)
     {
         try
@@ -272,6 +293,8 @@ public class RangeController : ControllerBase
     /// </summary>
     /// <param name="dto">The range data to create</param>
     [HttpPost("ranges")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<RangeDto>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<RangeDto>))]
     public async Task<ActionResult<ResponseResult<RangeDto>>> CreateRangeAsync([FromBody] RangeDto dto)
     {
         try
@@ -292,6 +315,8 @@ public class RangeController : ControllerBase
     /// <param name="page">Page number (1-based)</param>
     /// <param name="pageSize">Number of items per page</param>
     [HttpGet("ranges")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<PaginatedResult<RangeDto>>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<PaginatedResult<RangeDto>>))]
     public async Task<ActionResult<ResponseResult<PaginatedResult<RangeDto>>>> GetAllRangesPaginatedAsync(
         [FromQuery] int page = 1, 
         [FromQuery] int pageSize = 1000)
@@ -312,6 +337,8 @@ public class RangeController : ControllerBase
     /// Gets all ranges (Development only).
     /// </summary>
     [HttpGet("dev/ranges/all")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<IEnumerable<RangeDto>>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<IEnumerable<RangeDto>>))]
     [DevelopmentOnly]
     public async Task<ActionResult<ResponseResult<IEnumerable<RangeDto>>>> GetAllRangesAsync()
     {
@@ -333,6 +360,9 @@ public class RangeController : ControllerBase
     /// <param name="id">The range ID</param>
     /// <param name="dto">The updated range data</param>
     [HttpPut("ranges/{id}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<RangeDto>))]
+    [ProducesResponseType(StatusCodes.Status404NotFound, Type = typeof(ResponseResult<RangeDto>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<RangeDto>))]
     public async Task<ActionResult<ResponseResult<RangeDto>>> UpdateRangeByIdAsync(Guid id, [FromBody] RangeDto dto)
     {
         try
@@ -357,6 +387,9 @@ public class RangeController : ControllerBase
     /// </summary>
     /// <param name="id">The range ID</param>
     [HttpDelete("ranges/{id}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
+    [ProducesResponseType(StatusCodes.Status404NotFound, Type = typeof(ResponseResult))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
     public async Task<ActionResult<ResponseResult>> DeleteRangeByIdAsync(Guid id)
     {
         try
@@ -380,6 +413,8 @@ public class RangeController : ControllerBase
     /// Deletes all ranges (Development only).
     /// </summary>
     [HttpDelete("dev/ranges/all")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<int>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<int>))]
     [DevelopmentOnly]
     public async Task<ActionResult<ResponseResult<int>>> DeleteAllAsync()
     {
@@ -401,6 +436,9 @@ public class RangeController : ControllerBase
     /// <param name="start">Start timestamp (ISO-8601, assumed UTC if with 'Z')</param>
     /// <param name="end">End timestamp (ISO-8601, assumed UTC if with 'Z')</param>
     [HttpDelete("packets/clear")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<string>))]
+    [ProducesResponseType(StatusCodes.Status400BadRequest, Type = typeof(ResponseResult<string>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<string>))]
     public async Task<ActionResult<ResponseResult<string>>> ClearPacketsAsync([FromQuery] DateTime start, [FromQuery] DateTime end)
     {
         try

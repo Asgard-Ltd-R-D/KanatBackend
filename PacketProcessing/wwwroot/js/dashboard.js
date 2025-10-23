@@ -22,7 +22,9 @@ let stats = {
     hubReceived: 0,
     hubMotion: 0,
     hubSafety: 0,
-    hubOnvif: 0
+    hubOnvif: 0,
+    parseRate: 0,
+    flushRate: 0
 };
 
 // Charts data
@@ -515,7 +517,7 @@ async function resetStats() {
         logMessage('Resetting statistics...', 'info');
         
         // Call backend to reset server-side statistics
-        const response = await fetch('http://localhost:10901/api/v1/range/realtime/reset', {
+        const response = await fetch('http://localhost:10901/api/v1/range/reset', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -544,6 +546,8 @@ async function resetStats() {
         stats.hubMotion = 0;
         stats.hubSafety = 0;
         stats.hubOnvif = 0;
+        stats.parseRate = 0;
+        stats.flushRate = 0;
         
         // Reset last stats for rate calculation
         lastStats = {
@@ -584,6 +588,9 @@ let lastStats = {
     timestamp: Date.now()
 };
 
+// Initialize stats properly on first load
+let isFirstLoad = true;
+
 async function refreshStats() {
     // Only refresh stats if API is healthy
     if (!apiConnected) {
@@ -606,9 +613,21 @@ async function refreshStats() {
         const now = Date.now();
         const deltaTime = (now - lastStats.timestamp) / 1000; // seconds
         
-        const capturedDelta = Math.round((data.captured - lastStats.captured) / deltaTime);
-        const parsedDelta = Math.round((data.parsed - lastStats.parsed) / deltaTime);
-        const flushedDelta = Math.round((data.flushed - lastStats.flushed) / deltaTime);
+        // Avoid division by zero and negative values, and handle first load
+        if (deltaTime > 0 && !isFirstLoad) {
+            const capturedDelta = Math.max(0, Math.round((data.captured - lastStats.captured) / deltaTime));
+            const parsedDelta = Math.max(0, Math.round((data.parsed - lastStats.parsed) / deltaTime));
+            const flushedDelta = Math.max(0, Math.round((data.flushed - lastStats.flushed) / deltaTime));
+            
+            // Store calculated rates in stats object
+            stats.parseRate = parsedDelta;
+            stats.flushRate = flushedDelta;
+        } else if (isFirstLoad) {
+            // On first load, set rates to 0
+            stats.parseRate = 0;
+            stats.flushRate = 0;
+            isFirstLoad = false;
+        }
         
         lastStats = {
             captured: data.captured || 0,
@@ -696,8 +715,8 @@ function updateParseStats() {
     document.getElementById('totalDropped').textContent = stats.dropped.toLocaleString();
     document.getElementById('backpressure').textContent = stats.backpressure.toLocaleString();
     
-    const rate = Math.round((stats.parsed - (stats._lastParsed || 0)) / 2);
-    stats._lastParsed = stats.parsed;
+    // Use the calculated rate from refreshStats instead of recalculating here
+    const rate = stats.parseRate || 0;
     document.getElementById('parseRate').textContent = rate;
 }
 
@@ -705,8 +724,8 @@ function updateDbStats() {
     document.getElementById('totalFlushed').textContent = stats.flushed.toLocaleString();
     document.getElementById('totalFailed').textContent = stats.failed.toLocaleString();
     
-    const rate = Math.round((stats.flushed - (stats._lastFlushed || 0)) / 2);
-    stats._lastFlushed = stats.flushed;
+    // Use the calculated rate from refreshStats instead of recalculating here
+    const rate = stats.flushRate || 0;
     document.getElementById('flushRate').textContent = rate;
     
     const avgLatency = stats.avgLatency || 0;

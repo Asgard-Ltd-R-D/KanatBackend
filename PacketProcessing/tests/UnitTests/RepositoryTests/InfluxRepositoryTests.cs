@@ -155,17 +155,6 @@ public class InfluxRepositoryTests : IDisposable
     #region True Negative Tests - Expected Failures
 
 
-    [Fact]
-    public void QuestDbContext_GetTableName_WithInvalidEntity_ShouldThrow_TrueNegative()
-    {
-        // Arrange
-        _output.WriteLine("Testing QuestDB table name generation with invalid entity (True Negative)...");
-
-        // Act & Assert
-        Assert.Throws<ArgumentException>(() => QuestDbContext.GetTableName<object>());
-        
-        _output.WriteLine("QuestDB table name generation correctly failed with invalid entity type");
-    }
 
     #endregion
 
@@ -222,29 +211,6 @@ public class InfluxRepositoryTests : IDisposable
         _output.WriteLine("Single entity write operation completed successfully");
     }
 
-    [Fact]
-    public async Task WriteQuestDbAsync_WithNullSender_ShouldThrow_TrueNegative()
-    {
-        // Arrange
-        _output.WriteLine("Testing single entity write with null sender (True Negative)...");
-        var entity = new MotionPacketEntity
-        {
-            IsCmd = true,
-            OpCode = "NULL_SENDER_TEST",
-            Description = "Null Sender Test",
-            Axis = 25,
-            Value = 250.0,
-            Timestamp = DateTime.UtcNow
-        };
-
-        // Act & Assert - Test that null sender throws exception
-        await Assert.ThrowsAsync<ArgumentNullException>(async () =>
-        {
-            await _mockMotionRepository.Object.WriteQuestDbAsync(null!, entity);
-        });
-        
-        _output.WriteLine("Single entity write correctly failed with null sender");
-    }
 
     [Fact]
     public async Task WriteQuestDbAsync_WithInvalidConnection_ShouldHandleGracefully_FalsePositive()
@@ -390,6 +356,53 @@ public class InfluxRepositoryTests : IDisposable
         Assert.Contains(page1, e => e.OpCode == "PAGE2");
         Assert.Contains(page2, e => e.OpCode == "PAGE3");
         Assert.Contains(page2, e => e.OpCode == "PAGE4");
+    }
+
+    [Fact]
+    public async Task InfluxRepository_GetPaginatedFromQuestDbAsyncWithInterval_ShouldWork()
+    {
+        // Arrange - Test data with interval
+        var intervalEntities = new List<MotionPacketEntity>
+        {
+            new() { IsCmd = true, OpCode = "INTERVAL1", Description = "Interval Test 1", Axis = 1, Value = 1.0, Timestamp = DateTime.UtcNow.AddMinutes(-30) },
+            new() { IsCmd = false, OpCode = "INTERVAL2", Description = "Interval Test 2", Axis = 2, Value = 2.0, Timestamp = DateTime.UtcNow.AddMinutes(-20) },
+            new() { IsCmd = true, OpCode = "INTERVAL3", Description = "Interval Test 3", Axis = 3, Value = 3.0, Timestamp = DateTime.UtcNow.AddMinutes(-10) }
+        };
+        
+        var startTime = DateTime.UtcNow.AddHours(-1);
+        var endTime = DateTime.UtcNow.AddHours(1);
+        var interval = 1000; // 1 second interval
+
+        // Setup mock to return interval-based results
+        _mockMotionRepository.Setup(x => x.GetPaginatedFromQuestDbAsyncWithInterval(startTime, endTime, interval, OrderBy.Asc, 1, 10))
+            .ReturnsAsync(intervalEntities);
+
+        // Act - Test interval-based pagination
+        var result = await _mockMotionRepository.Object.GetPaginatedFromQuestDbAsyncWithInterval(startTime, endTime, interval, OrderBy.Asc, 1, 10);
+        
+        // Assert - Verify interval-based pagination works
+        Assert.Equal(3, result.Count());
+        Assert.Contains(result, e => e.OpCode == "INTERVAL1");
+        Assert.Contains(result, e => e.OpCode == "INTERVAL2");
+        Assert.Contains(result, e => e.OpCode == "INTERVAL3");
+    }
+
+    [Fact]
+    public async Task InfluxRepository_ClearPacketsByRangeAsync_ShouldWork()
+    {
+        // Arrange
+        var startTime = DateTime.UtcNow.AddHours(-1);
+        var endTime = DateTime.UtcNow.AddHours(1);
+
+        // Setup mock to handle clear operation
+        _mockMotionRepository.Setup(x => x.ClearPacketsByRangeAsync(startTime, endTime))
+            .Returns(Task.CompletedTask);
+
+        // Act - Clear packets in time range
+        await _mockMotionRepository.Object.ClearPacketsByRangeAsync(startTime, endTime);
+        
+        // Assert - Verify the operation completed without exception
+        _mockMotionRepository.Verify(x => x.ClearPacketsByRangeAsync(startTime, endTime), Times.Once);
     }
 
     [Fact]

@@ -20,6 +20,17 @@
             </div>
         </div>
         
+        <!-- Console Access -->
+        <div class="sidebar-section">
+            <h3>Console Access</h3>
+            <button class="btn-console" onclick="openConsole('swagger')">
+                Swagger API
+            </button>
+            <button class="btn-console" onclick="openConsole('questdb')">
+                QuestDB Console
+            </button>
+        </div>
+        
         <!-- Capture Controls -->
         <div class="sidebar-section">
             <h3>Capture</h3>
@@ -43,10 +54,10 @@
             <button onclick="clearLogs()">Clear Logs</button>
         </div>
         
+        
         <!-- Navigation -->
         <div class="sidebar-section">
             <h3>Quick Navigation</h3>
-            <a href="#configuration" class="nav-link">Configuration</a>
             <a href="#metrics" class="nav-link">Metrics</a>
             <a href="#channels" class="nav-link">Channels</a>
             <a href="#throughput" class="nav-link">Throughput Chart</a>
@@ -80,13 +91,6 @@
             </div>
             <div>Uptime: <span id="uptime">0s</span></div>
         </div>
-    </div>
-    
-    <!-- Configuration Display -->
-    <div id="configuration"></div>
-    <div class="config-container">
-        <h3>CONFIGURATION</h3>
-        <div id="configDisplay">Loading configuration...</div>
     </div>
     
     <!-- Metrics Grid -->
@@ -338,5 +342,16 @@
     </div> <!-- End main-content -->
 
     <script src="js/dashboard.js"></script>
+    
+    <script>
+        // Console Access Functions
+        function openConsole(consoleType) {
+            if (consoleType === 'swagger') {
+                window.open('http://localhost:10901/swagger/index.html', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+            } else if (consoleType === 'questdb') {
+                window.open('http://localhost:9000/index.html', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+            }
+        }
+    </script>
 </body>
 </html>

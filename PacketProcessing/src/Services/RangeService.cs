@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using PacketProcessing.DTOs;
 using PacketProcessing.DTOs.Range;
+using PacketProcessing.Entities;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Entities.Range;
 using PacketProcessing.Repositories.EfRepository;
@@ -198,6 +199,27 @@ public class RangeService : IRangeService
         try
         {
             var repository = _efFactory.Get<RangeEntity>();
+            var range = await repository.GetByIdAsync(id);
+
+            if (range == null)
+            {
+                _logger.LogDebug("Range with ID {Id} not found for deletion", id);
+                return false;
+            }
+
+            // Delete all packets within the range
+            var startTime = DateTimeOffset.FromUnixTimeMilliseconds(range.Start).DateTime;
+            var endTime = DateTimeOffset.FromUnixTimeMilliseconds(range.End).DateTime;
+            
+            // Clear packets from all packet types within the time range
+            var motionRepo = _influxFactory.Get<MotionPacketEntity>();
+            var onvifRepo = _influxFactory.Get<OnVIFPacketEntity>();
+            var safetyRepo = _influxFactory.Get<SafetyPacketEntity>();
+            
+            await motionRepo.ClearPacketsByRangeAsync(startTime, endTime);
+            await onvifRepo.ClearPacketsByRangeAsync(startTime, endTime);
+            await safetyRepo.ClearPacketsByRangeAsync(startTime, endTime);
+
             var result = await repository.DeleteAsync(id);
             
             if (result)

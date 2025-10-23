@@ -1,6 +1,7 @@
 ﻿namespace PacketProcessing.Config;
 
 using Serilog;
+using Serilog.Events;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,10 +22,6 @@ using PacketProcessing.Utils.Parsers;
 using PacketProcessing.Repositories.EfRepository;
 using System.Text.Json.Serialization;
 using PacketProcessing.Utils.Enums;
-using SignalRSwaggerGen;
-// TODO: Fix OpenAPI references
-// using Microsoft.OpenApi.Readers;
-// using Microsoft.OpenApi.Models;
 
 /// <summary>
 /// Configuration and Dependency Injection Manager
@@ -357,6 +354,7 @@ public class ConfigurationInjection
     {
         // Global exception handler should be first
         app.UseGlobalExceptionHandler();
+
 
         // Enable CORS Middleware
         CorsConfiguration.ConfigureCorsMiddleware(app);

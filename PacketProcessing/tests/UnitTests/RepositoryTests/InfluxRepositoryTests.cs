@@ -142,11 +142,11 @@ public class InfluxRepositoryTests : IDisposable
         // Arrange
         var entity = new MotionPacketEntity
         {
-            Type = true,
+            IsCmd = true,
             OpCode = "VALID_TEST",
-            OpCodeDescription = "Valid Test",
+            Description = "Valid Test",
             Axis = 25,
-            FloatValue = 250.0f,
+            Value = 250.0,
             Timestamp = DateTime.UtcNow
         };
         
@@ -181,16 +181,16 @@ public class InfluxRepositoryTests : IDisposable
         // Arrange
         var entities = new List<MotionPacketEntity>
         {
-            new() { Type = true, OpCode = "BATCH1", OpCodeDescription = "Batch Test 1", Axis = 1, FloatValue = 1.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = false, OpCode = "BATCH2", OpCodeDescription = "Batch Test 2", Axis = 2, FloatValue = 2.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = true, OpCode = "BATCH3", OpCodeDescription = "Batch Test 3", Axis = 3, FloatValue = 3.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = false, OpCode = "BATCH4", OpCodeDescription = "Batch Test 4", Axis = 4, FloatValue = 4.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = true, OpCode = "BATCH5", OpCodeDescription = "Batch Test 5", Axis = 5, FloatValue = 5.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = false, OpCode = "BATCH6", OpCodeDescription = "Batch Test 6", Axis = 6, FloatValue = 6.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = true, OpCode = "BATCH7", OpCodeDescription = "Batch Test 7", Axis = 7, FloatValue = 7.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = false, OpCode = "BATCH8", OpCodeDescription = "Batch Test 8", Axis = 8, FloatValue = 8.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = true, OpCode = "BATCH9", OpCodeDescription = "Batch Test 9", Axis = 9, FloatValue = 9.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = false, OpCode = "BATCH10", OpCodeDescription = "Batch Test 10", Axis = 10, FloatValue = 10.0f, Timestamp = DateTime.UtcNow }
+            new() { IsCmd = true, OpCode = "BATCH1", Description = "Batch Test 1", Axis = 1, Value = 1.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = false, OpCode = "BATCH2", Description = "Batch Test 2", Axis = 2, Value = 2.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = true, OpCode = "BATCH3", Description = "Batch Test 3", Axis = 3, Value = 3.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = false, OpCode = "BATCH4", Description = "Batch Test 4", Axis = 4, Value = 4.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = true, OpCode = "BATCH5", Description = "Batch Test 5", Axis = 5, Value = 5.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = false, OpCode = "BATCH6", Description = "Batch Test 6", Axis = 6, Value = 6.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = true, OpCode = "BATCH7", Description = "Batch Test 7", Axis = 7, Value = 7.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = false, OpCode = "BATCH8", Description = "Batch Test 8", Axis = 8, Value = 8.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = true, OpCode = "BATCH9", Description = "Batch Test 9", Axis = 9, Value = 9.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = false, OpCode = "BATCH10", Description = "Batch Test 10", Axis = 10, Value = 10.0, Timestamp = DateTime.UtcNow }
         };
         
         using var sender = Sender.New(_ilpHttpConnection);
@@ -225,9 +225,9 @@ public class InfluxRepositoryTests : IDisposable
         // Arrange - Write test data first
         var testEntities = new List<MotionPacketEntity>
         {
-            new() { Type = true, OpCode = "GETALL1", OpCodeDescription = "GetAll Test 1", Axis = 1, FloatValue = 1.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = false, OpCode = "GETALL2", OpCodeDescription = "GetAll Test 2", Axis = 2, FloatValue = 2.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = true, OpCode = "GETALL3", OpCodeDescription = "GetAll Test 3", Axis = 3, FloatValue = 3.0f, Timestamp = DateTime.UtcNow }
+            new() { IsCmd = true, OpCode = "GETALL1", Description = "GetAll Test 1", Axis = 1, Value = 1.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = false, OpCode = "GETALL2", Description = "GetAll Test 2", Axis = 2, Value = 2.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = true, OpCode = "GETALL3", Description = "GetAll Test 3", Axis = 3, Value = 3.0, Timestamp = DateTime.UtcNow }
         };
         
         using var sender = Sender.New(_ilpHttpConnection);
@@ -262,11 +262,11 @@ public class InfluxRepositoryTests : IDisposable
         // Arrange - Write test data first
         var testEntities = new List<MotionPacketEntity>
         {
-            new() { Type = true, OpCode = "PAGE1", OpCodeDescription = "Page Test 1", Axis = 1, FloatValue = 1.0f, Timestamp = DateTime.UtcNow.AddMinutes(-30) },
-            new() { Type = false, OpCode = "PAGE2", OpCodeDescription = "Page Test 2", Axis = 2, FloatValue = 2.0f, Timestamp = DateTime.UtcNow.AddMinutes(-20) },
-            new() { Type = true, OpCode = "PAGE3", OpCodeDescription = "Page Test 3", Axis = 3, FloatValue = 3.0f, Timestamp = DateTime.UtcNow.AddMinutes(-10) },
-            new() { Type = false, OpCode = "PAGE4", OpCodeDescription = "Page Test 4", Axis = 4, FloatValue = 4.0f, Timestamp = DateTime.UtcNow },
-            new() { Type = true, OpCode = "PAGE5", OpCodeDescription = "Page Test 5", Axis = 5, FloatValue = 5.0f, Timestamp = DateTime.UtcNow.AddMinutes(10) }
+            new() { IsCmd = true, OpCode = "PAGE1", Description = "Page Test 1", Axis = 1, Value = 1.0, Timestamp = DateTime.UtcNow.AddMinutes(-30) },
+            new() { IsCmd = false, OpCode = "PAGE2", Description = "Page Test 2", Axis = 2, Value = 2.0, Timestamp = DateTime.UtcNow.AddMinutes(-20) },
+            new() { IsCmd = true, OpCode = "PAGE3", Description = "Page Test 3", Axis = 3, Value = 3.0, Timestamp = DateTime.UtcNow.AddMinutes(-10) },
+            new() { IsCmd = false, OpCode = "PAGE4", Description = "Page Test 4", Axis = 4, Value = 4.0, Timestamp = DateTime.UtcNow },
+            new() { IsCmd = true, OpCode = "PAGE5", Description = "Page Test 5", Axis = 5, Value = 5.0, Timestamp = DateTime.UtcNow.AddMinutes(10) }
         };
         
         using var sender = Sender.New(_ilpHttpConnection);
@@ -309,27 +309,28 @@ public class InfluxRepositoryTests : IDisposable
         // Arrange
         var motionEntity = new MotionPacketEntity
         {
-            Type = true,
+            IsCmd = true,
             OpCode = "MOTION_TEST",
-            OpCodeDescription = "Motion Test",
+            Description = "Motion Test",
             Axis = 25,
-            FloatValue = 250.0f,
+            Value = 250.0,
             Timestamp = DateTime.UtcNow
         };
         
         var onvifEntity = new OnVIFPacketEntity
         {
-            Type = true,
+            IsCmd = true,
             Description = "OnVIF Test",
-            Measurement = 300.0f,
+            Measurement = 300.0,
             Timestamp = DateTime.UtcNow
         };
         
         var safetyEntity = new SafetyPacketEntity
         {
-            Type = true,
+            IsCmd = true,
             OpCode = "SAFETY_TEST",
-            OpCodeDescription = "Safety Test",
+            Description = "Safety Test",
+            Name = "Test Safety Device",
             State = "ACTIVE",
             Timestamp = DateTime.UtcNow
         };

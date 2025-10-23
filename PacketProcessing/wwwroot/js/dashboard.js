@@ -45,7 +45,6 @@ window.addEventListener('load', () => {
     initCharts();
     updateUptime();
     loadCurrentState(); // Load current state from backend
-    loadConfiguration(); // Load configuration display
     loadAvailableDevices(); // Load device list immediately
     checkApiHealth(); // Check health immediately on load
     checkQuestDbHealth(); // Check QuestDB health
@@ -492,8 +491,8 @@ async function checkQuestDbHealth() {
 async function checkPostgresHealth() {
     try {
         // PostgreSQL port 5432 is not HTTP, so we check if we can query through API
-        // We'll use the realtime/status endpoint as a proxy since it queries the database
-        const response = await fetch('http://localhost:10901/api/v1/range/realtime/status', {
+        // We'll use the status endpoint as a proxy since it queries the database
+        const response = await fetch('http://localhost:10901/api/v1/range/status', {
             method: 'GET',
             cache: 'no-cache'
         });
@@ -592,7 +591,7 @@ async function refreshStats() {
     }
     
     try {
-        const response = await fetch('http://localhost:10901/api/v1/range/realtime/status');
+        const response = await fetch('http://localhost:10901/api/v1/range/status');
         
         if (!response.ok) {
             return;
@@ -826,108 +825,4 @@ function clearLogs() {
     logMessage('All logs cleared', 'info');
 }
 
-// === CONFIGURATION DISPLAY ===
-async function loadConfiguration() {
-    try {
-        const response = await fetch('http://localhost:10901/api/v1/range/realtime/config');
-        
-        if (!response.ok) {
-            document.getElementById('configDisplay').innerHTML = '<p style="color: #f44336;">Failed to load configuration</p>';
-            return;
-        }
-        
-        const result = await response.json();
-        const config = result.data || result;
-        
-        console.log('Configuration data received:', config);
-        
-        displayConfiguration(config);
-    } catch (err) {
-        console.error('Configuration load error:', err);
-        document.getElementById('configDisplay').innerHTML = `<p style="color: #f44336;">Error: ${err.message}</p>`;
-    }
-}
-
-function displayConfiguration(config) {
-    const container = document.getElementById('configDisplay');
-    let html = '';
-    
-    // Helper function to get property with both casings
-    const getProp = (obj, name) => obj?.[name] || obj?.[name.charAt(0).toUpperCase() + name.slice(1)] || obj?.[name.charAt(0).toLowerCase() + name.slice(1)];
-    
-    // Environment
-    html += '<div style="margin-bottom: 20px;">';
-    html += '<h4 style="color: #4fc3f7; margin-bottom: 10px;">Environment</h4>';
-    html += `<div class="config-item"><div class="config-label">Environment</div><div class="config-value">${getProp(config, 'environment') || 'N/A'}</div></div>`;
-    html += '</div>';
-    
-    // Concurrency
-    const concurrency = getProp(config, 'concurrency');
-    if (concurrency) {
-        html += '<div style="margin-bottom: 20px;">';
-        html += '<h4 style="color: #4fc3f7; margin-bottom: 10px;">Concurrency</h4>';
-        html += '<div class="config-grid">';
-        html += `<div class="config-item"><div class="config-label">Min Workers</div><div class="config-value">${getProp(concurrency, 'minWorkers') || 'N/A'}</div></div>`;
-        html += `<div class="config-item"><div class="config-label">Max Workers</div><div class="config-value">${getProp(concurrency, 'maxWorkers') || 'N/A'}</div></div>`;
-        html += `<div class="config-item"><div class="config-label">Batch Size</div><div class="config-value">${getProp(concurrency, 'batchSize') || 'N/A'}</div></div>`;
-        html += `<div class="config-item"><div class="config-label">Batch Timeout</div><div class="config-value">${getProp(concurrency, 'batchTimeoutMs') || 'N/A'} ms</div></div>`;
-        html += '</div></div>';
-    }
-    
-    // DataPipes
-    const dataPipes = getProp(config, 'dataPipes');
-    if (dataPipes) {
-        html += '<div style="margin-bottom: 20px;">';
-        html += '<h4 style="color: #4fc3f7; margin-bottom: 10px;">Data Pipes</h4>';
-        
-        // Motion
-        const motion = getProp(dataPipes, 'motionCapture');
-        if (motion) {
-            const motionChannel = getProp(motion, 'channel');
-            const motionNetwork = getProp(motion, 'network');
-            html += '<div style="margin-bottom: 15px; padding: 10px; background: #252525; border-radius: 5px;">';
-            html += '<strong style="color: #4caf50;">Motion Capture</strong>';
-            html += '<div class="config-grid" style="margin-top: 10px;">';
-            html += `<div class="config-item"><div class="config-label">Protocol</div><div class="config-value">${getProp(motionNetwork, 'protocol') || 'N/A'}</div></div>`;
-            const motionIPs = getProp(motionNetwork, 'iPs') || getProp(motionNetwork, 'ips');
-            html += `<div class="config-item"><div class="config-label">IPs</div><div class="config-value">${motionIPs ? (Array.isArray(motionIPs) ? motionIPs.join(', ') : motionIPs) : 'N/A'}</div></div>`;
-            html += `<div class="config-item"><div class="config-label">Channel Size</div><div class="config-value">${(getProp(motionChannel, 'members') || 0).toLocaleString()}</div></div>`;
-            html += '</div></div>';
-        }
-        
-        // Safety
-        const safety = getProp(dataPipes, 'safetyCapture');
-        if (safety) {
-            const safetyChannel = getProp(safety, 'channel');
-            const safetyNetwork = getProp(safety, 'network');
-            html += '<div style="margin-bottom: 15px; padding: 10px; background: #252525; border-radius: 5px;">';
-            html += '<strong style="color: #ff9800;">Safety Capture</strong>';
-            html += '<div class="config-grid" style="margin-top: 10px;">';
-            html += `<div class="config-item"><div class="config-label">Protocol</div><div class="config-value">${getProp(safetyNetwork, 'protocol') || 'N/A'}</div></div>`;
-            const safetyIPs = getProp(safetyNetwork, 'iPs') || getProp(safetyNetwork, 'ips');
-            html += `<div class="config-item"><div class="config-label">IPs</div><div class="config-value">${safetyIPs ? (Array.isArray(safetyIPs) ? safetyIPs.join(', ') : safetyIPs) : 'N/A'}</div></div>`;
-            html += `<div class="config-item"><div class="config-label">Channel Size</div><div class="config-value">${(getProp(safetyChannel, 'members') || 0).toLocaleString()}</div></div>`;
-            html += '</div></div>';
-        }
-        
-        // OnVIF
-        const onvif = getProp(dataPipes, 'onVIFCapture') || getProp(dataPipes, 'onvifCapture');
-        if (onvif) {
-            const onvifChannel = getProp(onvif, 'channel');
-            const onvifNetwork = getProp(onvif, 'network');
-            html += '<div style="margin-bottom: 15px; padding: 10px; background: #252525; border-radius: 5px;">';
-            html += '<strong style="color: #2196f3;">OnVIF Capture</strong>';
-            html += '<div class="config-grid" style="margin-top: 10px;">';
-            html += `<div class="config-item"><div class="config-label">Protocol</div><div class="config-value">${getProp(onvifNetwork, 'protocol') || 'N/A'}</div></div>`;
-            const onvifIPs = getProp(onvifNetwork, 'iPs') || getProp(onvifNetwork, 'ips');
-            html += `<div class="config-item"><div class="config-label">IPs</div><div class="config-value">${onvifIPs ? (Array.isArray(onvifIPs) ? onvifIPs.join(', ') : onvifIPs) : 'N/A'}</div></div>`;
-            html += `<div class="config-item"><div class="config-label">Channel Size</div><div class="config-value">${(getProp(onvifChannel, 'members') || 0).toLocaleString()}</div></div>`;
-            html += '</div></div>';
-        }
-        
-        html += '</div>';
-    }
-    
-    container.innerHTML = html;
-}
 

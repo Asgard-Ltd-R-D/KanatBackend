@@ -30,7 +30,7 @@ public sealed class QuestDbContext
         var csb = new NpgsqlConnectionStringBuilder
         {
             Host = s["Host"] ?? "127.0.0.1",
-            Port = int.TryParse(s["Port"], out var p) ? p : 8812,
+            Port = int.TryParse(s["PostgresPort"], out var p) ? p : 8812,
             Username = s["Username"] ?? "quest",
             Password = s["Password"] ?? "quest",
             Database = s["Database"] ?? "qdb",

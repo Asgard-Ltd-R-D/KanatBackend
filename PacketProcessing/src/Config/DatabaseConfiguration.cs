@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using PacketProcessing.Context;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Entities.Range;
@@ -54,7 +55,9 @@ public class DatabaseConfiguration
         // Add PostgreSQL DbContext
         services.AddDbContext<PostgresDbContext>(options =>
         {
-            var connectionString = configuration.GetConnectionString("Postgres");
+            var postgresConfig = configuration.GetSection(PostgresConfiguration.SectionName).Get<PostgresConfiguration>();
+            var connectionString = postgresConfig?.GetConnectionString() ?? throw new InvalidOperationException("PostgreSQL configuration not found");
+            
             options.UseNpgsql(connectionString, npgsqlOptions =>
             {
                 npgsqlOptions.EnableRetryOnFailure(
@@ -95,22 +98,25 @@ public class DatabaseConfiguration
 
     private static void ConfigureRangeRepositories(IServiceCollection services, IConfiguration configuration)
     {
-        // Register range repositories (PostgreSQL)
-        services.AddSingleton<IEfRepository<RangeEntity>>(sp =>
+        // Register EF Repository Factory
+        services.AddScoped<IEfRepositoryFactory, EfRepositoryFactory>();
+        
+        // Register range repositories (PostgreSQL) - must be scoped to match DbContext
+        services.AddScoped<IEfRepository<RangeEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<EfRepository<RangeEntity>>>();
             var dbContext = sp.GetRequiredService<PostgresDbContext>();
             return new EfRepository<RangeEntity>(dbContext, logger);
         });
 
-        services.AddSingleton<IEfRepository<EventEntity>>(sp =>
+        services.AddScoped<IEfRepository<EventEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<EfRepository<EventEntity>>>();
             var dbContext = sp.GetRequiredService<PostgresDbContext>();
             return new EfRepository<EventEntity>(dbContext, logger);
         });
 
-        services.AddSingleton<IEfRepository<TargetEntity>>(sp =>
+        services.AddScoped<IEfRepository<TargetEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<EfRepository<TargetEntity>>>();
             var dbContext = sp.GetRequiredService<PostgresDbContext>();

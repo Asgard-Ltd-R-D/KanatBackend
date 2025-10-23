@@ -64,7 +64,10 @@ window.addEventListener('load', () => {
         window.scrollTo({ top: 0, behavior: 'instant' });
     }, 100);
     setInterval(refreshStats, 2000);
-    logMessage('Dashboard loaded. Click "Connect SignalR" to start receiving real-time data.', 'info');
+    
+    // Automatically connect to SignalR
+    logMessage('Dashboard loaded. Connecting to SignalR automatically...', 'info');
+    connectHub();
 });
 
 // === STATE MANAGEMENT ===
@@ -192,13 +195,7 @@ function updateChart(capturedDelta, parsedDelta, flushedDelta, avgLatency) {
 }
 
 // === SIGNALR HUB ===
-async function toggleSignalR() {
-    if (hubConnected) {
-        await disconnectHub();
-    } else {
-        await connectHub();
-    }
-}
+// toggleSignalR function removed - SignalR now connects automatically
 
 async function connectHub() {
     if (connection) {
@@ -208,6 +205,9 @@ async function connectHub() {
     
     const hubUrl = 'http://localhost:10901/hub/packets';
     logMessage(`Connecting to SignalR hub: ${hubUrl}`, 'info');
+    
+    // Show connecting state
+    updateSignalRStatus();
     
     connection = new signalR.HubConnectionBuilder()
         .withUrl(hubUrl)
@@ -228,37 +228,51 @@ async function connectHub() {
         logSignalRPacket(methodName, data);
     });
 
-    connection.onclose(() => {
+    connection.onclose((error) => {
+        console.log('SignalR connection closed:', error);
         hubConnected = false;
         updateConnectionStatus();
-        updateSignalRButton();
+        updateSignalRStatus();
         logMessage('SignalR disconnected', 'error');
     });
 
     connection.onreconnecting(() => {
+        console.log('SignalR reconnecting...');
         hubConnected = false;
         updateConnectionStatus();
-        updateSignalRButton();
+        updateSignalRStatus();
         logMessage('SignalR reconnecting...', 'warning');
     });
 
     connection.onreconnected(() => {
+        console.log('SignalR reconnected successfully');
         hubConnected = true;
         updateConnectionStatus();
-        updateSignalRButton();
+        updateSignalRStatus();
         logMessage('SignalR reconnected successfully', 'success');
     });
 
     try {
-        await connection.start();
+        logMessage('Starting SignalR connection...', 'info');
+        
+        // Add a timeout to the connection
+        const connectionPromise = connection.start();
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000)
+        );
+        
+        await Promise.race([connectionPromise, timeoutPromise]);
+        
         hubConnected = true;
         updateConnectionStatus();
-        updateSignalRButton();
+        updateSignalRStatus();
         logMessage('SignalR connected successfully!', 'success');
+        console.log('SignalR connection established successfully');
     } catch (err) {
         logMessage(`SignalR connection failed: ${err.message}`, 'error');
+        console.error('SignalR connection error:', err);
         connection = null;
-        updateSignalRButton();
+        updateSignalRStatus();
     }
 }
 
@@ -268,19 +282,26 @@ async function disconnectHub() {
         connection = null;
         hubConnected = false;
         updateConnectionStatus();
-        updateSignalRButton();
+        updateSignalRStatus();
         logMessage('SignalR disconnected', 'info');
     }
 }
 
-function updateSignalRButton() {
-    const btn = document.getElementById('signalRToggleBtn');
+function updateSignalRStatus() {
+    // Use the main status bar elements instead of sidebar
+    const indicator = document.getElementById('hubStatus');
+    const statusText = document.getElementById('hubStatusText');
+    
     if (hubConnected) {
-        btn.textContent = 'Disconnect SignalR';
-        btn.className = 'btn-stop';
+        indicator.className = 'status-indicator connected';
+        statusText.textContent = 'Hub: Connected';
+    } else if (connection) {
+        // Connection object exists but not connected yet (connecting/reconnecting)
+        indicator.className = 'status-indicator connecting';
+        statusText.textContent = 'Hub: Connecting...';
     } else {
-        btn.textContent = 'Connect SignalR';
-        btn.className = '';
+        indicator.className = 'status-indicator disconnected';
+        statusText.textContent = 'Hub: Disconnected';
     }
 }
 
@@ -477,14 +498,20 @@ async function checkQuestDbHealth() {
     try {
         // Try to ping QuestDB web console (port 9000)
         const response = await fetch('http://localhost:9000/', {
-            method: 'HEAD',
+            method: 'GET',
             cache: 'no-cache',
             mode: 'no-cors' // QuestDB might not have CORS enabled
         });
         
         // With no-cors, we can't read the response, but if it doesn't throw, the server is reachable
+        if (!questdbConnected) {
+            logMessage('QuestDB health check: Healthy', 'success');
+        }
         questdbConnected = true;
     } catch (err) {
+        if (questdbConnected) {
+            logMessage(`QuestDB health check failed: ${err.message}`, 'error');
+        }
         questdbConnected = false;
     }
     updateConnectionStatus();
@@ -499,13 +526,23 @@ async function checkPostgresHealth() {
             cache: 'no-cache'
         });
         
+        
         if (response.ok) {
             // If API can return stats, it means it can connect to databases
+            if (!postgresConnected) {
+                logMessage('PostgreSQL health check: Healthy', 'success');
+            }
             postgresConnected = true;
         } else {
+            if (postgresConnected) {
+                logMessage('PostgreSQL health check: Unhealthy', 'error');
+            }
             postgresConnected = false;
         }
     } catch (err) {
+        if (postgresConnected) {
+            logMessage(`PostgreSQL health check failed: ${err.message}`, 'error');
+        }
         postgresConnected = false;
     }
     updateConnectionStatus();
@@ -613,11 +650,16 @@ async function refreshStats() {
         const now = Date.now();
         const deltaTime = (now - lastStats.timestamp) / 1000; // seconds
         
+        // Initialize deltas to 0
+        let capturedDelta = 0;
+        let parsedDelta = 0;
+        let flushedDelta = 0;
+        
         // Avoid division by zero and negative values, and handle first load
         if (deltaTime > 0 && !isFirstLoad) {
-            const capturedDelta = Math.max(0, Math.round((data.captured - lastStats.captured) / deltaTime));
-            const parsedDelta = Math.max(0, Math.round((data.parsed - lastStats.parsed) / deltaTime));
-            const flushedDelta = Math.max(0, Math.round((data.flushed - lastStats.flushed) / deltaTime));
+            capturedDelta = Math.max(0, Math.round((data.captured - lastStats.captured) / deltaTime));
+            parsedDelta = Math.max(0, Math.round((data.parsed - lastStats.parsed) / deltaTime));
+            flushedDelta = Math.max(0, Math.round((data.flushed - lastStats.flushed) / deltaTime));
             
             // Store calculated rates in stats object
             stats.parseRate = parsedDelta;
@@ -681,17 +723,13 @@ async function refreshStats() {
 
 // === UI UPDATES ===
 function updateConnectionStatus() {
-    const hubStatusEl = document.getElementById('hubStatus');
-    const hubStatusText = document.getElementById('hubStatusText');
+    // Note: Hub status is handled separately by updateSignalRStatus()
     const apiStatusEl = document.getElementById('apiStatus');
     const apiStatusText = document.getElementById('apiStatusText');
     const questdbStatusEl = document.getElementById('questdbStatus');
     const questdbStatusText = document.getElementById('questdbStatusText');
     const postgresStatusEl = document.getElementById('postgresStatus');
     const postgresStatusText = document.getElementById('postgresStatusText');
-    
-    hubStatusEl.className = 'status-indicator ' + (hubConnected ? 'connected' : 'disconnected');
-    hubStatusText.textContent = 'Hub: ' + (hubConnected ? 'Connected' : 'Disconnected');
     
     apiStatusEl.className = 'status-indicator ' + (apiConnected ? 'connected' : 'disconnected');
     apiStatusText.textContent = 'API: ' + (apiConnected ? 'Connected' : 'Disconnected');

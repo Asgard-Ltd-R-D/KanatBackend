@@ -299,6 +299,9 @@ public class ConfigurationInjection
             options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter<DataPipes>());
         });
         
+        // Register ConnectionManager for SignalR
+        builder.Services.AddSingleton<Hubs.ConnectionManager.IConnectionManager, Hubs.ConnectionManager.ConnectionManager>();
+        
         // Configure routing to use lowercase URLs
         builder.Services.AddRouting(options => options.LowercaseUrls = true);
         

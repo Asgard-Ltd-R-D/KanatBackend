@@ -43,6 +43,17 @@ body {
     text-transform: uppercase;
 }
 
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    background: #2a2a2a;
+    border-radius: 5px;
+    border: 1px solid #444;
+}
+
+
 .config-container {
     background: #1e1e1e;
     border: 1px solid #333;
@@ -134,14 +145,31 @@ body {
     height: 12px;
     border-radius: 50%;
     margin-right: 5px;
+    font-size: 12px;
+    font-weight: bold;
+    text-align: center;
+    line-height: 12px;
 }
 
-.connected { background: #00ff00; animation: pulse 2s infinite; }
-.disconnected { background: #ff0000; }
+.status-indicator.connected { 
+    background: #4caf50; 
+    color: #4caf50;
+}
+
+.status-indicator.disconnected { 
+    background: #f44336; 
+    color: #f44336;
+}
+
+.status-indicator.connecting { 
+    background: #ff9800; 
+    color: #ff9800;
+    animation: pulse 1.5s ease-in-out infinite alternate;
+}
 
 @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    from { opacity: 1; }
+    to { opacity: 0.5; }
 }
 
 .grid {

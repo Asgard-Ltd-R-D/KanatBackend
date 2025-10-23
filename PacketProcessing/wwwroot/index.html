@@ -41,11 +41,6 @@
             <button class="btn-stop" onclick="stopCapture()">Stop Capture</button>
         </div>
         
-        <!-- SignalR Controls -->
-        <div class="sidebar-section">
-            <h3>SignalR</h3>
-            <button id="signalRToggleBtn" onclick="toggleSignalR()">Connect SignalR</button>
-        </div>
         
         <!-- Stats Controls -->
         <div class="sidebar-section">
@@ -74,8 +69,8 @@
         <h1 id="dashboardTitle">Kanat Packet Processing - Telemetry Dashboard</h1>
         <div class="status-bar">
             <div>
-                <span class="status-indicator" id="hubStatus"></span>
-                <span id="hubStatusText">Hub: Disconnected</span>
+                <span class="status-indicator connecting" id="hubStatus"></span>
+                <span id="hubStatusText">Hub: Connecting...</span>
             </div>
             <div>
                 <span class="status-indicator" id="apiStatus"></span>

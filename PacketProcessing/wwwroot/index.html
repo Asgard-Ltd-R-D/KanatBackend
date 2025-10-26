@@ -300,8 +300,72 @@
         <canvas id="latencyChart"></canvas>
     </div>
     
-    <!-- SignalR Packet Log -->
-    <div id="signalr-log"></div>
+        <!-- SignalR Packet Hub -->
+        <div class="log-container packet-hub-container" style="min-height: 800px; padding: 30px;">
+            <div class="log-header">
+                <h3 style="color: #4fc3f7; margin: 0;">SIGNALR PACKET HUB</h3>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <span id="packetHubStatus" style="color: #4caf50;">Ready</span>
+                        <button id="packetHubConnectBtn" class="btn-start" onclick="togglePacketHubConnection()" style="height: 32px; padding: 0 12px; font-size: 12px; border-radius: 4px; flex-shrink: 0; min-width: 80px; max-width: 100px;">Connect</button>
+                    </div>
+            </div>
+            
+            <!-- Data Pipe Selection -->
+            <div style="margin: 40px 0;">
+                <div class="card" style="padding: 35px;">
+                    <h4 style="color: #4fc3f7; margin: 0 0 25px 0; font-size: 20px;">Select Data Pipeline</h4>
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <select id="dataPipeSelect" class="form-select" style="width: 250px; height: 40px; font-size: 16px;">
+                            <option value="">-- Select Pipeline --</option>
+                            <option value="MotionPackets">Motion Packets</option>
+                            <option value="SafetyPackets">Safety Packets</option>
+                            <option value="OnVIFPackets">OnVIF Packets</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Stream Selection -->
+            <div id="streamSelection" style="margin: 40px 0; display: none;">
+                <div class="card" style="padding: 35px;">
+                    <h4 style="color: #4fc3f7; margin: 0 0 25px 0; font-size: 20px;">Stream Management</h4>
+                    
+                    <!-- Add Stream Section -->
+                    <div style="margin-bottom: 40px; padding: 30px; background: rgba(79, 195, 247, 0.1); border-radius: 8px; border-left: 4px solid #4fc3f7;">
+                        <h5 style="color: #4fc3f7; margin: 0 0 20px 0; font-size: 18px;">Add New Stream</h5>
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 15px;">
+                            <select id="streamSelect" class="form-select" style="flex: 1; height: 40px; font-size: 14px; min-width: 0;">
+                                <!-- Options will be populated dynamically -->
+                            </select>
+                            <button id="registerStreamBtn" class="btn-start" onclick="registerSelectedStream()" disabled style="height: 32px; padding: 0 12px; font-size: 12px; border-radius: 4px; flex-shrink: 0; min-width: 60px; max-width: 80px;">
+                                Add
+                            </button>
+                        </div>
+                        <div style="margin-top: 10px; font-size: 13px; color: #888;">
+                            <span id="streamInfo">Select a pipeline above to see available streams</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Active Streams Section -->
+                    <div style="padding: 30px; background: rgba(76, 175, 80, 0.1); border-radius: 8px; border-left: 4px solid #4caf50;">
+                        <h5 style="color: #4caf50; margin: 0 0 20px 0; font-size: 18px;">Active Streams</h5>
+                        <div id="activeStreamsList" style="min-height: 120px;">
+                            <div style="text-align: center; color: #888; padding: 20px;">
+                                No active streams
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <!-- SignalR Packet Hub Logs -->
+    <div class="log-container">
+        <div class="log-header">
+            <h3 style="color: #4fc3f7; margin: 0;">SIGNALR PACKET HUB LOGS</h3>
+        </div>
+        <div class="log-content" id="packetHubLogs" style="min-height: 200px; padding: 30px;"></div>
+    </div>
 
     <!-- System Logs -->
     <div id="system-log"></div>

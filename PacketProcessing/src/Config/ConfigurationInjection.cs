@@ -420,7 +420,7 @@ public class ConfigurationInjection
         app.MapHealthChecks("/health");
         
         // Map SignalR hubs
-        app.MapHub<Hubs.CustomHub>("/hub/packets");
+        app.MapHub<Hubs.CustomHub>("/hubs/packets");
         app.MapHub<Telemetry.TelemetryHub>("/hubs/telemetry");
         
         app.MapControllers();

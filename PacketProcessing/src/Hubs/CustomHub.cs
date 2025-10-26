@@ -12,7 +12,7 @@ namespace PacketProcessing.Hubs;
 /// <summary>
 /// SignalR Hub for real-time packet data transmission and playback control
 /// </summary>
-[SignalRHub]
+[SignalRHub("/hubs/packets")]
 public class CustomHub : Hub
 {
     private readonly ILogger<CustomHub> _logger;
@@ -32,10 +32,31 @@ public class CustomHub : Hub
     /// <returns>A task that represents the asynchronous operation.</returns>
     public override async Task OnConnectedAsync()
     {
-        _logger.LogInformation("Client {ConnectionId} performing connection to hub", Context.ConnectionId);
-        _connectionManager.Add(Context.ConnectionId);
-        _logger.LogInformation("Mapped ConnectionId {ConnectionId} to hub", Context.ConnectionId);
-        await base.OnConnectedAsync();
+        try
+        {
+            ArgumentNullException.ThrowIfNull(Context.ConnectionId);
+            _logger.LogInformation("Client {ConnectionId} performing connection to hub", Context.ConnectionId);
+            _connectionManager.Add(Context.ConnectionId);
+            _logger.LogInformation("Mapped ConnectionId {ConnectionId} to hub", Context.ConnectionId);
+            await base.OnConnectedAsync();
+            
+            // Get all active streams for this connection and send ACK list
+            var activeStreamKeys = _transmissionService.GetRegisteredStreamKeys(Context.ConnectionId);
+            var ackList = activeStreamKeys.Select(key => new AckDto 
+            { 
+                OperationType = OperationType.ConnectionEstablished, 
+                Message = key, 
+                Success = true 
+            }).ToList();
+            
+            await Clients.Client(Context.ConnectionId).SendAsync(Constants.SIGNALR_ACK, ackList);
+            _logger.LogInformation("Sent ACK list with {Count} active streams to client {ConnectionId}", ackList.Count, Context.ConnectionId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error connecting to hub");
+            await Clients.Client(Context.ConnectionId).SendAsync(Constants.SIGNALR_ACK, new AckDto { OperationType = OperationType.ConnectionEstablished, Success = false, Message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -46,30 +67,59 @@ public class CustomHub : Hub
     /// <returns>A task that represents the asynchronous operation.</returns>
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        _logger.LogInformation("Client {ConnectionId} performing disconnection from hub", Context.ConnectionId);
-        _connectionManager.Remove(Context.ConnectionId);
-        await _transmissionService.DeregisterFromAllStreamsAsync(Context.ConnectionId); // Deregister from all streams that the client is registered to
-        _logger.LogInformation("Removed mapping for ConnectionId {ConnectionId}", Context.ConnectionId);
-        await base.OnDisconnectedAsync(exception);
+        try
+        {   
+            ArgumentNullException.ThrowIfNull(Context.ConnectionId);
+            _logger.LogInformation("Client {ConnectionId} performing disconnection from hub", Context.ConnectionId);
+            _connectionManager.Remove(Context.ConnectionId);
+            await _transmissionService.DeregisterFromAllStreamsAsync(Context.ConnectionId); // Deregister from all streams that the client is registered to
+            _logger.LogInformation("Removed mapping for ConnectionId {ConnectionId}", Context.ConnectionId);
+            await base.OnDisconnectedAsync(exception);
+            
+            // Send ACK with null message on disconnect
+            await Clients.Client(Context.ConnectionId).SendAsync(Constants.SIGNALR_ACK, new AckDto { OperationType = OperationType.ConnectionClosed, Success = true, Message = null });
+            _logger.LogInformation("Sent disconnect ACK with null message to client {ConnectionId}", Context.ConnectionId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error disconnecting from hub");
+            await Clients.Client(Context.ConnectionId).SendAsync(Constants.SIGNALR_ACK, new AckDto { OperationType = OperationType.ConnectionClosed, Success = false, Message = ex.Message });
+        }
     }
 
     public async Task RegisterToMethod(StreamRequestDto requestStream)
     {
-        _logger.LogInformation("Client {ConnectionId} performing registration to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
-        await _transmissionService.RegisterStreamAsync(requestStream, Context.ConnectionId);
-        _logger.LogInformation("Client {ConnectionId} registered to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
-        await Clients.Client(Context.ConnectionId).SendAsync(Constants.SIGNALR_ACK, new AckDto { OperationType = OperationType.RegisterToEvent, MethodName = requestStream.Description, Success = true });
+        try
+        {
+            ArgumentNullException.ThrowIfNull(requestStream.SubscriptionKey);
+            _logger.LogInformation("Client {ConnectionId} performing registration to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
+            await _transmissionService.RegisterStreamAsync(requestStream, Context.ConnectionId);
+            _logger.LogInformation("Client {ConnectionId} registered to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error registering to method {SubscriptionKey}", requestStream.SubscriptionKey);
+            throw;
+        }
     }
 
     public async Task UnregisterFromMethod(StreamRequestDto requestStream)
     {
-        _logger.LogInformation("Client {ConnectionId} is unregistering from method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
-        await _transmissionService.DeregisterStreamAsync(requestStream);
-        _logger.LogInformation("Client {ConnectionId} is unregistered from method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
-        await Clients.Client(Context.ConnectionId).SendAsync(Constants.SIGNALR_ACK, new AckDto { OperationType = OperationType.UnregisterFromEvent, MethodName = requestStream.Description, Success = true });
+        try 
+        {
+            ArgumentNullException.ThrowIfNull(requestStream.SubscriptionKey);
+            _logger.LogInformation("Client {ConnectionId} is unregistering from method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
+            await _transmissionService.DeregisterStreamAsync(requestStream);
+            _logger.LogInformation("Client {ConnectionId} is unregistered from method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error unregistering from method {SubscriptionKey}", requestStream.SubscriptionKey);
+            throw;
+        }
     }
 
-    public async Task ReceiveHitDetectionData()
+    public Task ReceiveHitDetectionData()
     {
         //TODO: Implement on version 2.0
         throw new NotImplementedException();

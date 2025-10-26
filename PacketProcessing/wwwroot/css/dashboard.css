@@ -333,6 +333,43 @@ select option {
     margin-bottom: 20px;
 }
 
+/* Packet Hub Container - Dynamic sizing */
+.packet-hub-container {
+    min-height: auto;
+    max-height: none;
+    overflow-y: visible;
+    padding: 0;
+}
+
+.packet-hub-container .log-content {
+    max-height: none;
+    overflow-y: visible;
+}
+
+.packet-hub-container .log-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+/* Packet Hub Logs Container - Also dynamic */
+.log-container:has(#packetHubLogs) {
+    max-height: none;
+    overflow-y: visible;
+    min-height: auto;
+}
+
+.log-container:has(#packetHubLogs) .log-content {
+    max-height: none;
+    overflow-y: visible;
+}
+
+.log-container:has(#packetHubLogs) .log-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
 .log-header {
     position: sticky;
     top: 0;
@@ -405,3 +442,44 @@ canvas {
     box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
 }
 
+.btn-fixed-small {
+    position: fixed;
+    bottom: 10px;          /* fixed to bottom-right */
+    right: 10px;
+    height: 24px;          /* very small height */
+    padding: 0 6px;        /* tight padding */
+    font-size: 11px;       /* small text */
+    border-radius: 4px;    /* subtle rounding */
+    background-color: #007bff;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    z-index: 1000;         /* stay above content */
+    transition: background-color 0.2s ease;
+  }
+
+  .btn-fixed-small:hover:not(:disabled) {
+    background-color: #0056b3;
+  }
+
+  .btn-fixed-small:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .btn-danger{
+    background: #f44336;
+    color: #fff;
+  }
+  .btn-danger:hover{ 
+    background: #d32f2f; 
+    transform: translateY(-1px);
+  }
+  .btn-danger:active{
+    transform: translateY(0);
+    filter: brightness(0.95);
+  }
+  .btn-danger:disabled{
+    opacity: .6;
+    cursor: not-allowed;
+  }

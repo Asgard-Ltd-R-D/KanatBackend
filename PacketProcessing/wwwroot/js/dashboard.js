@@ -887,4 +887,751 @@ function clearLogs() {
     logMessage('All logs cleared', 'info');
 }
 
+// === PACKET HUB FUNCTIONALITY ===
+
+let packetHubConnection = null;
+let packetHubConnected = false;
+let activeStreams = new Map(); // Track active streams by pipeline
+
+// Helper function to convert pipeline name to DataPipes enum value
+function convertPipelineToEnum(pipelineName) {
+    switch (pipelineName) {
+        case 'MotionPackets':
+            return 'Motion';
+        case 'SafetyPackets':
+            return 'Safety';
+        case 'OnVIFPackets':
+            return 'OnVIF';
+        default:
+            return pipelineName;
+    }
+}
+
+// Define onDataPipeChange function early so it's available when HTML loads
+function onDataPipeChange() {
+    console.log('onDataPipeChange called');
+    const dataPipe = document.getElementById('dataPipeSelect').value;
+    console.log('Selected dataPipe:', dataPipe);
+    const streamSelection = document.getElementById('streamSelection');
+    const streamSelect = document.getElementById('streamSelect');
+    const streamInfo = document.getElementById('streamInfo');
+    
+    if (dataPipe) {
+        console.log('Showing stream selection for:', dataPipe);
+        streamSelection.style.display = 'block';
+        
+        // Clear existing options
+        streamSelect.innerHTML = '<option value="">-- Select Stream --</option>';
+        
+        // Populate stream options based on selected pipeline
+        let streams = [];
+        switch (dataPipe) {
+            case 'MotionPackets':
+                streams = [
+                    { value: 'MOT_GetMotorCurrent|false|0', text: 'MOT_GetMotorCurrent (RPT, Axis 0)' },
+                    { value: 'MOT_GetMotorCurrent|true|0', text: 'MOT_GetMotorCurrent (CMD, Axis 0)' },
+                    { value: 'MOT_GetMotorSpeed|false|0', text: 'MOT_GetMotorSpeed (RPT, Axis 0)' },
+                    { value: 'MOT_GetMotorSpeed|true|0', text: 'MOT_GetMotorSpeed (CMD, Axis 0)' },
+                    { value: 'DG_SetSyncMode|false|0', text: 'DG_SetSyncMode (RPT, Axis 0)' },
+                    { value: 'DG_SetSyncMode|true|0', text: 'DG_SetSyncMode (CMD, Axis 0)' },
+                    { value: 'DG_SetInnerMode|false|0', text: 'DG_SetInnerMode (RPT, Axis 0)' },
+                    { value: 'DG_SetInnerMode|true|0', text: 'DG_SetInnerMode (CMD, Axis 0)' },
+                    { value: 'DG_IsSyncMode|false|0', text: 'DG_IsSyncMode (RPT, Axis 0)' },
+                    { value: 'DG_IsSyncMode|true|0', text: 'DG_IsSyncMode (CMD, Axis 0)' },
+                    { value: 'DG_IsInnerMode|false|0', text: 'DG_IsInnerMode (RPT, Axis 0)' },
+                    { value: 'DG_IsInnerMode|true|0', text: 'DG_IsInnerMode (CMD, Axis 0)' },
+                    { value: 'DG_GetPosDiff|false|0', text: 'DG_GetPosDiff (RPT, Axis 0)' },
+                    { value: 'DG_GetPosDiff|true|0', text: 'DG_GetPosDiff (CMD, Axis 0)' },
+                    { value: 'DG_CTC|false|0', text: 'DG_CTC (RPT, Axis 0)' },
+                    { value: 'DG_CTC|true|0', text: 'DG_CTC (CMD, Axis 0)' },
+                    { value: 'DG_GetCTCoffset|false|0', text: 'DG_GetCTCoffset (RPT, Axis 0)' },
+                    { value: 'DG_GetCTCoffset|true|0', text: 'DG_GetCTCoffset (CMD, Axis 0)' },
+                    { value: 'DG_IsBoresightEn|false|0', text: 'DG_IsBoresightEn (RPT, Axis 0)' },
+                    { value: 'DG_IsBoresightEn|true|0', text: 'DG_IsBoresightEn (CMD, Axis 0)' },
+                    { value: 'DG_GetBoresightOffset|false|0', text: 'DG_GetBoresightOffset (RPT, Axis 0)' },
+                    { value: 'DG_GetBoresightOffset|true|0', text: 'DG_GetBoresightOffset (CMD, Axis 0)' },
+                    { value: 'DG_SetBallisticOffset|false|0', text: 'DG_SetBallisticOffset (RPT, Axis 0)' },
+                    { value: 'DG_SetBallisticOffset|true|0', text: 'DG_SetBallisticOffset (CMD, Axis 0)' }
+                ];
+                streamInfo.textContent = 'Motion Packets - Select a stream to register';
+                break;
+            case 'SafetyPackets':
+                streams = [
+                    { value: 'DO3_FIRE1|false|0', text: 'DO3_FIRE1 (RPT)' },
+                    { value: 'DO3_FIRE1|true|0', text: 'DO3_FIRE1 (CMD)' },
+                    { value: 'DO3_FIRE2|false|0', text: 'DO3_FIRE2 (RPT)' },
+                    { value: 'DO3_FIRE2|true|0', text: 'DO3_FIRE2 (CMD)' },
+                    { value: 'DO3_FIRE3|false|0', text: 'DO3_FIRE3 (RPT)' },
+                    { value: 'DO3_FIRE3|true|0', text: 'DO3_FIRE3 (CMD)' },
+                    { value: 'DO3_FIRE4|false|0', text: 'DO3_FIRE4 (RPT)' },
+                    { value: 'DO3_FIRE4|true|0', text: 'DO3_FIRE4 (CMD)' },
+                    { value: 'DO3_FIRE5|false|0', text: 'DO3_FIRE5 (RPT)' },
+                    { value: 'DO3_FIRE5|true|0', text: 'DO3_FIRE5 (CMD)' },
+                    { value: 'DO3_FIRE6|false|0', text: 'DO3_FIRE6 (RPT)' },
+                    { value: 'DO3_FIRE6|true|0', text: 'DO3_FIRE6 (CMD)' }
+                ];
+                streamInfo.textContent = 'Safety Packets - Select a stream to register';
+                break;
+            case 'OnVIFPackets':
+                streams = [
+                    { value: 'FOV_REQ|false|0', text: 'FOV_REQ (RPT)' },
+                    { value: 'FOV_REQ|true|0', text: 'FOV_REQ (CMD)' },
+                    { value: 'FOV_STS|false|0', text: 'FOV_STS (RPT)' },
+                    { value: 'FOV_STS|true|0', text: 'FOV_STS (CMD)' },
+                    { value: 'LRF_REQ|false|0', text: 'LRF_REQ (RPT)' },
+                    { value: 'LRF_REQ|true|0', text: 'LRF_REQ (CMD)' },
+                    { value: 'LRF_STS|false|0', text: 'LRF_STS (RPT)' },
+                    { value: 'LRF_STS|true|0', text: 'LRF_STS (CMD)' }
+                ];
+                streamInfo.textContent = 'OnVIF Packets - Select a stream to register';
+                break;
+        }
+        
+        // Add options to select
+        streams.forEach(stream => {
+            const option = document.createElement('option');
+            option.value = stream.value;
+            option.textContent = stream.text;
+            streamSelect.appendChild(option);
+        });
+        
+        // Enable register button
+        document.getElementById('registerStreamBtn').disabled = false;
+        
+    } else {
+        console.log('Hiding stream selection');
+        streamSelection.style.display = 'none';
+        streamInfo.textContent = 'Select a pipeline above to see available streams';
+    }
+    
+    updateActiveStreamsList();
+}
+
+// Update the active streams list display
+function updateActiveStreamsList() {
+    const activeStreamsList = document.getElementById('activeStreamsList');
+    if (!activeStreamsList) return;
+    
+    if (activeStreams.size === 0) {
+        activeStreamsList.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">No active streams</div>';
+        return;
+    }
+    
+    let html = '';
+    activeStreams.forEach((streamRequest, streamKey) => {
+        const displayName = `${streamRequest.description} (${streamRequest.isCmd ? 'CMD' : 'RPT'}, Axis ${streamRequest.axis})`;
+        const pipelineName = streamRequest.dataPipe;
+        
+        html += `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; margin: 5px 0; background: rgba(255,255,255,0.05); border-radius: 6px; border-left: 3px solid #4caf50;">
+                <div style="flex: 1; margin-right: 10px; min-width: 0;">
+                    <div style="font-weight: bold; color: #4caf50; font-size: 14px;">${displayName}</div>
+                    <div style="font-size: 12px; color: #888;">Pipeline: ${pipelineName}</div>
+                </div>
+                <button onclick="unregisterSpecificStream('${streamKey}')" style="height: 24px; padding: 0 8px; font-size: 11px; border-radius: 4px; background: #f44336; color: white; border: none; cursor: pointer; transition: all 0.2s ease; font-weight: 500; flex-shrink: 0; min-width: 60px; max-width: 80px;" onmouseover="this.style.background='#d32f2f'; this.style.transform='translateY(-1px)'" onmouseout="this.style.background='#f44336'; this.style.transform='translateY(0)'">
+                    Remove
+                </button>
+            </div>
+        `;
+    });
+    
+    activeStreamsList.innerHTML = html;
+}
+
+// Unregister a specific stream by key
+async function unregisterSpecificStream(streamKey) {
+    if (!packetHubConnection || !packetHubConnected) {
+        logPacketHubMessage('Not connected to Packet Hub', 'error');
+        return;
+    }
+    
+    const streamRequest = activeStreams.get(streamKey);
+    if (!streamRequest) {
+        logPacketHubMessage(`Stream ${streamKey} not found`, 'warning');
+        return;
+    }
+    
+    try {
+        logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)}`, 'info');
+        await packetHubConnection.invoke('UnregisterFromMethod', streamRequest);
+        activeStreams.delete(streamKey);
+        updateActiveStreamsList();
+        logPacketHubMessage('Stream unregistration request sent', 'success');
+    } catch (err) {
+        logPacketHubMessage(`Error unregistering stream: ${err.message}`, 'error');
+    }
+}
+
+// Auto-connect packet hub on page load
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, attempting to connect packet hub...');
+    
+    // Initialize the connect/disconnect button
+    updatePacketHubConnectButton();
+    
+    // Add event listener for data pipe selection
+    const dataPipeSelect = document.getElementById('dataPipeSelect');
+    if (dataPipeSelect) {
+        dataPipeSelect.addEventListener('change', function(event) {
+            console.log('Data pipe select change event triggered:', event.target.value);
+            onDataPipeChange();
+        });
+        console.log('Added event listener to dataPipeSelect');
+    } else {
+        console.error('dataPipeSelect element not found!');
+    }
+    
+    // Add a small delay to ensure all elements are ready
+    setTimeout(() => {
+        connectPacketHub();
+    }, 100);
+});
+
+async function connectPacketHub() {
+    console.log('connectPacketHub called');
+    if (packetHubConnection) {
+        logPacketHubMessage('Already connected or connecting...', 'warning');
+        return;
+    }
+    
+    const hubUrl = 'http://localhost:10901/hubs/packets';
+    console.log('Attempting to connect to:', hubUrl);
+    logPacketHubMessage(`Connecting to Packet Hub: ${hubUrl}`, 'info');
+    
+    // Check if SignalR is available
+    if (typeof signalR === 'undefined') {
+        console.error('SignalR library not loaded!');
+        logPacketHubMessage('SignalR library not loaded!', 'error');
+        updatePacketHubStatus('disconnected');
+        return;
+    }
+    
+    console.log('SignalR library loaded:', signalR);
+    updatePacketHubStatus('connecting');
+    
+    // Check server status first
+    const serverRunning = await checkServerStatus();
+    if (!serverRunning) {
+        console.error('Server is not running or not accessible');
+        logPacketHubMessage('Server is not running or not accessible', 'error');
+        updatePacketHubStatus('disconnected');
+        return;
+    }
+    
+    packetHubConnection = new signalR.HubConnectionBuilder()
+        .withUrl(hubUrl)
+        .withAutomaticReconnect([0, 1000, 2000, 5000])
+        .configureLogging(signalR.LogLevel.Information)
+        .build();
+
+    // Handle connection events
+    packetHubConnection.onclose((error) => {
+        console.log('Packet Hub connection closed:', error);
+        packetHubConnected = false;
+        
+        // Clear all active streams when connection is lost
+        activeStreams.clear();
+        updateActiveStreamsList();
+        
+        updatePacketHubStatus('disconnected');
+        logPacketHubMessage('Packet Hub disconnected - all streams cleared', 'error');
+    });
+
+    packetHubConnection.onreconnecting((error) => {
+        console.log('Packet Hub reconnecting...');
+        packetHubConnected = false;
+        
+        // Clear all active streams when reconnecting starts
+        activeStreams.clear();
+        updateActiveStreamsList();
+        
+        updatePacketHubStatus('reconnecting');
+        logPacketHubMessage('Packet Hub reconnecting... - all streams cleared', 'warning');
+    });
+
+    packetHubConnection.onreconnected((connectionId) => {
+        console.log('Packet Hub reconnected successfully');
+        packetHubConnected = true;
+        updatePacketHubStatus('connected');
+        logPacketHubMessage('Packet Hub reconnected successfully', 'success');
+    });
+
+    // Handle ACK messages - can be single ACK or array of ACKs
+    packetHubConnection.on('Ack', (ackData) => {
+        if (Array.isArray(ackData)) {
+            // Multiple ACKs (on connect)
+            ackData.forEach(ack => {
+                logPacketHubMessage(`ACK Received: ${JSON.stringify(ack)}`, 'success');
+            });
+        } else {
+            // Single ACK (on register/unregister/disconnect)
+            logPacketHubMessage(`ACK Received: ${JSON.stringify(ackData)}`, 'success');
+        }
+        console.log('ACK received:', ackData);
+        
+        // Refresh active streams list after ACK
+        updateActiveStreamsList();
+    });
+
+    // Handle packet data
+    packetHubConnection.on('OnReceivePacket', (packetData) => {
+        logPacketHubMessage(`Packet Received: ${JSON.stringify(packetData)}`, 'info');
+        console.log('Packet received:', packetData);
+    });
+
+    try {
+        console.log('Starting Packet Hub connection...');
+        logPacketHubMessage('Starting Packet Hub connection...', 'info');
+        
+        // Add timeout to connection attempt
+        const connectionPromise = packetHubConnection.start();
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000)
+        );
+        
+        await Promise.race([connectionPromise, timeoutPromise]);
+        
+        console.log('Packet Hub connection successful!');
+        packetHubConnected = true;
+        updatePacketHubStatus('connected');
+        logPacketHubMessage('Packet Hub connected successfully!', 'success');
+        console.log('Packet Hub connection established successfully');
+    } catch (err) {
+        console.error('Packet Hub connection failed:', err);
+        logPacketHubMessage(`Packet Hub connection failed: ${err.message}`, 'error');
+        console.error('Packet Hub connection error:', err);
+        packetHubConnected = false;
+        updatePacketHubStatus('disconnected');
+    }
+}
+
+function updatePacketHubStatus(status) {
+    const statusElement = document.getElementById('packetHubStatus');
+    const manualConnectBtn = document.getElementById('manualConnectBtn');
+    
+    switch (status) {
+        case 'connected':
+            statusElement.textContent = 'Connected';
+            statusElement.style.color = '#4caf50';
+            if (manualConnectBtn) manualConnectBtn.style.display = 'none';
+            break;
+        case 'connecting':
+        case 'reconnecting':
+            statusElement.textContent = 'Connecting...';
+            statusElement.style.color = '#ff9800';
+            if (manualConnectBtn) manualConnectBtn.style.display = 'none';
+            break;
+        case 'disconnected':
+        default:
+            statusElement.textContent = 'Disconnected';
+            statusElement.style.color = '#f44336';
+            if (manualConnectBtn) manualConnectBtn.style.display = 'inline-block';
+            break;
+    }
+    
+    // Update the connect/disconnect button
+    updatePacketHubConnectButton();
+    
+    // Update button states based on current pipeline selection
+    updatePipelineButtons();
+}
+
+// Update the connect/disconnect button text and styling
+function updatePacketHubConnectButton() {
+    const connectBtn = document.getElementById('packetHubConnectBtn');
+    if (!connectBtn) return;
+    
+    if (packetHubConnected) {
+        connectBtn.textContent = 'Disconnect';
+        connectBtn.className = 'btn-stop';
+    } else {
+        connectBtn.textContent = 'Connect';
+        connectBtn.className = 'btn-start';
+    }
+}
+
+// Toggle connection function for the connect/disconnect button
+async function togglePacketHubConnection() {
+    if (packetHubConnected) {
+        await disconnectPacketHub();
+    } else {
+        await connectPacketHub();
+    }
+}
+
+// Disconnect packet hub function
+async function disconnectPacketHub() {
+    if (packetHubConnection) {
+        try {
+            await packetHubConnection.stop();
+            packetHubConnection = null;
+            packetHubConnected = false;
+            
+            // Clear all active streams when disconnecting
+            activeStreams.clear();
+            updateActiveStreamsList();
+            
+            updatePacketHubStatus('disconnected');
+            logPacketHubMessage('Packet Hub disconnected manually - all streams cleared', 'info');
+            updatePacketHubConnectButton();
+        } catch (error) {
+            console.error('Error disconnecting Packet Hub:', error);
+            logPacketHubMessage(`Error disconnecting: ${error.message}`, 'error');
+        }
+    }
+}
+
+// Manual connect function for fallback
+async function manualConnectPacketHub() {
+    console.log('Manual connect triggered');
+    await connectPacketHub();
+}
+
+// Register selected stream
+async function registerSelectedStream() {
+    if (!packetHubConnection || !packetHubConnected) {
+        logPacketHubMessage('Not connected to Packet Hub', 'error');
+        return;
+    }
+
+    const dataPipe = document.getElementById('dataPipeSelect').value;
+    const streamValue = document.getElementById('streamSelect').value;
+    
+    if (!dataPipe || !streamValue) {
+        logPacketHubMessage('Please select both pipeline and stream', 'warning');
+        return;
+    }
+
+    // Parse stream value (format: description|isCmd|axis)
+    const [description, isCmdStr, axisStr] = streamValue.split('|');
+    const isCmd = isCmdStr === 'true';
+    const axis = parseInt(axisStr) || 0;
+
+    const streamRequest = {
+        dataPipe: convertPipelineToEnum(dataPipe),
+        description: description,
+        isCmd: isCmd,
+        axis: axis
+    };
+
+    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    
+    if (activeStreams.has(streamKey)) {
+        logPacketHubMessage(`Stream ${streamKey} is already registered`, 'warning');
+        return;
+    }
+
+    try {
+        logPacketHubMessage(`Registering Stream: ${JSON.stringify(streamRequest)}`, 'info');
+        await packetHubConnection.invoke('RegisterToMethod', streamRequest);
+        activeStreams.set(streamKey, streamRequest);
+        updateActiveStreamsList();
+        logPacketHubMessage('Stream registration request sent', 'success');
+    } catch (err) {
+        logPacketHubMessage(`Error registering stream: ${err.message}`, 'error');
+    }
+}
+
+// Unregister selected stream
+async function unregisterSelectedStream() {
+    if (!packetHubConnection || !packetHubConnected) {
+        logPacketHubMessage('Not connected to Packet Hub', 'error');
+        return;
+    }
+
+    const dataPipe = document.getElementById('dataPipeSelect').value;
+    const streamValue = document.getElementById('streamSelect').value;
+    
+    if (!dataPipe || !streamValue) {
+        logPacketHubMessage('Please select both pipeline and stream', 'warning');
+        return;
+    }
+
+    // Parse stream value (format: description|isCmd|axis)
+    const [description, isCmdStr, axisStr] = streamValue.split('|');
+    const isCmd = isCmdStr === 'true';
+    const axis = parseInt(axisStr) || 0;
+
+    const streamRequest = {
+        dataPipe: convertPipelineToEnum(dataPipe),
+        description: description,
+        isCmd: isCmd,
+        axis: axis
+    };
+
+    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    
+    if (!activeStreams.has(streamKey)) {
+        logPacketHubMessage(`Stream ${streamKey} is not registered`, 'warning');
+        return;
+    }
+
+    try {
+        logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)}`, 'info');
+        await packetHubConnection.invoke('UnregisterFromMethod', streamRequest);
+        activeStreams.delete(streamKey);
+        updateActiveStreamsList();
+        logPacketHubMessage('Stream unregistration request sent', 'success');
+    } catch (err) {
+        logPacketHubMessage(`Error unregistering stream: ${err.message}`, 'error');
+    }
+}
+
+// Check server status
+async function checkServerStatus() {
+    console.log('Checking server status...');
+    try {
+        const response = await fetch('http://localhost:10901/hubs/packets/negotiate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+        console.log('Server response:', response.status, response.statusText);
+        if (response.ok) {
+            logPacketHubMessage('Server is running and accessible', 'success');
+            return true;
+        } else {
+            logPacketHubMessage(`Server responded with status: ${response.status}`, 'warning');
+            return false;
+        }
+    } catch (error) {
+        console.error('Server check failed:', error);
+        logPacketHubMessage(`Server check failed: ${error.message}`, 'error');
+        return false;
+    }
+}
+
+function updatePipelineButtons() {
+    const dataPipe = document.getElementById('dataPipeSelect').value;
+    const isConnected = packetHubConnected;
+    
+    if (!dataPipe || !isConnected) {
+        // Disable all buttons
+        ['registerMotionBtn', 'unregisterMotionBtn', 'registerSafetyBtn', 'unregisterSafetyBtn', 'registerOnvifBtn', 'unregisterOnvifBtn'].forEach(btnId => {
+            const btn = document.getElementById(btnId);
+            if (btn) {
+                btn.disabled = true;
+                if (btnId.includes('register')) btn.textContent = 'Register';
+                if (btnId.includes('unregister')) btn.textContent = 'Unregister';
+            }
+        });
+        return;
+    }
+    
+    // Enable buttons for current pipeline
+    let registerBtnId, unregisterBtnId;
+    switch (dataPipe) {
+        case 'MotionPackets':
+            registerBtnId = 'registerMotionBtn';
+            unregisterBtnId = 'unregisterMotionBtn';
+            break;
+        case 'SafetyPackets':
+            registerBtnId = 'registerSafetyBtn';
+            unregisterBtnId = 'unregisterSafetyBtn';
+            break;
+        case 'OnVIFPackets':
+            registerBtnId = 'registerOnvifBtn';
+            unregisterBtnId = 'unregisterOnvifBtn';
+            break;
+    }
+    
+    if (registerBtnId && unregisterBtnId) {
+        const registerBtn = document.getElementById(registerBtnId);
+        const unregisterBtn = document.getElementById(unregisterBtnId);
+        
+        if (registerBtn && unregisterBtn) {
+            registerBtn.disabled = false;
+            unregisterBtn.disabled = false;
+        }
+    }
+}
+
+// Unified Stream Registration/Unregistration
+async function registerStream() {
+    if (!packetHubConnection || !packetHubConnected) {
+        logPacketHubMessage('Not connected to Packet Hub', 'error');
+        return;
+    }
+
+    const dataPipe = document.getElementById('dataPipeSelect').value;
+    if (!dataPipe) {
+        logPacketHubMessage('Please select a data pipeline first', 'warning');
+        return;
+    }
+
+    let streamRequest;
+    
+    switch (dataPipe) {
+        case 'MotionPackets':
+            const motionDescription = document.getElementById('motionDescriptionSelect').value;
+            const motionIsCmd = document.getElementById('motionIsCmdSelect').value === 'true';
+            const motionAxis = parseInt(document.getElementById('motionAxisInput').value) || 0;
+            
+            streamRequest = {
+                dataPipe: 'MotionPackets',
+                description: motionDescription,
+                isCmd: motionIsCmd,
+                axis: motionAxis
+            };
+            break;
+            
+        case 'SafetyPackets':
+            const safetyDescription = document.getElementById('safetyDescriptionSelect').value;
+            const safetyIsCmd = document.getElementById('safetyIsCmdSelect').value === 'true';
+            
+            streamRequest = {
+                dataPipe: 'SafetyPackets',
+                description: safetyDescription,
+                isCmd: safetyIsCmd,
+                axis: 0
+            };
+            break;
+            
+        case 'OnVIFPackets':
+            const onvifDescription = document.getElementById('onvifDescriptionSelect').value;
+            const onvifIsCmd = document.getElementById('onvifIsCmdSelect').value === 'true';
+            
+            streamRequest = {
+                dataPipe: 'OnVIFPackets',
+                description: onvifDescription,
+                isCmd: onvifIsCmd,
+                axis: 0
+            };
+            break;
+            
+        default:
+            logPacketHubMessage('Unknown data pipeline', 'error');
+            return;
+    }
+
+    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    
+    if (activeStreams.has(streamKey)) {
+        logPacketHubMessage(`Stream ${streamKey} is already registered`, 'warning');
+        return;
+    }
+
+    try {
+        logPacketHubMessage(`Registering Stream: ${JSON.stringify(streamRequest)}`, 'info');
+        await packetHubConnection.invoke('RegisterToMethod', streamRequest);
+        activeStreams.set(streamKey, streamRequest);
+        updateActiveStreamsList();
+        logPacketHubMessage('Stream registration request sent', 'success');
+    } catch (err) {
+        logPacketHubMessage(`Error registering stream: ${err.message}`, 'error');
+    }
+}
+
+async function unregisterStream() {
+    if (!packetHubConnection || !packetHubConnected) {
+        logPacketHubMessage('Not connected to Packet Hub', 'error');
+        return;
+    }
+
+    const dataPipe = document.getElementById('dataPipeSelect').value;
+    if (!dataPipe) {
+        logPacketHubMessage('Please select a data pipeline first', 'warning');
+        return;
+    }
+
+    let streamRequest;
+    
+    switch (dataPipe) {
+        case 'MotionPackets':
+            const motionDescription = document.getElementById('motionDescriptionSelect').value;
+            const motionIsCmd = document.getElementById('motionIsCmdSelect').value === 'true';
+            const motionAxis = parseInt(document.getElementById('motionAxisInput').value) || 0;
+            
+            streamRequest = {
+                dataPipe: 'MotionPackets',
+                description: motionDescription,
+                isCmd: motionIsCmd,
+                axis: motionAxis
+            };
+            break;
+            
+        case 'SafetyPackets':
+            const safetyDescription = document.getElementById('safetyDescriptionSelect').value;
+            const safetyIsCmd = document.getElementById('safetyIsCmdSelect').value === 'true';
+            
+            streamRequest = {
+                dataPipe: 'SafetyPackets',
+                description: safetyDescription,
+                isCmd: safetyIsCmd,
+                axis: 0
+            };
+            break;
+            
+        case 'OnVIFPackets':
+            const onvifDescription = document.getElementById('onvifDescriptionSelect').value;
+            const onvifIsCmd = document.getElementById('onvifIsCmdSelect').value === 'true';
+            
+            streamRequest = {
+                dataPipe: 'OnVIFPackets',
+                description: onvifDescription,
+                isCmd: onvifIsCmd,
+                axis: 0
+            };
+            break;
+            
+        default:
+            logPacketHubMessage('Unknown data pipeline', 'error');
+            return;
+    }
+
+    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    
+    if (!activeStreams.has(streamKey)) {
+        logPacketHubMessage(`Stream ${streamKey} is not registered`, 'warning');
+        return;
+    }
+
+    try {
+        logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)}`, 'info');
+        await packetHubConnection.invoke('UnregisterFromMethod', streamRequest);
+        activeStreams.delete(streamKey);
+        updateActiveStreamsList();
+        logPacketHubMessage('Stream unregistration request sent', 'success');
+    } catch (err) {
+        logPacketHubMessage(`Error unregistering stream: ${err.message}`, 'error');
+    }
+}
+
+function updateStreamButtons(isRegistered) {
+    const registerBtn = document.getElementById('registerStreamBtn');
+    const unregisterBtn = document.getElementById('unregisterStreamBtn');
+    
+    if (registerBtn && unregisterBtn) {
+        if (isRegistered) {
+            registerBtn.disabled = true;
+            unregisterBtn.disabled = false;
+            registerBtn.textContent = 'Registered';
+            unregisterBtn.textContent = 'Unregister Stream';
+        } else {
+            registerBtn.disabled = false;
+            unregisterBtn.disabled = true;
+            registerBtn.textContent = 'Register Stream';
+            unregisterBtn.textContent = 'Unregistered';
+        }
+    }
+}
+
+function logPacketHubMessage(message, type = 'info') {
+    const logsDiv = document.getElementById('packetHubLogs');
+    const logEntry = document.createElement('div');
+    logEntry.className = `log-entry log-${type}`;
+    
+    const timestamp = new Date().toLocaleTimeString() + '.' + 
+                      new Date().getMilliseconds().toString().padStart(3, '0');
+    
+    logEntry.textContent = `[${timestamp}] ${message}`;
+    logsDiv.insertBefore(logEntry, logsDiv.firstChild);
+    
+    // Keep only last 100 logs
+    while (logsDiv.children.length > 100) {
+        logsDiv.removeChild(logsDiv.lastChild);
+    }
+}
+
 

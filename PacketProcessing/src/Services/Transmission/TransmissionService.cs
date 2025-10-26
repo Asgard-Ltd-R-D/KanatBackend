@@ -6,6 +6,7 @@ using PacketProcessing.DTOs.Stream;
 using PacketProcessing.Entities;
 using PacketProcessing.Hubs;
 using PacketProcessing.Utils.Constants;
+using PacketProcessing.Utils.Enums;
 using PacketProcessing.Utils.Parsers;
 
 namespace PacketProcessing.Services.Transmission;
@@ -44,20 +45,51 @@ public class TransmissionService : ITransmissionService
 
         var key = request.SubscriptionKey;
 
-        if (_streamKeyToConnectionIdDict.TryAdd(key, connectionId))
+        try
         {
-            _logger.LogInformation(
-                "Client {ConnectionId} registered on stream {Key}",
-                connectionId, key);
+            if (_streamKeyToConnectionIdDict.TryAdd(key, connectionId))
+            {
+                _logger.LogInformation(
+                    "Client {ConnectionId} registered on stream {Key}",
+                    connectionId, key);
+                
+                // Send success ACK
+                await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
+                    new AckDto { 
+                        OperationType = OperationType.RegisterToMethod, 
+                        Message = request.SubscriptionKey, 
+                        Success = true 
+                    });
+            }
+            else
+            {
+                _logger.LogInformation("Client {ConnectionId} already registered on stream {Key}, ignoring registration", connectionId, key);
+                
+                // Send success ACK even if already registered
+                await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
+                    new AckDto { 
+                        OperationType = OperationType.RegisterToMethod, 
+                        Message = request.SubscriptionKey, 
+                        Success = true 
+                    });
+            }
+
+            _logger.LogInformation("Sent ack to client {ConnectionId} for stream registration: {Key}", connectionId, key);
         }
-        else
+        catch (Exception ex)
         {
-            _logger.LogInformation("Client {ConnectionId} already registered on stream {Key}, ignoring registration", connectionId, key);
+            _logger.LogError(ex, "Error during stream registration for client {ConnectionId} on stream {Key}", connectionId, key);
+            
+            // Send error ACK
+            await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
+                new AckDto { 
+                    OperationType = OperationType.RegisterToMethod, 
+                    Message = request.SubscriptionKey, 
+                    Success = false 
+                });
+            
+            throw;
         }
-        await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, request);
-
-        _logger.LogInformation("Sent ack to client {ConnectionId} for stream registration: {Key}", connectionId, key);
-
     }
     
     public async Task DeregisterStreamAsync(StreamRequestDto request)
@@ -66,24 +98,51 @@ public class TransmissionService : ITransmissionService
 
         var key = request.SubscriptionKey;
         var toBeRemovedConnectionId = _streamKeyToConnectionIdDict.TryGetValue(key, out var connectionId) ? connectionId : null;
-        if (toBeRemovedConnectionId == null)
+        
+        try
         {
-            _logger.LogWarning("Stream not found for deregistration: {Key}, ignoring deregistration", key);
-            return;
-        }
+            if (toBeRemovedConnectionId == null)
+            {
+                _logger.LogWarning("Stream not found for deregistration: {Key}, ignoring deregistration", key);
+                return;
+            }
 
-        if (_streamKeyToConnectionIdDict.TryRemove(key, out _))
+            if (_streamKeyToConnectionIdDict.TryRemove(key, out _))
+            {
+                _logger.LogInformation("Client {ConnectionId} unregistered from stream {Key}", toBeRemovedConnectionId, key);
+            }
+            else
+            {
+                _logger.LogWarning("Client {ConnectionId} not found for deregistration: {Key}, ignoring deregistration", toBeRemovedConnectionId, key);
+            }
+
+            // Send success ACK
+            await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
+                new AckDto { 
+                    OperationType = OperationType.UnregisterFromMethod, 
+                    Message = request.SubscriptionKey, 
+                    Success = true 
+                });
+
+            _logger.LogInformation("Sent ack to client {ConnectionId} for stream deregistration: {Key}", toBeRemovedConnectionId, key);
+        }
+        catch (Exception ex)
         {
-            _logger.LogInformation("Client {ConnectionId} unregistered from stream {Key}", toBeRemovedConnectionId, key);
+            _logger.LogError(ex, "Error during stream deregistration for client {ConnectionId} on stream {Key}", toBeRemovedConnectionId, key);
+            
+            // Send error ACK
+            if (toBeRemovedConnectionId != null)
+            {
+                await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
+                    new AckDto { 
+                        OperationType = OperationType.UnregisterFromMethod, 
+                        Message = request.SubscriptionKey, 
+                        Success = false 
+                    });
+            }
+            
+            throw;
         }
-        else
-        {
-            _logger.LogWarning("Client {ConnectionId} not found for deregistration: {Key}, ignoring deregistration", toBeRemovedConnectionId, key);
-        }
-
-        await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, request);
-
-        _logger.LogInformation("Sent ack to client {ConnectionId} for stream deregistration: {Key}", toBeRemovedConnectionId, key);
     }
 
     #region Private Helpers
@@ -147,9 +206,12 @@ public class TransmissionService : ITransmissionService
         return Task.CompletedTask;
     }
 
-    public ICollection<StreamRequestDto> GetRegisteredStreams()
+    public ICollection<string> GetRegisteredStreamKeys(string connectionId)
     {
-        throw new NotImplementedException();
+        return _streamKeyToConnectionIdDict
+            .Where(kvp => kvp.Value == connectionId)
+            .Select(kvp => kvp.Key)
+            .ToList();
     }
 
     #endregion

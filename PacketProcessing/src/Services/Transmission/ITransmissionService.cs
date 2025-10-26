@@ -29,4 +29,9 @@ public interface ITransmissionService : IObserver<BasePacketEntity>
     /// Unregister all stream requests
     /// </summary>
     Task UnregisterAllStreamsAsync();
+
+    /// <summary>
+    /// Get all registered streams for a specific connection ID
+    /// </summary>
+    ICollection<string> GetRegisteredStreamKeys(string connectionId);
 }

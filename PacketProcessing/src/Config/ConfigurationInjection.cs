@@ -392,7 +392,7 @@ public class ConfigurationInjection
         app.UseStaticFiles();
         
         // Map dashboard to specific path instead of root
-        app.MapGet("/dashboard", async context =>
+        app.MapGet("", async context =>
         {
             var filePath = Path.Combine(app.Environment.WebRootPath, "index.html");
             if (File.Exists(filePath))

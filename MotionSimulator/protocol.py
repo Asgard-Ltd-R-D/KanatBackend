@@ -5,8 +5,8 @@ import struct
 # ===============================
 # Version Information
 # ===============================
-__version__ = "1.0.4" # Corrected packet parsing logic
-__updated__ = "2025-10-20"
+__version__ = "1.2.0" # Added Axis ON/OFF/RESET, CMER, Ballistic Offset
+__updated__ = "2025-10-25"
 
 # ===============================
 # Protocol Constants
@@ -19,19 +19,39 @@ ACK_REPLY = b'\x06'
 # TCP OPCODES (Numerical Opcode to Name mapping)
 # ===============================
 OPCODES = {
+    # Motion Data Request Opcodes
+    0x0106: "MOT_GetMotorCurrent",
+    0x0107: "MOT_GetMotorVoltage",
     0x0109: "MOT_GetLoadPosition",
     0x010A: "MOT_GetMotorSpeed",
+    
+    # Motion Control Opcodes
     0x0130: "MOT_SetAcceleration",
     0x0131: "MOT_SetSpeed",
-    0x0132: "MOT_SendPosition",
-    0x0133: "MOT_SetActualPosition",
     0x0134: "MOT_Update",
     0x0138: "MOT_SetPositionRelative",
     0x0139: "MOT_SetPositionAbsolute",
-    0x013A: "MOT_SetSpeedMode",
     0x013B: "MOT_SetPositionMode",
-    0x0300: "LRF_SetRange",
-    0x0301: "LRF_GetRange",
+    
+    # Axis Control Opcodes
+    0x013C: "MOT_AxisOn",
+    0x013D: "MOT_AxisOff",
+    0x013E: "MOT_AxisReset",
+    
+    # Error Opcodes
+    0x0E0B: "ERR_CaptureMotorErrorRegister", # CMER
+    
+    # LRF Opcodes (System Axis 0)
+    0x0300: "LRF_SetRange",	
+    0x0301: "LRF_GetRange",	
+    
+    # DG (Dual Gimbal/Mode Control) Opcodes
+    0x0FA0: "DG_SetSyncMode",	
+    0x0FA1: "DG_SetInnerMode",
+    0x0FBE: "DG_GetBallisticOffset", 
+    0x0FBD: "DG_SetBallisticOffset", 
+    
+    # Communication Opcodes (System Axis 0)
     0x0702: "COM_Connect",
 }
 

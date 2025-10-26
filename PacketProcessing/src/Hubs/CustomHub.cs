@@ -3,6 +3,8 @@ using Microsoft.Extensions.Logging;
 using PacketProcessing.DTOs.Stream;
 using PacketProcessing.Hubs.ConnectionManager;
 using PacketProcessing.Services.Transmission;
+using PacketProcessing.Utils.Constants;
+using PacketProcessing.Utils.Enums;
 using SignalRSwaggerGen.Attributes;
 
 namespace PacketProcessing.Hubs;
@@ -56,6 +58,7 @@ public class CustomHub : Hub
         _logger.LogInformation("Client {ConnectionId} performing registration to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
         await _transmissionService.RegisterStreamAsync(requestStream, Context.ConnectionId);
         _logger.LogInformation("Client {ConnectionId} registered to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
+        await Clients.Client(Context.ConnectionId).SendAsync(Constants.SIGNALR_ACK, new AckDto { OperationType = OperationType.RegisterToEvent, MethodName = requestStream.Description, Success = true });
     }
 
     public async Task UnregisterFromMethod(StreamRequestDto requestStream)
@@ -63,6 +66,7 @@ public class CustomHub : Hub
         _logger.LogInformation("Client {ConnectionId} is unregistering from method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
         await _transmissionService.DeregisterStreamAsync(requestStream);
         _logger.LogInformation("Client {ConnectionId} is unregistered from method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
+        await Clients.Client(Context.ConnectionId).SendAsync(Constants.SIGNALR_ACK, new AckDto { OperationType = OperationType.UnregisterFromEvent, MethodName = requestStream.Description, Success = true });
     }
 
     public async Task ReceiveHitDetectionData()

@@ -26,5 +26,10 @@ public interface IRealtimeService
     /// Reset all statistics counters to zero
     /// </summary>
     void ResetStats();
+
+    /// <summary>
+    /// Get current statistics aggregated from all handlers and writers
+    /// </summary>
+    TelemetryDto GetStats();
 }
 

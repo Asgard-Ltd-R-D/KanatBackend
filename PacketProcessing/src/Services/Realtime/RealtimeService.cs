@@ -93,5 +93,13 @@ public class RealtimeService : IRealtimeService
         
         _logger.LogInformation("All pipeline statistics reset successfully");
     }
+
+    public TelemetryDto GetStats()
+    {
+        // Get stats from telemetry service
+        var telemetrySnapshot = _telemetryService.SnapshotAsync().GetAwaiter().GetResult();
+        
+        return telemetrySnapshot;
+    }
 }
 

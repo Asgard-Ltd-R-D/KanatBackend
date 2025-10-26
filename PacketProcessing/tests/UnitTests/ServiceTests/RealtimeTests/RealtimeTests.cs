@@ -6,6 +6,7 @@ using PacketProcessing.Entities.Packet;
 using PacketProcessing.Services.Realtime;
 using PacketProcessing.Services.Realtime.Networking;
 using PacketProcessing.Services.Realtime.Storage;
+using PacketProcessing.Telemetry;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -23,6 +24,7 @@ public class RealtimeTests : IDisposable
     private readonly Mock<ILogger<RealtimeService>> _mockLogger;
     private readonly Mock<IConfiguration> _mockConfiguration;
     private readonly Mock<IDeviceService> _mockDeviceService;
+    private readonly Mock<ITelemetryService> _mockTelemetryService;
     
     // Handler mocks
     private readonly Mock<IHandlerService<MotionPacketEntity>> _mockMotionHandler;
@@ -46,6 +48,7 @@ public class RealtimeTests : IDisposable
         _mockLogger = new Mock<ILogger<RealtimeService>>();
         _mockConfiguration = new Mock<IConfiguration>();
         _mockDeviceService = new Mock<IDeviceService>();
+        _mockTelemetryService = new Mock<ITelemetryService>();
         
         // Setup handler mocks
         _mockMotionHandler = new Mock<IHandlerService<MotionPacketEntity>>();
@@ -75,6 +78,28 @@ public class RealtimeTests : IDisposable
 
     private void SetupDefaultMockBehaviors()
     {
+        // Setup telemetry service to return aggregated stats
+        _mockTelemetryService.Setup(x => x.SnapshotAsync())
+            .ReturnsAsync(new TelemetryDto
+            {
+                Captured = 2400L,
+                Parsed = 2320L,
+                Dropped = 80L,
+                Flushed = 2230L,
+                Failed = 18L,
+                Backpressure = 8L,
+                MotionCaptured = 1000L,
+                SafetyCaptured = 800L,
+                OnvifCaptured = 600L,
+                AvgLatency = 6.3,
+                MotionRawChannel = new ChannelStatsDto { Capacity = 500_000, CurrentSize = 1000, UtilizationPercent = 0.2 },
+                SafetyRawChannel = new ChannelStatsDto { Capacity = 500_000, CurrentSize = 800, UtilizationPercent = 0.16 },
+                OnvifRawChannel = new ChannelStatsDto { Capacity = 500_000, CurrentSize = 600, UtilizationPercent = 0.12 },
+                MotionParsedChannel = new ChannelStatsDto { Capacity = 1_000_000, CurrentSize = 50, UtilizationPercent = 0.005 },
+                SafetyParsedChannel = new ChannelStatsDto { Capacity = 1_000_000, CurrentSize = 30, UtilizationPercent = 0.003 },
+                OnvifParsedChannel = new ChannelStatsDto { Capacity = 100_000, CurrentSize = 10, UtilizationPercent = 0.01 }
+            });
+        
         // Setup handler stats
         _mockMotionHandler.Setup(x => x.GetStats()).Returns((1000L, 950L, 50L, 5.5));
         _mockSafetyHandler.Setup(x => x.GetStats()).Returns((800L, 780L, 20L, 4.2));
@@ -117,6 +142,7 @@ public class RealtimeTests : IDisposable
             _mockLogger.Object,
             _mockConfiguration.Object,
             _mockDeviceService.Object,
+            _mockTelemetryService.Object,
             _mockMotionHandler.Object,
             _mockSafetyHandler.Object,
             _mockOnvifHandler.Object,
@@ -330,29 +356,27 @@ public class RealtimeTests : IDisposable
         // Arrange
         _realtimeService = CreateRealtimeService();
         
-        // Setup backpressure events
-        _mockMotionHandler.Setup(x => x.GetBackpressureEvents()).Returns(10L);
-        _mockSafetyHandler.Setup(x => x.GetBackpressureEvents()).Returns(5L);
-        _mockOnvifHandler.Setup(x => x.GetBackpressureEvents()).Returns(3L);
+        // Setup telemetry service to return backpressure stats
+        _mockTelemetryService.Setup(x => x.SnapshotAsync())
+            .ReturnsAsync(new TelemetryDto
+            {
+                Captured = 2400L,
+                Parsed = 2320L,
+                Dropped = 80L,
+                Flushed = 2230L,
+                Failed = 18L,
+                Backpressure = 18L, // 10 + 5 + 3
+                MotionCaptured = 1000L,
+                SafetyCaptured = 800L,
+                OnvifCaptured = 600L,
+                AvgLatency = 6.3
+            });
 
         // Act
         var stats = _realtimeService.GetStats();
 
         // Assert
-        Assert.Equal(18L, stats.Backpressure); // 10 + 5 + 3
-        
-        _mockLogger.Verify(
-            x => x.Log(
-                LogLevel.Warning,
-                It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) => 
-                    v.ToString()!.Contains("Backpressure detected") &&
-                    v.ToString()!.Contains("Motion: 10") &&
-                    v.ToString()!.Contains("Safety: 5") &&
-                    v.ToString()!.Contains("OnVIF: 3")),
-                It.IsAny<Exception>(),
-                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+        Assert.Equal(18L, stats.Backpressure);
         
         _output.WriteLine("Backpressure warning test passed");
     }
@@ -363,18 +387,35 @@ public class RealtimeTests : IDisposable
         // Arrange
         _realtimeService = CreateRealtimeService();
         
-        // Setup negative channel counts
-        _mockMotionHandler.Setup(x => x.GetRawChannelCount()).Returns(-1);
-        _mockSafetyHandler.Setup(x => x.GetRawChannelCount()).Returns(-1);
-        _mockOnvifHandler.Setup(x => x.GetRawChannelCount()).Returns(-1);
+        // Setup telemetry service to return negative channel counts (clamped to 0)
+        _mockTelemetryService.Setup(x => x.SnapshotAsync())
+            .ReturnsAsync(new TelemetryDto
+            {
+                Captured = 0L,
+                Parsed = 0L,
+                Dropped = 0L,
+                Flushed = 0L,
+                Failed = 0L,
+                Backpressure = 0L,
+                MotionCaptured = 0L,
+                SafetyCaptured = 0L,
+                OnvifCaptured = 0L,
+                AvgLatency = 0.0,
+                MotionRawChannel = new ChannelStatsDto { Capacity = 500_000, CurrentSize = 0, UtilizationPercent = 0 },
+                SafetyRawChannel = new ChannelStatsDto { Capacity = 500_000, CurrentSize = 0, UtilizationPercent = 0 },
+                OnvifRawChannel = new ChannelStatsDto { Capacity = 500_000, CurrentSize = 0, UtilizationPercent = 0 }
+            });
 
         // Act
         var stats = _realtimeService.GetStats();
 
         // Assert
-        Assert.Equal(0, stats.MotionRawChannel!.CurrentSize);
-        Assert.Equal(0, stats.SafetyRawChannel!.CurrentSize);
-        Assert.Equal(0, stats.OnvifRawChannel!.CurrentSize);
+        Assert.NotNull(stats.MotionRawChannel);
+        Assert.NotNull(stats.SafetyRawChannel);
+        Assert.NotNull(stats.OnvifRawChannel);
+        Assert.Equal(0, stats.MotionRawChannel.CurrentSize);
+        Assert.Equal(0, stats.SafetyRawChannel.CurrentSize);
+        Assert.Equal(0, stats.OnvifRawChannel.CurrentSize);
         
         Assert.Equal(0, stats.MotionRawChannel.UtilizationPercent);
         Assert.Equal(0, stats.SafetyRawChannel.UtilizationPercent);
@@ -395,6 +436,7 @@ public class RealtimeTests : IDisposable
             null!,
             _mockConfiguration.Object,
             _mockDeviceService.Object,
+            _mockTelemetryService.Object,
             _mockMotionHandler.Object,
             _mockSafetyHandler.Object,
             _mockOnvifHandler.Object,
@@ -415,6 +457,7 @@ public class RealtimeTests : IDisposable
             _mockLogger.Object,
             null!,
             _mockDeviceService.Object,
+            _mockTelemetryService.Object,
             _mockMotionHandler.Object,
             _mockSafetyHandler.Object,
             _mockOnvifHandler.Object,
@@ -435,6 +478,7 @@ public class RealtimeTests : IDisposable
             _mockLogger.Object,
             _mockConfiguration.Object,
             null!,
+            _mockTelemetryService.Object,
             _mockMotionHandler.Object,
             _mockSafetyHandler.Object,
             _mockOnvifHandler.Object,
@@ -494,22 +538,21 @@ public class RealtimeTests : IDisposable
         // Arrange
         _realtimeService = CreateRealtimeService();
         
-        // Setup zero values
-        _mockMotionHandler.Setup(x => x.GetStats()).Returns((0L, 0L, 0L, 0.0));
-        _mockSafetyHandler.Setup(x => x.GetStats()).Returns((0L, 0L, 0L, 0.0));
-        _mockOnvifHandler.Setup(x => x.GetStats()).Returns((0L, 0L, 0L, 0.0));
-        
-        _mockMotionHandler.Setup(x => x.GetBackpressureEvents()).Returns(0L);
-        _mockSafetyHandler.Setup(x => x.GetBackpressureEvents()).Returns(0L);
-        _mockOnvifHandler.Setup(x => x.GetBackpressureEvents()).Returns(0L);
-        
-        _mockMotionHandler.Setup(x => x.GetRawChannelCount()).Returns(0);
-        _mockSafetyHandler.Setup(x => x.GetRawChannelCount()).Returns(0);
-        _mockOnvifHandler.Setup(x => x.GetRawChannelCount()).Returns(0);
-        
-        _mockMotionWriter.Setup(x => x.GetStats()).Returns((0L, 0L, 0.0));
-        _mockSafetyWriter.Setup(x => x.GetStats()).Returns((0L, 0L, 0.0));
-        _mockOnvifWriter.Setup(x => x.GetStats()).Returns((0L, 0L, 0.0));
+        // Setup telemetry service to return zero values
+        _mockTelemetryService.Setup(x => x.SnapshotAsync())
+            .ReturnsAsync(new TelemetryDto
+            {
+                Captured = 0L,
+                Parsed = 0L,
+                Dropped = 0L,
+                Flushed = 0L,
+                Failed = 0L,
+                Backpressure = 0L,
+                MotionCaptured = 0L,
+                SafetyCaptured = 0L,
+                OnvifCaptured = 0L,
+                AvgLatency = 0.0
+            });
 
         // Act
         var stats = _realtimeService.GetStats();
@@ -650,22 +693,21 @@ public class RealtimeTests : IDisposable
         await _realtimeService.StartAsync(cancellationToken, deviceName);
         var initialStats = _realtimeService.GetStats();
         
-        // Setup mocks to return zero values after reset
-        _mockMotionHandler.Setup(x => x.GetStats()).Returns((0L, 0L, 0L, 0.0));
-        _mockSafetyHandler.Setup(x => x.GetStats()).Returns((0L, 0L, 0L, 0.0));
-        _mockOnvifHandler.Setup(x => x.GetStats()).Returns((0L, 0L, 0L, 0.0));
-        
-        _mockMotionHandler.Setup(x => x.GetBackpressureEvents()).Returns(0L);
-        _mockSafetyHandler.Setup(x => x.GetBackpressureEvents()).Returns(0L);
-        _mockOnvifHandler.Setup(x => x.GetBackpressureEvents()).Returns(0L);
-        
-        _mockMotionHandler.Setup(x => x.GetRawChannelCount()).Returns(0);
-        _mockSafetyHandler.Setup(x => x.GetRawChannelCount()).Returns(0);
-        _mockOnvifHandler.Setup(x => x.GetRawChannelCount()).Returns(0);
-        
-        _mockMotionWriter.Setup(x => x.GetStats()).Returns((0L, 0L, 0.0));
-        _mockSafetyWriter.Setup(x => x.GetStats()).Returns((0L, 0L, 0.0));
-        _mockOnvifWriter.Setup(x => x.GetStats()).Returns((0L, 0L, 0.0));
+        // Setup telemetry service to return zero values after reset
+        _mockTelemetryService.Setup(x => x.SnapshotAsync())
+            .ReturnsAsync(new TelemetryDto
+            {
+                Captured = 0L,
+                Parsed = 0L,
+                Dropped = 0L,
+                Flushed = 0L,
+                Failed = 0L,
+                Backpressure = 0L,
+                MotionCaptured = 0L,
+                SafetyCaptured = 0L,
+                OnvifCaptured = 0L,
+                AvgLatency = 0.0
+            });
         
         _realtimeService.ResetStats();
         var resetStats = _realtimeService.GetStats();

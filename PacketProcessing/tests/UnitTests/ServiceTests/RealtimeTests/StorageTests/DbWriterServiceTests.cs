@@ -9,6 +9,7 @@ using PacketProcessing.Config;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Repositories.InfluxRepository;
 using PacketProcessing.Services.Realtime.Storage;
+using PacketProcessing.Telemetry;
 using PacketProcessing.Utils.Enums;
 using QuestDB.Senders;
 using Xunit;
@@ -84,6 +85,7 @@ public class DbWriterServiceTests : IDisposable
     private readonly Mock<Channel<MotionPacketEntity>> _mockChannel;
     private readonly Channel<MotionPacketEntity> _channel;
     private readonly QuestDbConfiguration _questDbConfig;
+    private readonly Mock<ITelemetryService> _mockTelemetryService;
     private DbWriterService<MotionPacketEntity>? _dbWriterService;
 
     #endregion
@@ -97,6 +99,7 @@ public class DbWriterServiceTests : IDisposable
         _mockRepository = new Mock<IInfluxRepository<MotionPacketEntity>>();
         _mockOptions = new Mock<IOptions<QuestDbConfiguration>>();
         _mockChannel = new Mock<Channel<MotionPacketEntity>>();
+        _mockTelemetryService = new Mock<ITelemetryService>();
         
         // Setup channel
         _channel = Channel.CreateUnbounded<MotionPacketEntity>();
@@ -142,7 +145,8 @@ public class DbWriterServiceTests : IDisposable
             _channel,
             _mockRepository.Object,
             _mockOptions.Object,
-            _testConfiguration);
+            _testConfiguration,
+            _mockTelemetryService.Object);
     }
 
     private MotionPacketEntity CreateTestMotionEntity(string opCode = "TEST_OP", float value = 100.0f)
@@ -285,7 +289,8 @@ public class DbWriterServiceTests : IDisposable
                 _channel,
                 _mockRepository.Object,
                 _mockOptions.Object,
-                _testConfiguration));
+                _testConfiguration,
+                _mockTelemetryService.Object));
 
         Assert.Contains("logger", exception.ParamName);
         _output.WriteLine($"Expected exception thrown: {exception.Message}");
@@ -304,7 +309,8 @@ public class DbWriterServiceTests : IDisposable
             null!,
             _mockRepository.Object,
             _mockOptions.Object,
-            _testConfiguration);
+            _testConfiguration,
+            _mockTelemetryService.Object);
 
         // Assert - Service should be created successfully (no exception thrown)
         Assert.NotNull(service);
@@ -324,7 +330,8 @@ public class DbWriterServiceTests : IDisposable
             _channel,
             null!,
             _mockOptions.Object,
-            _testConfiguration);
+            _testConfiguration,
+            _mockTelemetryService.Object);
 
         // Assert - Service should be created successfully (no exception thrown)
         Assert.NotNull(service);
@@ -344,7 +351,8 @@ public class DbWriterServiceTests : IDisposable
                 _channel,
                 _mockRepository.Object,
                 null!,
-                _testConfiguration));
+                _testConfiguration,
+                _mockTelemetryService.Object));
 
         _output.WriteLine($"Expected exception thrown: {exception.Message}");
     }
@@ -362,7 +370,8 @@ public class DbWriterServiceTests : IDisposable
                 _channel,
                 _mockRepository.Object,
                 _mockOptions.Object,
-                null!));
+                null!,
+                _mockTelemetryService.Object));
 
         _output.WriteLine($"Expected exception thrown: {exception.Message}");
     }
@@ -571,7 +580,8 @@ public class DbWriterServiceTests : IDisposable
             _channel,
             _mockRepository.Object,
             _mockOptions.Object,
-            testConfig);
+            testConfig,
+            _mockTelemetryService.Object);
 
         // Assert - Verify that the service was created successfully with custom configuration
         // The service should be able to handle custom configuration values
@@ -612,7 +622,8 @@ public class DbWriterServiceTests : IDisposable
             _channel,
             _mockRepository.Object,
             _mockOptions.Object,
-            testConfig);
+            testConfig,
+            _mockTelemetryService.Object);
 
         // Assert - Verify logger was called with default configuration values
         _mockLogger.Verify(

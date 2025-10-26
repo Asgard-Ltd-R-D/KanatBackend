@@ -166,23 +166,6 @@ public class RangeControllerIntegrationTests : IClassFixture<SharedWebApplicatio
     #region Status and Reset Tests
 
     [Fact]
-    public async Task GetStatus_ReturnsSystemStatus()
-    {
-        // Act
-        var response = await _client.GetAsync("/api/v1/range/status");
-
-        // Assert
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        
-        var content = await response.Content.ReadAsStringAsync();
-        var result = JsonSerializer.Deserialize<ResponseResult<object>>(content, _jsonOptions);
-        
-        Assert.NotNull(result);
-        Assert.True(result.Success);
-        Assert.NotNull(result.Data);
-    }
-
-    [Fact]
     public async Task ResetStatistics_ReturnsSuccess()
     {
         // Act

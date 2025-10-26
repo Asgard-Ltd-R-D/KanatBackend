@@ -23,8 +23,6 @@ services:
       interval: 10s
       timeout: 10s
       retries: 3
-    networks:
-      - kanat-network
 
   postgresdb-prod:
     image: postgres:15-alpine
@@ -43,53 +41,8 @@ services:
       interval: 10s
       timeout: 10s
       retries: 3
-    networks:
-      - kanat-network
-
-  # Packet Processing Service
-  packetprocessing-prod:
-    build:
-      context: ./PacketProcessing
-      dockerfile: Dockerfile
-    container_name: packet-processing-prod
-    # Use host network for direct packet capture access
-    network_mode: host
-    # Required capabilities for packet capture
-    cap_add:
-      - NET_RAW
-      - NET_ADMIN
-    depends_on:
-      questdb-prod:
-        condition: service_healthy
-      postgresdb-prod:
-        condition: service_healthy
-    environment:
-      # Application environment
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://0.0.0.0:10900
-
-      # Capture
-      - CAPTURE_MODE=auto
-      - READ_TIMEOUT_MS=50
-      - KERNEL_BUFFER_MB=32
-      - LOG_EVERY_MS=1000
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:10900/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    ulimits:
-      nofile:
-        soft: 1048576
-        hard: 1048576
 
 volumes:
   questdb_data_prod:
   questdb_logs_prod:
   postgres_data_prod:
-
-networks:
-  kanat-network:
-    driver: bridge

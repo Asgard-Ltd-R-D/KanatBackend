@@ -387,6 +387,8 @@ public class ConfigurationInjection
     {
         // Global exception handler should be first
         app.UseGlobalExceptionHandler();
+
+        CorsConfiguration.ConfigureCorsMiddleware(app);
         
         // Serve static files (telemetry dashboard) only at specific paths
         app.UseStaticFiles();

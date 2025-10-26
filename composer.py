@@ -2,19 +2,28 @@
 """
 composer.py - Build and run PacketProcessing with Docker Compose
 Usage:
-    python composer.py up [dev|prod] [-d] [--build]
+    python composer.py up [dev|prod] [-d] [--build] [-r [index]]
     python composer.py stop [dev|prod]
     python composer.py kill [dev|prod]
-    python composer.py --build [dev|prod]
-    python composer.py up --build [dev|prod] [-d]
+    python composer.py --build [dev|prod] [-r [index]]
+    python composer.py up --build [dev|prod] [-d] [-r [index]]
+    python composer.py release [dev|prod] [win-x64|linux-x64|linux-musl-x64|osx-arm64]
+    python composer.py status
+    python composer.py --help
     
 Examples:
-    python composer.py up           # Run prod environment
-    python composer.py up dev       # Run dev environment
-    python composer.py stop dev     # Stop dev environment
-    python composer.py kill dev     # Kill dev environment (delete DLL and containers)
-    python composer.py --build      # Build prod environment
-    python composer.py up dev -d    # Run dev in detached mode
+    python composer.py up                    # Run prod environment (uses newest deploy package if available)
+    python composer.py up dev                # Run dev environment (uses newest deploy package if available)
+    python composer.py stop dev              # Stop dev environment
+    python composer.py kill dev              # Kill dev environment (delete DLL and containers)
+    python composer.py --build               # Build prod environment (uses newest deploy package if available)
+    python composer.py up dev -d             # Run dev in detached mode
+    python composer.py --build -r            # List available deploy versions
+    python composer.py --build -r 2          # Build using deploy version 2
+    python composer.py up --build -r 2       # Build and run using deploy version 2
+    python composer.py release dev linux-x64 # Create release package for dev environment on linux-x64
+    python composer.py release prod osx-arm64 # Create release package for prod environment on osx-arm64
+    python composer.py status                # Show current system status
 """
 
 import sys
@@ -31,6 +40,7 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).parent
 PACKET_PROCESSING_DIR = PROJECT_ROOT / "PacketProcessing"
 RELEASE_DIR = PROJECT_ROOT / "release"
+DEPLOY_DIR = PROJECT_ROOT / "deploy"
 DOCKER_COMPOSE_DEV_FILE = PROJECT_ROOT / "docker-compose.dev.yml"
 DOCKER_COMPOSE_PROD_FILE = PROJECT_ROOT / "docker-compose.prod.yml"
 
@@ -413,11 +423,495 @@ def kill_environment(environment):
     print_success(f"Environment {environment.upper()} killed")
     return True
 
+def create_release_package(environment, platform):
+    """Create a release package with Docker images, DLL, and configuration files"""
+    if environment not in ['dev', 'prod']:
+        print_error(f"Invalid environment: {environment}. Must be 'dev' or 'prod'")
+        return False
+    
+    if platform not in ['win-x64', 'linux-x64', 'linux-musl-x64', 'osx-arm64']:
+        print_error(f"Invalid platform: {platform}. Must be one of: win-x64, linux-x64, linux-musl-x64, osx-arm64")
+        return False
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    print_header(f"Creating release package for {environment.upper()} on {platform}... [{timestamp}]")
+    
+    # Create deploy directory structure
+    deploy_timestamp_dir = DEPLOY_DIR / timestamp
+    deploy_timestamp_dir.mkdir(parents=True, exist_ok=True)
+    
+    print_success(f"Created deploy directory: {deploy_timestamp_dir}")
+    
+    # Build DLL for the specified platform
+    print_info(f"Building DLL for {platform}...")
+    if not build_dll_for_platform(environment, platform):
+        return False
+    
+    # Get Docker images from compose file
+    compose_file = DOCKER_COMPOSE_DEV_FILE if environment == 'dev' else DOCKER_COMPOSE_PROD_FILE
+    project_name = f"kanatbackend-{environment}"
+    
+    # Start Docker Compose to build images
+    print_info("Starting Docker Compose to ensure images are built...")
+    try:
+        cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'up', '-d', '--build']
+        subprocess.run(cmd, cwd=PROJECT_ROOT, check=True, capture_output=True, text=True)
+        print_success("Docker Compose images built successfully")
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to build Docker Compose images: {e}")
+        return False
+    
+    # Export Docker images
+    print_info("Exporting Docker images...")
+    docker_images = []
+    
+    # Get list of images used by the compose file
+    try:
+        # Get images from compose
+        cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'images', '-q']
+        result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, check=True)
+        image_ids = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+        
+        # Get image names and tags
+        for image_id in image_ids:
+            cmd = ['docker', 'inspect', '--format={{.RepoTags}}', image_id]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            tags = result.stdout.strip().strip('[]').replace('"', '').split(',')
+            for tag in tags:
+                if tag.strip():
+                    docker_images.append(tag.strip())
+        
+        print_info(f"Found Docker images: {', '.join(docker_images)}")
+        
+        # Export each image
+        for image_name in docker_images:
+            # Clean image name for filename
+            safe_name = image_name.replace('/', '_').replace(':', '_')
+            tar_filename = f"{safe_name}.tar"
+            tar_path = deploy_timestamp_dir / tar_filename
+            
+            print_info(f"Exporting {image_name} to {tar_filename}...")
+            try:
+                cmd = ['docker', 'save', '-o', str(tar_path), image_name]
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
+                print_success(f"Exported {image_name} to {tar_filename}")
+            except subprocess.CalledProcessError as e:
+                print_error(f"Failed to export {image_name}: {e}")
+                return False
+    
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to get Docker images: {e}")
+        return False
+    
+    # Create DLL tar
+    print_info("Creating DLL tar...")
+    dll_dir = RELEASE_DIR / environment
+    if not dll_dir.exists():
+        print_error(f"DLL directory not found: {dll_dir}")
+        return False
+    
+    dll_tar_path = deploy_timestamp_dir / f"packetprocessing_{environment}_{platform}.tar"
+    try:
+        cmd = ['tar', '-czf', str(dll_tar_path), '-C', str(dll_dir.parent), environment]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print_success(f"Created DLL tar: {dll_tar_path.name}")
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to create DLL tar: {e}")
+        return False
+    
+    # Create deployment files tar
+    print_info("Creating deployment files tar...")
+    deploy_files_tar_path = deploy_timestamp_dir / f"deployment_files_{environment}.tar"
+    
+    # Create temporary directory for deployment files
+    temp_deploy_dir = deploy_timestamp_dir / "temp_deploy"
+    temp_deploy_dir.mkdir(exist_ok=True)
+    
+    # Copy composer.py
+    shutil.copy2(PROJECT_ROOT / "composer.py", temp_deploy_dir / "composer.py")
+    
+    # Copy docker-compose file
+    compose_filename = f"docker-compose.{environment}.yml"
+    shutil.copy2(compose_file, temp_deploy_dir / compose_filename)
+    
+    try:
+        cmd = ['tar', '-czf', str(deploy_files_tar_path), '-C', str(temp_deploy_dir), '.']
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print_success(f"Created deployment files tar: {deploy_files_tar_path.name}")
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to create deployment files tar: {e}")
+        return False
+    finally:
+        # Clean up temporary directory
+        shutil.rmtree(temp_deploy_dir, ignore_errors=True)
+    
+    # Stop Docker Compose
+    print_info("Stopping Docker Compose...")
+    try:
+        cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'down']
+        subprocess.run(cmd, cwd=PROJECT_ROOT, check=True, capture_output=True, text=True)
+        print_success("Docker Compose stopped")
+    except subprocess.CalledProcessError:
+        print_warning("Failed to stop Docker Compose (may not be running)")
+    
+    print_success(f"Release package created successfully in {deploy_timestamp_dir}")
+    print_info(f"Package contents:")
+    for item in deploy_timestamp_dir.iterdir():
+        size = item.stat().st_size if item.is_file() else "dir"
+        print_info(f"  - {item.name} ({size} bytes)" if isinstance(size, int) else f"  - {item.name} ({size})")
+    
+    return True
+
+def get_deploy_versions():
+    """Get all deploy versions sorted by timestamp (newest first)"""
+    if not DEPLOY_DIR.exists():
+        return []
+    
+    versions = []
+    for item in DEPLOY_DIR.iterdir():
+        if item.is_dir():
+            try:
+                # Parse timestamp from directory name
+                timestamp = datetime.strptime(item.name, "%Y%m%d_%H%M%S")
+                versions.append((timestamp, item))
+            except ValueError:
+                # Skip directories that don't match timestamp format
+                continue
+    
+    # Sort by timestamp (newest first)
+    versions.sort(key=lambda x: x[0], reverse=True)
+    return [version[1] for version in versions]
+
+def list_deploy_versions():
+    """List all available deploy versions with indices"""
+    versions = get_deploy_versions()
+    
+    if not versions:
+        print_info("No deploy versions found")
+        return []
+    
+    print_header("Available deploy versions:")
+    for i, version_dir in enumerate(versions, 1):
+        timestamp_str = version_dir.name
+        try:
+            dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+            formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            formatted_time = timestamp_str
+        
+        # Count files in the directory
+        file_count = len([f for f in version_dir.iterdir() if f.is_file()])
+        print_info(f"  {i}. {formatted_time} ({file_count} files)")
+    
+    return versions
+
+def show_status():
+    """Show current system status"""
+    print_header("System Status")
+    
+    # Check Docker containers
+    print_info("Docker Containers:")
+    try:
+        result = subprocess.run(['docker', 'ps', '-a', '--format', 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'], 
+                              capture_output=True, text=True, check=True)
+        if result.stdout.strip():
+            print(result.stdout)
+        else:
+            print_info("  No containers found")
+    except subprocess.CalledProcessError:
+        print_error("  Failed to get Docker container status")
+    
+    # Check running PacketProcessing processes
+    print_info("\nPacketProcessing Processes:")
+    try:
+        result = subprocess.run(['pgrep', '-f', 'PacketProcessing.dll'], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            pids = result.stdout.strip().split('\n')
+            for pid in pids:
+                try:
+                    ps_result = subprocess.run(['ps', '-p', pid, '-o', 'pid,etime,command'], 
+                                             capture_output=True, text=True, check=True)
+                    print(ps_result.stdout.strip())
+                except subprocess.CalledProcessError:
+                    pass
+        else:
+            print_info("  No PacketProcessing processes running")
+    except subprocess.CalledProcessError:
+        print_info("  No PacketProcessing processes running")
+    
+    # Check release directories
+    print_info("\nRelease Builds:")
+    if RELEASE_DIR.exists():
+        for env_dir in RELEASE_DIR.iterdir():
+            if env_dir.is_dir():
+                dll_path = env_dir / "PacketProcessing.dll"
+                status = "✓ Built" if dll_path.exists() else "✗ Missing DLL"
+                print_info(f"  {env_dir.name}: {status}")
+    else:
+        print_info("  No release directory found")
+    
+    # Check deploy packages
+    print_info("\nDeploy Packages:")
+    versions = get_deploy_versions()
+    if versions:
+        for version_dir in versions[:5]:  # Show only last 5
+            timestamp_str = version_dir.name
+            try:
+                dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                formatted_time = timestamp_str
+            
+            file_count = len([f for f in version_dir.iterdir() if f.is_file()])
+            print_info(f"  {formatted_time} ({file_count} files)")
+    else:
+        print_info("  No deploy packages found")
+    
+    # Check Docker Compose project status
+    print_info("\nDocker Compose Projects:")
+    try:
+        # First, list all compose projects
+        result = subprocess.run(['docker', 'compose', 'ls', '--format', 'json'], 
+                              capture_output=True, text=True, cwd=PROJECT_ROOT)
+        if result.returncode == 0 and result.stdout.strip():
+            import json
+            projects = json.loads(result.stdout)
+            if projects:
+                for project in projects:
+                    name = project.get('Name', 'Unknown')
+                    status = project.get('Status', 'Unknown')
+                    config_files = project.get('ConfigFiles', 'Unknown')
+                    print_info(f"  {name.upper()}: {status}")
+                    if 'dev' in name.lower():
+                        print_info(f"    Config: {config_files}")
+            else:
+                print_info("  No Docker Compose projects found")
+        else:
+            print_info("  No Docker Compose projects found")
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        print_info("  Failed to get Docker Compose project status")
+
+def get_selected_deploy_version(deploy_version_index=None):
+    """Get the selected deploy version directory"""
+    versions = get_deploy_versions()
+    
+    if not versions:
+        return None
+    
+    if deploy_version_index is None:
+        # Return the newest version (index 0)
+        return versions[0]
+    
+    # Validate index
+    if deploy_version_index < 1 or deploy_version_index > len(versions):
+        print_error(f"Invalid deploy version index: {deploy_version_index}")
+        print_error(f"Available versions: 1-{len(versions)}")
+        return None
+    
+    # Return the selected version (convert to 0-based index)
+    return versions[deploy_version_index - 1]
+
+def load_docker_images_from_deploy(deploy_dir):
+    """Load Docker images from tar files in deploy directory"""
+    print_info("Loading Docker images from deploy package...")
+    
+    tar_files = [f for f in deploy_dir.iterdir() if f.is_file() and f.suffix == '.tar' and not f.name.startswith('packetprocessing_') and not f.name.startswith('deployment_files_')]
+    
+    if not tar_files:
+        print_warning("No Docker image tar files found in deploy package")
+        return False
+    
+    for tar_file in tar_files:
+        print_info(f"Loading Docker image from {tar_file.name}...")
+        try:
+            cmd = ['docker', 'load', '-i', str(tar_file)]
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            print_success(f"Loaded image from {tar_file.name}")
+            # Print the loaded image name if available
+            if result.stdout:
+                print_info(f"  {result.stdout.strip()}")
+        except subprocess.CalledProcessError as e:
+            print_error(f"Failed to load image from {tar_file.name}: {e}")
+            return False
+    
+    return True
+
+def extract_dll_from_deploy(deploy_dir, environment):
+    """Extract DLL from deploy package"""
+    print_info("Extracting DLL from deploy package...")
+    
+    # Find the DLL tar file
+    dll_tar_pattern = f"packetprocessing_{environment}_*.tar"
+    dll_tar_files = [f for f in deploy_dir.iterdir() if f.is_file() and f.name.startswith(f"packetprocessing_{environment}_") and f.suffix == '.tar']
+    
+    if not dll_tar_files:
+        print_error(f"No DLL tar file found for environment {environment}")
+        return False
+    
+    dll_tar_file = dll_tar_files[0]  # Take the first match
+    print_info(f"Extracting DLL from {dll_tar_file.name}...")
+    
+    try:
+        # Extract to release directory
+        cmd = ['tar', '-xzf', str(dll_tar_file), '-C', str(RELEASE_DIR.parent)]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print_success(f"Extracted DLL to {RELEASE_DIR / environment}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to extract DLL: {e}")
+        return False
+
+def extract_deployment_files_from_deploy(deploy_dir, environment):
+    """Extract deployment files from deploy package"""
+    print_info("Extracting deployment files from deploy package...")
+    
+    # Find the deployment files tar
+    deploy_tar_files = [f for f in deploy_dir.iterdir() if f.is_file() and f.name.startswith(f"deployment_files_{environment}") and f.suffix == '.tar']
+    
+    if not deploy_tar_files:
+        print_warning(f"No deployment files tar found for environment {environment}")
+        return True  # Not critical, continue
+    
+    deploy_tar_file = deploy_tar_files[0]
+    print_info(f"Extracting deployment files from {deploy_tar_file.name}...")
+    
+    try:
+        # Create temporary directory for extraction
+        temp_dir = PROJECT_ROOT / "temp_deploy_extract"
+        temp_dir.mkdir(exist_ok=True)
+        
+        # Extract to temp directory
+        cmd = ['tar', '-xzf', str(deploy_tar_file), '-C', str(temp_dir)]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        
+        # Copy composer.py if it exists
+        composer_src = temp_dir / "composer.py"
+        if composer_src.exists():
+            shutil.copy2(composer_src, PROJECT_ROOT / "composer.py")
+            print_success("Updated composer.py from deploy package")
+        
+        # Copy docker-compose file if it exists
+        compose_filename = f"docker-compose.{environment}.yml"
+        compose_src = temp_dir / compose_filename
+        if compose_src.exists():
+            shutil.copy2(compose_src, PROJECT_ROOT / compose_filename)
+            print_success(f"Updated {compose_filename} from deploy package")
+        
+        # Clean up temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        print_success("Extracted deployment files")
+        return True
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to extract deployment files: {e}")
+        return False
+
+def build_dll_for_platform(environment, platform):
+    """Build the .NET DLL for the specified environment and platform"""
+    if environment not in ['dev', 'prod']:
+        print_error(f"Invalid environment: {environment}. Must be 'dev' or 'prod'")
+        return False
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print_header(f"Building PacketProcessing for {environment.upper()} on {platform}... [{timestamp}]")
+    
+    # Create release directory
+    release_env_dir = RELEASE_DIR / environment
+    if release_env_dir.exists():
+        print_info(f"Removing previous build in {release_env_dir}")
+        shutil.rmtree(release_env_dir)
+    
+    release_env_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Build command
+        build_cmd = ['dotnet', 'publish', 
+                    '-c', 'Release',
+                    '-o', str(release_env_dir),
+                    '-r', platform,
+                    '--self-contained', 'false']
+        
+        print_info(f"Running: {' '.join(build_cmd)}")
+        
+        # Run with live output
+        process = subprocess.Popen(
+            build_cmd,
+            cwd=PACKET_PROCESSING_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        
+        # Stream output
+        for line in process.stdout:
+            print(line, end='')
+        
+        process.wait()
+        result_code = process.returncode
+        
+        if result_code == 0:
+            print_success(f"Build completed successfully in {release_env_dir}")
+            
+            # Copy additional files and directories
+            print_info("Copying additional files and directories...")
+            
+            # Copy appsettings files
+            base_settings = PACKET_PROCESSING_DIR / "appsettings.json"
+            if base_settings.exists():
+                shutil.copy2(base_settings, release_env_dir / "appsettings.json")
+                print_success("Copied appsettings.json")
+            
+            # Copy environment-specific appsettings
+            normalized_environment = ("Development" if environment == 'dev' else "Production")
+            env_settings_name = f"appsettings.{normalized_environment}.json"
+            env_settings = PACKET_PROCESSING_DIR / env_settings_name
+            
+            if env_settings.exists():
+                shutil.copy2(env_settings, release_env_dir / env_settings_name)
+                print_success(f"Copied {env_settings_name}")
+            else:
+                print_warning(f"{env_settings_name} not found, skipping")
+            
+            # Copy swagger.json
+            swagger_json = PACKET_PROCESSING_DIR / "swagger.json"
+            if swagger_json.exists():
+                shutil.copy2(swagger_json, release_env_dir / "swagger.json")
+                print_success("Copied swagger.json")
+            
+            # Copy Properties directory
+            properties_dir = PACKET_PROCESSING_DIR / "Properties"
+            if properties_dir.exists():
+                dest_properties = release_env_dir / "Properties"
+                if dest_properties.exists():
+                    shutil.rmtree(dest_properties)
+                shutil.copytree(properties_dir, dest_properties)
+                print_success("Copied Properties directory")
+            
+            # Copy wwwroot directory
+            wwwroot_dir = PACKET_PROCESSING_DIR / "wwwroot"
+            if wwwroot_dir.exists():
+                dest_wwwroot = release_env_dir / "wwwroot"
+                if dest_wwwroot.exists():
+                    shutil.rmtree(dest_wwwroot)
+                shutil.copytree(wwwroot_dir, dest_wwwroot)
+                print_success("Copied wwwroot directory")
+            
+            return True
+        else:
+            print_error(f"Build failed with return code {result_code}")
+            return False
+        
+    except subprocess.CalledProcessError as e:
+        print_error(f"Build failed with return code {e.returncode}")
+        print_error(e.stderr)
+        return False
+
 def main():
     """Main entry point"""
     args = sys.argv[1:]
     
-    if not args or '--help' in args or '-h' in args or (len(args) == 1 and args[0] == 'help'):
+    # Handle help and no arguments
+    if not args or '--help' in args or '-h' in args:
         print(__doc__)
         return
     
@@ -431,8 +925,10 @@ def main():
     # Parse arguments
     command = None
     environment = None
+    platform = None
     should_build = False
     detached = False
+    deploy_version_index = None
     
     # Parse arguments
     i = 0
@@ -441,13 +937,27 @@ def main():
         
         if arg in ['dev', 'prod']:
             environment = arg
+        elif arg in ['win-x64', 'linux-x64', 'linux-musl-x64', 'osx-arm64']:
+            platform = arg
         elif arg == '--build':
             if command is None:
                 command = '--build'
             should_build = True
         elif arg == '-d':
             detached = True
-        elif arg in ['up', 'stop', 'kill']:
+        elif arg == '-r':
+            if i + 1 < len(args):
+                try:
+                    deploy_version_index = int(args[i + 1])
+                    i += 1  # Skip the next argument since we consumed it
+                except ValueError:
+                    print_error("Invalid deploy version index. Must be a number.")
+                    sys.exit(1)
+            else:
+                # Just list versions
+                versions = list_deploy_versions()
+                sys.exit(0)
+        elif arg in ['up', 'stop', 'kill', 'release', 'status']:
             command = arg
         elif arg.startswith('-'):
             # Unknown option
@@ -456,6 +966,20 @@ def main():
             sys.exit(1)
         
         i += 1
+    
+    # Handle release command
+    if command == 'release':
+        if environment is None:
+            print_error("Environment must be specified for 'release' command")
+            print("Usage: python composer.py release [dev|prod] [win-x64|linux-x64|linux-musl-x64|osx-arm64]")
+            sys.exit(1)
+        if platform is None:
+            print_error("Platform must be specified for 'release' command")
+            print("Usage: python composer.py release [dev|prod] [win-x64|linux-x64|linux-musl-x64|osx-arm64]")
+            sys.exit(1)
+        if not create_release_package(environment, platform):
+            sys.exit(1)
+        return
     
     # Handle stop and kill commands
     if command == 'stop':
@@ -476,22 +1000,56 @@ def main():
             sys.exit(1)
         return
     
+    # Handle status command
+    if command == 'status':
+        show_status()
+        return
+    
     # Handle up and --build commands
     if command == 'up':
         if environment is None:
             environment = 'prod'  # Default to prod for up
         
-        # Check if we need to build
+        # Check if we need to build or load from deploy package
         if not should_build:
             release_path = RELEASE_DIR / environment / "PacketProcessing.dll"
             if not release_path.exists():
-                print_warning("DLL not found, building...")
+                print_warning("DLL not found, checking for deploy packages...")
                 should_build = True
         
-        # Build if needed
+        # Build/load if needed
         if should_build:
-            if not build_dll(environment):
-                sys.exit(1)
+            # Check if we should use a deploy package
+            deploy_version = get_selected_deploy_version(deploy_version_index)
+            
+            if deploy_version:
+                print_header(f"Using deploy package: {deploy_version.name}")
+                
+                # Load Docker images from deploy package
+                if not load_docker_images_from_deploy(deploy_version):
+                    print_error("Failed to load Docker images from deploy package")
+                    sys.exit(1)
+                
+                # Extract DLL from deploy package
+                if not extract_dll_from_deploy(deploy_version, environment):
+                    print_error("Failed to extract DLL from deploy package")
+                    sys.exit(1)
+                
+                # Extract deployment files from deploy package
+                if not extract_deployment_files_from_deploy(deploy_version, environment):
+                    print_error("Failed to extract deployment files from deploy package")
+                    sys.exit(1)
+                
+                print_success("Successfully loaded deploy package")
+            else:
+                # No deploy package available, build from source
+                if deploy_version_index is not None:
+                    print_error("No deploy versions found")
+                    sys.exit(1)
+                
+                print_info("No deploy package found, building from source...")
+                if not build_dll(environment):
+                    sys.exit(1)
         
         # Start Docker Compose
         print_header(f"Starting environment: {environment.upper()}")
@@ -511,8 +1069,37 @@ def main():
         if environment is None:
             environment = 'prod'  # Default to prod for build
         
-        if not build_dll(environment):
-            sys.exit(1)
+        # Check if we should use a deploy package
+        deploy_version = get_selected_deploy_version(deploy_version_index)
+        
+        if deploy_version:
+            print_header(f"Using deploy package: {deploy_version.name}")
+            
+            # Load Docker images from deploy package
+            if not load_docker_images_from_deploy(deploy_version):
+                print_error("Failed to load Docker images from deploy package")
+                sys.exit(1)
+            
+            # Extract DLL from deploy package
+            if not extract_dll_from_deploy(deploy_version, environment):
+                print_error("Failed to extract DLL from deploy package")
+                sys.exit(1)
+            
+            # Extract deployment files from deploy package
+            if not extract_deployment_files_from_deploy(deploy_version, environment):
+                print_error("Failed to extract deployment files from deploy package")
+                sys.exit(1)
+            
+            print_success("Successfully loaded deploy package")
+        else:
+            # No deploy package available, build from source
+            if deploy_version_index is not None:
+                print_error("No deploy versions found")
+                sys.exit(1)
+            
+            print_info("No deploy package found, building from source...")
+            if not build_dll(environment):
+                sys.exit(1)
     
     else:
         print_error("Unknown command or missing required arguments")

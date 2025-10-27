@@ -106,9 +106,9 @@ public class ConfigurationInjection
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             var parseMapper = sp.GetRequiredService<ParseMapper>();
-            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
+            var statsObserver = sp.GetRequiredService<Utils.Observers.StatsObserver>();
             
-            var handler = new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", transmissionService, logger, channel, cfg, parseMapper, telemetryService);
+            var handler = new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", transmissionService, logger, channel, cfg, parseMapper, statsObserver);
             
             return handler;
         });
@@ -124,8 +124,8 @@ public class ConfigurationInjection
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             var parseMapper = sp.GetRequiredService<ParseMapper>();
-            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
-            var handler = new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", transmissionService, logger, channel, cfg, parseMapper, telemetryService);
+            var statsObserver = sp.GetRequiredService<Utils.Observers.StatsObserver>();
+            var handler = new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", transmissionService, logger, channel, cfg, parseMapper, statsObserver);
             
             return handler;
         });
@@ -141,9 +141,9 @@ public class ConfigurationInjection
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             var parseMapper = sp.GetRequiredService<ParseMapper>();
-            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
+            var statsObserver = sp.GetRequiredService<Utils.Observers.StatsObserver>();
             
-            var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", transmissionService, logger, channel, cfg, parseMapper, telemetryService);
+            var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", transmissionService, logger, channel, cfg, parseMapper, statsObserver);
             return handler;
         });
         
@@ -163,8 +163,8 @@ public class ConfigurationInjection
             var repository = sp.GetRequiredService<IInfluxRepository<MotionPacketEntity>>();
             var options = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var config = sp.GetRequiredService<IConfiguration>();
-            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
-            return new DbWriterService<MotionPacketEntity>(logger, channel, repository, options, config, telemetryService);
+            var statsObserver = sp.GetRequiredService<Utils.Observers.StatsObserver>();
+            return new DbWriterService<MotionPacketEntity>(logger, channel, repository, options, config, statsObserver);
         });
         builder.Services.AddSingleton<IDbWriterService<MotionPacketEntity>>(sp => 
             sp.GetRequiredService<DbWriterService<MotionPacketEntity>>());
@@ -176,8 +176,8 @@ public class ConfigurationInjection
             var repository = sp.GetRequiredService<IInfluxRepository<SafetyPacketEntity>>();
             var options = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var config = sp.GetRequiredService<IConfiguration>();
-            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
-            return new DbWriterService<SafetyPacketEntity>(logger, channel, repository, options, config, telemetryService);
+            var statsObserver = sp.GetRequiredService<Utils.Observers.StatsObserver>();
+            return new DbWriterService<SafetyPacketEntity>(logger, channel, repository, options, config, statsObserver);
         });
         builder.Services.AddSingleton<IDbWriterService<SafetyPacketEntity>>(sp => 
             sp.GetRequiredService<DbWriterService<SafetyPacketEntity>>());
@@ -189,8 +189,8 @@ public class ConfigurationInjection
             var repository = sp.GetRequiredService<IInfluxRepository<OnVIFPacketEntity>>();
             var options = sp.GetRequiredService<IOptions<QuestDbConfiguration>>();
             var config = sp.GetRequiredService<IConfiguration>();
-            var telemetryService = sp.GetRequiredService<Telemetry.ITelemetryService>();
-            return new DbWriterService<OnVIFPacketEntity>(logger, channel, repository, options, config, telemetryService);
+            var statsObserver = sp.GetRequiredService<Utils.Observers.StatsObserver>();
+            return new DbWriterService<OnVIFPacketEntity>(logger, channel, repository, options, config, statsObserver);
         });
         builder.Services.AddSingleton<IDbWriterService<OnVIFPacketEntity>>(sp => 
             sp.GetRequiredService<DbWriterService<OnVIFPacketEntity>>());
@@ -330,6 +330,13 @@ public class ConfigurationInjection
         {
             var broadcaster = provider.GetRequiredService<Telemetry.TelemetryBroadcaster>();
             return new Telemetry.TelemetryService(broadcaster);
+        });
+        
+        // Register StatsObserver as singleton
+        builder.Services.AddSingleton(provider =>
+        {
+            var telemetryService = provider.GetRequiredService<Telemetry.ITelemetryService>();
+            return new Utils.Observers.StatsObserver(telemetryService, "PacketProcessing");
         });
         
         // Register TelemetryBroadcaster as hosted service

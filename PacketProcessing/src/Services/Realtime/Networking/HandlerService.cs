@@ -10,13 +10,14 @@ using System.Buffers;
 using PacketProcessing.Utils.Observers;
 using PacketProcessing.Services.Transmission;
 using PacketProcessing.Telemetry;
+using PacketProcessing.Entities.Packet;
 namespace PacketProcessing.Services.Realtime.Networking;
 
 public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserver<RawPacketEvent>, IObservable<BasePacketEntity>
     where T : BasePacketEntity
 {
     private readonly ILogger<HandlerService<T>> _logger;
-    private readonly ITelemetryService _telemetryService;
+    private readonly StatsObserver _statsObserver;
 
     // Device filters
     private readonly string _protocol;
@@ -33,15 +34,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     // Hub transmission
     private readonly TimeSpan _transmissionInterval;
 
-    // Stats
-    private long _packetsCaptured;
-    private long _packetsParsed;
-    private long _packetsDropped;
-    private long _backpressureEvents;
-    private long _packetsTransmitted;
-    private long _totalLatencyMs;
-    private long _latencyCount;
-    
     // Channel counts (manual tracking since bounded channels don't support Reader.Count)
     private long _rawChannelCount;
 
@@ -58,13 +50,13 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         Channel<T> parsedChannel,
         IConfiguration configuration,
         ParseMapper parseMapper,
-        ITelemetryService telemetryService)
+        StatsObserver statsObserver)
     {
         _logger = logger;
         _parsedChannel = parsedChannel;
         _transmissionService = transmissionService;
         _parseMapper = parseMapper;
-        _telemetryService = telemetryService;
+        _statsObserver = statsObserver;
         
         // bounded channel for raw events with increased capacity
         // Wait mode ensures no packets are dropped (capture may block if processing too slow)
@@ -108,10 +100,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         _subscription = null;
         await deviceService.UnsubscribeAsync(this);
 
-        Interlocked.Exchange(ref _packetsCaptured, 0);
-        Interlocked.Exchange(ref _packetsParsed, 0);
-        Interlocked.Exchange(ref _packetsDropped, 0);
-        Interlocked.Exchange(ref _backpressureEvents, 0);
+        _statsObserver.Handler.Reset();
         Interlocked.Exchange(ref _rawChannelCount, 0);
 
         _logger.LogInformation("{Handler} unsubscribed", typeof(T).Name);
@@ -119,17 +108,13 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
     public (long Captured, long Parsed, long Dropped, double AvgLatencyMs) GetStats()
     {
-        var captured = Interlocked.Read(ref _packetsCaptured);
-        var parsed = Interlocked.Read(ref _packetsParsed);
-        var dropped = Interlocked.Read(ref _packetsDropped);
-        var totalLatency = Interlocked.Read(ref _totalLatencyMs);
-        var count = Interlocked.Read(ref _latencyCount);
-        var avgLatency = count > 0 ? (double)totalLatency / count : 0.0;
-        
-        return (captured, parsed, dropped, avgLatency);
+        return (_statsObserver.Handler.GetCaptured(), 
+                _statsObserver.Handler.GetParsed(), 
+                _statsObserver.Handler.GetDropped(), 
+                _statsObserver.Handler.GetAverageLatency());
     }
     
-    public long GetBackpressureEvents() => Interlocked.Read(ref _backpressureEvents);
+    public long GetBackpressureEvents() => _statsObserver.Handler.GetBackpressure();
     
     public int GetRawChannelCount()
     {
@@ -139,13 +124,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     
     public void ResetStats()
     {
-        Interlocked.Exchange(ref _packetsCaptured, 0);
-        Interlocked.Exchange(ref _packetsParsed, 0);
-        Interlocked.Exchange(ref _packetsDropped, 0);
-        Interlocked.Exchange(ref _backpressureEvents, 0);
-        Interlocked.Exchange(ref _packetsTransmitted, 0);
-        Interlocked.Exchange(ref _totalLatencyMs, 0);
-        Interlocked.Exchange(ref _latencyCount, 0);
+        _statsObserver.Handler.Reset();
         // Note: rawChannelCount is not reset as it represents actual queue state
         
         _logger.LogInformation("{Handler} statistics reset", typeof(T).Name);
@@ -157,25 +136,29 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
     public void OnNext(RawPacketEvent evt)
     {
-        Interlocked.Increment(ref _packetsCaptured);
+        _statsObserver.Handler.IncrementCaptured();
         
-        // Update telemetry service based on packet type
-        if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
-            _telemetryService.IncrementMotionCaptured();
-        else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
-            _telemetryService.IncrementSafetyCaptured();
-        else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
-            _telemetryService.IncrementOnvifCaptured();
-        
-        _telemetryService.IncrementCaptured();
-
         // Try fast path first
         if (_rawChannel.Writer.TryWrite(evt))
+        {
+            Interlocked.Increment(ref _rawChannelCount);
+            
+            // Update channel stats after incrementing
+            var currentCount = Interlocked.Read(ref _rawChannelCount);
+            var utilization = (double)currentCount / 500_000 * 100;
+            
+            if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
+                _statsObserver.UpdateChannelStats("MotionRaw", 500_000, (int)currentCount, utilization);
+            else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
+                _statsObserver.UpdateChannelStats("SafetyRaw", 500_000, (int)currentCount, utilization);
+            else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
+                _statsObserver.UpdateChannelStats("OnvifRaw", 500_000, (int)currentCount, utilization);
+            
             return;
+        }
 
         // Channel full - Wait mode will block to guarantee delivery
-        Interlocked.Increment(ref _backpressureEvents);
-        _telemetryService.IncrementBackpressure();
+        _statsObserver.Handler.IncrementBackpressure();
         
         // This blocks until space available (guarantees packet is written)
         _rawChannel.Writer
@@ -183,6 +166,19 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
             .AsTask()
             .GetAwaiter()
             .GetResult();
+        
+        Interlocked.Increment(ref _rawChannelCount);
+        
+        // Update channel stats after incrementing
+        var finalCount = Interlocked.Read(ref _rawChannelCount);
+        var finalUtilization = (double)finalCount / 500_000 * 100;
+        
+        if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
+            _statsObserver.UpdateChannelStats("MotionRaw", 500_000, (int)finalCount, finalUtilization);
+        else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
+            _statsObserver.UpdateChannelStats("SafetyRaw", 500_000, (int)finalCount, finalUtilization);
+        else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
+            _statsObserver.UpdateChannelStats("OnvifRaw", 500_000, (int)finalCount, finalUtilization);
     }
 
     public void OnError(Exception error) =>
@@ -245,6 +241,9 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                     rawBatch.Add(more);
                     Interlocked.Decrement(ref _rawChannelCount);
                 }
+                
+                // Update raw channel stats
+                UpdateRawChannelStats();
 
                 // ---- 3) Parse and forward ----
                 DateTime? firstParsedTimestamp = null;
@@ -260,8 +259,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
                         if (parsed is null)
                         {
-                            Interlocked.Increment(ref _packetsDropped);
-                            _telemetryService.IncrementDropped();
+                            _statsObserver.Handler.IncrementDropped();
                             batchDropped++;
                             continue;
                         }
@@ -278,26 +276,17 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                         // Try fast path to parsed channel; otherwise await (true backpressure)
                         if (!_parsedChannel.Writer.TryWrite(parsed))
                         {
-                            Interlocked.Increment(ref _backpressureEvents);
-                            _telemetryService.IncrementBackpressure();
+                            _statsObserver.Handler.IncrementBackpressure();
                             batchBackpressure++;
                             await _parsedChannel.Writer.WriteAsync(parsed, token);
                         }
 
-                        Interlocked.Increment(ref _packetsParsed);
-                        _telemetryService.IncrementParsed();
+                        _statsObserver.Handler.IncrementParsed();
                         batchParsed++;
-                        
-                        // Track latency (time from raw event to parsed)
-                        var latencyMs = (long)(DateTime.UtcNow - raw.Timestamp).TotalMilliseconds;
-                        Interlocked.Add(ref _totalLatencyMs, latencyMs);
-                        Interlocked.Increment(ref _latencyCount);
-                        _telemetryService.UpdateLatency(latencyMs);
                     }
                     catch
                     {
-                        Interlocked.Increment(ref _packetsDropped);
-                        _telemetryService.IncrementDropped();
+                        _statsObserver.Handler.IncrementDropped();
                         batchDropped++;
                     }
                     finally
@@ -309,10 +298,10 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                 }
 
                 // ---- 4) Log every parsing batch with stats ----
-                var totalCaptured = Interlocked.Read(ref _packetsCaptured);
-                var totalParsed = Interlocked.Read(ref _packetsParsed);
-                var totalDropped = Interlocked.Read(ref _packetsDropped);
-                var totalBackpressure = Interlocked.Read(ref _backpressureEvents);
+                var totalCaptured = _statsObserver.Handler.GetCaptured();
+                var totalParsed = _statsObserver.Handler.GetParsed();
+                var totalDropped = _statsObserver.Handler.GetDropped();
+                var totalBackpressure = _statsObserver.Handler.GetBackpressure();
                 
                 // Calculate parsing latency from this batch
                 var parsingLatencyMs = 0.0;
@@ -344,5 +333,23 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     {
         ArgumentNullException.ThrowIfNull(observer);
         return new Unsubscriber<BasePacketEntity>([observer], observer);
+    }
+    
+    private void UpdateRawChannelStats()
+    {
+        var rawChannelCount = Interlocked.Read(ref _rawChannelCount);
+        var rawCapacity = 500_000; // Hardcoded capacity from channel creation
+        var rawUtilization = (double)rawChannelCount / rawCapacity * 100;
+        
+        // Determine channel name based on packet type
+        var channelName = typeof(T).Name switch
+        {
+            nameof(MotionPacketEntity) => "MotionRaw",
+            nameof(SafetyPacketEntity) => "SafetyRaw", 
+            nameof(OnVIFPacketEntity) => "OnvifRaw",
+            _ => "UnknownRaw"
+        };
+        
+        _statsObserver.UpdateChannelStats(channelName, rawCapacity, (int)rawChannelCount, rawUtilization);
     }
 }

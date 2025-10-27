@@ -11,6 +11,8 @@ using QuestDB;
 using Microsoft.Extensions.Configuration;
 using PacketProcessing.Config;
 using PacketProcessing.Telemetry;
+using PacketProcessing.Entities.Packet;
+using PacketProcessing.Utils.Observers;
 
 namespace PacketProcessing.Services.Realtime.Storage;
 
@@ -26,12 +28,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     private readonly int _batchSize;
     private readonly TimeSpan _batchTimeout;
     private readonly int _workerCount;
-    private readonly ITelemetryService _telemetryService;
-
-    private long _flushedCount;
-    private long _failedCount;
-    private long _totalLatencyMs;
-    private long _latencyCount;
+    private readonly StatsObserver _statsObserver;
 
     public DbWriterService(
         ILogger<DbWriterService<T>> logger,
@@ -39,12 +36,12 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         IInfluxRepository<T> repository,
         IOptions<QuestDbConfiguration> options,
         IConfiguration configuration,
-        ITelemetryService telemetryService)
+        StatsObserver statsObserver)
     {
         _logger = logger;
         _channel = channel;
         _repository = repository;
-        _telemetryService = telemetryService;
+        _statsObserver = statsObserver;
 
         var concurrency = configuration.GetSection("Concurrency");
         _batchSize = concurrency.GetValue<int>("BatchSize", 1000);
@@ -164,6 +161,12 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
                                     break;
                             }
                         }
+                        
+                        // Decrement channel count as items are read from channel into buffer
+                        _statsObserver.DbWriter.AddChannelCount(-bufferCount);
+                        
+                        // Update channel stats after reading (items are now in buffer, not in channel)
+                        UpdateParsedChannelStats();
 
                         // Flush if full or latency cap reached
                         if (bufferCount >= _batchSize ||
@@ -175,6 +178,9 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
                             await FlushInternalAsync(sender, segment, workerId, oldestInBufferUtc, token);
                             bufferCount = 0;
                             oldestInBufferUtc = null;
+                            
+                            // Update parsed channel stats after flushing
+                            UpdateParsedChannelStats();
                         }
                     }
                     else
@@ -242,13 +248,9 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
 
     public (long Flushed, long Failed, double AvgLatencyMs) GetStats()
     {
-        var flushed = Interlocked.Read(ref _flushedCount);
-        var failed = Interlocked.Read(ref _failedCount);
-        var totalLatency = Interlocked.Read(ref _totalLatencyMs);
-        var count = Interlocked.Read(ref _latencyCount);
-        var avgLatency = count > 0 ? (double)totalLatency / count : 0.0;
-        
-        return (flushed, failed, avgLatency);
+        return (_statsObserver.DbWriter.GetFlushed(), 
+                _statsObserver.DbWriter.GetFailed(), 
+                _statsObserver.DbWriter.GetAverageLatency());
     }
     
     public int GetChannelCount()
@@ -260,10 +262,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     
     public void ResetStats()
     {
-        Interlocked.Exchange(ref _flushedCount, 0);
-        Interlocked.Exchange(ref _failedCount, 0);
-        Interlocked.Exchange(ref _totalLatencyMs, 0);
-        Interlocked.Exchange(ref _latencyCount, 0);
+        _statsObserver.DbWriter.Reset();
         
         _logger.LogInformation("[DB-WRITER] {Entity} statistics reset", typeof(T).Name);
     }
@@ -275,23 +274,25 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         
         var batchSize = batch.Count;
         var oldest = oldestInBufferUtc ?? DateTime.UtcNow;
-        var latencyMs = (DateTime.UtcNow - oldest).TotalMilliseconds;
+        var writeStartTime = DateTime.UtcNow;
+        var dbWriteLatencyMs = 0.0;
 
         try
         {
             await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
-            Interlocked.Add(ref _flushedCount, batch.Count);
-            _telemetryService.IncrementFlushed(batch.Count);
+            var writeEndTime = DateTime.UtcNow;
+            dbWriteLatencyMs = (writeEndTime - oldest).TotalMilliseconds; // Time from oldest packet to write completion
             
-            // Track latency
-            Interlocked.Add(ref _totalLatencyMs, (long)latencyMs);
-            Interlocked.Increment(ref _latencyCount);
-            _telemetryService.UpdateLatency(latencyMs);
+            _statsObserver.DbWriter.AddFlushed(batch.Count);
+            _statsObserver.DbWriter.AddParsed(batch.Count); // Increment parsed count when actually written to DB
+            
+            // Track DB write latency (actual database write time)
+            _statsObserver.DbWriter.AddLatency((long)dbWriteLatencyMs);
             
             var stats = GetStats();
             _logger.LogInformation(
                 "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgLatency:{AvgLatency:F1}ms)",
-                typeof(T).Name, workerId, batchSize, latencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
+                typeof(T).Name, workerId, batchSize, dbWriteLatencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
         }
         catch (Exception ex) when (ex is IOException || ex is SocketException || ex.GetType().Name.Contains("Ingress"))
         {
@@ -301,30 +302,63 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             try
             {
                 await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
-                Interlocked.Add(ref _flushedCount, batch.Count);
-                _telemetryService.IncrementFlushed(batch.Count);
+                var writeEndTime = DateTime.UtcNow;
+                dbWriteLatencyMs = (writeEndTime - oldest).TotalMilliseconds; // Time from oldest packet to write completion
                 
-                // Track latency
-                Interlocked.Add(ref _totalLatencyMs, (long)latencyMs);
-                Interlocked.Increment(ref _latencyCount);
+                _statsObserver.DbWriter.AddFlushed(batch.Count);
+                _statsObserver.DbWriter.AddParsed(batch.Count); // Increment parsed count when actually written to DB
+                
+                // Track DB write latency (actual database write time)
+                _statsObserver.DbWriter.AddLatency((long)dbWriteLatencyMs);
 
                 var stats = GetStats();
                 _logger.LogInformation(
                     "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgLatency:{AvgLatency:F1}ms)",
-                    typeof(T).Name, workerId, batchSize, latencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
+                    typeof(T).Name, workerId, batchSize, dbWriteLatencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
             }
             catch
             {
-                Interlocked.Add(ref _failedCount, batch.Count);
-                _telemetryService.IncrementFailed(batch.Count);
+                _statsObserver.DbWriter.AddFailed(batch.Count);
                 throw;
             }
         }
         catch (Exception ex)
         {
-            Interlocked.Add(ref _failedCount, batch.Count);
-            _telemetryService.IncrementFailed(batch.Count);
+            _statsObserver.DbWriter.AddFailed(batch.Count);
             _logger.LogError(ex, "Batch insert failed for {Entity}", typeof(T).Name);
         }
+    }
+    
+    private void UpdateParsedChannelStats()
+    {
+        // Get channel count from StatsObserver
+        var channelCount = _statsObserver.DbWriter.GetChannelCount();
+        
+        // Get capacity from configuration
+        var capacity = GetChannelCapacity();
+        var utilization = capacity > 0 ? (double)channelCount / capacity * 100 : 0;
+        
+        // Determine channel name based on packet type
+        var channelName = typeof(T).Name switch
+        {
+            nameof(MotionPacketEntity) => "MotionParsed",
+            nameof(SafetyPacketEntity) => "SafetyParsed",
+            nameof(OnVIFPacketEntity) => "OnvifParsed",
+            _ => "UnknownParsed"
+        };
+        
+        _statsObserver.UpdateChannelStats(channelName, capacity, channelCount, utilization);
+    }
+    
+    private int GetChannelCapacity()
+    {
+        // Get capacity from configuration based on packet type
+        return typeof(T).Name switch
+        {
+            nameof(MotionPacketEntity) => 1_000_000,   // From configuration
+            nameof(SafetyPacketEntity) => 1_000_000,  // From configuration
+            nameof(OnVIFPacketEntity) => 100_000,     // From configuration
+            _ => 100_000
+        };
     }
 }

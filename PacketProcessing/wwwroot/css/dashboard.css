@@ -360,16 +360,18 @@ select option {
     will-change: transform;
 }
 
-/* Packet Hub Logs Container - Also dynamic */
+/* Packet Hub Logs Container - Fixed height with scrolling */
 .log-container:has(#packetHubLogs) {
-    max-height: none;
-    overflow-y: visible;
-    min-height: auto;
+    max-height: 250px;
+    overflow-y: auto;
+    min-height: 150px;
 }
 
 .log-container:has(#packetHubLogs) .log-content {
     max-height: none;
     overflow-y: visible;
+    padding: 15px;
+    font-size: 11px;
 }
 
 .log-container:has(#packetHubLogs) .log-header {
@@ -404,10 +406,11 @@ select option {
 }
 
 .log-entry {
-    padding: 5px;
-    margin: 2px 0;
-    font-size: 12px;
+    padding: 3px;
+    margin: 1px 0;
+    font-size: 11px;
     border-left: 3px solid;
+    line-height: 1.4;
 }
 
 .log-info { border-color: #2196f3; }

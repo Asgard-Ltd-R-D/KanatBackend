@@ -152,7 +152,8 @@ public class TransmissionService : ITransmissionService
         try
         {
             // Find the connection ID for the packet, if doesn't exist it means that the packet is not registered for any connection
-            var existingConnectionId = _streamKeyToConnectionIdDict.TryGetValue(packet.GetSubscriptionKey(), out var connectionId) ? connectionId : null;
+            var subscriptionKey = packet.GetSubscriptionKey();
+            var existingConnectionId = _streamKeyToConnectionIdDict.TryGetValue(subscriptionKey, out var connectionId) ? connectionId : null;
             if (existingConnectionId == null)
                 return;
 
@@ -164,7 +165,8 @@ public class TransmissionService : ITransmissionService
                 _logger.LogWarning("Failed to convert packet to PlainData");
                 return;
             }
-            await SendToClientPacketAsync(existingConnectionId, Constants.SIGNALR_ON_RECEIVE_PACKET, plainData);
+            
+            await SendToClientPacketAsync(existingConnectionId, subscriptionKey, plainData);
 
             _logger.LogDebug(
                 "Transmitted packet to client {ConnectionId}: {DataPipe}.{Method} at {Timestamp}",
@@ -177,11 +179,11 @@ public class TransmissionService : ITransmissionService
         }
     }
 
-    private async Task SendToClientPacketAsync(string connectionId, string methodName, PlainDataDto data)
+    private async Task SendToClientPacketAsync(string connectionId, string subscriptionKey, PlainDataDto data)
     {
         try
         {
-            await _hubContext.Clients.Client(connectionId).SendAsync(methodName, data);
+            await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ON_RECEIVE_PACKET, subscriptionKey, data);
         }
         catch (Exception ex)
         {

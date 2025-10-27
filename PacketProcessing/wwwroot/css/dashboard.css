@@ -331,6 +331,8 @@ select option {
     overflow-y: auto;
     position: relative;
     margin-bottom: 20px;
+    /* Ensure sticky positioning works properly */
+    contain: layout style;
 }
 
 /* Packet Hub Container - Dynamic sizing */
@@ -347,9 +349,15 @@ select option {
 }
 
 .packet-hub-container .log-header {
+    position: -webkit-sticky; /* Safari */
     position: sticky;
     top: 0;
     z-index: 10;
+    background: #1e1e1e;
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
+    will-change: transform;
 }
 
 /* Packet Hub Logs Container - Also dynamic */
@@ -365,18 +373,30 @@ select option {
 }
 
 .log-container:has(#packetHubLogs) .log-header {
+    position: -webkit-sticky; /* Safari */
     position: sticky;
     top: 0;
     z-index: 10;
+    background: #1e1e1e;
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
+    will-change: transform;
 }
 
 .log-header {
+    position: -webkit-sticky; /* Safari */
     position: sticky;
     top: 0;
     background: #1e1e1e;
     padding: 15px 20px;
     border-bottom: 2px solid #4fc3f7;
     z-index: 10;
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
+    /* Ensure the header stays visible */
+    will-change: transform;
 }
 
 .log-content {

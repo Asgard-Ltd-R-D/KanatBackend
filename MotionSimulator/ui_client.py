@@ -16,7 +16,7 @@ __updated__ = "2025-10-25"
 # UI Constants
 # ===============================
 HOST = '132.8.7.125'
-PORT = 4949
+PORT = 5001
 POLL_INTERVAL_MS = 30
 SYSTEM_AXIS_ID = 0 # For system-level commands like LRF
 SIMULATED_AXES = [1, 2, 4, 5]

@@ -16,7 +16,7 @@ __updated__ = "2025-10-25"
 # Server Constants
 # ===============================
 HOST = '132.8.7.125'
-PORT = 4949
+PORT = 5001
 SIM_UPDATE_INTERVAL = 0.01 # 10ms simulation tick
 
 # Simulated Axes

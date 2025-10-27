@@ -57,7 +57,7 @@ public class TransmissionService : ITransmissionService
                 await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
                     new AckDto { 
                         OperationType = OperationType.RegisterToMethod, 
-                        Message = request.SubscriptionKey, 
+                        Message = request, 
                         Success = true 
                     });
             }
@@ -69,7 +69,7 @@ public class TransmissionService : ITransmissionService
                 await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
                     new AckDto { 
                         OperationType = OperationType.RegisterToMethod, 
-                        Message = request.SubscriptionKey, 
+                        Message = request, 
                         Success = true 
                     });
             }
@@ -84,7 +84,7 @@ public class TransmissionService : ITransmissionService
             await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
                 new AckDto { 
                     OperationType = OperationType.RegisterToMethod, 
-                    Message = request.SubscriptionKey, 
+                    Message = request, 
                     Success = false 
                 });
             
@@ -120,7 +120,7 @@ public class TransmissionService : ITransmissionService
             await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
                 new AckDto { 
                     OperationType = OperationType.UnregisterFromMethod, 
-                    Message = request.SubscriptionKey, 
+                    Message = request, 
                     Success = true 
                 });
 
@@ -136,7 +136,7 @@ public class TransmissionService : ITransmissionService
                 await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
                     new AckDto { 
                         OperationType = OperationType.UnregisterFromMethod, 
-                        Message = request.SubscriptionKey, 
+                        Message = request, 
                         Success = false 
                     });
             }

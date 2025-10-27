@@ -169,9 +169,9 @@ public class TransmissionService : ITransmissionService
             await SendToClientPacketAsync(existingConnectionId, subscriptionKey, plainData);
 
             _logger.LogDebug(
-                "Transmitted packet to client {ConnectionId}: {DataPipe}.{Method} at {Timestamp}",
+                "Transmitted packet to client {ConnectionId}: {SubscriptionKey} at {Timestamp}",
                 existingConnectionId,
-                plainData.DataPipe, plainData.MethodName, plainData.Timestamp);
+                plainData.SubscriptionKey, plainData.Timestamp);
     }
         catch (Exception ex)
         {

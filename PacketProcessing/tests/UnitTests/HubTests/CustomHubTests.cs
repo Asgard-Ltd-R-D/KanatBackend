@@ -54,10 +54,14 @@ public class CustomHubTests : IDisposable
         // Setup mock context
         _mockContext.Setup(x => x.ConnectionId).Returns("test-connection-id");
         
+        // Setup mock transmission service
+        _mockTransmissionService.Setup(x => x.GetRegisteredStreamKeys(It.IsAny<string>())).Returns(new List<string>());
+        
         // Setup mock clients
         _mockClients.Setup(x => x.All).Returns(_mockClientProxy.Object);
         _mockClients.Setup(x => x.Caller).Returns(_mockSingleClientProxy.Object);
         _mockClients.Setup(x => x.Others).Returns(_mockClientProxy.Object);
+        _mockClients.Setup(x => x.Client(It.IsAny<string>())).Returns(_mockSingleClientProxy.Object);
         
         // Create hub instance
         _hub = new CustomHub(_mockLogger.Object, _mockConnectionManager.Object, _mockTransmissionService.Object);
@@ -258,13 +262,13 @@ public class CustomHubTests : IDisposable
 
     #endregion
 
-    #region False Positive Tests - Unexpected Success
+    #region True Positive Tests - Graceful Null Handling
 
     [Fact]
-    public async Task OnConnectedAsync_WithNullConnectionManager_ShouldNotThrow_FalsePositive()
+    public async Task OnConnectedAsync_WithNullConnectionManager_ShouldHandleGracefully_TruePositive()
     {
         // Arrange
-        _output.WriteLine("Testing SignalR hub connection with null connection manager (False Positive)...");
+        _output.WriteLine("Testing SignalR hub connection with null connection manager (True Positive)...");
         var hubWithNullManager = new CustomHub(_mockLogger.Object, null!, _mockTransmissionService.Object);
         
         // Set hub context using reflection
@@ -277,17 +281,18 @@ public class CustomHubTests : IDisposable
         var groupsProperty = typeof(Hub).GetProperty("Groups");
         groupsProperty?.SetValue(hubWithNullManager, _mockGroups.Object);
         
-        // Act & Assert - The hub doesn't validate null parameters, so it will throw NullReferenceException
-        await Assert.ThrowsAsync<NullReferenceException>(() => hubWithNullManager.OnConnectedAsync());
+        // Act & Assert - The hub should handle null parameters gracefully without throwing exceptions
+        var exception = await Record.ExceptionAsync(() => hubWithNullManager.OnConnectedAsync());
+        Assert.Null(exception);
         
-        _output.WriteLine("SignalR hub connection with null connection manager test passed (expected NullReferenceException)");
+        _output.WriteLine("SignalR hub connection with null connection manager test passed (handled gracefully)");
     }
 
     [Fact]
-    public async Task OnDisconnectedAsync_WithNullTransmissionService_ShouldNotThrow_FalsePositive()
+    public async Task OnDisconnectedAsync_WithNullTransmissionService_ShouldHandleGracefully_TruePositive()
     {
         // Arrange
-        _output.WriteLine("Testing SignalR hub disconnection with null transmission service (False Positive)...");
+        _output.WriteLine("Testing SignalR hub disconnection with null transmission service (True Positive)...");
         var hubWithNullService = new CustomHub(_mockLogger.Object, _mockConnectionManager.Object, null!);
         
         // Set hub context using reflection
@@ -300,10 +305,11 @@ public class CustomHubTests : IDisposable
         var groupsProperty = typeof(Hub).GetProperty("Groups");
         groupsProperty?.SetValue(hubWithNullService, _mockGroups.Object);
         
-        // Act & Assert - The hub doesn't validate null parameters, so it will throw NullReferenceException
-        await Assert.ThrowsAsync<NullReferenceException>(() => hubWithNullService.OnDisconnectedAsync(null));
+        // Act & Assert - The hub should handle null parameters gracefully without throwing exceptions
+        var exception = await Record.ExceptionAsync(() => hubWithNullService.OnDisconnectedAsync(null));
+        Assert.Null(exception);
         
-        _output.WriteLine("SignalR hub disconnection with null transmission service test passed (expected NullReferenceException)");
+        _output.WriteLine("SignalR hub disconnection with null transmission service test passed (handled gracefully)");
     }
 
     #endregion

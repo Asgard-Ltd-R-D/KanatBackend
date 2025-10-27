@@ -100,6 +100,50 @@ def check_dotnet():
         print_info("Please install .NET SDK from https://dotnet.microsoft.com/download")
         return False
 
+def validate_release_path(path):
+    """Validate that a path is within the release directory"""
+    try:
+        path = Path(path).resolve()
+        release_dir = RELEASE_DIR.resolve()
+        return path.is_relative_to(release_dir)
+    except (ValueError, OSError):
+        return False
+
+def ensure_release_directory_cleanup():
+    """Ensure no dev/prod directories exist outside the release directory"""
+    print_info("Checking for stray dev/prod directories...")
+    
+    # Check project root for dev/prod directories (but exclude known directories)
+    project_root = PROJECT_ROOT
+    stray_dirs = []
+    
+    # Directories to exclude from cleanup (these are legitimate project directories)
+    excluded_dirs = {
+        RELEASE_DIR / 'dev',
+        RELEASE_DIR / 'prod',
+        DEPLOY_DIR,  # Don't touch the deploy directory
+        PACKET_PROCESSING_DIR,  # Don't touch the PacketProcessing directory
+    }
+    
+    for item in project_root.iterdir():
+        if item.is_dir() and item.name in ['dev', 'prod']:
+            # Check if it's not in our excluded directories
+            if item not in excluded_dirs:
+                stray_dirs.append(item)
+    
+    if stray_dirs:
+        print_warning(f"Found stray directories outside release folder: {[str(d) for d in stray_dirs]}")
+        print_info("Cleaning up stray directories...")
+        
+        for stray_dir in stray_dirs:
+            try:
+                shutil.rmtree(stray_dir)
+                print_success(f"Removed stray directory: {stray_dir}")
+            except Exception as e:
+                print_error(f"Failed to remove stray directory {stray_dir}: {e}")
+    else:
+        print_success("No stray dev/prod directories found")
+
 def get_os_info():
     """Get current OS information"""
     os_name = platform.system()
@@ -436,8 +480,8 @@ def create_release_package(environment, platform):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     print_header(f"Creating release package for {environment.upper()} on {platform}... [{timestamp}]")
     
-    # Create deploy directory structure
-    deploy_timestamp_dir = DEPLOY_DIR / timestamp
+    # Create deploy directory structure with environment prefix
+    deploy_timestamp_dir = DEPLOY_DIR / f"{environment}_{timestamp}"
     deploy_timestamp_dir.mkdir(parents=True, exist_ok=True)
     
     print_success(f"Created deploy directory: {deploy_timestamp_dir}")
@@ -571,16 +615,25 @@ def get_deploy_versions():
     for item in DEPLOY_DIR.iterdir():
         if item.is_dir():
             try:
-                # Parse timestamp from directory name
+                # Parse new format: environment_timestamp (e.g., dev_20251026_150739)
+                if '_' in item.name:
+                    parts = item.name.split('_', 1)
+                    if len(parts) == 2 and parts[0] in ['dev', 'prod']:
+                        environment = parts[0]
+                        timestamp = datetime.strptime(parts[1], "%Y%m%d_%H%M%S")
+                        versions.append((timestamp, item, environment))
+                        continue
+                
+                # Parse old format: timestamp only (e.g., 20251026_150739) - for backward compatibility
                 timestamp = datetime.strptime(item.name, "%Y%m%d_%H%M%S")
-                versions.append((timestamp, item))
+                versions.append((timestamp, item, None))  # None means unknown environment
             except ValueError:
-                # Skip directories that don't match timestamp format
+                # Skip directories that don't match either format
                 continue
     
     # Sort by timestamp (newest first)
     versions.sort(key=lambda x: x[0], reverse=True)
-    return [version[1] for version in versions]
+    return versions
 
 def list_deploy_versions():
     """List all available deploy versions with indices"""
@@ -591,17 +644,26 @@ def list_deploy_versions():
         return []
     
     print_header("Available deploy versions:")
-    for i, version_dir in enumerate(versions, 1):
+    for i, (timestamp, version_dir, environment) in enumerate(versions, 1):
         timestamp_str = version_dir.name
         try:
-            dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
-            formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+            if environment:
+                # New format: environment_timestamp
+                dt = datetime.strptime(timestamp_str.split('_', 1)[1], "%Y%m%d_%H%M%S")
+                formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                env_info = f" [{environment.upper()}]"
+            else:
+                # Old format: timestamp only
+                dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                env_info = " [UNKNOWN ENV]"
         except ValueError:
             formatted_time = timestamp_str
+            env_info = ""
         
         # Count files in the directory
         file_count = len([f for f in version_dir.iterdir() if f.is_file()])
-        print_info(f"  {i}. {formatted_time} ({file_count} files)")
+        print_info(f"  {i}. {formatted_time}{env_info} ({file_count} files)")
     
     return versions
 
@@ -654,16 +716,25 @@ def show_status():
     print_info("\nDeploy Packages:")
     versions = get_deploy_versions()
     if versions:
-        for version_dir in versions[:5]:  # Show only last 5
+        for timestamp, version_dir, environment in versions[:5]:  # Show only last 5
             timestamp_str = version_dir.name
             try:
-                dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
-                formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                if environment:
+                    # New format: environment_timestamp
+                    dt = datetime.strptime(timestamp_str.split('_', 1)[1], "%Y%m%d_%H%M%S")
+                    formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    env_info = f" [{environment.upper()}]"
+                else:
+                    # Old format: timestamp only
+                    dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                    formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    env_info = " [UNKNOWN ENV]"
             except ValueError:
                 formatted_time = timestamp_str
+                env_info = ""
             
             file_count = len([f for f in version_dir.iterdir() if f.is_file()])
-            print_info(f"  {formatted_time} ({file_count} files)")
+            print_info(f"  {formatted_time}{env_info} ({file_count} files)")
     else:
         print_info("  No deploy packages found")
     
@@ -691,6 +762,46 @@ def show_status():
     except (subprocess.CalledProcessError, json.JSONDecodeError):
         print_info("  Failed to get Docker Compose project status")
 
+def get_deploy_environment(deploy_dir):
+    """Extract environment information from deploy directory name"""
+    dir_name = deploy_dir.name
+    
+    # Check new format: environment_timestamp (e.g., dev_20251026_150739)
+    if '_' in dir_name:
+        parts = dir_name.split('_', 1)
+        if len(parts) == 2 and parts[0] in ['dev', 'prod']:
+            return parts[0]
+    
+    # Check old format: timestamp only (e.g., 20251026_150739) - for backward compatibility
+    try:
+        datetime.strptime(dir_name, "%Y%m%d_%H%M%S")
+        # This is an old format directory, try to detect environment from files
+        return detect_environment_from_files(deploy_dir)
+    except ValueError:
+        return None
+
+def detect_environment_from_files(deploy_dir):
+    """Try to detect environment from files in deploy directory (for backward compatibility)"""
+    # Look for DLL tar files that contain environment info
+    dll_files = [f for f in deploy_dir.iterdir() if f.is_file() and f.name.startswith('packetprocessing_') and f.suffix == '.tar']
+    
+    for dll_file in dll_files:
+        # Extract environment from filename like packetprocessing_dev_osx-arm64.tar
+        parts = dll_file.name.split('_')
+        if len(parts) >= 2 and parts[1] in ['dev', 'prod']:
+            return parts[1]
+    
+    # Look for deployment files tar
+    deploy_files = [f for f in deploy_dir.iterdir() if f.is_file() and f.name.startswith('deployment_files_') and f.suffix == '.tar']
+    
+    for deploy_file in deploy_files:
+        # Extract environment from filename like deployment_files_dev.tar
+        parts = deploy_file.name.split('_')
+        if len(parts) >= 3 and parts[2].replace('.tar', '') in ['dev', 'prod']:
+            return parts[2].replace('.tar', '')
+    
+    return None
+
 def get_selected_deploy_version(deploy_version_index=None):
     """Get the selected deploy version directory"""
     versions = get_deploy_versions()
@@ -700,7 +811,7 @@ def get_selected_deploy_version(deploy_version_index=None):
     
     if deploy_version_index is None:
         # Return the newest version (index 0)
-        return versions[0]
+        return versions[0][1]  # Return just the directory path
     
     # Validate index
     if deploy_version_index < 1 or deploy_version_index > len(versions):
@@ -709,7 +820,7 @@ def get_selected_deploy_version(deploy_version_index=None):
         return None
     
     # Return the selected version (convert to 0-based index)
-    return versions[deploy_version_index - 1]
+    return versions[deploy_version_index - 1][1]  # Return just the directory path
 
 def load_docker_images_from_deploy(deploy_dir):
     """Load Docker images from tar files in deploy directory"""
@@ -752,10 +863,20 @@ def extract_dll_from_deploy(deploy_dir, environment):
     print_info(f"Extracting DLL from {dll_tar_file.name}...")
     
     try:
-        # Extract to release directory
-        cmd = ['tar', '-xzf', str(dll_tar_file), '-C', str(RELEASE_DIR.parent)]
+        # Ensure release directory exists
+        RELEASE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Extract to release directory (ensure we extract into the release directory, not outside it)
+        cmd = ['tar', '-xzf', str(dll_tar_file), '-C', str(RELEASE_DIR)]
         subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print_success(f"Extracted DLL to {RELEASE_DIR / environment}")
+        
+        # Validate that the extracted directory is within the release folder
+        extracted_path = RELEASE_DIR / environment
+        if not validate_release_path(extracted_path):
+            print_error(f"Extraction created directory outside release folder: {extracted_path}")
+            return False
+        
+        print_success(f"Extracted DLL to {extracted_path}")
         return True
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to extract DLL: {e}")
@@ -922,6 +1043,9 @@ def main():
     if not check_dotnet():
         sys.exit(1)
     
+    # Ensure no stray dev/prod directories exist outside release folder
+    ensure_release_directory_cleanup()
+    
     # Parse arguments
     command = None
     environment = None
@@ -1023,7 +1147,21 @@ def main():
             deploy_version = get_selected_deploy_version(deploy_version_index)
             
             if deploy_version:
-                print_header(f"Using deploy package: {deploy_version.name}")
+                # Get environment from deploy package
+                deploy_env = get_deploy_environment(deploy_version)
+                
+                if deploy_env is None:
+                    print_error(f"Could not determine environment for deploy package: {deploy_version.name}")
+                    print_error("Please use a deploy package created with the updated composer")
+                    sys.exit(1)
+                
+                # Check if deploy package environment matches requested environment
+                if deploy_env != environment:
+                    print_warning(f"Deploy package is for {deploy_env.upper()} environment, but {environment.upper()} was requested")
+                    print_warning(f"Using {deploy_env.upper()} environment from deploy package")
+                    environment = deploy_env  # Override the requested environment
+                
+                print_header(f"Using deploy package: {deploy_version.name} [{environment.upper()}]")
                 
                 # Load Docker images from deploy package
                 if not load_docker_images_from_deploy(deploy_version):
@@ -1073,7 +1211,21 @@ def main():
         deploy_version = get_selected_deploy_version(deploy_version_index)
         
         if deploy_version:
-            print_header(f"Using deploy package: {deploy_version.name}")
+            # Get environment from deploy package
+            deploy_env = get_deploy_environment(deploy_version)
+            
+            if deploy_env is None:
+                print_error(f"Could not determine environment for deploy package: {deploy_version.name}")
+                print_error("Please use a deploy package created with the updated composer")
+                sys.exit(1)
+            
+            # Check if deploy package environment matches requested environment
+            if deploy_env != environment:
+                print_warning(f"Deploy package is for {deploy_env.upper()} environment, but {environment.upper()} was requested")
+                print_warning(f"Using {deploy_env.upper()} environment from deploy package")
+                environment = deploy_env  # Override the requested environment
+            
+            print_header(f"Using deploy package: {deploy_version.name} [{environment.upper()}]")
             
             # Load Docker images from deploy package
             if not load_docker_images_from_deploy(deploy_version):

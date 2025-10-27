@@ -187,7 +187,16 @@ public class TelemetryBroadcaster : BackgroundService
             return;
             
         _disposed = true;
-        _notificationWriter.Complete();
+        
+        try
+        {
+            _notificationWriter.Complete();
+        }
+        catch (InvalidOperationException)
+        {
+            // Channel already completed, ignore
+        }
+        
         _pushSemaphore.Dispose();
         base.Dispose();
     }

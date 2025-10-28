@@ -166,12 +166,12 @@ public class TransmissionService : ITransmissionService
                 return;
             }
             
-            await SendToClientPacketAsync(existingConnectionId, subscriptionKey, plainData);
+            await SendToClientPacketAsync(existingConnectionId, plainData);
 
             _logger.LogDebug(
-                "Transmitted packet to client {ConnectionId}: {DataPipe}.{Method} at {Timestamp}",
+                "Transmitted packet to client {ConnectionId}: {SubscriptionKey} at {Timestamp}",
                 existingConnectionId,
-                plainData.DataPipe, plainData.MethodName, plainData.Timestamp);
+                plainData.SubscriptionKey, plainData.Timestamp);
     }
         catch (Exception ex)
         {
@@ -179,11 +179,11 @@ public class TransmissionService : ITransmissionService
         }
     }
 
-    private async Task SendToClientPacketAsync(string connectionId, string subscriptionKey, PlainDataDto data)
+    private async Task SendToClientPacketAsync(string connectionId, PlainDataDto data)
     {
         try
         {
-            await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ON_RECEIVE_PACKET, subscriptionKey, data);
+            await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ON_RECEIVE_PACKET, data);
         }
         catch (Exception ex)
         {

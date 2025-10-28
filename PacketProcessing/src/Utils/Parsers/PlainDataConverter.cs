@@ -38,8 +38,7 @@ public static class PlainDataConverter
             {
                 Timestamp = new DateTimeOffset(motion.Timestamp).ToUnixTimeMilliseconds(),
                 Value = motion.Value.Value,
-                DataPipe = DataPipes.Motion,
-                MethodName = motion.Description
+                SubscriptionKey = motion.GetSubscriptionKey()
             };
         // Applicable for Motion Commands that have no float value
         if (motion.IsCmd)
@@ -47,16 +46,14 @@ public static class PlainDataConverter
             {
                 Timestamp = new DateTimeOffset(motion.Timestamp).ToUnixTimeMilliseconds(),
                 Value = 1d,
-                DataPipe = DataPipes.Motion,
-                MethodName = motion.Description
+                SubscriptionKey = motion.GetSubscriptionKey()
             };
         // Damaged packet
         return new PlainDataDto
         {
             Timestamp = new DateTimeOffset(motion.Timestamp).ToUnixTimeMilliseconds(),
             Value = motion.Value ?? -1d,
-            DataPipe = DataPipes.Motion,
-            MethodName = motion.Description
+            SubscriptionKey = motion.GetSubscriptionKey()
         };
     }
 
@@ -78,8 +75,7 @@ public static class PlainDataConverter
                 "BURST" => 3d,
                 _ => -1d
             },
-            DataPipe = DataPipes.Safety,
-            MethodName = safety.Description
+            SubscriptionKey = safety.GetSubscriptionKey()
         };
     }
 
@@ -96,40 +92,35 @@ public static class PlainDataConverter
                 {
                     Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
                     Value = 1.0d,
-                    DataPipe = DataPipes.OnVIF,
-                    MethodName = onvif.Description
+                    SubscriptionKey = onvif.GetSubscriptionKey()
                 };
             case Constants.Constants.ONVIF_FOV_STS:
                 return new PlainDataDto
                 {
                     Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
                     Value = onvif.Zoom ?? -1.0d,
-                    DataPipe = DataPipes.OnVIF,
-                    MethodName = onvif.Description
+                    SubscriptionKey = onvif.GetSubscriptionKey()
                 };
             case Constants.Constants.ONVIF_LRF_REQ:
                 return new PlainDataDto
                 {
                     Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
                     Value = 1.0d,
-                    DataPipe = DataPipes.OnVIF,
-                    MethodName = onvif.Description
+                    SubscriptionKey = onvif.GetSubscriptionKey()
                 };
             case Constants.Constants.ONVIF_LRF_STS:
                 return new PlainDataDto
                 {
                     Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
                     Value = onvif.Measurement ?? -1.0d,
-                    DataPipe = DataPipes.OnVIF,
-                    MethodName = onvif.Description
+                    SubscriptionKey = onvif.GetSubscriptionKey()
                 };
         }
         return new PlainDataDto
         {
             Timestamp = new DateTimeOffset(onvif.Timestamp).ToUnixTimeMilliseconds(),
             Value = -1.0d,
-            DataPipe = DataPipes.OnVIF,
-            MethodName = onvif.Description
+            SubscriptionKey = onvif.GetSubscriptionKey()
         };
     }
 }

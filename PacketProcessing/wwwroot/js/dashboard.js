@@ -1531,7 +1531,7 @@ async function registerSelectedStream() {
         axis: axis
     };
 
-    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
     
     if (activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is already registered`, 'warning');
@@ -1576,7 +1576,7 @@ async function unregisterSelectedStream() {
         axis: axis
     };
 
-    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
     
     if (!activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is not registered`, 'warning');
@@ -1591,76 +1591,6 @@ async function unregisterSelectedStream() {
         logPacketHubMessage('Stream unregistration request sent', 'success');
     } catch (err) {
         logPacketHubMessage(`Error unregistering stream: ${err.message}`, 'error');
-    }
-}
-
-// Check server status
-async function checkServerStatus() {
-    console.log('Checking server status...');
-    try {
-        const response = await fetch('http://localhost:10901/hubs/packets/negotiate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            }
-        });
-        console.log('Server response:', response.status, response.statusText);
-        if (response.ok) {
-            logPacketHubMessage('Server is running and accessible', 'success');
-            return true;
-        } else {
-            logPacketHubMessage(`Server responded with status: ${response.status}`, 'warning');
-            return false;
-        }
-    } catch (error) {
-        console.error('Server check failed:', error);
-        logPacketHubMessage(`Server check failed: ${error.message}`, 'error');
-        return false;
-    }
-}
-
-function updatePipelineButtons() {
-    const dataPipe = document.getElementById('dataPipeSelect').value;
-    const isConnected = packetHubConnected;
-    
-    if (!dataPipe || !isConnected) {
-        // Disable all buttons
-        ['registerMotionBtn', 'unregisterMotionBtn', 'registerSafetyBtn', 'unregisterSafetyBtn', 'registerOnvifBtn', 'unregisterOnvifBtn'].forEach(btnId => {
-            const btn = document.getElementById(btnId);
-            if (btn) {
-                btn.disabled = true;
-                if (btnId.includes('register')) btn.textContent = 'Register';
-                if (btnId.includes('unregister')) btn.textContent = 'Unregister';
-            }
-        });
-        return;
-    }
-    
-    // Enable buttons for current pipeline
-    let registerBtnId, unregisterBtnId;
-    switch (dataPipe) {
-        case 'MotionPackets':
-            registerBtnId = 'registerMotionBtn';
-            unregisterBtnId = 'unregisterMotionBtn';
-            break;
-        case 'SafetyPackets':
-            registerBtnId = 'registerSafetyBtn';
-            unregisterBtnId = 'unregisterSafetyBtn';
-            break;
-        case 'OnVIFPackets':
-            registerBtnId = 'registerOnvifBtn';
-            unregisterBtnId = 'unregisterOnvifBtn';
-            break;
-    }
-    
-    if (registerBtnId && unregisterBtnId) {
-        const registerBtn = document.getElementById(registerBtnId);
-        const unregisterBtn = document.getElementById(unregisterBtnId);
-        
-        if (registerBtn && unregisterBtn) {
-            registerBtn.disabled = false;
-            unregisterBtn.disabled = false;
-        }
     }
 }
 
@@ -1722,7 +1652,7 @@ async function registerStream() {
             return;
     }
 
-    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
     
     if (activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is already registered`, 'warning');
@@ -1797,7 +1727,7 @@ async function unregisterStream() {
             return;
     }
 
-    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
     
     if (!activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is not registered`, 'warning');

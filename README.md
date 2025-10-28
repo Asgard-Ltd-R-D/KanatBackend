@@ -631,7 +631,13 @@ await connection.invoke("RegisterToMethod", streamRequest);
 {
   "operationType": "RegisterToMethod",
   "success": true,
-  "message": "motion|mot_getmotorcurrent|false|1"
+  "message": {
+    "dataPipe": "Motion",
+    "description": "MOT_GetMotorCurrent",
+    "isCmd": false,
+    "axis": 1,
+    "subscriptionKey": "motion|mot_getmotorcurrent|false|1"
+  }
 }
 ```
 
@@ -693,24 +699,24 @@ connection.on("Ack", (ackData) => {
 #### OnReceivePacket
 Received when packet data is transmitted.
 
-**Parameters:** `object` (packet data)
+**Parameters:** `PlainDataDto`
+
+Plain payload from server:
+
+```json
+{
+  "subscriptionKey": "motion|mot_getmotorcurrent|false|1",
+  "timestamp": 1730093700000,
+  "value": 42.5
+}
+```
 
 **Example:**
 ```javascript
 // JavaScript client
-connection.on("OnReceivePacket", (packetData) => {
-  console.log(`Packet Received: ${JSON.stringify(packetData)}`);
-  
-  // Example packet data structure:
-  // {
-  //   "id": "123e4567-e89b-12d3-a456-426614174000",
-  //   "timestamp": "2024-01-15T10:30:00Z",
-  //   "dataPipe": "MotionPackets",
-  //   "description": "MOT_GetMotorCurrent",
-  //   "isCmd": false,
-  //   "axis": 1,
-  //   "value": 42.5
-  // }
+connection.on("OnReceivePacket", (plainData) => {
+  console.log("Packet Received:", plainData);
+  // plainData.subscriptionKey, plainData.timestamp (ms), plainData.value
 });
 ```
 

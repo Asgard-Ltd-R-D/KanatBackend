@@ -580,12 +580,12 @@ Automatically called when a client connects.
   {
     "operationType": "ConnectionEstablished",
     "success": true,
-    "message": "motionpackets|mot_getmotorcurrent|false|1"
+    "message": "motion|mot_getmotorcurrent|false|1"
   },
   {
     "operationType": "ConnectionEstablished", 
     "success": true,
-    "message": "safetypackets|do3_fire1|true|"
+    "message": "safety|do3_fire1|true|"
   }
 ]
 ```
@@ -617,7 +617,7 @@ Register to receive packets for a specific stream.
 ```javascript
 // JavaScript client
 const streamRequest = {
-  dataPipe: "MotionPackets",
+  dataPipe: "Motion",
   description: "MOT_GetMotorCurrent",
   isCmd: false,
   axis: 1
@@ -631,14 +631,14 @@ await connection.invoke("RegisterToMethod", streamRequest);
 {
   "operationType": "RegisterToMethod",
   "success": true,
-  "message": "motionpackets|mot_getmotorcurrent|false|1"
+  "message": "motion|mot_getmotorcurrent|false|1"
 }
 ```
 
 #### UnregisterFromMethod
 Unregister from receiving packets for a specific stream.
 
-**Parameters:** `StreamRequestDto`
+**Parameters:** `string subscriptionKey`
 
 **Returns:** `AckDto`
 
@@ -646,13 +646,16 @@ Unregister from receiving packets for a specific stream.
 ```javascript
 // JavaScript client
 const streamRequest = {
-  dataPipe: "MotionPackets",
+  dataPipe: "Motion",
   description: "MOT_GetMotorCurrent", 
   isCmd: false,
   axis: 1
 };
 
-await connection.invoke("UnregisterFromMethod", streamRequest);
+// Build subscription key exactly like the server and lowercase it
+const subscriptionKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd ?? false}|${streamRequest.axis ?? ""}`.toLowerCase();
+
+await connection.invoke("UnregisterFromMethod", subscriptionKey);
 ```
 
 **Response:**
@@ -660,7 +663,7 @@ await connection.invoke("UnregisterFromMethod", streamRequest);
 {
   "operationType": "UnregisterFromMethod",
   "success": true,
-  "message": "motionpackets|mot_getmotorcurrent|false|1"
+  "message": "motion|mot_getmotorcurrent|false|1"
 }
 ```
 
@@ -752,13 +755,13 @@ connection.on("OnReceivePacket", (packetData) => {
     
     // Process different packet types
     switch (packetData.dataPipe) {
-        case "MotionPackets":
+        case "Motion":
             console.log(`Motion: ${packetData.description} - Axis ${packetData.axis} = ${packetData.value}`);
             break;
-        case "SafetyPackets":
+        case "Safety":
             console.log(`Safety: ${packetData.description} - State: ${packetData.state}`);
             break;
-        case "OnVIFPackets":
+        case "OnVIF":
             console.log(`OnVIF: ${packetData.description} - Zoom: ${packetData.zoom}, Measurement: ${packetData.measurement}`);
             break;
     }
@@ -781,7 +784,7 @@ async function startConnection() {
 // Register for motion packets
 async function registerForMotionPackets() {
     const streamRequest = {
-        dataPipe: "MotionPackets",
+        dataPipe: "Motion",
         description: "MOT_GetMotorCurrent",
         isCmd: false,
         axis: 1
@@ -798,14 +801,15 @@ async function registerForMotionPackets() {
 // Unregister from motion packets
 async function unregisterFromMotionPackets() {
     const streamRequest = {
-        dataPipe: "MotionPackets", 
+        dataPipe: "Motion", 
         description: "MOT_GetMotorCurrent",
         isCmd: false,
         axis: 1
     };
     
     try {
-        await connection.invoke("UnregisterFromMethod", streamRequest);
+        const subscriptionKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd ?? false}|${streamRequest.axis ?? ""}`.toLowerCase();
+        await connection.invoke("UnregisterFromMethod", subscriptionKey);
         console.log("Unregistered from motion packets");
     } catch (err) {
         console.error("Unregistration failed:", err);
@@ -859,7 +863,7 @@ curl -X POST "http://localhost:10901/api/v1/range/reset"
 #### Motion Packets
 ```json
 {
-  "dataPipe": "MotionPackets",
+  "dataPipe": "Motion",
   "description": "MOT_GetMotorCurrent",
   "isCmd": false,
   "axis": 1
@@ -869,7 +873,7 @@ curl -X POST "http://localhost:10901/api/v1/range/reset"
 #### Safety Packets
 ```json
 {
-  "dataPipe": "SafetyPackets", 
+  "dataPipe": "Safety", 
   "description": "DO3_FIRE1",
   "isCmd": true,
   "axis": 0
@@ -879,7 +883,7 @@ curl -X POST "http://localhost:10901/api/v1/range/reset"
 #### OnVIF Packets
 ```json
 {
-  "dataPipe": "OnVIFPackets",
+  "dataPipe": "OnVIF",
   "description": "LRF_REQ",
   "isCmd": false,
   "axis": 0

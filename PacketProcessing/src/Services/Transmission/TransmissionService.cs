@@ -122,11 +122,11 @@ public class TransmissionService : ITransmissionService
                     Success = true 
                 });
 
-            _logger.LogInformation("Sent ack to client {ConnectionId} for stream deregistration: {Key}", toBeRemovedConnectionId, key);
+            _logger.LogInformation("Sent ack to client {ConnectionId} for stream deregistration: {Key}", toBeRemovedConnectionId, subscriptionKey);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during stream deregistration for client {ConnectionId} on stream {Key}", toBeRemovedConnectionId, key);
+            _logger.LogError(ex, "Error during stream deregistration for client {ConnectionId} on stream {Key}", toBeRemovedConnectionId, subscriptionKey);
             
             // Send error ACK
             if (toBeRemovedConnectionId != null)
@@ -134,7 +134,7 @@ public class TransmissionService : ITransmissionService
                 await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
                     new AckDto { 
                         OperationType = OperationType.UnregisterFromMethod, 
-                        Message = request.SubscriptionKey, 
+                        Message = subscriptionKey, 
                         Success = false 
                     });
             }

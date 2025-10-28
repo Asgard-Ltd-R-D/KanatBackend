@@ -33,6 +33,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     
     // Auto-scaling
     private volatile int _currentWorkers;
+    private readonly int _parsedChannelCapacity;
 
     public DbWriterService(
         ILogger<DbWriterService<T>> logger,
@@ -56,6 +57,17 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         _workerCount = 4; // Default start with 4 workers
         _currentWorkers = _workerCount;
 
+        // Determine data pipe key and get parsed channel capacity from appsettings
+        // We reuse the same Channel:Members setting defined per DataPipes section
+        string dataPipeKey = typeof(T).Name switch
+        {
+            nameof(MotionPacketEntity) => "DataPipes:MotionCapture",
+            nameof(SafetyPacketEntity) => "DataPipes:SafetyCapture",
+            nameof(OnVIFPacketEntity) => "DataPipes:OnVIFCapture",
+            _ => "DataPipes:MotionCapture"
+        };
+        _parsedChannelCapacity = configuration.GetValue<int>($"{dataPipeKey}:Channel:Members", 100_000);
+
         var opt = options.Value;
         // Optimize connection string for high-throughput ingestion
         _connectionString =
@@ -74,143 +86,185 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("[DB-WRITER] {Entity} Starting {Workers} worker loops...", typeof(T).Name, _workerCount);
-        
-        // Dictionary to track all worker cancellation tokens (initial + dynamic)
+
         var workerCancellationTokens = new Dictionary<int, CancellationTokenSource>();
-        
-        // Start initial workers with individual cancellation tokens
+        var workerTasks = new Dictionary<int, Task>(); // NEW
+
+        // Push initial parsed channel stats so capacity appears in telemetry immediately
+        UpdateParsedChannelStats();
+
         var workers = new List<Task>();
         for (int i = 0; i < _workerCount; i++)
         {
             int workerId = i;
             var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             workerCancellationTokens[workerId] = workerCts;
-            
-            workers.Add(Task.Factory.StartNew(
+
+            var task = Task.Factory.StartNew(
                 () => WorkerLoopAsync(workerId, workerCts.Token),
                 workerCts.Token,
                 TaskCreationOptions.LongRunning,
-                TaskScheduler.Default).Unwrap());
+                TaskScheduler.Default).Unwrap();
+
+            workers.Add(task);
+            workerTasks[workerId] = task; // NEW
         }
 
         _logger.LogInformation("[DB-WRITER] {Entity} All {Workers} workers started", typeof(T).Name, _workerCount);
-        
-        // Start auto-scaler
+
         var autoScalerTask = Task.Factory.StartNew(
-            () => AutoScalerAsync(stoppingToken, workers, workerCancellationTokens),
+            () => AutoScalerAsync(stoppingToken, workers, workerCancellationTokens, workerTasks), // CHANGED
             stoppingToken,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default).Unwrap();
-        
-        return Task.WhenAll(workers.Concat([autoScalerTask]));
+
+        return Task.WhenAll(workers.Concat(new[] { autoScalerTask }));
     }
-    
-    private async Task AutoScalerAsync(CancellationToken stoppingToken, List<Task> workers, Dictionary<int, CancellationTokenSource> workerCancellationTokens)
+
+    private async Task AutoScalerAsync(
+        CancellationToken stoppingToken,
+        List<Task> workers,
+        Dictionary<int, CancellationTokenSource> workerCancellationTokens,
+        Dictionary<int, Task> workerTasks)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10)); // Check every 10 seconds
-        const double TARGET_LATENCY_MS = 30.0; // Fixed target latency
-        var scalingHighLatencyCount = 0;
-        var scalingLowLatencyCount = 0;
-        int nextWorkerId = _workerCount;
-        
+        var checkInterval = TimeSpan.FromSeconds(10); // sampling cadence
+        using var timer = new PeriodicTimer(checkInterval);
+
+        // Decision windows per your spec
+        var scaleUpWindow   = TimeSpan.FromSeconds(30);
+        var scaleDownWindow = TimeSpan.FromMinutes(1);
+
+        // Cooldowns equal to the windows
+        var scaleUpCooldown   = scaleUpWindow;
+        var scaleDownCooldown = scaleDownWindow;
+
+        TimeSpan highLatencyElapsed = TimeSpan.Zero;
+        TimeSpan lowLatencyElapsed  = TimeSpan.Zero;
+
+        double targetMs = _batchTimeout.TotalMilliseconds; // base latency is _batchTimeout
+        DateTime nextDecisionNotBefore = DateTime.UtcNow;
+
+        int nextWorkerId = workerCancellationTokens.Count;
+
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
                 await timer.WaitForNextTickAsync(stoppingToken);
-                
+
+                // Enforce cooldown after any scale action
+                if (DateTime.UtcNow < nextDecisionNotBefore)
+                {
+                    _logger.LogDebug("[AUTO-SCALER][DB] Cooling down until {Until:o}", nextDecisionNotBefore);
+                    continue;
+                }
+
                 var currentLatency = _statsObserver.DbWriter.GetAverageLatency();
                 var currentWorkers = _currentWorkers;
-                
-                // Scale UP: If latency > 30ms for 30 seconds, add workers until latency ≤ 30ms or max workers reached
-                if (currentLatency > TARGET_LATENCY_MS && currentWorkers < _maxWorkers)
+
+                // Update elapsed windows
+                if (currentLatency > targetMs)
                 {
-                    scalingHighLatencyCount++;
-                    
-                    // Scale up if condition persists for 30 seconds (3 checks)
-                    if (scalingHighLatencyCount >= 3)
-                    {
-                        var newWorkers = currentWorkers + 1;
-                        _logger.LogInformation(
-                            "[AUTO-SCALER] {Entity} SCALING UP: Increasing workers from {Old} to {New} (latency: {Current:F1}ms > {Target:F1}ms)",
-                            typeof(T).Name, currentWorkers, newWorkers, currentLatency, TARGET_LATENCY_MS);
-                        
-                        _currentWorkers = newWorkers;
-                        
-                        // Start a new worker with its own cancellation token
-                        int workerId = nextWorkerId++;
-                        var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                        workerCancellationTokens[workerId] = workerCts;
-                        
-                        _logger.LogInformation(
-                            "[AUTO-SCALER] {Entity} Starting new worker {WorkerId} (total workers: {TotalWorkers})",
-                            typeof(T).Name, workerId, newWorkers);
-                        
-                        workers.Add(Task.Factory.StartNew(
-                            () => WorkerLoopAsync(workerId, workerCts.Token),
-                            workerCts.Token,
-                            TaskCreationOptions.LongRunning,
-                            TaskScheduler.Default).Unwrap());
-                        
-                        // Reset counter
-                        scalingHighLatencyCount = 0;
-                    }
+                    highLatencyElapsed += checkInterval;
+                    lowLatencyElapsed = TimeSpan.Zero;
+                }
+                else if (currentLatency > 0) // 0 means "no samples yet"
+                {
+                    lowLatencyElapsed += checkInterval;
+                    highLatencyElapsed = TimeSpan.Zero;
                 }
                 else
                 {
-                    scalingHighLatencyCount = 0;
+                    highLatencyElapsed = TimeSpan.Zero;
+                    lowLatencyElapsed  = TimeSpan.Zero;
                 }
-                
-                // Scale DOWN: If latency ≤ 30ms for 1 minute (60 seconds), remove workers until latency > 30ms or min workers reached
-                if (currentLatency > 0 && currentLatency <= TARGET_LATENCY_MS && currentWorkers > _minWorkers)
-                {
-                    scalingLowLatencyCount++;
-                    
-                    // Wait 1 minute (6 checks) before scaling down
-                    if (scalingLowLatencyCount >= 6)
-                    {
-                        var newWorkers = currentWorkers - 1;
-                        _logger.LogInformation(
-                            "[AUTO-SCALER] {Entity} SCALING DOWN: Decreasing workers from {Old} to {New} (latency: {Current:F1}ms ≤ {Target:F1}ms for 1 minute)",
-                            typeof(T).Name, currentWorkers, newWorkers, currentLatency, TARGET_LATENCY_MS);
-                        
-                        _currentWorkers = newWorkers;
-                        
-                        // Find and terminate the last worker
-                        var workerToTerminate = workerCancellationTokens.Keys.Max();
-                        if (workerCancellationTokens.TryGetValue(workerToTerminate, out var cts))
-                        {
-                            cts.Cancel();
-                            workerCancellationTokens.Remove(workerToTerminate);
-                            _logger.LogInformation(
-                                "[AUTO-SCALER] {Entity} Terminated worker {WorkerId} (remaining workers: {RemainingWorkers})",
-                                typeof(T).Name, workerToTerminate, newWorkers);
-                        }
-                        
-                        // Reset counter
-                        scalingLowLatencyCount = 0;
-                    }
-                }
-                else
-                {
-                    scalingLowLatencyCount = 0;
-                }
-                
-                // Log status every check
+
                 _logger.LogDebug(
-                    "[AUTO-SCALER] {Entity} Workers={Workers} Latency={Latency:F1}ms Target={Target:F1}ms (HighCount={HighCount} LowCount={LowCount})",
-                    typeof(T).Name, currentWorkers, currentLatency, TARGET_LATENCY_MS, scalingHighLatencyCount, scalingLowLatencyCount);
+                    "[AUTO-SCALER][DB] {Entity} Workers={Workers} Latency={Latency:F1}ms Target={Target:F1}ms | HighElapsed={High}s LowElapsed={Low}s",
+                    typeof(T).Name, currentWorkers, currentLatency, targetMs,
+                    (int)highLatencyElapsed.TotalSeconds, (int)lowLatencyElapsed.TotalSeconds);
+
+                // ---- SCALE UP ----
+                if (currentLatency > targetMs &&
+                    currentWorkers < _maxWorkers &&
+                    highLatencyElapsed >= scaleUpWindow)
+                {
+                    int newWorkers = currentWorkers + 1;
+                    _currentWorkers = newWorkers;
+
+                    int workerId = nextWorkerId++;
+                    var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    workerCancellationTokens[workerId] = workerCts;
+
+                    _logger.LogInformation(
+                        "[AUTO-SCALER][DB] {Entity} SCALING UP: {Old} -> {New} (latency {Latency:F1}ms > target {Target:F1}ms for {Window}s)",
+                        typeof(T).Name, currentWorkers, newWorkers, currentLatency, targetMs, (int)scaleUpWindow.TotalSeconds);
+
+                    var task = Task.Factory.StartNew(
+                        () => WorkerLoopAsync(workerId, workerCts.Token),
+                        workerCts.Token,
+                        TaskCreationOptions.LongRunning,
+                        TaskScheduler.Default).Unwrap();
+
+                    workers.Add(task);
+                    workerTasks[workerId] = task;
+
+                    // reset window and start cooldown
+                    highLatencyElapsed = TimeSpan.Zero;
+                    nextDecisionNotBefore = DateTime.UtcNow + scaleUpCooldown;
+                    continue;
+                }
+
+                // ---- SCALE DOWN ----
+                if (currentLatency > 0 &&
+                    currentLatency <= targetMs &&
+                    currentWorkers > _minWorkers &&
+                    lowLatencyElapsed >= scaleDownWindow)
+                {
+                    int newWorkers = currentWorkers - 1;
+                    _currentWorkers = newWorkers;
+
+                    var workerToTerminate = workerCancellationTokens.Keys.Max();
+
+                    _logger.LogInformation(
+                        "[AUTO-SCALER][DB] {Entity} SCALING DOWN: {Old} -> {New} (latency {Latency:F1}ms ≤ target {Target:F1}ms for {Window}s)",
+                        typeof(T).Name, currentWorkers, newWorkers, currentLatency, targetMs, (int)scaleDownWindow.TotalSeconds);
+
+                    if (workerCancellationTokens.TryGetValue(workerToTerminate, out var cts))
+                    {
+                        // Signal graceful stop; worker will flush then exit
+                        cts.Cancel();
+
+                        // Await the worker task so it actually finishes before we proceed
+                        if (workerTasks.TryGetValue(workerToTerminate, out var wt))
+                        {
+                            try { await wt; }
+                            catch (OperationCanceledException) { /* normal */ }
+                            catch { /* worker already logs */ }
+
+                            workerTasks.Remove(workerToTerminate);
+                            workers.Remove(wt);
+                        }
+
+                        cts.Dispose();
+                        workerCancellationTokens.Remove(workerToTerminate);
+
+                        _logger.LogInformation(
+                            "[AUTO-SCALER][DB] {Entity} Worker {WorkerId} terminated gracefully (remaining {Remaining})",
+                            typeof(T).Name, workerToTerminate, newWorkers);
+                    }
+
+                    // reset window and start cooldown
+                    lowLatencyElapsed = TimeSpan.Zero;
+                    nextDecisionNotBefore = DateTime.UtcNow + scaleDownCooldown;
+                    continue;
+                }
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* normal */ }
         finally
         {
-            // Clean up all worker cancellation tokens
-            foreach (var cts in workerCancellationTokens.Values)
-            {
-                cts.Cancel();
-                cts.Dispose();
-            }
+            // Caller cleans up remaining CTS
         }
     }
 
@@ -411,6 +465,8 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
                 _ => "UnknownParsed"
             };
             _statsObserver.AddChannelLatency(channelName, dbWriteLatencyMs);
+            // Update parsed channel stats immediately so AvgLatencyMs reflects latest measurement
+            UpdateParsedChannelStats();
             
             var stats = GetStats();
             _logger.LogInformation(
@@ -443,6 +499,8 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
                     _ => "UnknownParsed"
                 };
                 _statsObserver.AddChannelLatency(channelName, dbWriteLatencyMs);
+                // Update parsed channel stats immediately so AvgLatencyMs reflects latest measurement
+                UpdateParsedChannelStats();
 
                 var stats = GetStats();
                 _logger.LogInformation(
@@ -485,13 +543,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     
     private int GetChannelCapacity()
     {
-        // Get capacity from configuration based on packet type
-        return typeof(T).Name switch
-        {
-            nameof(MotionPacketEntity) => 1_000_000,   // From configuration
-            nameof(SafetyPacketEntity) => 1_000_000,  // From configuration
-            nameof(OnVIFPacketEntity) => 100_000,     // From configuration
-            _ => 100_000
-        };
+        // Capacity read from appsettings per DataPipes section
+        return _parsedChannelCapacity;
     }
 }

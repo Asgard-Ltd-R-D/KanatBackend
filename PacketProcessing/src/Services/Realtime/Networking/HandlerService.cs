@@ -10,6 +10,7 @@ using System.Buffers;
 using PacketProcessing.Utils.Observers;
 using PacketProcessing.Services.Transmission;
 using PacketProcessing.Entities.Packet;
+using System.Linq;
 namespace PacketProcessing.Services.Realtime.Networking;
 
 public class HandlerService<T> : BackgroundService, IHandlerService<T> where T : BasePacketEntity
@@ -26,7 +27,9 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
     // Channels
     private readonly Channel<RawPacketEvent> _rawChannel; // device -> handler
     private readonly Channel<T> _parsedChannel;           // handler -> DbWriter
-
+    private readonly int _rawChannelCapacity;
+    private readonly int _parsedChannelCapacity;
+    
     private int _workerCount;
     private readonly int _minWorkers;
     private readonly int _maxWorkers;
@@ -40,9 +43,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
     
     // Auto-scaling
     private volatile int _currentWorkers;
-    private readonly CancellationTokenSource _workersCancellation = new();
 
-    private const int RAW_READ_BURST = 64; // Smaller burst for lower latency
+    private const int RAW_READ_BURST = 128; // Smaller burst for lower latency
 
     private IDisposable? _subscription;
 
@@ -63,14 +65,18 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
         _parseMapper = parseMapper;
         _statsObserver = statsObserver;
         
-        // bounded channel for raw events with increased capacity
+        // bounded channel for raw events with capacity from appsettings (DataPipes:<Pipe>:Channel:Members)
         // Wait mode ensures no packets are dropped (capture may block if processing too slow)
+        _rawChannelCapacity = configuration.GetValue<int>($"{dataPipeName}:Channel:Members", 500_000);
         _rawChannel = Channel.CreateBounded<RawPacketEvent>(
-            new BoundedChannelOptions(500_000) { 
+            new BoundedChannelOptions(_rawChannelCapacity) { 
                 SingleReader = false,  // Multiple workers read
                 SingleWriter = false,  // DeviceService may write from multiple threads via Task.Run
                 FullMode = BoundedChannelFullMode.Wait  // Block to guarantee delivery
             });
+        
+        // Parsed channel capacity is the same configured value (DI created the channel with it)
+        _parsedChannelCapacity = configuration.GetValue<int>($"{dataPipeName}:Channel:Members", _rawChannelCapacity);
 
         _protocol = configuration.GetValue<string>($"{dataPipeName}:Network:Protocol") ?? "";
         _ips = configuration.GetSection($"{dataPipeName}:Network:IPs").Get<IEnumerable<string>>() ?? [];
@@ -88,8 +94,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
             configuration.GetValue<int>("HubTransmission:IntervalMs", 30));
 
         _logger.LogInformation(
-            "[HANDLER-SERVICE] {Handler} initialized with {Workers} workers (RawChannelCapacity:500K, ParsedChannelCapacity:{ParsedCap}, every {IntervalMs}ms",
-            typeof(T).Name, _workerCount, parsedChannel.Reader.CanCount ? "?" : "Bounded", _transmissionInterval.TotalMilliseconds);
+            "[HANDLER-SERVICE] {Handler} initialized with {Workers} workers (RawChannelCapacity:{RawCap}, ParsedChannelCapacity:{ParsedCap}, every {IntervalMs}ms)",
+            typeof(T).Name, _workerCount, _rawChannelCapacity, _parsedChannelCapacity, _transmissionInterval.TotalMilliseconds);
     }
 
     #region IHandlerService
@@ -153,14 +159,14 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
             
             // Update channel stats after incrementing
             var currentCount = Interlocked.Read(ref _rawChannelCount);
-            var utilization = (double)currentCount / 500_000 * 100;
+            var utilization = (double)currentCount / _rawChannelCapacity * 100;
             
             if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
-                _statsObserver.UpdateChannelStats("MotionRaw", 500_000, (int)currentCount, utilization, _currentWorkers);
+                _statsObserver.UpdateChannelStats("MotionRaw", _rawChannelCapacity, (int)currentCount, utilization, _currentWorkers);
             else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
-                _statsObserver.UpdateChannelStats("SafetyRaw", 500_000, (int)currentCount, utilization, _currentWorkers);
+                _statsObserver.UpdateChannelStats("SafetyRaw", _rawChannelCapacity, (int)currentCount, utilization, _currentWorkers);
             else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
-                _statsObserver.UpdateChannelStats("OnvifRaw", 500_000, (int)currentCount, utilization, _currentWorkers);
+                _statsObserver.UpdateChannelStats("OnvifRaw", _rawChannelCapacity, (int)currentCount, utilization, _currentWorkers);
             
             return;
         }
@@ -179,14 +185,14 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
         
         // Update channel stats after incrementing
         var finalCount = Interlocked.Read(ref _rawChannelCount);
-        var finalUtilization = (double)finalCount / 500_000 * 100;
+        var finalUtilization = (double)finalCount / _rawChannelCapacity * 100;
         
         if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
-            _statsObserver.UpdateChannelStats("MotionRaw", 500_000, (int)finalCount, finalUtilization, _currentWorkers);
+            _statsObserver.UpdateChannelStats("MotionRaw", _rawChannelCapacity, (int)finalCount, finalUtilization, _currentWorkers);
         else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
-            _statsObserver.UpdateChannelStats("SafetyRaw", 500_000, (int)finalCount, finalUtilization, _currentWorkers);
+            _statsObserver.UpdateChannelStats("SafetyRaw", _rawChannelCapacity, (int)finalCount, finalUtilization, _currentWorkers);
         else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
-            _statsObserver.UpdateChannelStats("OnvifRaw", 500_000, (int)finalCount, finalUtilization, _currentWorkers);
+            _statsObserver.UpdateChannelStats("OnvifRaw", _rawChannelCapacity, (int)finalCount, finalUtilization, _currentWorkers);
     }
 
     public void OnError(Exception error) =>
@@ -206,7 +212,11 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
     {
         // Dictionary to track all worker cancellation tokens (initial + dynamic)
         var workerCancellationTokens = new Dictionary<int, CancellationTokenSource>();
-        
+        var workerTasks = new Dictionary<int, Task>();
+
+        // Push initial raw channel stats so capacity appears in telemetry immediately
+        UpdateRawChannelStats();
+
         // Start initial workers with individual cancellation tokens
         var workers = new List<Task>();
         for (int i = 0; i < _workerCount; i++)
@@ -215,129 +225,178 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
             var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             workerCancellationTokens[workerId] = workerCts;
             
-            workers.Add(Task.Factory.StartNew(
+            var task = Task.Factory.StartNew(
                 () => WorkerLoopAsync(workerId, workerCts.Token),
                 workerCts.Token,
                 TaskCreationOptions.LongRunning,
-                TaskScheduler.Default).Unwrap());
+                TaskScheduler.Default).Unwrap();
+
+            workers.Add(task);
+            workerTasks[workerId] = task;
         }
         
         // Start auto-scaler
         var autoScalerTask = Task.Factory.StartNew(
-            () => AutoScalerAsync(stoppingToken, workers, workerCancellationTokens),
+            () => AutoScalerAsync(stoppingToken, workers, workerCancellationTokens, workerTasks), // CHANGED
             stoppingToken,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default).Unwrap();
 
-        return Task.WhenAll(workers.Concat([autoScalerTask]));
+        return Task.WhenAll(workers.Concat(new[] { autoScalerTask }));
     }
-    
-    private async Task AutoScalerAsync(CancellationToken stoppingToken, List<Task> workers, Dictionary<int, CancellationTokenSource> workerCancellationTokens)
+
+    private async Task AutoScalerAsync(
+        CancellationToken stoppingToken,
+        List<Task> workers,
+        Dictionary<int, CancellationTokenSource> workerCancellationTokens,
+        Dictionary<int, Task> workerTasks)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10)); // Check every 10 seconds
-        const double TARGET_LATENCY_MS = 30.0; // Fixed target latency
-        var scalingHighLatencyCount = 0;
-        var scalingLowLatencyCount = 0;
-        int nextWorkerId = _workerCount;
-        
+        var checkInterval = TimeSpan.FromSeconds(10);      // sampling cadence
+        using var timer = new PeriodicTimer(checkInterval);
+
+        // Windows you requested
+        var scaleUpWindow   = TimeSpan.FromSeconds(30);
+        var scaleDownWindow = TimeSpan.FromMinutes(1);
+
+        // Cooldowns equal to the windows, per your rule
+        var scaleUpCooldown   = scaleUpWindow;
+        var scaleDownCooldown = scaleDownWindow;
+
+        // Elapsed trackers
+        TimeSpan highLatencyElapsed = TimeSpan.Zero;
+        TimeSpan lowLatencyElapsed  = TimeSpan.Zero;
+
+        // Last scale action time (to enforce cooldown)
+        DateTime? lastScaleAt = null;
+
+        // Target latency is batch timeout (your rule)
+        double targetMs = _batchTimeout.TotalMilliseconds;
+
+        // Next allowed time to make any scaling decision (enforced cooldown)
+        DateTime nextDecisionNotBefore = DateTime.UtcNow;
+
+        int nextWorkerId = workerCancellationTokens.Count; // continue ids after initial set
+
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
                 await timer.WaitForNextTickAsync(stoppingToken);
-                
+
+                // Enforce cooldown after any scale action
+                if (DateTime.UtcNow < nextDecisionNotBefore)
+                {
+                    _logger.LogDebug("[AUTO-SCALER] Cooling down until {Until:o}", nextDecisionNotBefore);
+                    continue;
+                }
+
                 var currentLatency = _statsObserver.Handler.GetAverageLatency();
                 var currentWorkers = _currentWorkers;
-                
-                // Scale UP: If latency > 30ms for 30 seconds, add workers until latency ≤ 30ms or max workers reached
-                if (currentLatency > TARGET_LATENCY_MS && currentWorkers < _maxWorkers)
+
+                // Update elapsed windows
+                if (currentLatency > targetMs)
                 {
-                    scalingHighLatencyCount++;
-                    
-                    // Scale up if condition persists for 30 seconds (3 checks)
-                    if (scalingHighLatencyCount >= 3)
-                    {
-                        var newWorkers = currentWorkers + 1;
-                        _logger.LogInformation(
-                            "[AUTO-SCALER] {Entity} SCALING UP: Increasing workers from {Old} to {New} (latency: {Current:F1}ms > {Target:F1}ms)",
-                            typeof(T).Name, currentWorkers, newWorkers, currentLatency, TARGET_LATENCY_MS);
-                        
-                        _currentWorkers = newWorkers;
-                        
-                        // Start a new worker with its own cancellation token
-                        int workerId = nextWorkerId++;
-                        var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                        workerCancellationTokens[workerId] = workerCts;
-                        
-                        _logger.LogInformation(
-                            "[AUTO-SCALER] {Entity} Starting new worker {WorkerId} (total workers: {TotalWorkers})",
-                            typeof(T).Name, workerId, newWorkers);
-                        
-                        workers.Add(Task.Factory.StartNew(
-                            () => WorkerLoopAsync(workerId, workerCts.Token),
-                            workerCts.Token,
-                            TaskCreationOptions.LongRunning,
-                            TaskScheduler.Default).Unwrap());
-                        
-                        // Reset counter
-                        scalingHighLatencyCount = 0;
-                    }
+                    highLatencyElapsed += checkInterval;
+                    lowLatencyElapsed = TimeSpan.Zero;
+                }
+                else if (currentLatency > 0) // treat 0 as "no signal yet"
+                {
+                    lowLatencyElapsed += checkInterval;
+                    highLatencyElapsed = TimeSpan.Zero;
                 }
                 else
                 {
-                    scalingHighLatencyCount = 0;
+                    // No samples; don't accumulate either window
+                    highLatencyElapsed = TimeSpan.Zero;
+                    lowLatencyElapsed  = TimeSpan.Zero;
                 }
-                
-                // Scale DOWN: If latency ≤ 30ms for 1 minute (60 seconds), remove workers until latency > 30ms or min workers reached
-                if (currentLatency > 0 && currentLatency <= TARGET_LATENCY_MS && currentWorkers > _minWorkers)
-                {
-                    scalingLowLatencyCount++;
-                    
-                    // Wait 1 minute (6 checks) before scaling down
-                    if (scalingLowLatencyCount >= 6)
-                    {
-                        var newWorkers = currentWorkers - 1;
-                        _logger.LogInformation(
-                            "[AUTO-SCALER] {Entity} SCALING DOWN: Decreasing workers from {Old} to {New} (latency: {Current:F1}ms ≤ {Target:F1}ms for 1 minute)",
-                            typeof(T).Name, currentWorkers, newWorkers, currentLatency, TARGET_LATENCY_MS);
-                        
-                        _currentWorkers = newWorkers;
-                        
-                        // Find and terminate the last worker
-                        var workerToTerminate = workerCancellationTokens.Keys.Max();
-                        if (workerCancellationTokens.TryGetValue(workerToTerminate, out var cts))
-                        {
-                            cts.Cancel();
-                            workerCancellationTokens.Remove(workerToTerminate);
-                            _logger.LogInformation(
-                                "[AUTO-SCALER] {Entity} Terminated worker {WorkerId} (remaining workers: {RemainingWorkers})",
-                                typeof(T).Name, workerToTerminate, newWorkers);
-                        }
-                        
-                        // Reset counter
-                        scalingLowLatencyCount = 0;
-                    }
-                }
-                else
-                {
-                    scalingLowLatencyCount = 0;
-                }
-                
-                // Log status every check
+
                 _logger.LogDebug(
-                    "[AUTO-SCALER] {Entity} Workers={Workers} Latency={Latency:F1}ms Target={Target:F1}ms (HighCount={HighCount} LowCount={LowCount})",
-                    typeof(T).Name, currentWorkers, currentLatency, TARGET_LATENCY_MS, scalingHighLatencyCount, scalingLowLatencyCount);
+                    "[AUTO-SCALER] {Entity} Workers={Workers} Latency={Latency:F1}ms Target={Target:F1}ms | HighElapsed={High}s LowElapsed={Low}s",
+                    typeof(T).Name, currentWorkers, currentLatency, targetMs,
+                    (int)highLatencyElapsed.TotalSeconds, (int)lowLatencyElapsed.TotalSeconds);
+
+                // --- SCALE UP ---
+                if (currentLatency > targetMs &&
+                    currentWorkers < _maxWorkers &&
+                    highLatencyElapsed >= scaleUpWindow)
+                {
+                    int newWorkers = currentWorkers + 1;
+                    _currentWorkers = newWorkers;
+
+                    int workerId = nextWorkerId++;
+                    var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    workerCancellationTokens[workerId] = workerCts;
+
+                    _logger.LogInformation(
+                        "[AUTO-SCALER] {Entity} SCALING UP: {Old} -> {New} (latency {Latency:F1}ms > target {Target:F1}ms for {Window}s)",
+                        typeof(T).Name, currentWorkers, newWorkers, currentLatency, targetMs, (int)scaleUpWindow.TotalSeconds);
+
+                    var task = Task.Factory.StartNew(
+                        () => WorkerLoopAsync(workerId, workerCts.Token),
+                        workerCts.Token,
+                        TaskCreationOptions.LongRunning,
+                        TaskScheduler.Default).Unwrap();
+
+                    workers.Add(task);
+                    workerTasks[workerId] = task;
+
+                    // reset window and set cooldown
+                    highLatencyElapsed = TimeSpan.Zero;
+                    lastScaleAt = DateTime.UtcNow;
+                    nextDecisionNotBefore = lastScaleAt.Value + scaleUpCooldown;
+                    continue; // skip further checks this tick
+                }
+
+                // --- SCALE DOWN ---
+                if (currentLatency > 0 &&
+                    currentLatency <= targetMs &&
+                    currentWorkers > _minWorkers &&
+                    lowLatencyElapsed >= scaleDownWindow)
+                {
+                    int newWorkers = currentWorkers - 1;
+                    _currentWorkers = newWorkers;
+
+                    // choose the highest id to terminate
+                    var workerToTerminate = workerCancellationTokens.Keys.Max();
+
+                    _logger.LogInformation(
+                        "[AUTO-SCALER] {Entity} SCALING DOWN: {Old} -> {New} (latency {Latency:F1}ms ≤ target {Target:F1}ms for {Window}s)",
+                        typeof(T).Name, currentWorkers, newWorkers, currentLatency, targetMs, (int)scaleDownWindow.TotalSeconds);
+
+                    if (workerCancellationTokens.TryGetValue(workerToTerminate, out var cts))
+                    {
+                        // signal graceful stop; worker will flush then exit
+                        cts.Cancel();
+
+                        // Await the task to ensure it "finishes" before we proceed
+                        if (workerTasks.TryGetValue(workerToTerminate, out var wt))
+                        {
+                            try { await wt; } catch (OperationCanceledException) { } catch { /* already logged in worker */ }
+                            workerTasks.Remove(workerToTerminate);
+                            workers.Remove(wt);
+                        }
+
+                        cts.Dispose();
+                        workerCancellationTokens.Remove(workerToTerminate);
+
+                        _logger.LogInformation(
+                            "[AUTO-SCALER] {Entity} Worker {WorkerId} terminated gracefully (remaining {Remaining})",
+                            typeof(T).Name, workerToTerminate, newWorkers);
+                    }
+
+                    // reset window and set cooldown
+                    lowLatencyElapsed = TimeSpan.Zero;
+                    lastScaleAt = DateTime.UtcNow;
+                    nextDecisionNotBefore = lastScaleAt.Value + scaleDownCooldown;
+                    continue; // skip further checks this tick
+                }
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* normal on shutdown */ }
         finally
         {
-            // Clean up all worker cancellation tokens
-            foreach (var cts in workerCancellationTokens.Values)
-            {
-                cts.Cancel();
-                cts.Dispose();
-            }
+            // ensure all pending cancels get disposed by caller
         }
     }
 
@@ -461,6 +520,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
                                 _ => "UnknownRaw"
                             };
                             _statsObserver.AddChannelLatency(channelName, processingLatencyMs);
+                            // Push fresh per-channel stats so AvgLatencyMs reflects latest measurement
+                            UpdateRawChannelStats();
                             
                             var backpressureCount = await FlushBatchInternal(segment, workerId, batchNumber, token);
                             
@@ -507,6 +568,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
                             _ => "UnknownRaw"
                         };
                         _statsObserver.AddChannelLatency(channelName, processingLatencyMs);
+                        // Push fresh per-channel stats so AvgLatencyMs reflects latest measurement
+                        UpdateRawChannelStats();
                         
                         var backpressureCount = await FlushBatchInternal(segment, workerId, batchNumber, token);
                         
@@ -596,6 +659,13 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
                 _statsObserver.Handler.IncrementBackpressure();
                 backpressureCount++;
                 await _parsedChannel.Writer.WriteAsync(parsed, token);
+                // Successfully enqueued after waiting; reflect in parsed-channel count
+                _statsObserver.DbWriter.IncrementChannelCount();
+            }
+            else
+            {
+                // Successfully enqueued immediately; reflect in parsed-channel count
+                _statsObserver.DbWriter.IncrementChannelCount();
             }
         }
 
@@ -611,7 +681,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T> where T :
     private void UpdateRawChannelStats()
     {
         var rawChannelCount = Interlocked.Read(ref _rawChannelCount);
-        var rawCapacity = 500_000; // Hardcoded capacity from channel creation
+        var rawCapacity = _rawChannelCapacity;
         var rawUtilization = (double)rawChannelCount / rawCapacity * 100;
         
         // Determine channel name based on packet type

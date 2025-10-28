@@ -108,9 +108,9 @@ public class CustomHub : Hub
         try 
         {
             ArgumentNullException.ThrowIfNull(subscriptionKey);
-            _logger.LogInformation("Client {ConnectionId} is unregistering from method {SubscriptionKey}", Context.ConnectionId, SubscriptionKey);
+            _logger.LogInformation("Client {ConnectionId} is unregistering from method {SubscriptionKey}", Context.ConnectionId, subscriptionKey);
             await _transmissionService.DeregisterStreamAsync(subscriptionKey);
-            _logger.LogInformation("Client {ConnectionId} is unregistered from method {SubscriptionKey}", Context.ConnectionId, SubscriptionKey);
+            _logger.LogInformation("Client {ConnectionId} is unregistered from method {SubscriptionKey}", Context.ConnectionId, subscriptionKey);
         }
         catch (Exception ex)
         {

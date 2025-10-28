@@ -92,35 +92,33 @@ public class TransmissionService : ITransmissionService
         }
     }
     
-    public async Task DeregisterStreamAsync(StreamRequestDto request)
+    public async Task DeregisterStreamAsync(string subscriptionKey)
     {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var key = request.SubscriptionKey;
-        var toBeRemovedConnectionId = _streamKeyToConnectionIdDict.TryGetValue(key, out var connectionId) ? connectionId : null;
+        ArgumentNullException.ThrowIfNull(subscriptionKey);
+        var toBeRemovedConnectionId = _streamKeyToConnectionIdDict.TryGetValue(subscriptionKey, out var connectionId) ? connectionId : null;
         
         try
         {
             if (toBeRemovedConnectionId == null)
             {
-                _logger.LogWarning("Stream not found for deregistration: {Key}, ignoring deregistration", key);
+                _logger.LogWarning("Stream not found for deregistration: {Key}, ignoring deregistration", subscriptionKey);
                 return;
             }
 
-            if (_streamKeyToConnectionIdDict.TryRemove(key, out _))
+            if (_streamKeyToConnectionIdDict.TryRemove(subscriptionKey, out _))
             {
-                _logger.LogInformation("Client {ConnectionId} unregistered from stream {Key}", toBeRemovedConnectionId, key);
+                _logger.LogInformation("Client {ConnectionId} unregistered from stream {Key}", toBeRemovedConnectionId, subscriptionKey);
             }
             else
             {
-                _logger.LogWarning("Client {ConnectionId} not found for deregistration: {Key}, ignoring deregistration", toBeRemovedConnectionId, key);
+                _logger.LogWarning("Client {ConnectionId} not found for deregistration: {Key}, ignoring deregistration", toBeRemovedConnectionId, subscriptionKey);
             }
 
             // Send success ACK
             await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
                 new AckDto { 
                     OperationType = OperationType.UnregisterFromMethod, 
-                    Message = request.SubscriptionKey, 
+                    Message = subscriptionKey, 
                     Success = true 
                 });
 

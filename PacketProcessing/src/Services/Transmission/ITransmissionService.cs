@@ -18,7 +18,7 @@ public interface ITransmissionService : IObserver<BasePacketEntity>
     /// <summary>
     /// Deregister a stream request
     /// </summary>
-    Task DeregisterStreamAsync(StreamRequestDto request);
+    Task DeregisterStreamAsync(string subscriptionKey);
 
     /// <summary>
     /// Unregister a stream request by connection ID

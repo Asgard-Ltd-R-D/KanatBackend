@@ -80,7 +80,15 @@ public interface ITelemetryService
     /// <param name="capacity">Channel capacity</param>
     /// <param name="currentSize">Current channel size</param>
     /// <param name="utilizationPercent">Channel utilization percentage</param>
-    void UpdateChannelStats(string channelName, int capacity, int currentSize, double utilizationPercent);
+    /// <param name="workerCount">Number of workers processing this channel</param>
+    void UpdateChannelStats(string channelName, int capacity, int currentSize, double utilizationPercent, int workerCount = 0);
+    
+    /// <summary>
+    /// Adds latency measurement for a specific channel
+    /// </summary>
+    /// <param name="channelName">Name of the channel</param>
+    /// <param name="latencyMs">Latency in milliseconds</param>
+    void AddChannelLatency(string channelName, double latencyMs);
     
     /// <summary>
     /// Resets all telemetry counters

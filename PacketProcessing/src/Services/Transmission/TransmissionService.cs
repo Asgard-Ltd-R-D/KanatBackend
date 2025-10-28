@@ -120,7 +120,7 @@ public class TransmissionService : ITransmissionService
             await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
                 new AckDto { 
                     OperationType = OperationType.UnregisterFromMethod, 
-                    Message = request, 
+                    Message = request.SubscriptionKey, 
                     Success = true 
                 });
 
@@ -136,7 +136,7 @@ public class TransmissionService : ITransmissionService
                 await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
                     new AckDto { 
                         OperationType = OperationType.UnregisterFromMethod, 
-                        Message = request, 
+                        Message = request.SubscriptionKey, 
                         Success = false 
                     });
             }

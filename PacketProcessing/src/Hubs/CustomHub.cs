@@ -103,18 +103,18 @@ public class CustomHub : Hub
         }
     }
 
-    public async Task UnregisterFromMethod(StreamRequestDto requestStream)
+    public async Task UnregisterFromMethod(string subscriptionKey)
     {
         try 
         {
-            ArgumentNullException.ThrowIfNull(requestStream.SubscriptionKey);
-            _logger.LogInformation("Client {ConnectionId} is unregistering from method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
-            await _transmissionService.DeregisterStreamAsync(requestStream);
-            _logger.LogInformation("Client {ConnectionId} is unregistered from method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
+            ArgumentNullException.ThrowIfNull(subscriptionKey);
+            _logger.LogInformation("Client {ConnectionId} is unregistering from method {SubscriptionKey}", Context.ConnectionId, subscriptionKey);
+            await _transmissionService.DeregisterStreamAsync(subscriptionKey);
+            _logger.LogInformation("Client {ConnectionId} is unregistered from method {SubscriptionKey}", Context.ConnectionId, subscriptionKey);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error unregistering from method {SubscriptionKey}", requestStream.SubscriptionKey);
+            _logger.LogError(ex, "Error unregistering from method {SubscriptionKey}", subscriptionKey);
             throw;
         }
     }

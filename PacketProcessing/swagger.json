@@ -10,12 +10,8 @@
   },
   "servers": [
     {
-      "url": "https://localhost:7001",
+      "url": "http://localhost:10901",
       "description": "Development server"
-    },
-    {
-      "url": "https://localhost:5001",
-      "description": "Production server"
     }
   ],
   "tags": [
@@ -25,7 +21,7 @@
     },
     {
       "name": "Range Status",
-      "description": "Operations for getting system status, devices, and resetting statistics"
+      "description": "Operations for devices list and resetting statistics"
     },
     {
       "name": "Range Repository",
@@ -183,6 +179,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResult"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to start services",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -213,6 +216,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResult"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to stop services",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -311,56 +321,21 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultStringArray"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/range/status": {
-      "get": {
-        "tags": ["Range Status"],
-        "summary": "Get system status",
-        "description": "Gets the status of the current mode and system",
-        "operationId": "GetStatus",
-        "responses": {
-          "200": {
-            "description": "Status retrieved successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResponseResultObject"
                 },
                 "example": {
-                  "success": true,
-                  "data": {
-                    "mode": "Realtime",
-                    "isActive": true,
-                    "captured": 1250,
-                    "processed": 1200,
-                    "errors": 5
-                  },
-                  "errorMessage": null,
-                  "statusCode": 200,
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to get available devices",
+                  "statusCode": 500,
                   "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
-          },
-          "500": {
-            "description": "Failed to get status",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResponseResultObject"
-                }
-              }
-            }
           }
         }
       }
     },
+    
     "/api/v1/range/reset": {
       "post": {
         "tags": ["Range Status"],
@@ -384,6 +359,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResult"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to reset statistics",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -439,6 +421,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultPaginatedRange"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to get ranges",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -484,6 +473,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultRange"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to create range",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -544,6 +540,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultRange"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to get range",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -595,6 +598,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultRange"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Range not found",
+                  "statusCode": 404,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -605,6 +615,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultRange"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to update range",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -646,6 +663,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResult"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Range not found",
+                  "statusCode": 404,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -656,6 +680,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResult"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to delete range",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -717,6 +748,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultString"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to clear packets",
+                  "statusCode": 400,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -727,6 +765,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultString"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Internal server error",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -767,6 +812,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultRangeArray"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to get all ranges",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -812,6 +864,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseResultInteger"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to delete all ranges",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
                 }
               }
             }
@@ -819,82 +878,164 @@
         }
       }
     },
-    "/hub/packets": {
-      "get": {
-        "tags": ["SignalR Hub"],
-        "summary": "SignalR Hub Connection",
-        "description": "WebSocket endpoint for real-time packet data transmission and playback control",
-        "operationId": "SignalRHubConnection",
-        "parameters": [
-          {
-            "name": "access_token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Optional access token for authentication"
-          }
-        ],
-        "responses": {
-          "101": {
-            "description": "Switching Protocols - WebSocket connection established"
-          },
-          "400": {
-            "description": "Bad Request - Invalid connection request"
-          },
-          "401": {
-            "description": "Unauthorized - Invalid or missing authentication"
-          }
-        }
-      }
-    },
-    "/hub/packets/negotiate": {
+    
+    "/hubs/packets/RegisterToMethod": {
       "post": {
         "tags": ["SignalR Hub"],
-        "summary": "SignalR Hub Negotiation",
-        "description": "Negotiates the SignalR connection parameters",
-        "operationId": "SignalRHubNegotiate",
+        "summary": "Invoke RegisterToMethod (SignalR)",
+        "description": "Logical documentation endpoint for invoking the SignalR hub method RegisterToMethod. This is not an HTTP API call; use a SignalR client to call the hub method.",
+        "operationId": "HubRegisterToMethod",
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "protocol": {
-                    "type": "string",
-                    "description": "SignalR protocol version"
-                  },
-                  "version": {
-                    "type": "integer",
-                    "description": "Protocol version number"
-                  }
-                }
+              "schema": { "$ref": "#/components/schemas/StreamRequestDto" },
+              "example": {
+                "dataPipe": "Motion",
+                "description": "MOT_GetMotorSpeed",
+                "isCmd": false,
+                "axis": 0
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Negotiation successful",
+            "description": "ACK emitted by the hub via the 'Ack' event",
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "connectionId": {
-                      "type": "string",
-                      "description": "Unique connection identifier"
-                    },
-                    "url": {
-                      "type": "string",
-                      "description": "WebSocket connection URL"
-                    },
-                    "accessToken": {
-                      "type": "string",
-                      "description": "Access token for the connection"
+                "schema": { "$ref": "#/components/schemas/AckDto" },
+                "examples": {
+                  "success": {
+                    "summary": "Registration success",
+                    "value": {
+                      "operationType": "RegisterToMethod",
+                      "success": true,
+                      "message": {
+                        "dataPipe": "Motion",
+                        "description": "MOT_GetMotorSpeed",
+                        "isCmd": false,
+                        "axis": 0,
+                        "subscriptionKey": "motion|mot_getmotorspeed|false|0"
+                      }
                     }
+                  },
+                  "failure": {
+                    "summary": "Registration failure",
+                    "value": {
+                      "operationType": "RegisterToMethod",
+                      "success": false,
+                      "message": { "error": "Registration failed" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/hubs/packets/UnregisterFromMethod": {
+      "post": {
+        "tags": ["SignalR Hub"],
+        "summary": "Invoke UnregisterFromMethod (SignalR)",
+        "description": "Logical documentation endpoint for invoking the SignalR hub method UnregisterFromMethod. This is not an HTTP API call; use a SignalR client to call the hub method.",
+        "operationId": "HubUnregisterFromMethod",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "string" },
+              "example": "motion|mot_getmotorspeed|false|0"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ACK emitted by the hub via the 'Ack' event",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AckDto" },
+                "examples": {
+                  "success": {
+                    "summary": "Unregistration success",
+                    "value": {
+                      "operationType": "UnregisterFromMethod",
+                      "success": true,
+                      "message": "motion|mot_getmotorspeed|false|0"
+                    }
+                  },
+                  "failure": {
+                    "summary": "Unregistration failure",
+                    "value": {
+                      "operationType": "UnregisterFromMethod",
+                      "success": false,
+                      "message": "motion|mot_getmotorspeed|false|0"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "OnReceivePacket": {
+      "get": {
+        "tags": ["SignalR Hub"],
+        "summary": "OnReceivePacket (SignalR event)",
+        "description": "Documentation for the server->client event payload sent when a subscribed packet arrives. This is not an HTTP endpoint.",
+        "operationId": "HubOnReceivePacketEvent",
+        "responses": {
+          "200": {
+            "description": "Example payload of PlainDataDto",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PlainDataDto" },
+                "examples": {
+                  "motion": {
+                    "summary": "Motion packet sample",
+                    "value": { "subscriptionKey": "motion|mot_getmotorspeed|false|0", "timestamp": 1730138400000, "value": 12.34 }
+                  },
+                  "safety": {
+                    "summary": "Safety packet sample",
+                    "value": { "subscriptionKey": "safety|do3_fire1|false|", "timestamp": 1730138400500, "value": 1 }
+                  },
+                  "onvif": {
+                    "summary": "OnVIF packet sample",
+                    "value": { "subscriptionKey": "onvif|lrf_sts|false|", "timestamp": 1730138401000, "value": 1500.0 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Ack": {
+      "get": {
+        "tags": ["SignalR Hub"],
+        "summary": "Ack (SignalR event)",
+        "description": "Documentation for the server->client ACK event emitted for hub operations (register/unregister). This is not an HTTP endpoint.",
+        "operationId": "HubAckEvent",
+        "responses": {
+          "200": {
+            "description": "Example payload of AckDto",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AckDto" },
+                "examples": {
+                  "register-success": {
+                    "summary": "Register success",
+                    "value": { "operationType": "RegisterToMethod", "success": true, "message": { "dataPipe": "Motion", "description": "MOT_GetMotorSpeed", "isCmd": false, "axis": 0, "subscriptionKey": "motion|mot_getmotorspeed|false|0" } }
+                  },
+                  "register-failure": {
+                    "summary": "Register failure",
+                    "value": { "operationType": "RegisterToMethod", "success": false, "message": { "error": "Registration failed" } }
+                  },
+                  "unregister-success": {
+                    "summary": "Unregister success",
+                    "value": { "operationType": "UnregisterFromMethod", "success": true, "message": "motion|mot_getmotorspeed|false|0" }
                   }
                 }
               }
@@ -1247,7 +1388,179 @@
           }
         },
         "required": ["success", "statusCode", "timestamp"]
+      },
+      "OperationType": {
+        "type": "string",
+        "enum": [
+          "RegisterToMethod",
+          "UnregisterFromMethod",
+          "ConnectionEstablished",
+          "ConnectionClosed"
+        ]
+      },
+      "AckDto": {
+        "type": "object",
+        "properties": {
+          "operationType": {
+            "$ref": "#/components/schemas/OperationType",
+            "description": "Operation the ACK refers to"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the operation was successful"
+          },
+          "message": {
+            "description": "Optional payload or error context",
+            "nullable": true
+          }
+        },
+        "required": ["operationType", "success"]
+      },
+      "PlainDataDto": {
+        "type": "object",
+        "properties": {
+          "subscriptionKey": { "type": "string" },
+          "timestamp": { "type": "integer", "format": "int64" },
+          "value": { "type": "number", "format": "double" }
+        },
+        "required": ["subscriptionKey", "timestamp", "value"]
       }
     }
+  },
+  "x-signalr": {
+    "hubs": [
+      {
+        "path": "/hubs/packets",
+        "summary": "Real-time packet transmission hub",
+        "methods": [
+          {
+            "name": "RegisterToMethod",
+            "direction": "client->server",
+            "description": "Register the current connection to a packet stream based on the provided request.",
+            "parameters": [
+              {
+                "name": "requestStream",
+                "in": "body",
+                "schema": { "$ref": "#/components/schemas/StreamRequestDto" }
+              }
+            ],
+            "responses": [
+              {
+                "event": "Ack",
+                "description": "ACK on registration result",
+                "schema": { "$ref": "#/components/schemas/AckDto" },
+                "examples": {
+                  "success": {
+                    "summary": "Registration success",
+                    "value": {
+                      "operationType": "RegisterToMethod",
+                      "success": true,
+                      "message": {
+                        "dataPipe": "Motion",
+                        "description": "MOT_GetMotorSpeed",
+                        "isCmd": false,
+                        "axis": 0
+                      }
+                    }
+                  },
+                  "failure": {
+                    "summary": "Registration failure",
+                    "value": {
+                      "operationType": "RegisterToMethod",
+                      "success": false,
+                      "message": {
+                        "error": "Registration failed"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "UnregisterFromMethod",
+            "direction": "client->server",
+            "description": "Unregister the current connection from a previously registered subscription.",
+            "parameters": [
+              {
+                "name": "subscriptionKey",
+                "in": "body",
+                "schema": { "type": "string" }
+              }
+            ],
+            "responses": [
+              {
+                "event": "Ack",
+                "description": "ACK on unregistration result",
+                "schema": { "$ref": "#/components/schemas/AckDto" },
+                "examples": {
+                  "success": {
+                    "summary": "Unregistration success",
+                    "value": {
+                      "operationType": "UnregisterFromMethod",
+                      "success": true,
+                      "message": "motion|mot_getmotorspeed|false|0"
+                    }
+                  },
+                  "failure": {
+                    "summary": "Unregistration failure",
+                    "value": {
+                      "operationType": "UnregisterFromMethod",
+                      "success": false,
+                      "message": "motion|mot_getmotorspeed|false|0"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "ReceiveHitDetectionData",
+            "direction": "client->server",
+            "description": "Reserved for future use (v2.0)."
+          }
+        ],
+        "events": [
+          {
+            "name": "Ack",
+            "direction": "server->client",
+            "description": "ACK event for hub operations (e.g., register/unregister)",
+            "schema": { "$ref": "#/components/schemas/AckDto" }
+          },
+          {
+            "name": "OnReceivePacket",
+            "direction": "server->client",
+            "description": "Emitted when a packet matching the subscription is available (event name: OnReceivePacket)",
+            "schema": { "$ref": "#/components/schemas/PlainDataDto" },
+            "examples": {
+              "motion": {
+                "summary": "Motion packet sample",
+                "value": {
+                  "subscriptionKey": "motion|mot_getmotorspeed|false|0",
+                  "timestamp": 1730138400000,
+                  "value": 12.34
+                }
+              },
+              "safety": {
+                "summary": "Safety packet sample",
+                "value": {
+                  "subscriptionKey": "safety|do3_fire1|false|",
+                  "timestamp": 1730138400500,
+                  "value": 1
+                }
+              },
+              "onvif": {
+                "summary": "OnVIF packet sample",
+                "value": {
+                  "subscriptionKey": "onvif|lrf_sts|false|",
+                  "timestamp": 1730138401000,
+                  "value": 1500.0
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
   }
 }

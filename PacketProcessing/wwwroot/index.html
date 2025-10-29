@@ -45,8 +45,8 @@
         <!-- Stats Controls -->
         <div class="sidebar-section">
             <h3>Statistics</h3>
-            <button onclick="resetStats()">Reset Stats</button>
-            <button onclick="clearLogs()">Clear Logs</button>
+            <button class="btn-console" onclick="resetStats()">Reset Stats</button>
+            <button class="btn-console" onclick="clearLogs()">Clear Logs</button>
         </div>
         
         
@@ -317,14 +317,15 @@
                     <div style="display: flex; gap: 15px; align-items: center;">
                         <select id="dataPipeSelect" class="form-select" style="width: 250px; height: 40px; font-size: 16px;">
                             <option value="">-- Select Pipeline --</option>
-                            <option value="MotionPackets">Motion Packets</option>
-                            <option value="SafetyPackets">Safety Packets</option>
-                            <option value="OnVIFPackets">OnVIF Packets</option>
+                            <option value="Motion">Motion</option>
+                            <option value="Safety">Safety</option>
+                            <option value="OnVIF">OnVIF</option>
                         </select>
                     </div>
                 </div>
             </div>
             
+
             <!-- Stream Selection -->
             <div id="streamSelection" style="margin: 40px 0; display: none;">
                 <div class="card" style="padding: 35px;">
@@ -362,9 +363,9 @@
     <!-- SignalR Packet Hub Logs -->
     <div class="log-container">
         <div class="log-header">
-            <h3 style="color: #4fc3f7; margin: 0;">SIGNALR PACKET HUB LOGS</h3>
+            <h3 style="color: #4fc3f7; margin: 0;">SIGNALR PACKET HUB LOGS (Last 100 entries)</h3>
         </div>
-        <div class="log-content" id="packetHubLogs" style="min-height: 200px; padding: 30px;"></div>
+        <div class="log-content" id="packetHubLogs"></div>
     </div>
 
     <!-- System Logs -->

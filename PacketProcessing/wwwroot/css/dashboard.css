@@ -331,6 +331,8 @@ select option {
     overflow-y: auto;
     position: relative;
     margin-bottom: 20px;
+    /* Ensure sticky positioning works properly */
+    contain: layout style;
 }
 
 /* Packet Hub Container - Dynamic sizing */
@@ -347,36 +349,56 @@ select option {
 }
 
 .packet-hub-container .log-header {
+    position: -webkit-sticky; /* Safari */
     position: sticky;
     top: 0;
     z-index: 10;
+    background: #1e1e1e;
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
+    will-change: transform;
 }
 
-/* Packet Hub Logs Container - Also dynamic */
+/* Packet Hub Logs Container - Fixed height with scrolling */
 .log-container:has(#packetHubLogs) {
-    max-height: none;
-    overflow-y: visible;
-    min-height: auto;
+    max-height: 250px;
+    overflow-y: auto;
+    min-height: 150px;
 }
 
 .log-container:has(#packetHubLogs) .log-content {
     max-height: none;
     overflow-y: visible;
+    padding: 15px;
+    font-size: 11px;
 }
 
 .log-container:has(#packetHubLogs) .log-header {
+    position: -webkit-sticky; /* Safari */
     position: sticky;
     top: 0;
     z-index: 10;
+    background: #1e1e1e;
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
+    will-change: transform;
 }
 
 .log-header {
+    position: -webkit-sticky; /* Safari */
     position: sticky;
     top: 0;
     background: #1e1e1e;
     padding: 15px 20px;
     border-bottom: 2px solid #4fc3f7;
     z-index: 10;
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
+    /* Ensure the header stays visible */
+    will-change: transform;
 }
 
 .log-content {
@@ -384,10 +406,11 @@ select option {
 }
 
 .log-entry {
-    padding: 5px;
-    margin: 2px 0;
-    font-size: 12px;
+    padding: 3px;
+    margin: 1px 0;
+    font-size: 11px;
     border-left: 3px solid;
+    line-height: 1.4;
 }
 
 .log-info { border-color: #2196f3; }

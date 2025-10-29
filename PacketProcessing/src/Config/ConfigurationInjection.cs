@@ -380,9 +380,30 @@ public class ConfigurationInjection
         // Use Middleware (e.g., Swagger, HTTPS Redirection)
         if (!app.Environment.IsProduction())
         {
+            var staticSwaggerPath = Path.Combine(app.Environment.ContentRootPath, "swagger.json");
+            if (File.Exists(staticSwaggerPath))
+            {
+                // Serve static swagger.json if present, overriding generated doc
+                app.Use(async (context, next) =>
+                {
+                    if (string.Equals(context.Request.Path.Value, "/swagger/v1/swagger.json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        context.Response.ContentType = "application/json";
+                        await context.Response.SendFileAsync(staticSwaggerPath);
+                        return;
+                    }
+                    await next();
+                });
+                Log.Information("Serving static swagger.json from {Path}", staticSwaggerPath);
+            }
+
             app.UseSwagger();
             Log.Information("Swagger is enabled on route {Route}", app.Configuration.GetValue<string>("Application:Url")+"/swagger");
-            app.UseSwaggerUI();
+            app.UseSwaggerUI(c =>
+            {
+                // Always point UI to the v1 endpoint; our middleware overrides it when file exists
+                c.SwaggerEndpoint("/swagger/v1/swagger.json", "Kanat Packet Processing API v1");
+            });
         }
         // Map simple health check endpoint
         app.MapHealthChecks("/health");
@@ -423,9 +444,30 @@ public class ConfigurationInjection
         // Use Middleware (e.g., Swagger, HTTPS Redirection)
         if (!app.Environment.IsProduction())
         {
+            var staticSwaggerPath = Path.Combine(app.Environment.ContentRootPath, "swagger.json");
+            if (File.Exists(staticSwaggerPath))
+            {
+                // Serve static swagger.json if present, overriding generated doc
+                app.Use(async (context, next) =>
+                {
+                    if (string.Equals(context.Request.Path.Value, "/swagger/v1/swagger.json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        context.Response.ContentType = "application/json";
+                        await context.Response.SendFileAsync(staticSwaggerPath);
+                        return;
+                    }
+                    await next();
+                });
+                Log.Information("Serving static swagger.json from {Path}", staticSwaggerPath);
+            }
+
             app.UseSwagger();
             Log.Information("Swagger is enabled on route {Route}", app.Configuration.GetValue<string>("Application:Url")+"/swagger");
-            app.UseSwaggerUI();
+            app.UseSwaggerUI(c =>
+            {
+                // Always point UI to the v1 endpoint; our middleware overrides it when file exists
+                c.SwaggerEndpoint("/swagger/v1/swagger.json", "Kanat Packet Processing API v1");
+            });
         }
         // Map simple health check endpoint
         app.MapHealthChecks("/health");

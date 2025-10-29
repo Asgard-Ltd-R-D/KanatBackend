@@ -57,7 +57,7 @@ public class TransmissionService : ITransmissionService
                 await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
                     new AckDto { 
                         OperationType = OperationType.RegisterToMethod, 
-                        Message = request.SubscriptionKey, 
+                        Message = request, 
                         Success = true 
                     });
             }
@@ -69,7 +69,7 @@ public class TransmissionService : ITransmissionService
                 await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
                     new AckDto { 
                         OperationType = OperationType.RegisterToMethod, 
-                        Message = request.SubscriptionKey, 
+                        Message = request, 
                         Success = true 
                     });
             }
@@ -84,7 +84,7 @@ public class TransmissionService : ITransmissionService
             await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
                 new AckDto { 
                     OperationType = OperationType.RegisterToMethod, 
-                    Message = request.SubscriptionKey, 
+                    Message = request, 
                     Success = false 
                 });
             
@@ -92,43 +92,41 @@ public class TransmissionService : ITransmissionService
         }
     }
     
-    public async Task DeregisterStreamAsync(StreamRequestDto request)
+    public async Task DeregisterStreamAsync(string subscriptionKey)
     {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var key = request.SubscriptionKey;
-        var toBeRemovedConnectionId = _streamKeyToConnectionIdDict.TryGetValue(key, out var connectionId) ? connectionId : null;
+        ArgumentNullException.ThrowIfNull(subscriptionKey);
+        var toBeRemovedConnectionId = _streamKeyToConnectionIdDict.TryGetValue(subscriptionKey, out var connectionId) ? connectionId : null;
         
         try
         {
             if (toBeRemovedConnectionId == null)
             {
-                _logger.LogWarning("Stream not found for deregistration: {Key}, ignoring deregistration", key);
+                _logger.LogWarning("Stream not found for deregistration: {Key}, ignoring deregistration", subscriptionKey);
                 return;
             }
 
-            if (_streamKeyToConnectionIdDict.TryRemove(key, out _))
+            if (_streamKeyToConnectionIdDict.TryRemove(subscriptionKey, out _))
             {
-                _logger.LogInformation("Client {ConnectionId} unregistered from stream {Key}", toBeRemovedConnectionId, key);
+                _logger.LogInformation("Client {ConnectionId} unregistered from stream {Key}", toBeRemovedConnectionId, subscriptionKey);
             }
             else
             {
-                _logger.LogWarning("Client {ConnectionId} not found for deregistration: {Key}, ignoring deregistration", toBeRemovedConnectionId, key);
+                _logger.LogWarning("Client {ConnectionId} not found for deregistration: {Key}, ignoring deregistration", toBeRemovedConnectionId, subscriptionKey);
             }
 
             // Send success ACK
             await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
                 new AckDto { 
                     OperationType = OperationType.UnregisterFromMethod, 
-                    Message = request.SubscriptionKey, 
+                    Message = subscriptionKey, 
                     Success = true 
                 });
 
-            _logger.LogInformation("Sent ack to client {ConnectionId} for stream deregistration: {Key}", toBeRemovedConnectionId, key);
+            _logger.LogInformation("Sent ack to client {ConnectionId} for stream deregistration: {Key}", toBeRemovedConnectionId, subscriptionKey);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during stream deregistration for client {ConnectionId} on stream {Key}", toBeRemovedConnectionId, key);
+            _logger.LogError(ex, "Error during stream deregistration for client {ConnectionId} on stream {Key}", toBeRemovedConnectionId, subscriptionKey);
             
             // Send error ACK
             if (toBeRemovedConnectionId != null)
@@ -136,7 +134,7 @@ public class TransmissionService : ITransmissionService
                 await _hubContext.Clients.Client(toBeRemovedConnectionId).SendAsync(Constants.SIGNALR_ACK, 
                     new AckDto { 
                         OperationType = OperationType.UnregisterFromMethod, 
-                        Message = request.SubscriptionKey, 
+                        Message = subscriptionKey, 
                         Success = false 
                     });
             }
@@ -152,7 +150,8 @@ public class TransmissionService : ITransmissionService
         try
         {
             // Find the connection ID for the packet, if doesn't exist it means that the packet is not registered for any connection
-            var existingConnectionId = _streamKeyToConnectionIdDict.TryGetValue(packet.GetSubscriptionKey(), out var connectionId) ? connectionId : null;
+            var subscriptionKey = packet.GetSubscriptionKey();
+            var existingConnectionId = _streamKeyToConnectionIdDict.TryGetValue(subscriptionKey, out var connectionId) ? connectionId : null;
             if (existingConnectionId == null)
                 return;
 
@@ -164,12 +163,13 @@ public class TransmissionService : ITransmissionService
                 _logger.LogWarning("Failed to convert packet to PlainData");
                 return;
             }
-            await SendToClientPacketAsync(existingConnectionId, Constants.SIGNALR_ON_RECEIVE_PACKET, plainData);
+            
+            await SendToClientPacketAsync(existingConnectionId, plainData);
 
             _logger.LogDebug(
-                "Transmitted packet to client {ConnectionId}: {DataPipe}.{Method} at {Timestamp}",
+                "Transmitted packet to client {ConnectionId}: {SubscriptionKey} at {Timestamp}",
                 existingConnectionId,
-                plainData.DataPipe, plainData.MethodName, plainData.Timestamp);
+                plainData.SubscriptionKey, plainData.Timestamp);
     }
         catch (Exception ex)
         {
@@ -177,11 +177,11 @@ public class TransmissionService : ITransmissionService
         }
     }
 
-    private async Task SendToClientPacketAsync(string connectionId, string methodName, PlainDataDto data)
+    private async Task SendToClientPacketAsync(string connectionId, PlainDataDto data)
     {
         try
         {
-            await _hubContext.Clients.Client(connectionId).SendAsync(methodName, data);
+            await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ON_RECEIVE_PACKET, data);
         }
         catch (Exception ex)
         {

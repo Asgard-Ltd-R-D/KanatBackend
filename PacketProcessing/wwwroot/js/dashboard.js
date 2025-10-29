@@ -884,7 +884,14 @@ function logMessage(message, type = 'info') {
 
 function clearLogs() {
     document.getElementById('logs').innerHTML = '';
-    logMessage('All logs cleared', 'info');
+    
+    // Also clear Packet Hub logs
+    const packetHubLogs = document.getElementById('packetHubLogs');
+    if (packetHubLogs) {
+        packetHubLogs.innerHTML = '';
+    }
+    
+    logMessage('All logs cleared (System + Packet Hub)', 'info');
 }
 
 // === PACKET HUB FUNCTIONALITY ===
@@ -892,6 +899,163 @@ function clearLogs() {
 let packetHubConnection = null;
 let packetHubConnected = false;
 let activeStreams = new Map(); // Track active streams by pipeline
+
+// === AXIS CONTROL FUNCTIONS ===
+function getSelectedAxis() {
+    const axisSelect = document.getElementById('axisSelect');
+    return parseInt(axisSelect.value);
+}
+
+function setAbsolutePosition() {
+    const positionValue = document.getElementById('positionValue').value;
+    const axis = getSelectedAxis();
+    
+    if (!positionValue) {
+        logPacketHubMessage('Please enter a position value', 'error');
+        return;
+    }
+    
+    if (!packetHubConnected) {
+        logPacketHubMessage('Packet Hub not connected', 'error');
+        return;
+    }
+    
+    const position = parseFloat(positionValue);
+    logPacketHubMessage(`Setting absolute position ${position} for Axis ${axis}`, 'info');
+    
+    // Send MOT_SetPositionAbsolute command
+    sendMotionCommand('MOT_SetPositionAbsolute', axis, position);
+}
+
+function setRelativePosition() {
+    const positionValue = document.getElementById('positionValue').value;
+    const axis = getSelectedAxis();
+    
+    if (!positionValue) {
+        logPacketHubMessage('Please enter a position value', 'error');
+        return;
+    }
+    
+    if (!packetHubConnected) {
+        logPacketHubMessage('Packet Hub not connected', 'error');
+        return;
+    }
+    
+    const position = parseFloat(positionValue);
+    logPacketHubMessage(`Setting relative position ${position} for Axis ${axis}`, 'info');
+    
+    // Send MOT_SetPositionRelative command
+    sendMotionCommand('MOT_SetPositionRelative', axis, position);
+}
+
+function setSpeed() {
+    const speedValue = document.getElementById('speedValue').value;
+    const axis = getSelectedAxis();
+    
+    if (!speedValue) {
+        logPacketHubMessage('Please enter a speed value', 'error');
+        return;
+    }
+    
+    if (!packetHubConnected) {
+        logPacketHubMessage('Packet Hub not connected', 'error');
+        return;
+    }
+    
+    const speed = parseFloat(speedValue);
+    logPacketHubMessage(`Setting speed ${speed} for Axis ${axis}`, 'info');
+    
+    // Send MOT_SetSpeed command
+    sendMotionCommand('MOT_SetSpeed', axis, speed);
+}
+
+function setAcceleration() {
+    const accelerationValue = document.getElementById('accelerationValue').value;
+    const axis = getSelectedAxis();
+    
+    if (!accelerationValue) {
+        logPacketHubMessage('Please enter an acceleration value', 'error');
+        return;
+    }
+    
+    if (!packetHubConnected) {
+        logPacketHubMessage('Packet Hub not connected', 'error');
+        return;
+    }
+    
+    const acceleration = parseFloat(accelerationValue);
+    logPacketHubMessage(`Setting acceleration ${acceleration} for Axis ${axis}`, 'info');
+    
+    // Send MOT_SetAcceleration command
+    sendMotionCommand('MOT_SetAcceleration', axis, acceleration);
+}
+
+function axisOn() {
+    const axis = getSelectedAxis();
+    
+    if (!packetHubConnected) {
+        logPacketHubMessage('Packet Hub not connected', 'error');
+        return;
+    }
+    
+    logPacketHubMessage(`Turning ON Axis ${axis}`, 'info');
+    
+    // Send MOT_AxisOn command
+    sendMotionCommand('MOT_AxisOn', axis, 0);
+}
+
+function axisOff() {
+    const axis = getSelectedAxis();
+    
+    if (!packetHubConnected) {
+        logPacketHubMessage('Packet Hub not connected', 'error');
+        return;
+    }
+    
+    logPacketHubMessage(`Turning OFF Axis ${axis}`, 'info');
+    
+    // Send MOT_AxisOff command
+    sendMotionCommand('MOT_AxisOff', axis, 0);
+}
+
+function axisReset() {
+    const axis = getSelectedAxis();
+    
+    if (!packetHubConnected) {
+        logPacketHubMessage('Packet Hub not connected', 'error');
+        return;
+    }
+    
+    logPacketHubMessage(`Resetting Axis ${axis}`, 'info');
+    
+    // Send MOT_AxisReset command
+    sendMotionCommand('MOT_AxisReset', axis, 0);
+}
+
+function sendMotionCommand(command, axis, value) {
+    try {
+        // Create a mock packet for the motion command
+        const mockPacket = {
+            command: command,
+            axis: axis,
+            value: value,
+            timestamp: Date.now()
+        };
+        
+        logPacketHubMessage(`Sending ${command} to Axis ${axis} with value ${value}`, 'info');
+        
+        // In a real implementation, you would send this to the MotionSimulator
+        // For now, we'll just log it
+        console.log('Motion command:', mockPacket);
+        
+        // You could also send this via SignalR if you have a command endpoint
+        // packetHubConnection.invoke('SendMotionCommand', mockPacket);
+        
+    } catch (error) {
+        logPacketHubMessage(`Error sending motion command: ${error.message}`, 'error');
+        console.error('Error sending motion command:', error);
+    }
+}
 
 // Helper function to convert pipeline name to DataPipes enum value
 function convertPipelineToEnum(pipelineName) {
@@ -928,30 +1092,53 @@ function onDataPipeChange() {
         switch (dataPipe) {
             case 'MotionPackets':
                 streams = [
-                    { value: 'MOT_GetMotorCurrent|false|0', text: 'MOT_GetMotorCurrent (RPT, Axis 0)' },
-                    { value: 'MOT_GetMotorCurrent|true|0', text: 'MOT_GetMotorCurrent (CMD, Axis 0)' },
-                    { value: 'MOT_GetMotorSpeed|false|0', text: 'MOT_GetMotorSpeed (RPT, Axis 0)' },
-                    { value: 'MOT_GetMotorSpeed|true|0', text: 'MOT_GetMotorSpeed (CMD, Axis 0)' },
-                    { value: 'DG_SetSyncMode|false|0', text: 'DG_SetSyncMode (RPT, Axis 0)' },
-                    { value: 'DG_SetSyncMode|true|0', text: 'DG_SetSyncMode (CMD, Axis 0)' },
-                    { value: 'DG_SetInnerMode|false|0', text: 'DG_SetInnerMode (RPT, Axis 0)' },
-                    { value: 'DG_SetInnerMode|true|0', text: 'DG_SetInnerMode (CMD, Axis 0)' },
-                    { value: 'DG_IsSyncMode|false|0', text: 'DG_IsSyncMode (RPT, Axis 0)' },
-                    { value: 'DG_IsSyncMode|true|0', text: 'DG_IsSyncMode (CMD, Axis 0)' },
-                    { value: 'DG_IsInnerMode|false|0', text: 'DG_IsInnerMode (RPT, Axis 0)' },
-                    { value: 'DG_IsInnerMode|true|0', text: 'DG_IsInnerMode (CMD, Axis 0)' },
-                    { value: 'DG_GetPosDiff|false|0', text: 'DG_GetPosDiff (RPT, Axis 0)' },
-                    { value: 'DG_GetPosDiff|true|0', text: 'DG_GetPosDiff (CMD, Axis 0)' },
-                    { value: 'DG_CTC|false|0', text: 'DG_CTC (RPT, Axis 0)' },
-                    { value: 'DG_CTC|true|0', text: 'DG_CTC (CMD, Axis 0)' },
-                    { value: 'DG_GetCTCoffset|false|0', text: 'DG_GetCTCoffset (RPT, Axis 0)' },
-                    { value: 'DG_GetCTCoffset|true|0', text: 'DG_GetCTCoffset (CMD, Axis 0)' },
-                    { value: 'DG_IsBoresightEn|false|0', text: 'DG_IsBoresightEn (RPT, Axis 0)' },
-                    { value: 'DG_IsBoresightEn|true|0', text: 'DG_IsBoresightEn (CMD, Axis 0)' },
-                    { value: 'DG_GetBoresightOffset|false|0', text: 'DG_GetBoresightOffset (RPT, Axis 0)' },
-                    { value: 'DG_GetBoresightOffset|true|0', text: 'DG_GetBoresightOffset (CMD, Axis 0)' },
-                    { value: 'DG_SetBallisticOffset|false|0', text: 'DG_SetBallisticOffset (RPT, Axis 0)' },
-                    { value: 'DG_SetBallisticOffset|true|0', text: 'DG_SetBallisticOffset (CMD, Axis 0)' }
+                    // Axis 1 commands
+                    { value: 'MOT_GetMotorCurrent|false|1', text: 'MOT_GetMotorCurrent (RPT, Axis 1)' },
+                    { value: 'MOT_GetMotorCurrent|true|1', text: 'MOT_GetMotorCurrent (CMD, Axis 1)' },
+                    { value: 'MOT_GetMotorVoltage|false|1', text: 'MOT_GetMotorVoltage (RPT, Axis 1)' },
+                    { value: 'MOT_GetMotorVoltage|true|1', text: 'MOT_GetMotorVoltage (CMD, Axis 1)' },
+                    { value: 'MOT_GetMotorPosition|false|1', text: 'MOT_GetMotorPosition (RPT, Axis 1)' },
+                    { value: 'MOT_GetMotorPosition|true|1', text: 'MOT_GetMotorPosition (CMD, Axis 1)' },
+                    { value: 'MOT_GetLoadPosition|false|1', text: 'MOT_GetLoadPosition (RPT, Axis 1)' },
+                    { value: 'MOT_GetLoadPosition|true|1', text: 'MOT_GetLoadPosition (CMD, Axis 1)' },
+                    { value: 'MOT_GetMotorSpeed|false|1', text: 'MOT_GetMotorSpeed (RPT, Axis 1)' },
+                    { value: 'MOT_GetMotorSpeed|true|1', text: 'MOT_GetMotorSpeed (CMD, Axis 1)' },
+                    
+                    // Axis 2 commands
+                    { value: 'MOT_GetMotorCurrent|false|2', text: 'MOT_GetMotorCurrent (RPT, Axis 2)' },
+                    { value: 'MOT_GetMotorCurrent|true|2', text: 'MOT_GetMotorCurrent (CMD, Axis 2)' },
+                    { value: 'MOT_GetMotorVoltage|false|2', text: 'MOT_GetMotorVoltage (RPT, Axis 2)' },
+                    { value: 'MOT_GetMotorVoltage|true|2', text: 'MOT_GetMotorVoltage (CMD, Axis 2)' },
+                    { value: 'MOT_GetMotorPosition|false|2', text: 'MOT_GetMotorPosition (RPT, Axis 2)' },
+                    { value: 'MOT_GetMotorPosition|true|2', text: 'MOT_GetMotorPosition (CMD, Axis 2)' },
+                    { value: 'MOT_GetLoadPosition|false|2', text: 'MOT_GetLoadPosition (RPT, Axis 2)' },
+                    { value: 'MOT_GetLoadPosition|true|2', text: 'MOT_GetLoadPosition (CMD, Axis 2)' },
+                    { value: 'MOT_GetMotorSpeed|false|2', text: 'MOT_GetMotorSpeed (RPT, Axis 2)' },
+                    { value: 'MOT_GetMotorSpeed|true|2', text: 'MOT_GetMotorSpeed (CMD, Axis 2)' },
+                    
+                    // Axis 4 commands
+                    { value: 'MOT_GetMotorCurrent|false|4', text: 'MOT_GetMotorCurrent (RPT, Axis 4)' },
+                    { value: 'MOT_GetMotorCurrent|true|4', text: 'MOT_GetMotorCurrent (CMD, Axis 4)' },
+                    { value: 'MOT_GetMotorVoltage|false|4', text: 'MOT_GetMotorVoltage (RPT, Axis 4)' },
+                    { value: 'MOT_GetMotorVoltage|true|4', text: 'MOT_GetMotorVoltage (CMD, Axis 4)' },
+                    { value: 'MOT_GetMotorPosition|false|4', text: 'MOT_GetMotorPosition (RPT, Axis 4)' },
+                    { value: 'MOT_GetMotorPosition|true|4', text: 'MOT_GetMotorPosition (CMD, Axis 4)' },
+                    { value: 'MOT_GetLoadPosition|false|4', text: 'MOT_GetLoadPosition (RPT, Axis 4)' },
+                    { value: 'MOT_GetLoadPosition|true|4', text: 'MOT_GetLoadPosition (CMD, Axis 4)' },
+                    { value: 'MOT_GetMotorSpeed|false|4', text: 'MOT_GetMotorSpeed (RPT, Axis 4)' },
+                    { value: 'MOT_GetMotorSpeed|true|4', text: 'MOT_GetMotorSpeed (CMD, Axis 4)' },
+                    
+                    // Axis 5 commands
+                    { value: 'MOT_GetMotorCurrent|false|5', text: 'MOT_GetMotorCurrent (RPT, Axis 5)' },
+                    { value: 'MOT_GetMotorCurrent|true|5', text: 'MOT_GetMotorCurrent (CMD, Axis 5)' },
+                    { value: 'MOT_GetMotorVoltage|false|5', text: 'MOT_GetMotorVoltage (RPT, Axis 5)' },
+                    { value: 'MOT_GetMotorVoltage|true|5', text: 'MOT_GetMotorVoltage (CMD, Axis 5)' },
+                    { value: 'MOT_GetMotorPosition|false|5', text: 'MOT_GetMotorPosition (RPT, Axis 5)' },
+                    { value: 'MOT_GetMotorPosition|true|5', text: 'MOT_GetMotorPosition (CMD, Axis 5)' },
+                    { value: 'MOT_GetLoadPosition|false|5', text: 'MOT_GetLoadPosition (RPT, Axis 5)' },
+                    { value: 'MOT_GetLoadPosition|true|5', text: 'MOT_GetLoadPosition (CMD, Axis 5)' },
+                    { value: 'MOT_GetMotorSpeed|false|5', text: 'MOT_GetMotorSpeed (RPT, Axis 5)' },
+                    { value: 'MOT_GetMotorSpeed|true|5', text: 'MOT_GetMotorSpeed (CMD, Axis 5)' }
                 ];
                 streamInfo.textContent = 'Motion Packets - Select a stream to register';
                 break;
@@ -1173,10 +1360,40 @@ async function connectPacketHub() {
         updateActiveStreamsList();
     });
 
-    // Handle packet data
-    packetHubConnection.on('OnReceivePacket', (packetData) => {
-        logPacketHubMessage(`Packet Received: ${JSON.stringify(packetData)}`, 'info');
-        console.log('Packet received:', packetData);
+    // Handle packet data - new format: subscriptionKey, plainData
+    packetHubConnection.on('OnReceivePacket', (subscriptionKey, plainData) => {
+        try {
+            console.log('Raw packet data received:', JSON.stringify({ subscriptionKey, plainData }, null, 2));
+            console.log('plainData type:', typeof plainData);
+            console.log('plainData keys:', plainData ? Object.keys(plainData) : 'null');
+            
+            // Safely extract values with null checks - handle both camelCase and PascalCase
+            const subKey = subscriptionKey || 'N/A';
+            
+            // Try both camelCase and PascalCase property names
+            const dataPipe = plainData?.DataPipe || plainData?.dataPipe || plainData?.DataPipe || 'N/A';
+            const method = plainData?.MethodName || plainData?.methodName || plainData?.MethodName || 'N/A';
+            const value = plainData?.Value != null ? String(plainData.Value) : (plainData?.value != null ? String(plainData.value) : 'N/A');
+            const timestamp = plainData?.Timestamp ? new Date(plainData.Timestamp).toLocaleString() : (plainData?.timestamp ? new Date(plainData.timestamp).toLocaleString() : 'N/A');
+            
+            console.log('Extracted values:', { subKey, dataPipe, method, value, timestamp });
+            
+            // Format the packet for display with ASCII characters only
+            const displayMessage = `[${subKey}] Received:
+                Data Pipe: ${dataPipe}
+                Method: ${method}
+                Value: ${value}
+                Timestamp: ${timestamp}`;
+            
+            logPacketHubMessage(displayMessage, 'info');
+            console.log('Packet received:', { subscriptionKey: subKey, plainData });
+            
+            // Also show compact version in console
+            console.log(`[PACKET] ${subKey} | ${dataPipe}.${method} = ${value}`);
+        } catch (err) {
+            logPacketHubMessage(`Error processing packet: ${err.message}`, 'error');
+            console.error('Error processing packet:', err);
+        }
     });
 
     try {
@@ -1314,7 +1531,7 @@ async function registerSelectedStream() {
         axis: axis
     };
 
-    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
     
     if (activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is already registered`, 'warning');
@@ -1359,7 +1576,7 @@ async function unregisterSelectedStream() {
         axis: axis
     };
 
-    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
     
     if (!activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is not registered`, 'warning');
@@ -1374,76 +1591,6 @@ async function unregisterSelectedStream() {
         logPacketHubMessage('Stream unregistration request sent', 'success');
     } catch (err) {
         logPacketHubMessage(`Error unregistering stream: ${err.message}`, 'error');
-    }
-}
-
-// Check server status
-async function checkServerStatus() {
-    console.log('Checking server status...');
-    try {
-        const response = await fetch('http://localhost:10901/hubs/packets/negotiate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            }
-        });
-        console.log('Server response:', response.status, response.statusText);
-        if (response.ok) {
-            logPacketHubMessage('Server is running and accessible', 'success');
-            return true;
-        } else {
-            logPacketHubMessage(`Server responded with status: ${response.status}`, 'warning');
-            return false;
-        }
-    } catch (error) {
-        console.error('Server check failed:', error);
-        logPacketHubMessage(`Server check failed: ${error.message}`, 'error');
-        return false;
-    }
-}
-
-function updatePipelineButtons() {
-    const dataPipe = document.getElementById('dataPipeSelect').value;
-    const isConnected = packetHubConnected;
-    
-    if (!dataPipe || !isConnected) {
-        // Disable all buttons
-        ['registerMotionBtn', 'unregisterMotionBtn', 'registerSafetyBtn', 'unregisterSafetyBtn', 'registerOnvifBtn', 'unregisterOnvifBtn'].forEach(btnId => {
-            const btn = document.getElementById(btnId);
-            if (btn) {
-                btn.disabled = true;
-                if (btnId.includes('register')) btn.textContent = 'Register';
-                if (btnId.includes('unregister')) btn.textContent = 'Unregister';
-            }
-        });
-        return;
-    }
-    
-    // Enable buttons for current pipeline
-    let registerBtnId, unregisterBtnId;
-    switch (dataPipe) {
-        case 'MotionPackets':
-            registerBtnId = 'registerMotionBtn';
-            unregisterBtnId = 'unregisterMotionBtn';
-            break;
-        case 'SafetyPackets':
-            registerBtnId = 'registerSafetyBtn';
-            unregisterBtnId = 'unregisterSafetyBtn';
-            break;
-        case 'OnVIFPackets':
-            registerBtnId = 'registerOnvifBtn';
-            unregisterBtnId = 'unregisterOnvifBtn';
-            break;
-    }
-    
-    if (registerBtnId && unregisterBtnId) {
-        const registerBtn = document.getElementById(registerBtnId);
-        const unregisterBtn = document.getElementById(unregisterBtnId);
-        
-        if (registerBtn && unregisterBtn) {
-            registerBtn.disabled = false;
-            unregisterBtn.disabled = false;
-        }
     }
 }
 
@@ -1505,7 +1652,7 @@ async function registerStream() {
             return;
     }
 
-    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
     
     if (activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is already registered`, 'warning');
@@ -1580,7 +1727,7 @@ async function unregisterStream() {
             return;
     }
 
-    const streamKey = `${dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
     
     if (!activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is not registered`, 'warning');
@@ -1625,7 +1772,11 @@ function logPacketHubMessage(message, type = 'info') {
     const timestamp = new Date().toLocaleTimeString() + '.' + 
                       new Date().getMilliseconds().toString().padStart(3, '0');
     
-    logEntry.textContent = `[${timestamp}] ${message}`;
+    // Create text node to avoid encoding issues with special characters
+    const timestampText = `[${timestamp}] `;
+    const messageText = String(message);
+    
+    logEntry.textContent = timestampText + messageText;
     logsDiv.insertBefore(logEntry, logsDiv.firstChild);
     
     // Keep only last 100 logs

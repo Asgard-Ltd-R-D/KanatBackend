@@ -980,7 +980,7 @@
         }
       }
     },
-    "/hubs/packets/OnReceivePacket": {
+    "OnReceivePacket": {
       "get": {
         "tags": ["SignalR Hub"],
         "summary": "OnReceivePacket (SignalR event)",
@@ -1012,7 +1012,7 @@
         }
       }
     },
-    "/hubs/packets/Ack": {
+    "Ack": {
       "get": {
         "tags": ["SignalR Hub"],
         "summary": "Ack (SignalR event)",

@@ -21,7 +21,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
     // Device filters
     private readonly string _protocol;
-    private readonly IEnumerable<string> _ips;
+    private readonly IEnumerable<string> _ports;
 
     private readonly ITransmissionService? _transmissionService;
 
@@ -68,7 +68,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
             });
 
         _protocol = configuration.GetValue<string>($"{dataPipeName}:Network:Protocol") ?? "";
-        _ips = configuration.GetSection($"{dataPipeName}:Network:IPs").Get<IEnumerable<string>>() ?? [];
+        _ports = configuration.GetSection($"{dataPipeName}:Network:Ports").Get<IEnumerable<string>>() ?? [];
 
         var concurrency = configuration.GetSection("Concurrency");
         var min = concurrency.GetValue<int>("MinWorkers", 2);
@@ -88,7 +88,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
     public async Task SubscribeToDeviceAsync(IDeviceService deviceService, string deviceName)
     {
-        var filter = BpfFilterBuilder.Build(_protocol, _ips);
+        var filter = BpfFilterBuilder.Build(_protocol, _ports);
         await deviceService.SubscribeWithFilterAsync(this, deviceName, filter);
         _logger.LogInformation("{Handler} subscribed to {Device} with filter {Filter}",
             typeof(T).Name, deviceName, filter);

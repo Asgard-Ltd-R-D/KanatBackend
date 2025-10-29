@@ -24,7 +24,11 @@ SIMULATED_AXES = [1, 2, 4, 5]
 
 # --- UDP Fire Client Constants ---
 FIRE1_DEST_PORT = 1025
-FIRE2_DEST_PORT = 1026
+FIRE2_DEST_PORT = 1025
+
+IP_SAFETY1 = "132.8.7.101"
+IP_SAFETY2 = "132.8.7.102"
+
 FIRE_INTERVAL_MS = 10 # 10 ms cycle rate
 
 # --- DEFINITIVE 20-BYTE PAYLOAD CONSTRUCTION ---
@@ -174,7 +178,8 @@ class UDPFireClient:
         interval_s = FIRE_INTERVAL_MS / 1000.0
         while self.is_sending:
             try:
-                self.sock.sendto(self.payload, (HOST, self.dest_port))
+                target_host = IP_SAFETY1 if self.command_name == "FIRE1_CMD" else IP_SAFETY2
+                self.sock.sendto(self.payload, (target_host, self.dest_port))
             except Exception as e:
                 print(f"[UDP Client] Error sending {self.command_name}: {e}")
                 self.is_sending = False

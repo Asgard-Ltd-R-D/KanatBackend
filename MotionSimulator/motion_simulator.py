@@ -21,7 +21,11 @@ SIM_UPDATE_INTERVAL = 0.01 # 10ms simulation tick
 
 # --- UDP Fire Ports ---
 FIRE1_LISTEN_PORT = 1025
-FIRE2_LISTEN_PORT = 1026
+FIRE2_LISTEN_PORT = 1025
+
+IP_SAFETY1 = "132.8.7.101"
+IP_SAFETY2 = "132.8.7.102"
+
 
 # Simulated Axes
 SIMULATED_AXES = [1, 2, 4, 5]
@@ -205,13 +209,13 @@ def log_axis_status_ascii(axis_id, cmer):
     )
     print(log_msg)
 
-def udp_fire_listener(port, command_name):
+def udp_fire_listener(host, port, command_name):
     """Listens for cyclic UDP fire commands."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.bind(('127.0.0.1', port))
+            s.bind((host, port))
             s.settimeout(0.5) # Use timeout for cleaner exit
-            print(f"[UDP Server] Listening for {command_name} on port {port}...")
+            print(f"[UDP Server] Listening for {command_name} on port {host}:{port}...")
             while True:
                 try:
                     # Expecting a small, simple command (e.g., "FIRE1")
@@ -402,8 +406,8 @@ def simulation_loop():
 
 def main():
     # Start UDP Listeners
-    fire1_thread = threading.Thread(target=udp_fire_listener, args=(FIRE1_LISTEN_PORT, "FIRE1_CMD"), daemon=True)
-    fire2_thread = threading.Thread(target=udp_fire_listener, args=(FIRE2_LISTEN_PORT, "FIRE2_CMD"), daemon=True)
+    fire1_thread = threading.Thread(target=udp_fire_listener, args=(IP_SAFETY1, FIRE1_LISTEN_PORT, "FIRE1_CMD"), daemon=True)
+    fire2_thread = threading.Thread(target=udp_fire_listener, args=(IP_SAFETY2, FIRE2_LISTEN_PORT, "FIRE2_CMD"), daemon=True)
     fire1_thread.start()
     fire2_thread.start()
 

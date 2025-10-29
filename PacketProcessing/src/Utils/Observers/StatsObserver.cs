@@ -66,6 +66,14 @@ public class StatsObserver
             _telemetryService.IncrementCaptured();
         }
         
+        // Per-pipeline captured counters
+        public void IncrementMotionCaptured()
+            => _telemetryService.IncrementMotionCaptured();
+        public void IncrementSafetyCaptured()
+            => _telemetryService.IncrementSafetyCaptured();
+        public void IncrementOnvifCaptured()
+            => _telemetryService.IncrementOnvifCaptured();
+        
         public void IncrementParsed() 
         { 
             Interlocked.Increment(ref _packetsParsed);

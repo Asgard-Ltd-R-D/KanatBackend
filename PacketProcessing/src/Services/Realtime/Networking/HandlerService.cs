@@ -137,6 +137,13 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     public void OnNext(RawPacketEvent evt)
     {
         _statsObserver.Handler.IncrementCaptured();
+        // Increment per-pipeline captured counters
+        if (typeof(T) == typeof(MotionPacketEntity))
+            _statsObserver.Handler.IncrementMotionCaptured();
+        else if (typeof(T) == typeof(SafetyPacketEntity))
+            _statsObserver.Handler.IncrementSafetyCaptured();
+        else if (typeof(T) == typeof(OnVIFPacketEntity))
+            _statsObserver.Handler.IncrementOnvifCaptured();
         
         // Try fast path first
         if (_rawChannel.Writer.TryWrite(evt))

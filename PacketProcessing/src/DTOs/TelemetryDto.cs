@@ -35,5 +35,7 @@ public class ChannelStatsDto
     public int Capacity { get; set; }
     public int CurrentSize { get; set; }
     public double UtilizationPercent { get; set; }
+    public int WorkerCount { get; set; }
+    public double AvgLatencyMs { get; set; }
 }
 

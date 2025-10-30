@@ -20,9 +20,17 @@ public class StatsObserver
     /// <summary>
     /// Update channel statistics for both raw and parsed channels
     /// </summary>
-    public void UpdateChannelStats(string channelName, int capacity, int count, double utilization)
+    public void UpdateChannelStats(string channelName, int capacity, int count, double utilization, int workerCount = 0)
     {
-        _telemetryService.UpdateChannelStats(channelName, capacity, count, utilization);
+        _telemetryService.UpdateChannelStats(channelName, capacity, count, utilization, workerCount);
+    }
+
+    /// <summary>
+    /// Add latency measurement for a specific channel
+    /// </summary>
+    public void AddChannelLatency(string channelName, double latencyMs)
+    {
+        _telemetryService.AddChannelLatency(channelName, latencyMs);
     }
 
     public StatsObserver(ITelemetryService telemetryService, string serviceName)

@@ -9,23 +9,15 @@ import random
 # ===============================
 # Version Information
 # ===============================
-__version__ = "1.6.0" # Added parallel UDP Fire listeners
-__updated__ = "2025-10-26"
+__version__ = "1.3.0" # Added CMER logic, Axis On/Off/Reset, Ballistic Offset
+__updated__ = "2025-10-25"
 
 # ===============================
 # Server Constants
 # ===============================
-HOST = '127.0.0.1'
-PORT = 4949
+HOST = '132.8.7.125'
+PORT = 5001
 SIM_UPDATE_INTERVAL = 0.01 # 10ms simulation tick
-
-# --- UDP Fire Ports ---
-FIRE1_LISTEN_PORT = 1025
-FIRE2_LISTEN_PORT = 1025
-
-IP_SAFETY1 = "132.8.7.101"
-IP_SAFETY2 = "132.8.7.102"
-
 
 # Simulated Axes
 SIMULATED_AXES = [1, 2, 4, 5]
@@ -40,9 +32,9 @@ class SimpleAxis:
         self.max_speed = 10.0  # units/sec
         self.acceleration = 20.0 # units/sec^2 (not fully used in this simple sim)
         self.is_in_position_mode = True
-        self.is_on = False  # Axis state (CMER Bit 1)
-        self.is_faulted = False # Axis fault state (CMER Bit 0)
-        self.is_motion_complete = True # Motion status (CMER Bit 2)
+        self.is_on = False  # Axis state
+        self.is_faulted = False # Axis fault state
+        self.is_motion_complete = True # Motion status (Bit 2 of CMER)
         self.ballistic_offset = 0.0 # Ballistic offset state (Axis 1 and 2 only)
         self.lock = threading.Lock()
 
@@ -56,7 +48,6 @@ class SimpleAxis:
             
             delta = self.target_position - self.current_position
             
-            # Check if we are in position
             if abs(delta) < 0.01:
                 self.current_speed = 0.0
                 self.current_position = self.target_position
@@ -75,7 +66,6 @@ class SimpleAxis:
                 self.current_position += step
                 self.current_speed = -self.max_speed
 
-    # --- Command Setters ---
     def set_target_abs(self, pos):
         with self.lock:
             self.target_position = pos
@@ -120,7 +110,6 @@ class SimpleAxis:
             self.ballistic_offset = offset
             print(f"[Axis {self.axis_id}] Ballistic Offset set to: {offset:.4f}")
 
-    # --- Data Getters ---
     def get_ballistic_offset(self):
         with self.lock:
             return self.ballistic_offset
@@ -160,15 +149,14 @@ class SimpleAxis:
             reg |= 0x0002
             
         # Bit 2: Motion is complete (1 = Motion complete)
-            # This logic sets Motion Complete (1) if stopped, or In Motion (0) if moving.
         if self.is_motion_complete:
             reg |= 0x0004
             
-        # Bit 7: Over current error (Simulated if current > 2.0A)
+        # Simulate a generic over-current if current > 2.0 (Bit 7)
         if self.get_current() > 2.0:
             reg |= 0x0080 
             
-        # Bit 15: CAN Bus error (Simulated for Axis 5)
+        # Simulate a CAN bus error if axis 5 (Bit 15)
         if self.axis_id == 5:
             reg |= 0x8000
             
@@ -186,48 +174,6 @@ lrf_lock = threading.Lock()
 is_sync_mode = False
 is_inner_mode = False
 
-def log_axis_status_ascii(axis_id, cmer):
-    """Prints detailed axis status to the console in ASCII format."""
-    axis = simulated_axes.get(axis_id)
-    if not axis:
-        return
-
-    # Decode CMER bits
-    fault = (cmer & 0x0001) != 0
-    axis_on = (cmer & 0x0002) != 0
-    motion_complete = (cmer & 0x0004) != 0
-    over_current = (cmer & 0x0080) != 0
-    can_error = (cmer & 0x8000) != 0
-
-    log_msg = (
-        f"--- ASCII STATUS LOG: Axis {axis_id} ---\n"
-        f"| Pos: {axis.get_position():<10.3f} | Speed: {axis.get_speed():<8.3f} | Target: {axis.target_position:<8.3f} |\n"
-        f"| Volt: {axis.get_voltage():<10.2f} | Current: {axis.get_current():<8.2f} | CMER: {cmer:04X}h           |\n"
-        f"| Status: {'FAULT ' if fault else 'OK    '} | Axis: {'ON' if axis_on else 'OFF'} | Motion: {'COMPLETE' if motion_complete else 'IN_MOTION'} |\n"
-        f"| Errors: {'OC ' if over_current else ''}{'CAN ' if can_error else ''}{'None' if not (over_current or can_error) else ''}\n"
-        f"-----------------------------------------"
-    )
-    print(log_msg)
-
-def udp_fire_listener(host, port, command_name):
-    """Listens for cyclic UDP fire commands."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.bind((host, port))
-            s.settimeout(0.5) # Use timeout for cleaner exit
-            print(f"[UDP Server] Listening for {command_name} on port {host}:{port}...")
-            while True:
-                try:
-                    # Expecting a small, simple command (e.g., "FIRE1")
-                    data, addr = s.recvfrom(1024)
-                    print(f"[UDP Server] Received {command_name} from {addr} (Data: {data.decode().strip()})")
-                except socket.timeout:
-                    continue
-                except socket.error:
-                    break
-    except Exception as e:
-        print(f"[UDP Server] Error setting up listener on port {port}: {e}")
-
 def handle_client(conn, addr):
     print(f"[Server] Connected by {addr}")
     global simulated_lrf_range, is_sync_mode, is_inner_mode
@@ -238,6 +184,7 @@ def handle_client(conn, addr):
             if not data:
                 break
             
+            print(f"[Server-RX-DEBUG] Received raw bytes: {data.hex(' ')}")
             buffer += data
             
             while True:
@@ -245,24 +192,25 @@ def handle_client(conn, addr):
                 if packet is None:
                     break
 
+                print(f"[Server-RX-DEBUG] Parsed valid packet: {packet.hex(' ')}")
+                
                 axis_id = packet[4]
                 opcode = (packet[5] << 8) | packet[6]
                 data_field = packet[7:-1]
                 
                 # --- Handle System-Level Opcodes (Axis 0 or DG/COM/LRF Groups) ---
                 if axis_id == 0:
-                    
-                    # Connection/System
                     if opcode == protocol.NAME_TO_OPCODE["COM_Connect"]:
                         print(f"[Server] Received COM_Connect. Acknowledging.")
                         conn.sendall(protocol.ACK_REPLY)
-                    
+                        
                     # LRF COMMANDS
                     elif opcode == protocol.NAME_TO_OPCODE["LRF_GetRange"]:
                         with lrf_lock:
                             current_range = simulated_lrf_range
                         reply_data = struct.pack(">f", current_range)
                         reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
+                        print(f"[Server-TX-DEBUG] Sending LRF_GetRange reply: {reply_pkt.hex(' ')}")
                         conn.sendall(reply_pkt)
                     elif opcode == protocol.NAME_TO_OPCODE["LRF_SetRange"]:
                         new_range = struct.unpack(">f", data_field)[0]
@@ -320,13 +268,10 @@ def handle_client(conn, addr):
 
                     elif opcode == protocol.NAME_TO_OPCODE["ERR_CaptureMotorErrorRegister"]:
                         cmer = axis.get_error_register()
+                        # CMER is a 16-bit (2-byte) unsigned integer
                         reply_data = struct.pack(">H", cmer)
                         reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
-                        
-                        # --- ASCII LOGGING ---
-                        log_axis_status_ascii(axis_id, cmer)
-                        # --- END ASCII LOGGING ---
-                        
+                        print(f"[Server-TX-DEBUG] Sending CMER ({cmer:04X}) reply: {reply_pkt.hex(' ')}")
                         conn.sendall(reply_pkt)
                         
                     elif opcode == protocol.NAME_TO_OPCODE["DG_GetBallisticOffset"]:
@@ -381,6 +326,7 @@ def handle_client(conn, addr):
                         protocol.NAME_TO_OPCODE["MOT_SetPositionMode"],
                         protocol.NAME_TO_OPCODE["MOT_Update"]
                     ]:
+                        # Acknowledge commands that don't change internal state in this simple simulator
                         conn.sendall(protocol.ACK_REPLY)
                         
                     else:
@@ -405,22 +351,14 @@ def simulation_loop():
         time.sleep(SIM_UPDATE_INTERVAL)
 
 def main():
-    # Start UDP Listeners
-    fire1_thread = threading.Thread(target=udp_fire_listener, args=(IP_SAFETY1, FIRE1_LISTEN_PORT, "FIRE1_CMD"), daemon=True)
-    fire2_thread = threading.Thread(target=udp_fire_listener, args=(IP_SAFETY2, FIRE2_LISTEN_PORT, "FIRE2_CMD"), daemon=True)
-    fire1_thread.start()
-    fire2_thread.start()
-
-    # Start Simulation Loop
     sim_thread = threading.Thread(target=simulation_loop, daemon=True)
     sim_thread.start()
     
-    # Start TCP Server
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
         s.listen()
-        print(f"[Server] Motion Simulator v{__version__} ({__updated__}) listening on {HOST}:{PORT} (TCP)...")
+        print(f"[Server] Motion Simulator v{__version__} ({__updated__}) listening on {HOST}:{PORT}...")
         
         while True:
             conn, addr = s.accept()

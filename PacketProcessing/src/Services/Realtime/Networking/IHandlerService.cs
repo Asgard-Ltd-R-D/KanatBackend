@@ -7,7 +7,7 @@ namespace PacketProcessing.Services.Realtime.Networking;
 /// Extends IObserver to receive raw packets and adds
 /// subscription methods for device service binding.
 /// </summary>
-public interface IHandlerService<T> : IObserver<RawPacketEvent>, IObservable<BasePacketEntity>
+public interface IHandlerService<T> : IObserver<RawPacketEvent>
 {
     /// <summary>
     /// Explicitly subscribes this handler to the given device service.

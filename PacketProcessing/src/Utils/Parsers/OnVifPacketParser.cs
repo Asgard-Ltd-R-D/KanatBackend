@@ -60,7 +60,7 @@ namespace PacketProcessing.Utils.Parsers
                 // On this point onwards is guaranteed that the string is structured as an XML document
                 XDocument xmlBody = XDocument.Parse(body);
 
-                var isCmd = tcpSrc != Constants.Constants.ONVIF_REPORT_TCP_PORT;
+                var isCmd = ipSrc != Constants.Constants.ONVIF_REPORT_IP;
 
                 // If the profile token is present, then it's a FOV_REQ 
                 if (TryExtractProfileToken(xmlBody, out string token))

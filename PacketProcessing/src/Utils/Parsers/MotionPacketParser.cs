@@ -7,31 +7,35 @@ using PacketProcessing.Utils.Enums;
 namespace PacketProcessing.Utils.Parsers;
 
 /// <summary>
-/// Parses raw packet data into a MotionPacketEntity by following these conventions:
-/// - [0..1]=StartByte (u16),
-/// - [2]=Length (u8),
-/// - [3]=GroupID (u8),
-/// - [4]=AxisID (u8),
-/// - [5..6]=OPCODE (u16, big-endian, combined withe high opcode and low opcode),
-/// - [7..7+N-1]=DATA (N = Length-4),
-/// - [7+N]=Checksum (u8),
+/// Parser for Motion packets using TCP/CapTrack protocol
 /// </summary>
-/// <param name="rawPacket">Raw packet bytes</param>
-/// <returns>Parsed MotionPacketEntity or null if parsing fails</returns>
 public class MotionPacketParser
 {
     private readonly ILogger<MotionPacketParser> _logger;
+    private const string REPORT_IP = "132.8.7.125";
 
     public MotionPacketParser(ILogger<MotionPacketParser> logger)
     {
         _logger = logger;
     }
 
+    /// <summary>
+    /// Parses raw packet data into a MotionPacketEntity by following these conventions:
+    /// - [0..1]=StartByte (u16),
+    /// - [2]=Length (u8),
+    /// - [3]=GroupID (u8),
+    /// - [4]=AxisID (u8),
+    /// - [5..6]=OPCODE (u16, big-endian, combined withe high opcode and low opcode),
+    /// - [7..7+N-1]=DATA (N = Length-4),
+    /// - [7+N]=Checksum (u8),
+    /// </summary>
+    /// <param name="rawPacket">Raw packet bytes</param>
+    /// <returns>Parsed MotionPacketEntity or null if parsing fails</returns>
     public MotionPacketEntity? Parse(ReadOnlySpan<byte> rawPacket)
     {
         try
         {
-            // --- Try to locate an IPv4 header dynamically (0x45 = IPv4 + IHL=5) ---
+            // --- Try to locate the real IPv4 header start dynamically ---
             int ipStart = -1;
             for (int i = 0; i < Math.Min(32, rawPacket.Length - 20); i++)
             {
@@ -43,43 +47,24 @@ public class MotionPacketParser
                 }
             }
 
-            ReadOnlySpan<byte> payload = [];
-            ushort srcPort = 0;
-            ushort dstPort = 0;
+            ReadOnlySpan<byte> payload;
+            string? srcIp = null;
 
             if (ipStart >= 0 && rawPacket.Length >= ipStart + 40)
             {
-                // Case 1: IP header detected → parse full IP+TCP structure
                 _logger.LogTrace("Detected IPv4 header at offset {Offset}", ipStart);
-                payload = ExtractTcpPayload(rawPacket, ipStart, out srcPort, out dstPort);
+                payload = ExtractTcpPayload(rawPacket, ipStart, out srcIp);
                 if (payload.IsEmpty)
                 {
-                    _logger.LogDebug("Failed to extract TCP payload (ipStart={Start})", ipStart);
+                    _logger.LogDebug("Failed to extract TCP payload from framed packet (ipStart={Start})", ipStart);
                     return null;
                 }
             }
             else
             {
-                // Case 2: No IPv4 → still attempt to parse TCP header directly
-                _logger.LogTrace("No IPv4 header found; assuming TCP header starts at offset 0.");
-
-                if (rawPacket.Length >= 20)
-                {
-                    srcPort = BinaryPrimitives.ReadUInt16BigEndian(rawPacket.Slice(0, 2));
-                    dstPort = BinaryPrimitives.ReadUInt16BigEndian(rawPacket.Slice(2, 2));
-                    int tcpHeaderLen = ((rawPacket[12] >> 4) & 0x0F) * 4;
-                    int tcpPayloadStart = tcpHeaderLen;
-
-                    if (tcpPayloadStart < rawPacket.Length)
-                        payload = rawPacket[tcpPayloadStart..];
-                }
-
-                // If even that fails (e.g., truncated), fallback to raw payload
-                if (payload.IsEmpty)
-                {
-                    _logger.LogTrace("TCP header parse failed; using entire packet as payload.");
-                    payload = rawPacket;
-                }
+                // No IPv4 signature detected → assume plain TCP payload (simulator)
+                _logger.LogTrace("No IPv4 header found; assuming plain TCP payload.");
+                payload = rawPacket;
             }
 
             if (payload.Length < 7)
@@ -88,7 +73,7 @@ public class MotionPacketParser
                 return null;
             }
 
-            bool isReport = srcPort == Constants.Constants.MOTION_REPORT_PORT;
+            bool isReport = srcIp == REPORT_IP;
 
             // --- Field extraction ---
             byte length = payload.Length >= 3 ? payload[2] : (byte)0;
@@ -113,8 +98,8 @@ public class MotionPacketParser
             }
 
             _logger.LogDebug(
-                "Parsed Motion Packet → Axis={Axis}, Opcode=0x{Op:X4} ({Desc}), Value={Val}, SrcPort={Src}, DstPort={Dst}, IsCmd={IsCmd}",
-                axisId, opCode, record.OpCodeDescription, value, srcPort, dstPort, !isReport);
+                "Parsed Motion Packet → Axis={Axis}, Opcode=0x{Op:X4} ({Desc}), Value={Val}, IsCmd={IsCmd}",
+                axisId, opCode, record.OpCodeDescription, value, !isReport);
 
             return new MotionPacketEntity
             {
@@ -134,26 +119,21 @@ public class MotionPacketParser
         }
     }
 
-    // --- Extract TCP payload from IP+TCP frame ---
-    private static ReadOnlySpan<byte> ExtractTcpPayload(ReadOnlySpan<byte> raw, int ipStart, out ushort srcPort, out ushort dstPort)
+    // --- Extract TCP payload given the starting offset of the IPv4 header ---
+    private static ReadOnlySpan<byte> ExtractTcpPayload(ReadOnlySpan<byte> raw, int ipStart, out string srcIp)
     {
-        srcPort = 0;
-        dstPort = 0;
+        srcIp = string.Empty;
 
-        // Validate minimal IP header
+        // Calculate IP header length
         int ipHeaderLen = (raw[ipStart] & 0x0F) * 4;
-        if (raw.Length < ipStart + ipHeaderLen + 20)
-            return [];
+        if (raw.Length < ipStart + ipHeaderLen + 20) return [];
 
         int tcpStart = ipStart + ipHeaderLen;
         int tcpHeaderLen = ((raw[tcpStart + 12] >> 4) & 0x0F) * 4;
         int tcpPayloadStart = tcpStart + tcpHeaderLen;
-        if (tcpPayloadStart >= raw.Length)
-            return [];
+        if (tcpPayloadStart >= raw.Length) return ReadOnlySpan<byte>.Empty;
 
-        srcPort = BinaryPrimitives.ReadUInt16BigEndian(raw.Slice(tcpStart, 2));
-        dstPort = BinaryPrimitives.ReadUInt16BigEndian(raw.Slice(tcpStart + 2, 2));
-
+        srcIp = $"{raw[ipStart + 12]}.{raw[ipStart + 13]}.{raw[ipStart + 14]}.{raw[ipStart + 15]}";
         return raw[tcpPayloadStart..];
     }
 

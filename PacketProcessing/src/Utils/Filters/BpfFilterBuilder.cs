@@ -48,7 +48,7 @@ public static class BpfFilterBuilder
 
     /// <summary>
     /// Builds a BPF filter string based on the protocol and IPs.
-    /// returns the filter constructed as {protocol} and (port {port number} or port {port number} or ...)
+    /// returns the filter constructed as {protocol} and (host {ip} or host {ip} or ...)
     /// </summary>
     /// <param name="protocol"></param>
     /// <param name="ips"></param>
@@ -70,10 +70,10 @@ public static class BpfFilterBuilder
         if (!string.IsNullOrWhiteSpace(proto))
             conditions.Add(proto);
 
-        if (ports is not null && ports.Any())
+        if (ips is not null && ips.Any())
         {
-            var portExprs = ports.Select(ip => $"port {ip}");
-            conditions.Add($"({string.Join(" or ", portExprs)})");
+            var ipExprs = ips.Select(ip => $"host {ip}");
+            conditions.Add($"({string.Join(" or ", ipExprs)})");
         }
 
         return string.Join(" and ", conditions);

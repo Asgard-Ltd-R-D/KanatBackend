@@ -7,12 +7,10 @@ namespace PacketProcessing.Utils.Parsers
     public class SafetyPacketParser
     {
         private readonly ILogger<SafetyPacketParser> _logger;
-
         public SafetyPacketParser(ILogger<SafetyPacketParser> logger)
         {
             _logger = logger;
         }
-
         // DO maps (by destination IP)
         private readonly IReadOnlyDictionary<ushort, string> DO_PBE = new Dictionary<ushort, string>
         {
@@ -39,155 +37,96 @@ namespace PacketProcessing.Utils.Parsers
             { 0x0003, "BURST" }
         };
 
-        public SafetyPacketEntity? Parse(ReadOnlySpan<byte> raw)
+    public SafetyPacketEntity? Parse(ReadOnlySpan<byte> raw)
+    {
+        if (raw.Length < 42)
         {
-            try
-            {
-                if (raw.Length < 4)
-                {
-                    _logger.LogDebug("Packet too short ({Len} bytes), dropping.", raw.Length);
-                    return null;
-                }
+            _logger.LogDebug("Packet too short ({Len} bytes), dropping packet", raw.Length);
+            return null;
+        } // Other UDP packet that is not Safety PDU
 
-                // --- Try to locate the real IPv4 header start dynamically (0..31) ---
-                int ipStart = -1;
-                for (int i = 0; i < Math.Min(32, raw.Length - 20); i++)
-                {
-                    // IPv4 header signature: 0x45 (version=4, IHL=5)
-                    if (raw[i] == 0x45 && raw.Length >= i + 20)
-                    {
-                        ipStart = i;
-                        break;
-                    }
-                }
-
-                ReadOnlySpan<byte> payload;
-                string srcIp = string.Empty;
-                string dstIp = string.Empty;
-
-                if (ipStart >= 0 && raw.Length >= ipStart + 28) // enough for IP(20) + UDP(8)
-                {
-                    _logger.LogTrace("Detected IPv4 header at offset {Offset}", ipStart);
-
-                    payload = ExtractUdpPayload(raw, ipStart, out srcIp, out dstIp);
-                    if (payload.IsEmpty)
-                    {
-                        _logger.LogDebug("Failed to extract UDP payload (ipStart={Start}), dropping.", ipStart);
-                        return null;
-                    }
-                }
-                else
-                {
-                    // No IPv4 signature detected → assume raw UDP payload (simulator)
-                    _logger.LogTrace("No IPv4 header found; assuming raw UDP payload (simulator).");
-                    payload = raw;
-                    // dstIp stays empty; maps will fall back to "Unknown"
-                }
-
-                // --- Safety payload must end with: [ ... DO (2 bytes) | STATE (2 bytes) ] ---
-                if (payload.Length < 4)
-                {
-                    _logger.LogDebug("Safety payload too small ({Len} bytes), dropping.", payload.Length);
-                    return null;
-                }
-
-                int doOffset = payload.Length - 4;
-                int stateOffset = payload.Length - 2;
-
-                ushort doVal = ReadBE16(payload.Slice(doOffset, 2));
-                ushort stVal = ReadBE16(payload.Slice(stateOffset, 2));
-
-                // --- Map DO/STATE by destination IP when available ---
-                IReadOnlyDictionary<ushort, string>? doMap = dstIp switch
-                {
-                    Constants.Constants.PBE_IP=> DO_PBE,
-                    Constants.Constants.SBE_IP => DO_SBE,
-                    _             => null
-                };
-                if (doMap == null)
-                {
-                    _logger.LogDebug("No DO map found for destination IP {DstIp}", dstIp);
-                    return null;
-                }
-
-                string doDescr = (doMap != null && doMap.TryGetValue(doVal, out var name)) ? name : $"0x{doVal:X4}";
-                string stDescr = STATE.TryGetValue(stVal, out var sname) ? sname : $"0x{stVal:X4}";
-
-                var dataPipeName = dstIp switch
-                {
-                    Constants.Constants.PBE_IP => "PBE",
-                    Constants.Constants.SBE_IP => "SBE",
-                    _             => null
-                };
-                if (dataPipeName == null)
-                {
-                    _logger.LogDebug("No data pipe name found for destination IP {DstIp}", dstIp);
-                    return null;
-                }
-
-                _logger.LogDebug("Parsed Safety Packet → Name: {Name}, DO: {DO}, STATE: {STATE}", dataPipeName, doDescr, stDescr);
-
-                return new SafetyPacketEntity
-                {
-                    Id = Guid.NewGuid(),
-                    Timestamp = DateTime.UtcNow, // your pipeline overrides with capture ts
-                    IsCmd = true,
-                    Name = dataPipeName,
-                    OpCode = $"0x{doVal:X4}",   // HEX value of DO
-                    Description = doDescr,      // DO description
-                    State = stDescr
-                };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error parsing safety packet ({Length} bytes).", raw.Length);
-                return null;
-            }
+        // --- Detect IPv4 header (with Ethernet prefix if present) ---
+        int ipStart = (raw.Length >= 14 && ReadBE16(raw.Slice(12, 2)) == 0x0800) ? 14 : 0;
+        if (raw.Length < ipStart + 20 || (raw[ipStart] >> 4) != 4)
+        {
+            _logger.LogDebug("IP header too short ({Len} bytes), dropping packet", raw.Length - ipStart);
+            return null;
         }
 
-        // --- Extract UDP payload given the starting offset of the IPv4 header ---
-        private static ReadOnlySpan<byte> ExtractUdpPayload(ReadOnlySpan<byte> raw, int ipStart, out string srcIp, out string dstIp)
+        int ihl = (raw[ipStart] & 0x0F) * 4;
+        if (ihl < 20 || raw.Length < ipStart + ihl)
         {
-            srcIp = string.Empty;
-            dstIp = string.Empty;
-
-            if (raw.Length < ipStart + 20)
-                return [];
-
-            // Verify IPv4
-            if ((raw[ipStart] >> 4) != 4)
-                return [];
-
-            int ihl = (raw[ipStart] & 0x0F) * 4;
-            if (ihl < 20 || raw.Length < ipStart + ihl + 8)
-                return [];
-
-            // Protocol: UDP = 17
-            byte proto = raw[ipStart + 9];
-            if (proto != 17)
-                return [];
-
-            // IPs
-            srcIp = $"{raw[ipStart + 12]}.{raw[ipStart + 13]}.{raw[ipStart + 14]}.{raw[ipStart + 15]}";
-            dstIp = $"{raw[ipStart + 16]}.{raw[ipStart + 17]}.{raw[ipStart + 18]}.{raw[ipStart + 19]}";
-
-            int udpStart = ipStart + ihl;
-            if (raw.Length < udpStart + 8)
-                return [];
-
-            ushort udpLen = ReadBE16(raw.Slice(udpStart + 4, 2));
-            if (udpLen < 8)
-                return [];
-
-            int payloadStart = udpStart + 8;
-            int payloadLen = Math.Min(udpLen - 8, raw.Length - payloadStart);
-            if (payloadLen <= 0)
-                return [];
-
-            return raw.Slice(payloadStart, payloadLen);
+            _logger.LogDebug("IP header too short ({Len} bytes), dropping packet", raw.Length - ipStart);
+            return null;
         }
 
-        private static ushort ReadBE16(ReadOnlySpan<byte> s) =>
+        if (raw[ipStart + 9] != 17) return null; // not UDP
+
+        // --- Destination IP ---
+        var dstIp = $"{raw[ipStart + 16]}.{raw[ipStart + 17]}.{raw[ipStart + 18]}.{raw[ipStart + 19]}";
+
+        // --- UDP header ---
+        int udpStart = ipStart + ihl;
+        if (raw.Length < udpStart + 8)
+        {
+            _logger.LogDebug("UDP header too short ({Len} bytes), dropping packet", raw.Length - udpStart);
+            return null;
+        }
+
+        ushort udpLen = ReadBE16(raw.Slice(udpStart + 4, 2));
+        if (udpLen < 8)
+        {
+            _logger.LogDebug("UDP length too small ({Len} bytes), dropping packet", udpLen);
+            return null;
+        }
+
+        int payloadStart = udpStart + 8;
+        int payloadLen = Math.Min(udpLen - 8, raw.Length - payloadStart);
+        if (payloadLen < 4)
+        {
+            _logger.LogDebug("Payload too small ({Len} bytes), dropping packet", payloadLen);
+            return null;
+        } // at least enough for DO + STATE
+
+        // --- Extract DO (4 bytes from end) and STATE (last 2 bytes) ---
+        int doOffset = payloadStart + payloadLen - 4;
+        int stateOffset = payloadStart + payloadLen - 2;
+
+        ushort doVal = ReadBE16(raw.Slice(doOffset, 2));
+        ushort stVal = ReadBE16(raw.Slice(stateOffset, 2));
+
+        // --- Map DO/STATE ---
+        IReadOnlyDictionary<ushort, string>? doMap = dstIp switch
+        {
+            "132.8.7.101" => DO_PBE,
+            "132.8.7.102" => DO_SBE,
+            _             => null
+        };
+
+        string doDescr = (doMap != null && doMap.TryGetValue(doVal, out var name)) ? name : $"0x{doVal:X4}";
+        string stDescr = STATE.TryGetValue(stVal, out var sname) ? sname : $"0x{stVal:X4}";
+
+        var dataPipeName = dstIp switch
+        {
+            "132.8.7.101" => "PBE",
+            "132.8.7.102" => "SBE",
+            _             => "Unknown"
+        };
+        _logger.LogDebug("Parsed Safety Packet → Name: {Name}, DO: {DO}, STATE: {STATE}", dataPipeName, doDescr, stDescr);
+
+        return new SafetyPacketEntity
+        {
+            Id = Guid.NewGuid(),
+            Timestamp=DateTime.UtcNow, // The datetime will be override by the actual timestamp of the packet
+            IsCmd = true,
+            Name = dataPipeName,
+            OpCode = $"0x{doVal:X4}", // HEX value of DO
+            Description = doDescr, // Description of DO
+            State = stDescr
+        };
+    }
+
+        private ushort ReadBE16(ReadOnlySpan<byte> s) =>
             BinaryPrimitives.ReadUInt16BigEndian(s);
     }
 }

@@ -21,7 +21,22 @@ let stats = {
     onvifCaptured: 0,
     hubReceived: 0,
     parseRate: 0,
-    flushRate: 0
+    flushRate: 0,
+    motionCaptureFail: 0,
+    safetyCaptureFail: 0,
+    onvifCaptureFail: 0,
+    motionParseSuccess: 0,
+    motionParseFail: 0,
+    safetyParseSuccess: 0,
+    safetyParseFail: 0,
+    onvifParseSuccess: 0,
+    onvifParseFail: 0,
+    motionFlushSuccess: 0,
+    motionFlushFail: 0,
+    safetyFlushSuccess: 0,
+    safetyFlushFail: 0,
+    onvifFlushSuccess: 0,
+    onvifFlushFail: 0
 };
 
 // Throughput tracking
@@ -275,6 +290,27 @@ async function connectHub() {
         stats.motionCaptured = telemetryData.motionCaptured || 0;
         stats.safetyCaptured = telemetryData.safetyCaptured || 0;
         stats.onvifCaptured = telemetryData.onvifCaptured || 0;
+        
+        // Map per-entity capture fail
+        stats.motionCaptureFail = telemetryData.motionCaptureFail || 0;
+        stats.safetyCaptureFail = telemetryData.safetyCaptureFail || 0;
+        stats.onvifCaptureFail = telemetryData.onvifCaptureFail || 0;
+
+        // Map per-entity parse success/fail
+        stats.motionParseSuccess = telemetryData.motionParseSuccess || 0;
+        stats.motionParseFail = telemetryData.motionParseFail || 0;
+        stats.safetyParseSuccess = telemetryData.safetyParseSuccess || 0;
+        stats.safetyParseFail = telemetryData.safetyParseFail || 0;
+        stats.onvifParseSuccess = telemetryData.onvifParseSuccess || 0;
+        stats.onvifParseFail = telemetryData.onvifParseFail || 0;
+
+        // Map per-entity flush success/fail
+        stats.motionFlushSuccess = telemetryData.motionFlushSuccess || 0;
+        stats.motionFlushFail = telemetryData.motionFlushFail || 0;
+        stats.safetyFlushSuccess = telemetryData.safetyFlushSuccess || 0;
+        stats.safetyFlushFail = telemetryData.safetyFlushFail || 0;
+        stats.onvifFlushSuccess = telemetryData.onvifFlushSuccess || 0;
+        stats.onvifFlushFail = telemetryData.onvifFlushFail || 0;
         
         // Update channel stats if available
         if (telemetryData.motionRawChannel || telemetryData.safetyRawChannel || telemetryData.onvifRawChannel ||

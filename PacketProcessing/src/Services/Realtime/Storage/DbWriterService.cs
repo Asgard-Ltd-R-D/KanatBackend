@@ -10,7 +10,6 @@ using QuestDB.Senders;
 using QuestDB;
 using Microsoft.Extensions.Configuration;
 using PacketProcessing.Config;
-using PacketProcessing.Telemetry;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Utils.Observers;
 
@@ -61,9 +60,8 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         _connectionString =
             $"http::addr={opt.Host}:{opt.InfluxPort};" +
             $"username={opt.Username};password={opt.Password};" +
-            $"request_min_throughput=500000;" +  // Target 500K packets/sec throughput
-            $"request_timeout=5000;" +            // 5 second timeout for requests
-            $"retry_timeout=1000;";
+            $"auto_flush_rows={_batchSize};" +
+            $"auto_flush_interval={_batchTimeout.TotalMilliseconds};";
         
         var parsedCapacity = GetChannelCapacity();
         _logger.LogInformation(
@@ -289,7 +287,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             var entityName = typeof(T) == typeof(Entities.Packet.MotionPacketEntity) ? "Motion" :
                              typeof(T) == typeof(Entities.Packet.SafetyPacketEntity) ? "Safety" :
                              typeof(T) == typeof(Entities.Packet.OnVIFPacketEntity) ? "OnVIF" : "Unknown";
-            _statsObserver.IncrementFlushFor(entityName, success: true);
+            _statsObserver.IncrementFlushFor(entityName, success: true, count: batch.Count);
             _statsObserver.DbWriter.AddParsed(batch.Count); // Increment parsed count when actually written to DB
             
             // Track queue latency for parsed channel telemetry (more indicative of backpressure)
@@ -314,7 +312,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
                 dbWriteLatencyMs = (writeEndTime - writeStartTime).TotalMilliseconds; // Pure DB write time
                 
                 _statsObserver.DbWriter.AddFlushed(batch.Count);
-                _statsObserver.IncrementFlushFor(_entityName, success: true);
+                _statsObserver.IncrementFlushFor(_entityName, success: true, count: batch.Count);
                 _statsObserver.DbWriter.AddParsed(batch.Count); // Increment parsed count when actually written to DB
                 
                 // Track queue latency for parsed channel telemetry
@@ -328,14 +326,14 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             catch
             {
                 _statsObserver.DbWriter.AddFailed(batch.Count);
-                _statsObserver.IncrementFlushFor(_entityName, success: false);
+                _statsObserver.IncrementFlushFor(_entityName, success: false, count: batch.Count);
                 throw;
             }
         }
         catch (Exception ex)
         {
             _statsObserver.DbWriter.AddFailed(batch.Count);
-            _statsObserver.IncrementFlushFor(_entityName, success: false);
+            _statsObserver.IncrementFlushFor(_entityName, success: false, count: batch.Count);
             _logger.LogError(ex, "Batch insert failed for {Entity}", typeof(T).Name);
         }
     }

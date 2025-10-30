@@ -65,19 +65,19 @@ public class StatsObserver
         }
     }
 
-    public void IncrementFlushFor(string entity, bool success)
+    public void IncrementFlushFor(string entity, bool success, long count = 1)
     {
         if (entity.Equals("Motion", StringComparison.OrdinalIgnoreCase))
         {
-            if (success) _telemetryService.IncrementMotionFlushSuccess(); else _telemetryService.IncrementMotionFlushFail();
+            if (success) _telemetryService.IncrementMotionFlushSuccess(count); else _telemetryService.IncrementMotionFlushFail(count);
         }
         else if (entity.Equals("Safety", StringComparison.OrdinalIgnoreCase))
         {
-            if (success) _telemetryService.IncrementSafetyFlushSuccess(); else _telemetryService.IncrementSafetyFlushFail();
+            if (success) _telemetryService.IncrementSafetyFlushSuccess(count); else _telemetryService.IncrementSafetyFlushFail(count);
         }
         else if (entity.Equals("OnVIF", StringComparison.OrdinalIgnoreCase))
         {
-            if (success) _telemetryService.IncrementOnvifFlushSuccess(); else _telemetryService.IncrementOnvifFlushFail();
+            if (success) _telemetryService.IncrementOnvifFlushSuccess(count); else _telemetryService.IncrementOnvifFlushFail(count);
         }
     }
 

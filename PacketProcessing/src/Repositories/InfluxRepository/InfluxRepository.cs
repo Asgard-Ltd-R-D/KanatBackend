@@ -48,7 +48,7 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             // start one transaction for this row
             var table = entity.TableName;
             sender.Transaction(table);
-            sender.Symbol("id", entity.Id.ToString("N"));
+            sender.Column("id", entity.Id.ToString("N"));
 
             entity.WriteColumns(sender);
 
@@ -125,12 +125,12 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
                 // Format GUID to reusable buffer to reduce allocations
                 if (e.Id.TryFormat(guidBuffer, out _, "N"))
                 {
-                    sender.Symbol("id", new string(guidBuffer));
+                    sender.Column("id", new string(guidBuffer));
                 }
                 else
                 {
                     // Fallback to ToString if TryFormat fails (should never happen)
-                    sender.Symbol("id", e.Id.ToString("N"));
+                    sender.Column("id", e.Id.ToString("N"));
                 }
                 
                 e.WriteColumns(sender);

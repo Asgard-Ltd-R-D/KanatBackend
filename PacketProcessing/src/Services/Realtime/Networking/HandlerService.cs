@@ -14,15 +14,14 @@ using PacketProcessing.DTOs.Range;
 using PacketProcessing.DTOs.Conf;
 namespace PacketProcessing.Services.Realtime.Networking;
 
-public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserver<RawPacketEvent>, IObservable<BasePacketEntity>
-    where T : BasePacketEntity
+public class HandlerService<T> : BackgroundService, IHandlerService<T> where T : BasePacketEntity
 {
     private readonly ILogger<HandlerService<T>> _logger;
     private readonly StatsObserver _statsObserver;
 
     // Device filters
     private readonly string _protocol;
-    private readonly IEnumerable<string> _ips;
+    private readonly IEnumerable<string> _ports;
 
     private readonly ITransmissionService? _transmissionService;
 
@@ -35,11 +34,15 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     
     // Hub transmission
     private readonly TimeSpan _transmissionInterval;
+    private readonly TimeSpan _batchTimeout;
 
     // Channel counts (manual tracking since bounded channels don't support Reader.Count)
     private long _rawChannelCount;
+    
+    // Auto-scaling
+    private volatile int _currentWorkers;
 
-    private const int RAW_READ_BURST = 64; // Smaller burst for lower latency
+    private const int RAW_READ_BURST = 128; // Smaller burst for lower latency
 
     private IDisposable? _subscription;
 
@@ -73,9 +76,12 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                       typeof(T) == typeof(OnVIFPacketEntity) ? "OnVIF" : "Unknown";
 
         var concurrency = configuration.GetSection("Concurrency");
-        var min = concurrency.GetValue<int>("MinWorkers", 2);
-        var max = concurrency.GetValue<int>("MaxWorkers", 8);
-        _workerCount = Math.Clamp(Environment.ProcessorCount, min, max);
+        _minWorkers = concurrency.GetValue<int>("MinWorkers", 2);
+        _maxWorkers = concurrency.GetValue<int>("MaxWorkers", 8);
+        _batchTimeout = TimeSpan.FromMilliseconds(concurrency.GetValue<int>("BatchTimeoutMs", 30));
+        _workerCount = 4; // Default start with 4 workers
+        
+        _currentWorkers = _workerCount;
         
         // Hub transmission configuration
         _transmissionInterval = TimeSpan.FromMilliseconds(
@@ -168,7 +174,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     [Obsolete("Development only - use SubscribeToDeviceAsync(DeviceService, RangeDto.RangeConfig) instead")]
     public async Task SubscribeToDeviceAsync(IDeviceService deviceService, string deviceName)
     {
-        var filter = BpfFilterBuilder.Build(_protocol, _ips);
+        var filter = BpfFilterBuilder.Build(_protocol, _ports);
         await deviceService.SubscribeWithFilterAsync(this, deviceName, filter);
         _logger.LogInformation("[HANDLER-SERVICE] {Handler} subscribed to {Device} with filter {Filter}",
             typeof(T).Name, deviceName, filter);
@@ -218,6 +224,13 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     public void OnNext(RawPacketEvent evt)
     {
         _statsObserver.Handler.IncrementCaptured();
+        // Increment per-pipeline captured counters
+        if (typeof(T) == typeof(MotionPacketEntity))
+            _statsObserver.Handler.IncrementMotionCaptured();
+        else if (typeof(T) == typeof(SafetyPacketEntity))
+            _statsObserver.Handler.IncrementSafetyCaptured();
+        else if (typeof(T) == typeof(OnVIFPacketEntity))
+            _statsObserver.Handler.IncrementOnvifCaptured();
         
         // Try fast path first
         if (_rawChannel.Writer.TryWrite(evt))
@@ -282,22 +295,218 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var workers = Enumerable.Range(0, _workerCount)
-            .Select(i => Task.Factory.StartNew(
-                () => WorkerLoopAsync(i, stoppingToken),
-                stoppingToken,
-                TaskCreationOptions.LongRunning,
-                TaskScheduler.Default).Unwrap())
-            .ToArray();
+        // Dictionary to track all worker cancellation tokens (initial + dynamic)
+        var workerCancellationTokens = new Dictionary<int, CancellationTokenSource>();
+        var workerTasks = new Dictionary<int, Task>();
 
-        return Task.WhenAll(workers);
+        // Push initial raw channel stats so capacity appears in telemetry immediately
+        UpdateRawChannelStats();
+
+        // Start initial workers with individual cancellation tokens
+        var workers = new List<Task>();
+        for (int i = 0; i < _workerCount; i++)
+        {
+            int workerId = i;
+            var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            workerCancellationTokens[workerId] = workerCts;
+            
+            var task = Task.Factory.StartNew(
+                () => WorkerLoopAsync(workerId, workerCts.Token),
+                workerCts.Token,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default).Unwrap();
+
+            workers.Add(task);
+            workerTasks[workerId] = task;
+        }
+        
+        // Start auto-scaler
+        var autoScalerTask = Task.Factory.StartNew(
+            () => AutoScalerAsync(stoppingToken, workers, workerCancellationTokens, workerTasks), // CHANGED
+            stoppingToken,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap();
+
+        return Task.WhenAll(workers.Concat(new[] { autoScalerTask }));
+    }
+
+    private async Task AutoScalerAsync(
+        CancellationToken stoppingToken,
+        List<Task> workers,
+        Dictionary<int, CancellationTokenSource> workerCancellationTokens,
+        Dictionary<int, Task> workerTasks)
+    {
+        var checkInterval = TimeSpan.FromSeconds(10);      // sampling cadence
+        using var timer = new PeriodicTimer(checkInterval);
+
+        // Windows you requested
+        var scaleUpWindow   = TimeSpan.FromSeconds(30);
+        var scaleDownWindow = TimeSpan.FromMinutes(1);
+
+        // Cooldowns equal to the windows, per your rule
+        var scaleUpCooldown   = scaleUpWindow;
+        var scaleDownCooldown = scaleDownWindow;
+
+        // Elapsed trackers
+        TimeSpan highLatencyElapsed = TimeSpan.Zero;
+        TimeSpan lowLatencyElapsed  = TimeSpan.Zero;
+
+        // Last scale action time (to enforce cooldown)
+        DateTime? lastScaleAt = null;
+
+        // Target latency is batch timeout (your rule)
+        double targetMs = _batchTimeout.TotalMilliseconds;
+
+        // Next allowed time to make any scaling decision (enforced cooldown)
+        DateTime nextDecisionNotBefore = DateTime.UtcNow;
+
+        int nextWorkerId = workerCancellationTokens.Count; // continue ids after initial set
+
+        try
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                await timer.WaitForNextTickAsync(stoppingToken);
+
+                // Enforce cooldown after any scale action
+                if (DateTime.UtcNow < nextDecisionNotBefore)
+                {
+                    _logger.LogDebug("[AUTO-SCALER] Cooling down until {Until:o}", nextDecisionNotBefore);
+                    continue;
+                }
+
+                var currentLatency = _statsObserver.Handler.GetAverageLatency();
+                var currentWorkers = _currentWorkers;
+
+                // Update elapsed windows
+                if (currentLatency > targetMs)
+                {
+                    highLatencyElapsed += checkInterval;
+                    lowLatencyElapsed = TimeSpan.Zero;
+                }
+                else if (currentLatency > 0) // treat 0 as "no signal yet"
+                {
+                    lowLatencyElapsed += checkInterval;
+                    highLatencyElapsed = TimeSpan.Zero;
+                }
+                else
+                {
+                    // No samples; don't accumulate either window
+                    highLatencyElapsed = TimeSpan.Zero;
+                    lowLatencyElapsed  = TimeSpan.Zero;
+                }
+
+                _logger.LogDebug(
+                    "[AUTO-SCALER] {Entity} Workers={Workers} Latency={Latency:F1}ms Target={Target:F1}ms | HighElapsed={High}s LowElapsed={Low}s",
+                    typeof(T).Name, currentWorkers, currentLatency, targetMs,
+                    (int)highLatencyElapsed.TotalSeconds, (int)lowLatencyElapsed.TotalSeconds);
+
+                // --- SCALE UP ---
+                if (currentLatency > targetMs &&
+                    currentWorkers < _maxWorkers &&
+                    highLatencyElapsed >= scaleUpWindow)
+                {
+                    int newWorkers = currentWorkers + 1;
+                    _currentWorkers = newWorkers;
+
+                    int workerId = nextWorkerId++;
+                    var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    workerCancellationTokens[workerId] = workerCts;
+
+                    _logger.LogInformation(
+                        "[AUTO-SCALER] {Entity} SCALING UP: {Old} -> {New} (latency {Latency:F1}ms > target {Target:F1}ms for {Window}s)",
+                        typeof(T).Name, currentWorkers, newWorkers, currentLatency, targetMs, (int)scaleUpWindow.TotalSeconds);
+
+                    var task = Task.Factory.StartNew(
+                        () => WorkerLoopAsync(workerId, workerCts.Token),
+                        workerCts.Token,
+                        TaskCreationOptions.LongRunning,
+                        TaskScheduler.Default).Unwrap();
+
+                    workers.Add(task);
+                    workerTasks[workerId] = task;
+
+                    // reset window and set cooldown
+                    highLatencyElapsed = TimeSpan.Zero;
+                    lastScaleAt = DateTime.UtcNow;
+                    nextDecisionNotBefore = lastScaleAt.Value + scaleUpCooldown;
+                    continue; // skip further checks this tick
+                }
+
+                // --- SCALE DOWN ---
+                if (currentLatency > 0 &&
+                    currentLatency <= targetMs &&
+                    currentWorkers > _minWorkers &&
+                    lowLatencyElapsed >= scaleDownWindow)
+                {
+                    int newWorkers = currentWorkers - 1;
+                    _currentWorkers = newWorkers;
+
+                    // choose the highest id to terminate
+                    var workerToTerminate = workerCancellationTokens.Keys.Max();
+
+                    _logger.LogInformation(
+                        "[AUTO-SCALER] {Entity} SCALING DOWN: {Old} -> {New} (latency {Latency:F1}ms ≤ target {Target:F1}ms for {Window}s)",
+                        typeof(T).Name, currentWorkers, newWorkers, currentLatency, targetMs, (int)scaleDownWindow.TotalSeconds);
+
+                    if (workerCancellationTokens.TryGetValue(workerToTerminate, out var cts))
+                    {
+                        // signal graceful stop; worker will flush then exit
+                        cts.Cancel();
+
+                        // Await the task to ensure it "finishes" before we proceed
+                        if (workerTasks.TryGetValue(workerToTerminate, out var wt))
+                        {
+                            try { await wt; } catch (OperationCanceledException) { } catch { /* already logged in worker */ }
+                            workerTasks.Remove(workerToTerminate);
+                            workers.Remove(wt);
+                        }
+
+                        cts.Dispose();
+                        workerCancellationTokens.Remove(workerToTerminate);
+
+                        _logger.LogInformation(
+                            "[AUTO-SCALER] {Entity} Worker {WorkerId} terminated gracefully (remaining {Remaining})",
+                            typeof(T).Name, workerToTerminate, newWorkers);
+                    }
+
+                    // reset window and set cooldown
+                    lowLatencyElapsed = TimeSpan.Zero;
+                    lastScaleAt = DateTime.UtcNow;
+                    nextDecisionNotBefore = lastScaleAt.Value + scaleDownCooldown;
+                    continue; // skip further checks this tick
+                }
+            }
+        }
+        catch (OperationCanceledException) { /* normal on shutdown */ }
+        finally
+        {
+            // ensure all pending cancels get disposed by caller
+        }
     }
 
     private async Task WorkerLoopAsync(int workerId, CancellationToken token)
     {
-        // Reuse buffers to avoid per-iteration allocs
-        var rawBatch = new List<RawPacketEvent>(RAW_READ_BURST);
+        // Pre-allocate scope dictionary to avoid repeated allocations
+        var scopeState = new Dictionary<string, object>(2)
+        {
+            ["Worker"] = workerId,
+            ["Entity"] = typeof(T).Name
+        };
+        using var scope = _logger.BeginScope(scopeState);
+
+        // Rent arrays from pool - allocate once, reuse throughout worker lifetime
+        var rawBatch = ArrayPool<RawPacketEvent>.Shared.Rent(RAW_READ_BURST);
+        var parsedBatch = ArrayPool<T>.Shared.Rent(RAW_READ_BURST);
         
+        long batchNumber = 0;
+        DateTime? oldestInBufferUtc = null;
+        int rawCount = 0;
+        int parsedCount = 0;
+        
+        using var timer = new PeriodicTimer(_batchTimeout);
+        Task<bool> tickTask = timer.WaitForNextTickAsync(token).AsTask();
+
         try
         {
             while (!token.IsCancellationRequested)
@@ -424,6 +633,38 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         catch { return null; }
     }
 
+    private async Task<int> FlushBatchInternal(IReadOnlyList<T> parsedBatch, int workerId, long batchNumber, CancellationToken token)
+    {
+        if (parsedBatch.Count == 0) return 0;
+
+        var backpressureCount = 0;
+
+        for (int i = 0; i < parsedBatch.Count; i++)
+        {
+            var parsed = parsedBatch[i];
+
+            // Send to transmission service (fire and forget)
+            _transmissionService?.OnNext(parsed);
+            
+            // Write to parsed channel (can block if full - this is the bottleneck for DB writer)
+            if (!_parsedChannel.Writer.TryWrite(parsed))
+            {
+                _statsObserver.Handler.IncrementBackpressure();
+                backpressureCount++;
+                await _parsedChannel.Writer.WriteAsync(parsed, token);
+                // Successfully enqueued after waiting; reflect in parsed-channel count
+                _statsObserver.DbWriter.IncrementChannelCount();
+            }
+            else
+            {
+                // Successfully enqueued immediately; reflect in parsed-channel count
+                _statsObserver.DbWriter.IncrementChannelCount();
+            }
+        }
+
+        return backpressureCount;
+    }
+
     public IDisposable Subscribe(IObserver<BasePacketEntity> observer)
     {
         ArgumentNullException.ThrowIfNull(observer);
@@ -445,6 +686,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
             _ => "UnknownRaw"
         };
         
-        _statsObserver.UpdateChannelStats(channelName, rawCapacity, (int)rawChannelCount, rawUtilization);
+        _statsObserver.UpdateChannelStats(channelName, rawCapacity, (int)rawChannelCount, rawUtilization, _currentWorkers);
     }
 }

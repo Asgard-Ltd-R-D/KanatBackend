@@ -9,6 +9,7 @@ namespace PacketProcessing.Telemetry;
 public class TelemetryService : ITelemetryService
 {
     private readonly ConcurrentDictionary<string, ChannelStatsDto> _channelStats = new();
+    private readonly ConcurrentDictionary<string, ChannelLatencyTracker> _channelLatencyTrackers = new();
     private readonly TelemetryBroadcaster? _broadcaster;
     private long _captured = 0;
     private long _parsed = 0;
@@ -202,6 +203,9 @@ public class TelemetryService : ITelemetryService
 
     public void UpdateChannelStats(string channelName, int capacity, int currentSize, double utilizationPercent, int workers = 0, double avgLatencyMs = 0)
     {
+        var tracker = _channelLatencyTrackers.GetOrAdd(channelName, _ => new ChannelLatencyTracker());
+        var avgLatency = tracker.GetAverageLatency();
+        
         var channelStats = new ChannelStatsDto
         {
             Capacity = capacity,
@@ -212,6 +216,14 @@ public class TelemetryService : ITelemetryService
         };
         
         _channelStats.AddOrUpdate(channelName, channelStats, (key, oldValue) => channelStats);
+        _hasChanges = true;
+        _broadcaster?.NotifyChange();
+    }
+
+    public void AddChannelLatency(string channelName, double latencyMs)
+    {
+        var tracker = _channelLatencyTrackers.GetOrAdd(channelName, _ => new ChannelLatencyTracker());
+        tracker.AddLatency(latencyMs);
         _hasChanges = true;
         _broadcaster?.NotifyChange();
     }
@@ -247,6 +259,10 @@ public class TelemetryService : ITelemetryService
         _avgLatency = 0;
         
         _channelStats.Clear();
+        foreach (var tracker in _channelLatencyTrackers.Values)
+        {
+            tracker.Reset();
+        }
         _hasChanges = true;
         _broadcaster?.NotifyChange();
     }
@@ -273,5 +289,44 @@ public class TelemetryService : ITelemetryService
     private ChannelStatsDto? GetChannelStats(string channelName)
     {
         return _channelStats.TryGetValue(channelName, out var stats) ? stats : null;
+    }
+}
+
+/// <summary>
+/// Thread-safe latency tracker for individual channels that maintains last 100 batch latencies
+/// </summary>
+public class ChannelLatencyTracker
+{
+    private readonly Queue<double> _latencies = new();
+    private readonly object _lock = new();
+    private const int MAX_LATENCIES = 100;
+
+    public void AddLatency(double latencyMs)
+    {
+        lock (_lock)
+        {
+            _latencies.Enqueue(latencyMs);
+            if (_latencies.Count > MAX_LATENCIES)
+            {
+                _latencies.Dequeue();
+            }
+        }
+    }
+
+    public double GetAverageLatency()
+    {
+        lock (_lock)
+        {
+            if (_latencies.Count == 0) return 0.0;
+            return _latencies.Average();
+        }
+    }
+
+    public void Reset()
+    {
+        lock (_lock)
+        {
+            _latencies.Clear();
+        }
     }
 }

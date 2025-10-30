@@ -933,16 +933,16 @@ function updateParseStats() {
     const opf = document.getElementById('onvifParseFail'); if (opf) opf.textContent = (stats.onvifParseFail || 0).toLocaleString();
     
     // Use the calculated rate from refreshStats instead of recalculating here
-    const rate = stats.parseRate || 0;
+    const rate = Math.max(0, stats.parseRate || 0);
     document.getElementById('parseRate').textContent = rate;
 }
 
 function updateDbStats() {
-    document.getElementById('totalFlushed').textContent = stats.flushed.toLocaleString();
-    document.getElementById('totalFailed').textContent = stats.failed.toLocaleString();
+    document.getElementById('totalFlushed').textContent = Math.max(0, stats.flushed || 0).toLocaleString();
+    document.getElementById('totalFailed').textContent = Math.max(0, stats.failed || 0).toLocaleString();
     
     // Use the calculated rate from refreshStats instead of recalculating here
-    const rate = stats.flushRate || 0;
+    const rate = Math.max(0, stats.flushRate || 0);
     document.getElementById('flushRate').textContent = rate;
     const mfs = document.getElementById('motionFlushSuccess'); if (mfs) mfs.textContent = (stats.motionFlushSuccess || 0).toLocaleString();
     const mff = document.getElementById('motionFlushFail'); if (mff) mff.textContent = (stats.motionFlushFail || 0).toLocaleString();
@@ -983,13 +983,13 @@ function updateTelemetryStats() {
     const off2 = document.getElementById('onvifFlushFail'); if (off2) off2.textContent = (stats.onvifFlushFail || 0).toLocaleString();
     
     // Update throughput rates (packets per second)
-    document.getElementById('parseRate').textContent = throughput.parsedPps.toLocaleString();
-    document.getElementById('flushRate').textContent = throughput.flushedPps.toLocaleString();
+    document.getElementById('parseRate').textContent = Math.max(0, throughput.parsedPps || 0).toLocaleString();
+    document.getElementById('flushRate').textContent = Math.max(0, throughput.flushedPps || 0).toLocaleString();
     
     // Add captured throughput rate if element exists
     const capturedRateElement = document.getElementById('capturedRate');
     if (capturedRateElement) {
-        capturedRateElement.textContent = throughput.capturedPps.toLocaleString();
+        capturedRateElement.textContent = Math.max(0, throughput.capturedPps || 0).toLocaleString();
     }
     
 }
@@ -1007,6 +1007,7 @@ function updateChannelStats(motionRaw, safetyRaw, onvifRaw, motionParsed, safety
         const ml = document.getElementById('motionRawAvgLatency'); if (ml) ml.textContent = ((motionRaw.avgLatencyMs || motionRaw.avgLatency || 0).toFixed ? (motionRaw.avgLatencyMs || motionRaw.avgLatency || 0).toFixed(1) : (motionRaw.avgLatencyMs || motionRaw.avgLatency || 0)) + ' ms';
         document.getElementById('motionRawChannelPercent').textContent = motionRaw.utilizationPercent.toFixed(2) + '%';
         document.getElementById('motionRawChannelBar').style.width = Math.min(motionRaw.utilizationPercent, 100) + '%';
+        document.getElementById('motionRawChannelAvgLatency').textContent = Math.max(0, motionRaw.avgLatencyMs || 0).toFixed(1);
     }
     
     if (safetyRaw) {
@@ -1015,6 +1016,7 @@ function updateChannelStats(motionRaw, safetyRaw, onvifRaw, motionParsed, safety
         const sl = document.getElementById('safetyRawAvgLatency'); if (sl) sl.textContent = ((safetyRaw.avgLatencyMs || safetyRaw.avgLatency || 0).toFixed ? (safetyRaw.avgLatencyMs || safetyRaw.avgLatency || 0).toFixed(1) : (safetyRaw.avgLatencyMs || safetyRaw.avgLatency || 0)) + ' ms';
         document.getElementById('safetyRawChannelPercent').textContent = safetyRaw.utilizationPercent.toFixed(2) + '%';
         document.getElementById('safetyRawChannelBar').style.width = Math.min(safetyRaw.utilizationPercent, 100) + '%';
+        document.getElementById('safetyRawChannelAvgLatency').textContent = Math.max(0, safetyRaw.avgLatencyMs || 0).toFixed(1);
     }
     
     if (onvifRaw) {
@@ -1023,6 +1025,7 @@ function updateChannelStats(motionRaw, safetyRaw, onvifRaw, motionParsed, safety
         const ol = document.getElementById('onvifRawAvgLatency'); if (ol) ol.textContent = ((onvifRaw.avgLatencyMs || onvifRaw.avgLatency || 0).toFixed ? (onvifRaw.avgLatencyMs || onvifRaw.avgLatency || 0).toFixed(1) : (onvifRaw.avgLatencyMs || onvifRaw.avgLatency || 0)) + ' ms';
         document.getElementById('onvifRawChannelPercent').textContent = onvifRaw.utilizationPercent.toFixed(2) + '%';
         document.getElementById('onvifRawChannelBar').style.width = Math.min(onvifRaw.utilizationPercent, 100) + '%';
+        document.getElementById('onvifRawChannelAvgLatency').textContent = Math.max(0, onvifRaw.avgLatencyMs || 0).toFixed(1);
     }
     
     // Update Parsed Channels (Parse -> DB)
@@ -1032,6 +1035,7 @@ function updateChannelStats(motionRaw, safetyRaw, onvifRaw, motionParsed, safety
         const mpl = document.getElementById('motionParsedAvgLatency'); if (mpl) mpl.textContent = ((motionParsed.avgLatencyMs || motionParsed.avgLatency || 0).toFixed ? (motionParsed.avgLatencyMs || motionParsed.avgLatency || 0).toFixed(1) : (motionParsed.avgLatencyMs || motionParsed.avgLatency || 0)) + ' ms';
         document.getElementById('motionParsedChannelPercent').textContent = motionParsed.utilizationPercent.toFixed(2) + '%';
         document.getElementById('motionParsedChannelBar').style.width = Math.min(motionParsed.utilizationPercent, 100) + '%';
+        document.getElementById('motionParsedChannelAvgLatency').textContent = Math.max(0, motionParsed.avgLatencyMs || 0).toFixed(1);
     }
     
     if (safetyParsed) {
@@ -1040,6 +1044,7 @@ function updateChannelStats(motionRaw, safetyRaw, onvifRaw, motionParsed, safety
         const spl = document.getElementById('safetyParsedAvgLatency'); if (spl) spl.textContent = ((safetyParsed.avgLatencyMs || safetyParsed.avgLatency || 0).toFixed ? (safetyParsed.avgLatencyMs || safetyParsed.avgLatency || 0).toFixed(1) : (safetyParsed.avgLatencyMs || safetyParsed.avgLatency || 0)) + ' ms';
         document.getElementById('safetyParsedChannelPercent').textContent = safetyParsed.utilizationPercent.toFixed(2) + '%';
         document.getElementById('safetyParsedChannelBar').style.width = Math.min(safetyParsed.utilizationPercent, 100) + '%';
+        document.getElementById('safetyParsedChannelAvgLatency').textContent = Math.max(0, safetyParsed.avgLatencyMs || 0).toFixed(1);
     }
     
     if (onvifParsed) {
@@ -1048,6 +1053,7 @@ function updateChannelStats(motionRaw, safetyRaw, onvifRaw, motionParsed, safety
         const opl = document.getElementById('onvifParsedAvgLatency'); if (opl) opl.textContent = ((onvifParsed.avgLatencyMs || onvifParsed.avgLatency || 0).toFixed ? (onvifParsed.avgLatencyMs || onvifParsed.avgLatency || 0).toFixed(1) : (onvifParsed.avgLatencyMs || onvifParsed.avgLatency || 0)) + ' ms';
         document.getElementById('onvifParsedChannelPercent').textContent = onvifParsed.utilizationPercent.toFixed(2) + '%';
         document.getElementById('onvifParsedChannelBar').style.width = Math.min(onvifParsed.utilizationPercent, 100) + '%';
+        document.getElementById('onvifParsedChannelAvgLatency').textContent = Math.max(0, onvifParsed.avgLatencyMs || 0).toFixed(1);
     }
 }
 

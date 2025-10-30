@@ -48,10 +48,14 @@ public class ConfigurationInjection
         // Ensure DB is set up before services
         EnvironmentConfiguration.LoadConfigurations(builder);
 
-        // Register Repositories & Services
-        //TODO: Implement Repositories and Services
-
         var config = builder.Configuration;
+
+        builder.Services.Configure<HostOptions>(options =>
+        {
+            options.BackgroundServiceExceptionBehavior = 
+                BackgroundServiceExceptionBehavior.Ignore; // Do not stop host on background service exceptions
+        });
+
         
         // === Channels (centralized, sizes from DataPipes:{Pipe}:Channel:Members) ===
         // Parsed channels (handler -> DB) - sizes from DataPipes

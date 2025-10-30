@@ -283,6 +283,10 @@
         <div class="card">
             <h3>Motion Raw (Capture &rarr; Parse)</h3>
             <div class="metric">
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="motionRawChannelWorkers">4</span>
+            </div>
+            <div class="metric">
                 <span class="metric-label">Capacity</span>
                 <span class="metric-value" id="motionRawChannelCapacity">500,000</span>
             </div>
@@ -298,6 +302,10 @@
                 <span class="metric-label">Utilization</span>
                 <span class="metric-value" id="motionRawChannelPercent">0%</span>
             </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value"><span id="motionRawChannelAvgLatency">0</span> <span style="font-size:12px">ms</span></span>
+            </div>
             <div style="margin-top: 10px; background: #2a2a2a; border-radius: 5px; height: 20px; overflow: hidden;">
                 <div id="motionRawChannelBar" style="background: linear-gradient(90deg, #4caf50, #ff9800, #f44336); height: 100%; width: 0%; transition: width 0.3s;"></div>
             </div>
@@ -306,6 +314,10 @@
         <!-- Safety Raw Channel -->
         <div class="card">
             <h3>Safety Raw (Capture &rarr; Parse)</h3>
+            <div class="metric">
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="safetyRawChannelWorkers">4</span>
+            </div>
             <div class="metric">
                 <span class="metric-label">Capacity</span>
                 <span class="metric-value" id="safetyRawChannelCapacity">500,000</span>
@@ -322,6 +334,10 @@
                 <span class="metric-label">Utilization</span>
                 <span class="metric-value" id="safetyRawChannelPercent">0%</span>
             </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value"><span id="safetyRawChannelAvgLatency">0</span> <span style="font-size:12px">ms</span></span>
+            </div>
             <div style="margin-top: 10px; background: #2a2a2a; border-radius: 5px; height: 20px; overflow: hidden;">
                 <div id="safetyRawChannelBar" style="background: linear-gradient(90deg, #4caf50, #ff9800, #f44336); height: 100%; width: 0%; transition: width 0.3s;"></div>
             </div>
@@ -330,6 +346,10 @@
         <!-- OnVIF Raw Channel -->
         <div class="card">
             <h3>OnVIF Raw (Capture &rarr; Parse)</h3>
+            <div class="metric">
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="onvifRawChannelWorkers">4</span>
+            </div>
             <div class="metric">
                 <span class="metric-label">Capacity</span>
                 <span class="metric-value" id="onvifRawChannelCapacity">500,000</span>
@@ -346,6 +366,10 @@
                 <span class="metric-label">Utilization</span>
                 <span class="metric-value" id="onvifRawChannelPercent">0%</span>
             </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value"><span id="onvifRawChannelAvgLatency">0</span> <span style="font-size:12px">ms</span></span>
+            </div>
             <div style="margin-top: 10px; background: #2a2a2a; border-radius: 5px; height: 20px; overflow: hidden;">
                 <div id="onvifRawChannelBar" style="background: linear-gradient(90deg, #4caf50, #ff9800, #f44336); height: 100%; width: 0%; transition: width 0.3s;"></div>
             </div>
@@ -357,6 +381,10 @@
         <!-- Motion Parsed Channel -->
         <div class="card">
             <h3>Motion Parsed (Parse &rarr; DB)</h3>
+            <div class="metric">
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="motionParsedChannelWorkers">4</span>
+            </div>
             <div class="metric">
                 <span class="metric-label">Capacity</span>
                 <span class="metric-value" id="motionParsedChannelCapacity">1,000,000</span>
@@ -373,6 +401,10 @@
                 <span class="metric-label">Utilization</span>
                 <span class="metric-value" id="motionParsedChannelPercent">0%</span>
             </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value"><span id="motionParsedChannelAvgLatency">0</span> <span style="font-size:12px">ms</span></span>
+            </div>
             <div style="margin-top: 10px; background: #2a2a2a; border-radius: 5px; height: 20px; overflow: hidden;">
                 <div id="motionParsedChannelBar" style="background: linear-gradient(90deg, #4caf50, #ff9800, #f44336); height: 100%; width: 0%; transition: width 0.3s;"></div>
             </div>
@@ -381,6 +413,10 @@
         <!-- Safety Parsed Channel -->
         <div class="card">
             <h3>Safety Parsed (Parse &rarr; DB)</h3>
+            <div class="metric">
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="safetyParsedChannelWorkers">4</span>
+            </div>
             <div class="metric">
                 <span class="metric-label">Capacity</span>
                 <span class="metric-value" id="safetyParsedChannelCapacity">1,000,000</span>
@@ -397,6 +433,10 @@
                 <span class="metric-label">Utilization</span>
                 <span class="metric-value" id="safetyParsedChannelPercent">0%</span>
             </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value"><span id="safetyParsedChannelAvgLatency">0</span> <span style="font-size:12px">ms</span></span>
+            </div>
             <div style="margin-top: 10px; background: #2a2a2a; border-radius: 5px; height: 20px; overflow: hidden;">
                 <div id="safetyParsedChannelBar" style="background: linear-gradient(90deg, #4caf50, #ff9800, #f44336); height: 100%; width: 0%; transition: width 0.3s;"></div>
             </div>
@@ -405,6 +445,10 @@
         <!-- OnVIF Parsed Channel -->
         <div class="card">
             <h3>OnVIF Parsed (Parse &rarr; DB)</h3>
+            <div class="metric">
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="onvifParsedChannelWorkers">4</span>
+            </div>
             <div class="metric">
                 <span class="metric-label">Capacity</span>
                 <span class="metric-value" id="onvifParsedChannelCapacity">100,000</span>
@@ -420,6 +464,10 @@
             <div class="metric">
                 <span class="metric-label">Utilization</span>
                 <span class="metric-value" id="onvifParsedChannelPercent">0%</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value"><span id="onvifParsedChannelAvgLatency">0</span> <span style="font-size:12px">ms</span></span>
             </div>
             <div style="margin-top: 10px; background: #2a2a2a; border-radius: 5px; height: 20px; overflow: hidden;">
                 <div id="onvifParsedChannelBar" style="background: linear-gradient(90deg, #4caf50, #ff9800, #f44336); height: 100%; width: 0%; transition: width 0.3s;"></div>

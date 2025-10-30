@@ -29,6 +29,8 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     private readonly TimeSpan _batchTimeout;
     private readonly int _workerCount;
     private readonly StatsObserver _statsObserver;
+    private readonly string _entityName;
+    private readonly IConfiguration _configuration;
 
     public DbWriterService(
         ILogger<DbWriterService<T>> logger,
@@ -42,11 +44,14 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         _channel = channel;
         _repository = repository;
         _statsObserver = statsObserver;
+        _configuration = configuration;
 
         var concurrency = configuration.GetSection("Concurrency");
         _batchSize = concurrency.GetValue<int>("BatchSize", 1000);
         _batchTimeout = TimeSpan.FromMilliseconds(concurrency.GetValue<int>("BatchTimeoutMs", 30));
-
+        _entityName = typeof(T) == typeof(Entities.Packet.MotionPacketEntity) ? "Motion" :
+                      typeof(T) == typeof(Entities.Packet.SafetyPacketEntity) ? "Safety" :
+                      typeof(T) == typeof(Entities.Packet.OnVIFPacketEntity) ? "OnVIF" : "Unknown";
         var min = concurrency.GetValue<int>("MinWorkers", 2);
         var max = concurrency.GetValue<int>("MaxWorkers", 8);
         _workerCount = Math.Clamp(Environment.ProcessorCount, min, max);
@@ -60,30 +65,24 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             $"request_timeout=5000;" +            // 5 second timeout for requests
             $"retry_timeout=1000;";
         
+        var parsedCapacity = GetChannelCapacity();
         _logger.LogInformation(
-            "[DB-WRITER] {Entity} initialized with {Workers} workers, BatchSize={BatchSize}, Timeout={Timeout}ms",
-            typeof(T).Name, _workerCount, _batchSize, _batchTimeout.TotalMilliseconds);
+            "[DB-WRITER] {Entity} initialized with {Workers} workers (ParsedChannelCapacity:{ParsedCap}, BatchSize:{BatchSize}, Timeout:{Timeout}ms)",
+            typeof(T).Name, _workerCount, parsedCapacity, _batchSize, _batchTimeout.TotalMilliseconds);
     }
 
     // ----------- BackgroundService entry point -----------
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        _logger.LogInformation("[DB-WRITER] {Entity} Starting {Workers} worker loops...", typeof(T).Name, _workerCount);
-        
+    {        
         // Avoid LINQ allocations - use direct array allocation
-        var workers = new Task[_workerCount];
-        for (int i = 0; i < _workerCount; i++)
-        {
-            int workerId = i; // Capture variable for closure
-            workers[i] = Task.Factory.StartNew(
-                () => WorkerLoopAsync(workerId, stoppingToken),
+        var workers = Enumerable.Range(0, _workerCount)
+            .Select(i => Task.Factory.StartNew(
+                () => WorkerLoopAsync(i, stoppingToken),
                 stoppingToken,
                 TaskCreationOptions.LongRunning,
-                TaskScheduler.Default)
-            .Unwrap();
-        }
+                TaskScheduler.Default).Unwrap())
+            .ToArray();
 
-        _logger.LogInformation("[DB-WRITER] {Entity} All {Workers} workers started", typeof(T).Name, _workerCount);
         return Task.WhenAll(workers);
     }
 
@@ -275,24 +274,31 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         var batchSize = batch.Count;
         var oldest = oldestInBufferUtc ?? DateTime.UtcNow;
         var writeStartTime = DateTime.UtcNow;
-        var dbWriteLatencyMs = 0.0;
+        var dbWriteLatencyMs = 0.0;           // Pure DB write duration
+        var queueLatencyMs = 0.0;             // Time spent buffered before write starts
 
         try
         {
+            // Measure queue time up to the start of DB write
+            queueLatencyMs = (writeStartTime - oldest).TotalMilliseconds;
             await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
             var writeEndTime = DateTime.UtcNow;
-            dbWriteLatencyMs = (writeEndTime - oldest).TotalMilliseconds; // Time from oldest packet to write completion
+            dbWriteLatencyMs = (writeEndTime - writeStartTime).TotalMilliseconds; // Pure DB write time
             
             _statsObserver.DbWriter.AddFlushed(batch.Count);
+            var entityName = typeof(T) == typeof(Entities.Packet.MotionPacketEntity) ? "Motion" :
+                             typeof(T) == typeof(Entities.Packet.SafetyPacketEntity) ? "Safety" :
+                             typeof(T) == typeof(Entities.Packet.OnVIFPacketEntity) ? "OnVIF" : "Unknown";
+            _statsObserver.IncrementFlushFor(entityName, success: true);
             _statsObserver.DbWriter.AddParsed(batch.Count); // Increment parsed count when actually written to DB
             
-            // Track DB write latency (actual database write time)
-            _statsObserver.DbWriter.AddLatency((long)dbWriteLatencyMs);
+            // Track queue latency for parsed channel telemetry (more indicative of backpressure)
+            _statsObserver.DbWriter.AddLatency((long)queueLatencyMs);
             
             var stats = GetStats();
             _logger.LogInformation(
-                "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgLatency:{AvgLatency:F1}ms)",
-                typeof(T).Name, workerId, batchSize, dbWriteLatencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
+                "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Queue:{QueueMs:F1}ms Write:{WriteMs:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgQueue:{AvgLatency:F1}ms)",
+                typeof(T).Name, workerId, batchSize, queueLatencyMs, dbWriteLatencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
         }
         catch (Exception ex) when (ex is IOException || ex is SocketException || ex.GetType().Name.Contains("Ingress"))
         {
@@ -301,30 +307,35 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             sender = Sender.New(_connectionString);
             try
             {
+                // Recompute queue time relative to the original oldest timestamp
+                queueLatencyMs = (writeStartTime - oldest).TotalMilliseconds;
                 await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
                 var writeEndTime = DateTime.UtcNow;
-                dbWriteLatencyMs = (writeEndTime - oldest).TotalMilliseconds; // Time from oldest packet to write completion
+                dbWriteLatencyMs = (writeEndTime - writeStartTime).TotalMilliseconds; // Pure DB write time
                 
                 _statsObserver.DbWriter.AddFlushed(batch.Count);
+                _statsObserver.IncrementFlushFor(_entityName, success: true);
                 _statsObserver.DbWriter.AddParsed(batch.Count); // Increment parsed count when actually written to DB
                 
-                // Track DB write latency (actual database write time)
-                _statsObserver.DbWriter.AddLatency((long)dbWriteLatencyMs);
+                // Track queue latency for parsed channel telemetry
+                _statsObserver.DbWriter.AddLatency((long)queueLatencyMs);
 
                 var stats = GetStats();
                 _logger.LogInformation(
-                    "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Latency:{Latency:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgLatency:{AvgLatency:F1}ms)",
-                    typeof(T).Name, workerId, batchSize, dbWriteLatencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
+                    "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Queue:{QueueMs:F1}ms Write:{WriteMs:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgQueue:{AvgLatency:F1}ms)",
+                    typeof(T).Name, workerId, batchSize, queueLatencyMs, dbWriteLatencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
             }
             catch
             {
                 _statsObserver.DbWriter.AddFailed(batch.Count);
+                _statsObserver.IncrementFlushFor(_entityName, success: false);
                 throw;
             }
         }
         catch (Exception ex)
         {
             _statsObserver.DbWriter.AddFailed(batch.Count);
+            _statsObserver.IncrementFlushFor(_entityName, success: false);
             _logger.LogError(ex, "Batch insert failed for {Entity}", typeof(T).Name);
         }
     }
@@ -336,7 +347,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         
         // Get capacity from configuration
         var capacity = GetChannelCapacity();
-        var utilization = capacity > 0 ? (double)channelCount / capacity * 100 : 0;
+        var utilization = capacity > 0 ? (double) channelCount / capacity * 100 : 0;
         
         // Determine channel name based on packet type
         var channelName = typeof(T).Name switch
@@ -347,18 +358,49 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             _ => "UnknownParsed"
         };
         
-        _statsObserver.UpdateChannelStats(channelName, capacity, channelCount, utilization);
+        var avgLatency = _statsObserver.DbWriter.GetAverageLatency();
+        _statsObserver.UpdateChannelStats(channelName, capacity, channelCount, utilization, _workerCount, avgLatency);
     }
     
     private int GetChannelCapacity()
     {
         // Get capacity from configuration based on packet type
-        return typeof(T).Name switch
+        // Match ConfigurationInjection.cs keys: DataPipes:{Pipe}:Channel:Members
+        // Defaults align with DI fallbacks
+        var capacityKey = typeof(T).Name switch
         {
-            nameof(MotionPacketEntity) => 1_000_000,   // From configuration
-            nameof(SafetyPacketEntity) => 1_000_000,  // From configuration
-            nameof(OnVIFPacketEntity) => 100_000,     // From configuration
-            _ => 100_000
+            nameof(MotionPacketEntity) => "DataPipes:MotionCapture:Channel:Members",
+            nameof(SafetyPacketEntity) => "DataPipes:SafetyCapture:Channel:Members",
+            nameof(OnVIFPacketEntity) => "DataPipes:OnVIFCapture:Channel:Members",
+            _ => string.Empty
         };
+
+        if (!string.IsNullOrEmpty(capacityKey))
+        {
+            // IConfiguration is available via constructor (variable name 'configuration')
+            try
+            {
+                var cfg = (IConfiguration?)typeof(DbWriterService<T>)
+                    .GetField("configuration", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
+                    .GetValue(this);
+
+                // Fallback: use options injected earlier if reflection fails
+                if (cfg == null)
+                {
+                    // 'configuration' was passed in constructor; keep a private field for it
+                }
+            }
+            catch { }
+        }
+
+        // Direct read from constructor-captured configuration (added private field)
+        return _configuration.GetValue<int>(capacityKey,
+            typeof(T).Name switch
+            {
+                nameof(MotionPacketEntity) => 1_000_000,
+                nameof(SafetyPacketEntity) => 1_000_000,
+                nameof(OnVIFPacketEntity) => 100_000,
+                _ => 100_000
+            });
     }
 }

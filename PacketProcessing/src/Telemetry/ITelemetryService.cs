@@ -72,6 +72,27 @@ public interface ITelemetryService
     /// </summary>
     /// <param name="count">Number to increment by (default 1)</param>
     void IncrementOnvifCaptured(long count = 1);
+
+    // Per-entity capture fail
+    void IncrementMotionCaptureFail(long count = 1);
+    void IncrementSafetyCaptureFail(long count = 1);
+    void IncrementOnvifCaptureFail(long count = 1);
+
+    // Per-entity parse success/fail
+    void IncrementMotionParseSuccess(long count = 1);
+    void IncrementMotionParseFail(long count = 1);
+    void IncrementSafetyParseSuccess(long count = 1);
+    void IncrementSafetyParseFail(long count = 1);
+    void IncrementOnvifParseSuccess(long count = 1);
+    void IncrementOnvifParseFail(long count = 1);
+
+    // Per-entity flush success/fail
+    void IncrementMotionFlushSuccess(long count = 1);
+    void IncrementMotionFlushFail(long count = 1);
+    void IncrementSafetyFlushSuccess(long count = 1);
+    void IncrementSafetyFlushFail(long count = 1);
+    void IncrementOnvifFlushSuccess(long count = 1);
+    void IncrementOnvifFlushFail(long count = 1);
     
     /// <summary>
     /// Updates channel statistics for a specific channel
@@ -80,7 +101,9 @@ public interface ITelemetryService
     /// <param name="capacity">Channel capacity</param>
     /// <param name="currentSize">Current channel size</param>
     /// <param name="utilizationPercent">Channel utilization percentage</param>
-    void UpdateChannelStats(string channelName, int capacity, int currentSize, double utilizationPercent);
+    /// <param name="workers">Active workers processing this channel</param>
+    /// <param name="avgLatencyMs">Average latency (ms) for this channel</param>
+    void UpdateChannelStats(string channelName, int capacity, int currentSize, double utilizationPercent, int workers = 0, double avgLatencyMs = 0);
     
     /// <summary>
     /// Resets all telemetry counters

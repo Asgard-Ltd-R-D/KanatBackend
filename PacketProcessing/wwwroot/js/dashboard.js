@@ -81,12 +81,17 @@ window.addEventListener('load', () => {
     // Automatically connect to SignalR
     logMessage('Dashboard loaded. Connecting to SignalR automatically...', 'info');
     connectHub();
+
+    // Initialize endpoint input rows
+    ['motionEndpoints','safetyEndpoints','onvifEndpoints'].forEach(id => addEndpointRow(id));
+    // Initialize cameras container with one row
+    addCameraRow();
 });
 
 // === STATE MANAGEMENT ===
 async function loadCurrentState() {
     try {
-        const response = await fetch('http://localhost:10901/api/v1/range/mode');
+        const response = await fetch('http://localhost:10901/api/range/mode');
         
         if (response.ok) {
             const result = await response.json();
@@ -412,17 +417,13 @@ function updateSignalRStatus() {
 
 function updateDashboardTitle() {
     const titleEl = document.getElementById('dashboardTitle');
-    if (activeDevice) {
-        titleEl.textContent = `Kanat Packet Processing - Telemetry Dashboard [${activeDevice}]`;
-    } else {
-        titleEl.textContent = 'Kanat Packet Processing - Telemetry Dashboard';
-    }
+    titleEl.textContent = 'Kanat Packet Processing - Telemetry Dashboard';
 }
 
 // === DEVICE MANAGEMENT ===
 async function loadAvailableDevices() {
     try {
-        const response = await fetch('http://localhost:10901/api/v1/range/realtime/devices');
+        const response = await fetch('http://localhost:10901/api/range/realtime/devices');
         
         if (!response.ok) {
             logMessage('Failed to load available devices', 'error');
@@ -433,27 +434,47 @@ async function loadAvailableDevices() {
         const devices = result.data || result;
         
         const select = document.getElementById('deviceNameSelect');
-        select.innerHTML = '';
+        const bpfSelect = document.getElementById('bpfDeviceSelect');
+        if (select) select.innerHTML = '';
+        if (bpfSelect) bpfSelect.innerHTML = '';
         
         if (devices && devices.length > 0) {
             devices.forEach(device => {
-                const option = document.createElement('option');
-                option.value = device;
-                option.textContent = device;
-                select.appendChild(option);
+                if (select) {
+                    const option = document.createElement('option');
+                    option.value = device;
+                    option.textContent = device;
+                    select.appendChild(option);
+                }
+                if (bpfSelect) {
+                    const option2 = document.createElement('option');
+                    option2.value = device;
+                    option2.textContent = device;
+                    bpfSelect.appendChild(option2);
+                }
             });
             logMessage(`Loaded ${devices.length} available network devices`, 'success');
         } else {
-            const option = document.createElement('option');
-            option.value = '';
-            option.textContent = 'No devices available';
-            select.appendChild(option);
+            if (select) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No devices available';
+                select.appendChild(option);
+            }
+            if (bpfSelect) {
+                const option2 = document.createElement('option');
+                option2.value = '';
+                option2.textContent = 'No devices available';
+                bpfSelect.appendChild(option2);
+            }
             logMessage('No network devices found', 'warning');
         }
     } catch (err) {
         logMessage(`Error loading devices: ${err.message}`, 'error');
         const select = document.getElementById('deviceNameSelect');
-        select.innerHTML = '<option value="">Error loading devices</option>';
+        const bpfSelect = document.getElementById('bpfDeviceSelect');
+        if (select) select.innerHTML = '<option value="">Error loading devices</option>';
+        if (bpfSelect) bpfSelect.innerHTML = '<option value="">Error loading devices</option>';
     }
 }
 
@@ -467,7 +488,7 @@ async function switchMode(mode) {
         logMessage(`Switching to ${mode} mode...`, 'info');
         
         // Call backend API to change mode
-        const response = await fetch(`http://localhost:10901/api/v1/range/mode/${mode}`, {
+        const response = await fetch(`http://localhost:10901/api/range/mode/${mode}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
@@ -507,7 +528,82 @@ function updateModeButtons() {
 }
 
 // === CAPTURE CONTROL ===
-async function startCapture() {
+async function startRange() {
+    const desc = document.getElementById('rangeDescription').value || '';
+    const device = (document.getElementById('bpfDeviceSelect')?.value || '').trim();
+    if (!device) {
+        logMessage('Please select a device before starting range', 'error');
+        return;
+    }
+    const motion = collectEndpoints('motionEndpoints');
+    const safety = collectEndpoints('safetyEndpoints');
+    const onvif = collectEndpoints('onvifEndpoints');
+    const mtxIp = document.getElementById('mtxIp').value.trim();
+    const mtxPortStr = document.getElementById('mtxPort').value.trim();
+    const mtxPort = mtxPortStr ? parseInt(mtxPortStr) : null;
+
+    const body = {
+        description: desc,
+        config: {
+            bpfConfig: {
+                device: device || 'any',
+                motion: motion.length > 0 ? motion : undefined,
+                safety: safety.length > 0 ? safety : undefined,
+                onVIF: onvif.length > 0 ? onvif : undefined
+            },
+            mtxConfig: (mtxIp || mtxPort) ? { ip: mtxIp || null, port: mtxPort || null } : undefined,
+            cams: (collectCams().length > 0) ? collectCams() : undefined
+        }
+    };
+    try {
+        logMessage('Starting range...', 'info');
+        const response = await fetch('http://localhost:10901/api/range/realtime/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const result = await response.json();
+        if (response.ok) {
+            const range = result.data || result;
+            renderCurrentRange(range);
+            logMessage(`Range started (Id=${range.id})`, 'success');
+        } else {
+            logMessage(`Failed to start range: ${result.errorMessage || 'Unknown error'}`, 'error');
+        }
+    } catch (err) {
+        logMessage(`Error starting range: ${err.message}`, 'error');
+    }
+}
+
+async function stopRange() {
+    try {
+        logMessage('Stopping range...', 'info');
+        const response = await fetch('http://localhost:10901/api/range/realtime/stop', { method: 'DELETE' });
+        const result = await response.json();
+        if (response.ok) {
+            const range = result.data || result;
+            // Reset all stats (frontend + backend) and clear range header
+            try { await resetStats(); } catch (_) {}
+            renderCurrentRange(null);
+            logMessage(`Range stopped (Id=${range?.id || 'N/A'})`, 'success');
+        } else {
+            logMessage(`Failed to stop range: ${result.errorMessage || 'Unknown error'}`, 'error');
+        }
+    } catch (err) {
+        logMessage(`Error stopping range: ${err.message}`, 'error');
+    }
+}
+
+function renderCurrentRange(range) {
+    const el = document.getElementById('currentRangeSummary');
+    if (!range) { el.textContent = ''; return; }
+    const ts = range.timestamp ? new Date(range.timestamp).toLocaleString() : 'N/A';
+    const desc = range.description || '';
+    const cfg = range.config || {};
+    el.textContent = `Range: ${range.id} | Created: ${ts} ${desc ? '| ' + desc : ''} | Device: ${cfg?.bpfConfig?.device || 'N/A'}`;
+}
+
+async function startCaptureDev() {
     const deviceName = document.getElementById('deviceNameSelect').value.trim();
     
     if (!deviceName) {
@@ -518,7 +614,7 @@ async function startCapture() {
     try {
         logMessage(`Starting capture on device: ${deviceName}...`, 'info');
         
-        const response = await fetch(`http://localhost:10901/api/v1/range/realtime/start/${encodeURIComponent(deviceName)}`, {
+        const response = await fetch(`http://localhost:10901/api/range/dev/realtime/start/${encodeURIComponent(deviceName)}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -540,11 +636,11 @@ async function startCapture() {
     }
 }
 
-async function stopCapture() {
+async function stopCaptureDev() {
     try {
         logMessage('Stopping capture...', 'info');
         
-        const response = await fetch('http://localhost:10901/api/v1/range/realtime/stop', {
+        const response = await fetch('http://localhost:10901/api/range/dev/realtime/stop', {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json'
@@ -657,7 +753,7 @@ async function resetStats() {
         logMessage('Resetting statistics...', 'info');
         
         // Call backend to reset server-side statistics
-        const response = await fetch('http://localhost:10901/api/v1/range/reset', {
+        const response = await fetch('http://localhost:10901/api/range/reset', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -745,17 +841,96 @@ function updateConnectionStatus() {
     postgresStatusText.textContent = 'PostgreSQL: ' + (postgresConnected ? 'Connected' : 'Disconnected');
 }
 
+// Fallback server status checker used by Packet Hub connect logic
+async function checkServerStatus() {
+    try {
+        const res = await fetch('http://localhost:10901/health', { method: 'GET', cache: 'no-cache' });
+        return !!res;
+    } catch (_) {
+        // If health check is blocked by CORS or unreachable, don't block UI
+        return true;
+    }
+}
+
+// === RANGE FORM HELPERS ===
+function addEndpointRow(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'endpoint-row';
+    row.style = 'display:flex; gap:6px; margin: 4px 0;';
+    row.innerHTML = `
+        <input type=\"text\" placeholder=\"IP\" class=\"ep-ip\">\n\
+        <input type=\"number\" placeholder=\"Port\" class=\"ep-port\">\n\
+        <button type=\"button\" class=\"btn-stop ep-remove\" onclick=\"this.parentElement.remove()\">\u00D7</button>
+    `;
+    container.appendChild(row);
+}
+
+function collectEndpoints(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return [];
+    const rows = Array.from(container.querySelectorAll('.endpoint-row'));
+    const endpoints = [];
+    rows.forEach(r => {
+        const ip = r.querySelector('.ep-ip')?.value?.trim();
+        const portStr = r.querySelector('.ep-port')?.value?.trim();
+        const port = portStr ? parseInt(portStr) : null;
+        if ((ip && ip.length > 0) || (port !== null && !isNaN(port))) {
+            endpoints.push({ ip: ip || null, port: port });
+        }
+    });
+    return endpoints;
+}
+
+function addCameraRow() {
+    const container = document.getElementById('camsContainer');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'endpoint-row';
+    row.style = 'display:flex; gap:6px; margin: 4px 0; align-items:center;';
+    row.innerHTML = `
+        <input type=\"text\" placeholder=\"Alias\" class=\"cam-alias\">\n\
+        <label style=\"display:flex; align-items:center; gap:6px; color:#b0b0b0;\"><input type=\"checkbox\" class=\"cam-record\"> Record</label>\n\
+        <button type=\"button\" class=\"btn-stop ep-remove\" onclick=\"this.parentElement.remove()\">\u00D7</button>
+    `;
+    container.appendChild(row);
+}
+
+function collectCams() {
+    const container = document.getElementById('camsContainer');
+    if (!container) return [];
+    const rows = Array.from(container.querySelectorAll('.endpoint-row'));
+    const cams = [];
+    rows.forEach(r => {
+        const alias = r.querySelector('.cam-alias')?.value?.trim();
+        const isRecording = !!r.querySelector('.cam-record')?.checked;
+        if (alias && alias.length > 0) {
+            cams.push({ alias: alias, isRecording: isRecording });
+        }
+    });
+    return cams;
+}
+
 function updateCaptureStats() {
     document.getElementById('totalCaptured').textContent = stats.captured.toLocaleString();
-    document.getElementById('motionCaptured').textContent = (stats.motionCaptured || 0).toLocaleString();
-    document.getElementById('safetyCaptured').textContent = (stats.safetyCaptured || 0).toLocaleString();
-    document.getElementById('onvifCaptured').textContent = (stats.onvifCaptured || 0).toLocaleString();
+    const mc = document.getElementById('motionCaptured'); if (mc) mc.textContent = (stats.motionCaptured || 0).toLocaleString();
+    const mcf = document.getElementById('motionCaptureFail'); if (mcf) mcf.textContent = (stats.motionCaptureFail || 0).toLocaleString();
+    const sc = document.getElementById('safetyCaptured'); if (sc) sc.textContent = (stats.safetyCaptured || 0).toLocaleString();
+    const scf = document.getElementById('safetyCaptureFail'); if (scf) scf.textContent = (stats.safetyCaptureFail || 0).toLocaleString();
+    const oc = document.getElementById('onvifCaptured'); if (oc) oc.textContent = (stats.onvifCaptured || 0).toLocaleString();
+    const ocf = document.getElementById('onvifCaptureFail'); if (ocf) ocf.textContent = (stats.onvifCaptureFail || 0).toLocaleString();
 }
 
 function updateParseStats() {
     document.getElementById('totalParsed').textContent = stats.parsed.toLocaleString();
     document.getElementById('totalDropped').textContent = stats.dropped.toLocaleString();
-    document.getElementById('backpressure').textContent = stats.backpressure.toLocaleString();
+    const mps = document.getElementById('motionParseSuccess'); if (mps) mps.textContent = (stats.motionParseSuccess || 0).toLocaleString();
+    const mpf = document.getElementById('motionParseFail'); if (mpf) mpf.textContent = (stats.motionParseFail || 0).toLocaleString();
+    const sps = document.getElementById('safetyParseSuccess'); if (sps) sps.textContent = (stats.safetyParseSuccess || 0).toLocaleString();
+    const spf = document.getElementById('safetyParseFail'); if (spf) spf.textContent = (stats.safetyParseFail || 0).toLocaleString();
+    const ops = document.getElementById('onvifParseSuccess'); if (ops) ops.textContent = (stats.onvifParseSuccess || 0).toLocaleString();
+    const opf = document.getElementById('onvifParseFail'); if (opf) opf.textContent = (stats.onvifParseFail || 0).toLocaleString();
     
     // Use the calculated rate from refreshStats instead of recalculating here
     const rate = stats.parseRate || 0;
@@ -769,27 +944,43 @@ function updateDbStats() {
     // Use the calculated rate from refreshStats instead of recalculating here
     const rate = stats.flushRate || 0;
     document.getElementById('flushRate').textContent = rate;
-    
-    const avgLatency = stats.avgLatency || 0;
-    document.getElementById('avgLatency').textContent = avgLatency.toFixed(1);
+    const mfs = document.getElementById('motionFlushSuccess'); if (mfs) mfs.textContent = (stats.motionFlushSuccess || 0).toLocaleString();
+    const mff = document.getElementById('motionFlushFail'); if (mff) mff.textContent = (stats.motionFlushFail || 0).toLocaleString();
+    const sfs = document.getElementById('safetyFlushSuccess'); if (sfs) sfs.textContent = (stats.safetyFlushSuccess || 0).toLocaleString();
+    const sff = document.getElementById('safetyFlushFail'); if (sff) sff.textContent = (stats.safetyFlushFail || 0).toLocaleString();
+    const ofs = document.getElementById('onvifFlushSuccess'); if (ofs) ofs.textContent = (stats.onvifFlushSuccess || 0).toLocaleString();
+    const off = document.getElementById('onvifFlushFail'); if (off) off.textContent = (stats.onvifFlushFail || 0).toLocaleString();
 }
 
 function updateTelemetryStats() {
     // Update capture stats
     document.getElementById('totalCaptured').textContent = stats.captured.toLocaleString();
-    document.getElementById('motionCaptured').textContent = stats.motionCaptured.toLocaleString();
-    document.getElementById('safetyCaptured').textContent = stats.safetyCaptured.toLocaleString();
-    document.getElementById('onvifCaptured').textContent = stats.onvifCaptured.toLocaleString();
+    const mc2 = document.getElementById('motionCaptured'); if (mc2) mc2.textContent = (stats.motionCaptured || 0).toLocaleString();
+    const mcf2 = document.getElementById('motionCaptureFail'); if (mcf2) mcf2.textContent = (stats.motionCaptureFail || 0).toLocaleString();
+    const sc2 = document.getElementById('safetyCaptured'); if (sc2) sc2.textContent = (stats.safetyCaptured || 0).toLocaleString();
+    const scf2 = document.getElementById('safetyCaptureFail'); if (scf2) scf2.textContent = (stats.safetyCaptureFail || 0).toLocaleString();
+    const oc2 = document.getElementById('onvifCaptured'); if (oc2) oc2.textContent = (stats.onvifCaptured || 0).toLocaleString();
+    const ocf2 = document.getElementById('onvifCaptureFail'); if (ocf2) ocf2.textContent = (stats.onvifCaptureFail || 0).toLocaleString();
     
     // Update parse stats
     document.getElementById('totalParsed').textContent = stats.parsed.toLocaleString();
     document.getElementById('totalDropped').textContent = stats.dropped.toLocaleString();
-    document.getElementById('backpressure').textContent = stats.backpressure.toLocaleString();
+    const mps2 = document.getElementById('motionParseSuccess'); if (mps2) mps2.textContent = (stats.motionParseSuccess || 0).toLocaleString();
+    const mpf2 = document.getElementById('motionParseFail'); if (mpf2) mpf2.textContent = (stats.motionParseFail || 0).toLocaleString();
+    const sps2 = document.getElementById('safetyParseSuccess'); if (sps2) sps2.textContent = (stats.safetyParseSuccess || 0).toLocaleString();
+    const spf2 = document.getElementById('safetyParseFail'); if (spf2) spf2.textContent = (stats.safetyParseFail || 0).toLocaleString();
+    const ops2 = document.getElementById('onvifParseSuccess'); if (ops2) ops2.textContent = (stats.onvifParseSuccess || 0).toLocaleString();
+    const opf2 = document.getElementById('onvifParseFail'); if (opf2) opf2.textContent = (stats.onvifParseFail || 0).toLocaleString();
     
     // Update DB stats
     document.getElementById('totalFlushed').textContent = stats.flushed.toLocaleString();
     document.getElementById('totalFailed').textContent = stats.failed.toLocaleString();
-    document.getElementById('avgLatency').textContent = stats.avgLatency.toFixed(1);
+    const mfs2 = document.getElementById('motionFlushSuccess'); if (mfs2) mfs2.textContent = (stats.motionFlushSuccess || 0).toLocaleString();
+    const mff2 = document.getElementById('motionFlushFail'); if (mff2) mff2.textContent = (stats.motionFlushFail || 0).toLocaleString();
+    const sfs2 = document.getElementById('safetyFlushSuccess'); if (sfs2) sfs2.textContent = (stats.safetyFlushSuccess || 0).toLocaleString();
+    const sff2 = document.getElementById('safetyFlushFail'); if (sff2) sff2.textContent = (stats.safetyFlushFail || 0).toLocaleString();
+    const ofs2 = document.getElementById('onvifFlushSuccess'); if (ofs2) ofs2.textContent = (stats.onvifFlushSuccess || 0).toLocaleString();
+    const off2 = document.getElementById('onvifFlushFail'); if (off2) off2.textContent = (stats.onvifFlushFail || 0).toLocaleString();
     
     // Update throughput rates (packets per second)
     document.getElementById('parseRate').textContent = throughput.parsedPps.toLocaleString();
@@ -812,21 +1003,24 @@ function updateChannelStats(motionRaw, safetyRaw, onvifRaw, motionParsed, safety
     // Update Raw Channels (Capture -> Parse)
     if (motionRaw) {
         document.getElementById('motionRawChannelCapacity').textContent = motionRaw.capacity.toLocaleString();
-        document.getElementById('motionRawChannelSize').textContent = motionRaw.currentSize.toLocaleString();
+        const mw = document.getElementById('motionRawWorkers'); if (mw) mw.textContent = (motionRaw.workers || 0).toLocaleString();
+        const ml = document.getElementById('motionRawAvgLatency'); if (ml) ml.textContent = ((motionRaw.avgLatencyMs || motionRaw.avgLatency || 0).toFixed ? (motionRaw.avgLatencyMs || motionRaw.avgLatency || 0).toFixed(1) : (motionRaw.avgLatencyMs || motionRaw.avgLatency || 0)) + ' ms';
         document.getElementById('motionRawChannelPercent').textContent = motionRaw.utilizationPercent.toFixed(2) + '%';
         document.getElementById('motionRawChannelBar').style.width = Math.min(motionRaw.utilizationPercent, 100) + '%';
     }
     
     if (safetyRaw) {
         document.getElementById('safetyRawChannelCapacity').textContent = safetyRaw.capacity.toLocaleString();
-        document.getElementById('safetyRawChannelSize').textContent = safetyRaw.currentSize.toLocaleString();
+        const sw = document.getElementById('safetyRawWorkers'); if (sw) sw.textContent = (safetyRaw.workers || 0).toLocaleString();
+        const sl = document.getElementById('safetyRawAvgLatency'); if (sl) sl.textContent = ((safetyRaw.avgLatencyMs || safetyRaw.avgLatency || 0).toFixed ? (safetyRaw.avgLatencyMs || safetyRaw.avgLatency || 0).toFixed(1) : (safetyRaw.avgLatencyMs || safetyRaw.avgLatency || 0)) + ' ms';
         document.getElementById('safetyRawChannelPercent').textContent = safetyRaw.utilizationPercent.toFixed(2) + '%';
         document.getElementById('safetyRawChannelBar').style.width = Math.min(safetyRaw.utilizationPercent, 100) + '%';
     }
     
     if (onvifRaw) {
         document.getElementById('onvifRawChannelCapacity').textContent = onvifRaw.capacity.toLocaleString();
-        document.getElementById('onvifRawChannelSize').textContent = onvifRaw.currentSize.toLocaleString();
+        const ow = document.getElementById('onvifRawWorkers'); if (ow) ow.textContent = (onvifRaw.workers || 0).toLocaleString();
+        const ol = document.getElementById('onvifRawAvgLatency'); if (ol) ol.textContent = ((onvifRaw.avgLatencyMs || onvifRaw.avgLatency || 0).toFixed ? (onvifRaw.avgLatencyMs || onvifRaw.avgLatency || 0).toFixed(1) : (onvifRaw.avgLatencyMs || onvifRaw.avgLatency || 0)) + ' ms';
         document.getElementById('onvifRawChannelPercent').textContent = onvifRaw.utilizationPercent.toFixed(2) + '%';
         document.getElementById('onvifRawChannelBar').style.width = Math.min(onvifRaw.utilizationPercent, 100) + '%';
     }
@@ -834,21 +1028,24 @@ function updateChannelStats(motionRaw, safetyRaw, onvifRaw, motionParsed, safety
     // Update Parsed Channels (Parse -> DB)
     if (motionParsed) {
         document.getElementById('motionParsedChannelCapacity').textContent = motionParsed.capacity.toLocaleString();
-        document.getElementById('motionParsedChannelSize').textContent = motionParsed.currentSize.toLocaleString();
+        const mpw = document.getElementById('motionParsedWorkers'); if (mpw) mpw.textContent = (motionParsed.workers || 0).toLocaleString();
+        const mpl = document.getElementById('motionParsedAvgLatency'); if (mpl) mpl.textContent = ((motionParsed.avgLatencyMs || motionParsed.avgLatency || 0).toFixed ? (motionParsed.avgLatencyMs || motionParsed.avgLatency || 0).toFixed(1) : (motionParsed.avgLatencyMs || motionParsed.avgLatency || 0)) + ' ms';
         document.getElementById('motionParsedChannelPercent').textContent = motionParsed.utilizationPercent.toFixed(2) + '%';
         document.getElementById('motionParsedChannelBar').style.width = Math.min(motionParsed.utilizationPercent, 100) + '%';
     }
     
     if (safetyParsed) {
         document.getElementById('safetyParsedChannelCapacity').textContent = safetyParsed.capacity.toLocaleString();
-        document.getElementById('safetyParsedChannelSize').textContent = safetyParsed.currentSize.toLocaleString();
+        const spw = document.getElementById('safetyParsedWorkers'); if (spw) spw.textContent = (safetyParsed.workers || 0).toLocaleString();
+        const spl = document.getElementById('safetyParsedAvgLatency'); if (spl) spl.textContent = ((safetyParsed.avgLatencyMs || safetyParsed.avgLatency || 0).toFixed ? (safetyParsed.avgLatencyMs || safetyParsed.avgLatency || 0).toFixed(1) : (safetyParsed.avgLatencyMs || safetyParsed.avgLatency || 0)) + ' ms';
         document.getElementById('safetyParsedChannelPercent').textContent = safetyParsed.utilizationPercent.toFixed(2) + '%';
         document.getElementById('safetyParsedChannelBar').style.width = Math.min(safetyParsed.utilizationPercent, 100) + '%';
     }
     
     if (onvifParsed) {
         document.getElementById('onvifParsedChannelCapacity').textContent = onvifParsed.capacity.toLocaleString();
-        document.getElementById('onvifParsedChannelSize').textContent = onvifParsed.currentSize.toLocaleString();
+        const opw = document.getElementById('onvifParsedWorkers'); if (opw) opw.textContent = (onvifParsed.workers || 0).toLocaleString();
+        const opl = document.getElementById('onvifParsedAvgLatency'); if (opl) opl.textContent = ((onvifParsed.avgLatencyMs || onvifParsed.avgLatency || 0).toFixed ? (onvifParsed.avgLatencyMs || onvifParsed.avgLatency || 0).toFixed(1) : (onvifParsed.avgLatencyMs || onvifParsed.avgLatency || 0)) + ' ms';
         document.getElementById('onvifParsedChannelPercent').textContent = onvifParsed.utilizationPercent.toFixed(2) + '%';
         document.getElementById('onvifParsedChannelBar').style.width = Math.min(onvifParsed.utilizationPercent, 100) + '%';
     }
@@ -1425,32 +1622,36 @@ async function connectPacketHub() {
 function updatePacketHubStatus(status) {
     const statusElement = document.getElementById('packetHubStatus');
     const manualConnectBtn = document.getElementById('manualConnectBtn');
-    
-    switch (status) {
-        case 'connected':
-            statusElement.textContent = 'Connected';
-            statusElement.style.color = '#4caf50';
-            if (manualConnectBtn) manualConnectBtn.style.display = 'none';
-            break;
-        case 'connecting':
-        case 'reconnecting':
-            statusElement.textContent = 'Connecting...';
-            statusElement.style.color = '#ff9800';
-            if (manualConnectBtn) manualConnectBtn.style.display = 'none';
-            break;
-        case 'disconnected':
-        default:
-            statusElement.textContent = 'Disconnected';
-            statusElement.style.color = '#f44336';
-            if (manualConnectBtn) manualConnectBtn.style.display = 'inline-block';
-            break;
+
+    if (statusElement) {
+        switch (status) {
+            case 'connected':
+                statusElement.textContent = 'Connected';
+                statusElement.style.color = '#4caf50';
+                if (manualConnectBtn) manualConnectBtn.style.display = 'none';
+                break;
+            case 'connecting':
+            case 'reconnecting':
+                statusElement.textContent = 'Connecting...';
+                statusElement.style.color = '#ff9800';
+                if (manualConnectBtn) manualConnectBtn.style.display = 'none';
+                break;
+            case 'disconnected':
+            default:
+                statusElement.textContent = 'Disconnected';
+                statusElement.style.color = '#f44336';
+                if (manualConnectBtn) manualConnectBtn.style.display = 'inline-block';
+                break;
+        }
     }
-    
-    // Update the connect/disconnect button
+
+    // Update the connect/disconnect button (safe if missing)
     updatePacketHubConnectButton();
-    
+
     // Update button states based on current pipeline selection
-    updatePipelineButtons();
+    if (typeof updatePipelineButtons === 'function') {
+        updatePipelineButtons();
+    }
 }
 
 // Update the connect/disconnect button text and styling

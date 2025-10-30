@@ -41,7 +41,7 @@
     }
   ],
   "paths": {
-    "/api/v1/range/mode/{mode}": {
+    "/api/range/mode/{mode}": {
       "put": {
         "tags": ["Range Management"],
         "summary": "Change application mode",
@@ -107,7 +107,7 @@
         }
       }
     },
-    "/api/v1/range/mode": {
+    "/api/range/mode": {
       "get": {
         "tags": ["Range Management"],
         "summary": "Get current mode",
@@ -144,9 +144,9 @@
         }
       }
     },
-    "/api/v1/range/realtime/start/{deviceName}": {
+    "/api/range/dev/realtime/start/{deviceName}": {
       "post": {
-        "tags": ["Range Management"],
+        "tags": ["Development"],
         "summary": "Start realtime services",
         "description": "Starts all realtime capture services for the specified device",
         "operationId": "StartAllServices",
@@ -193,12 +193,12 @@
         }
       }
     },
-    "/api/v1/range/realtime/stop": {
+    "/api/range/dev/realtime/stop": {
       "delete": {
-        "tags": ["Range Management"],
-        "summary": "Stop realtime services",
-        "description": "Stops all realtime capture services",
-        "operationId": "StopAllServices",
+        "tags": ["Development"],
+        "summary": "Stop realtime services (Development)",
+        "description": "Stops all realtime capture services (development-only endpoint)",
+        "operationId": "DevStopAllServices",
         "responses": {
           "200": {
             "description": "Services stopped successfully",
@@ -230,7 +230,83 @@
         }
       }
     },
-    "/api/v1/range/playback/pace/{pace}": {
+    "/api/range/realtime/start": {
+      "post": {
+        "tags": ["Range Management"],
+        "summary": "Start realtime with configuration",
+        "description": "Starts realtime capture using a full Range configuration (device and endpoints).",
+        "operationId": "StartRealtimeWithConfig",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RangeStartRequest" },
+              "example": {
+                "description": "Range session",
+                "config": {
+                  "bpfConfig": {
+                    "device": "any",
+                    "motion": [ { "ip": "132.8.7.125", "port": 5000 } ],
+                    "safety": [ { "ip": "132.8.7.101", "port": 5000 }, { "ip": "132.8.7.102", "port": 5001 } ],
+                    "onVIF": [ { "ip": "132.8.7.121", "port": 5000 } ]
+                  },
+                  "mtxConfig": { "ip": "127.0.0.1", "port": 8554 },
+                  "cams": [ { "alias": "Default", "isRecording": false } ]
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Realtime started",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResponseResultRange" } } }
+          },
+          "500": {
+            "description": "Failed to start realtime",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResponseResultRange" } } }
+          }
+        }
+      }
+    },
+    "/api/range/realtime/stop": {
+      "delete": {
+        "tags": ["Range Management"],
+        "summary": "Stop realtime services",
+        "description": "Stops all realtime capture services",
+        "operationId": "StopAllServices",
+        "responses": {
+          "200": {
+            "description": "Services stopped successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to stop services",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseResultRange"
+                },
+                "example": {
+                  "success": false,
+                  "data": null,
+                  "errorMessage": "Failed to stop services",
+                  "statusCode": 500,
+                  "timestamp": "2024-01-15T10:30:00Z"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/range/playback/pace/{pace}": {
       "put": {
         "tags": ["Range Management"],
         "summary": "Set playback pace",
@@ -291,7 +367,7 @@
         }
       }
     },
-    "/api/v1/range/realtime/devices": {
+    "/api/range/realtime/devices": {
       "get": {
         "tags": ["Range Status"],
         "summary": "Get available devices",
@@ -336,7 +412,7 @@
       }
     },
     
-    "/api/v1/range/reset": {
+    "/api/range/reset": {
       "post": {
         "tags": ["Range Status"],
         "summary": "Reset statistics",
@@ -373,7 +449,7 @@
         }
       }
     },
-    "/api/v1/range/ranges": {
+    "/api/range/ranges": {
       "get": {
         "tags": ["Range Repository"],
         "summary": "Get ranges (paginated)",
@@ -487,7 +563,7 @@
         }
       }
     },
-    "/api/v1/range/ranges/{id}": {
+    "/api/range/ranges/{id}": {
       "get": {
         "tags": ["Range Repository"],
         "summary": "Get range by ID",
@@ -694,7 +770,7 @@
         }
       }
     },
-    "/api/v1/range/packets/clear": {
+    "/api/range/packets/clear": {
       "delete": {
         "tags": ["Packet Repository"],
         "summary": "Clear packets",
@@ -779,7 +855,7 @@
         }
       }
     },
-    "/api/v1/range/dev/ranges/all": {
+    "/api/range/dev/ranges/all": {
       "get": {
         "tags": ["Development"],
         "summary": "Get all ranges (Development only)",
@@ -1047,6 +1123,48 @@
   },
   "components": {
     "schemas": {
+      "EndpointSpecification": {
+        "type": "object",
+        "properties": {
+          "ip": { "type": "string", "nullable": true },
+          "port": { "type": "integer", "nullable": true }
+        }
+      },
+      "BPFConfDto": {
+        "type": "object",
+        "properties": {
+          "safety": { "type": "array", "items": { "$ref": "#/components/schemas/EndpointSpecification" } },
+          "motion": { "type": "array", "items": { "$ref": "#/components/schemas/EndpointSpecification" } },
+          "onVIF":  { "type": "array", "items": { "$ref": "#/components/schemas/EndpointSpecification" } },
+          "device": { "type": "string" }
+        },
+        "required": ["device"]
+      },
+      "CameraConfDto": {
+        "type": "object",
+        "properties": {
+          "alias": { "type": "string" },
+          "isRecording": { "type": "boolean" }
+        },
+        "required": ["alias", "isRecording"]
+      },
+      "RangeConfig": {
+        "type": "object",
+        "properties": {
+          "bpfConfig": { "$ref": "#/components/schemas/BPFConfDto" },
+          "mtxConfig": { "$ref": "#/components/schemas/EndpointSpecification" },
+          "cams": { "type": "array", "items": { "$ref": "#/components/schemas/CameraConfDto" } }
+        },
+        "required": ["bpfConfig"]
+      },
+      "RangeStartRequest": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string" },
+          "config": { "$ref": "#/components/schemas/RangeConfig" }
+        },
+        "required": ["config"]
+      },
       "ResponseResult": {
         "type": "object",
         "properties": {

@@ -1,7 +1,8 @@
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.DTOs;
 using PacketProcessing.DTOs.Range;
-using PacketProcessing.Entities;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.Entities.Range;
 using PacketProcessing.Repositories.EfRepository;
@@ -10,6 +11,7 @@ using PacketProcessing.Services.Playback;
 using PacketProcessing.Services.Realtime;
 using PacketProcessing.Utils.Enums;
 using PacketProcessing.Utils.Mappers;
+using PacketProcessing.Utils.ModelValidator;
 
 namespace PacketProcessing.Services;
 
@@ -20,9 +22,14 @@ namespace PacketProcessing.Services;
 public class RangeService : IRangeService
 {
     private readonly ILogger<RangeService> _logger;
+
+    #region Services
+    public IRealtimeService Realtime { get; }
+    public IPlaybackService Playback { get; }
     private States _currentMode = States.Realtime;
     private readonly object _modeLock = new();
-    
+
+    private readonly IConfiguration _configuration;
     private readonly IInfluxRepositoryFactory _influxFactory;
     private readonly IEfRepositoryFactory _efFactory;
 
@@ -30,22 +37,23 @@ public class RangeService : IRangeService
         ILogger<RangeService> logger,
         IRealtimeService realtimeService,
         IPlaybackService playbackService,
+        IConfiguration configuration,
         IInfluxRepositoryFactory influxFactory,
         IEfRepositoryFactory efFactory)
     {
         _logger = logger;
         Realtime = realtimeService;
         Playback = playbackService;
+        _configuration = configuration;
         _influxFactory = influxFactory;
         _efFactory = efFactory;
         
         _logger.LogInformation("RangeService initialized with mode: {Mode}", _currentMode);
     }
 
-    public IRealtimeService Realtime { get; }
-    
-    public IPlaybackService Playback { get; }
+    #endregion
 
+    #region Mode Management
     public States CurrentMode
     {
         get
@@ -65,6 +73,11 @@ public class RangeService : IRangeService
             
             if (previousMode != mode)
             {
+                if (previousMode == States.Realtime && Realtime.IsActive) 
+                {
+                    throw new InvalidOperationException("Cannot change to Realtime mode while the realtime service is active");
+                }
+                
                 _currentMode = mode;
                 _logger.LogInformation(
                     "Application mode changed: {PreviousMode} → {NewMode}",
@@ -72,6 +85,83 @@ public class RangeService : IRangeService
             }
         }
     }
+    #endregion
+
+    #region Realtime Orchestration
+
+    public async Task<RangeDto> StartRealtimeRangeAsync(CancellationToken cancellationToken, RangeDto range)
+    {
+        try 
+        {
+            // Validate and hydrate provided config (ignore Id/Timestamp/StartTime/EndTime from request)
+            var availableDevices = GetAvailableDeviceNames();
+            var validatedRange = RangeModelValidator.ValidateAndHydrate(range, availableDevices, _configuration);
+            if (validatedRange.Config?.BpfConfig == null)
+            {
+                throw new InvalidOperationException("Range configuration is invalid");
+            }
+
+            var createdDto = await CreateRangeAsync(validatedRange);
+
+            createdDto.Config = validatedRange.Config;
+            await Realtime.SetCurrentRangeAsync(createdDto);
+
+            // Start realtime using hydrated configuration
+            await Realtime.StartAsync(cancellationToken, createdDto.Config!.BpfConfig!);
+
+            _logger.LogInformation("Realtime range started (Id={Id}, Device={Device})", createdDto.Id, createdDto.Config!.BpfConfig!.Device);
+            return createdDto;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error starting realtime range");
+            throw;
+        }
+    }
+
+    public async Task<RangeDto?> StopRealtimeRangeAsync(CancellationToken cancellationToken)
+    {
+        try 
+        {
+            var currentRange = await Realtime.GetCurrentRangeAsync();
+
+            await Realtime.StopAsync(cancellationToken);
+
+            // Reset runtime stats/values per request
+            Realtime.ResetStats();
+
+            if (currentRange != null)
+            {
+                currentRange.EndTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var updated = await UpdateRangeByIdAsync(currentRange.Id, currentRange);
+                if (updated == null)
+                {
+                    _logger.LogWarning("Range {Id} not found during stop update", currentRange.Id);
+                }
+                else
+                {
+                    // Reflect updated DTO in realtime service state
+                    await Realtime.SetCurrentRangeAsync(updated);
+                    currentRange = updated;
+                }
+            }
+
+            _logger.LogInformation("Realtime range stopped (Id={Id})", currentRange?.Id);
+            return currentRange;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error stopping realtime range");
+            throw;
+        }
+    }
+
+    public ICollection<string> GetAvailableDeviceNames()
+    {
+        return Realtime.GetAvailableDeviceNames();
+    }
+    
+    #endregion
 
     #region Range Operations
 
@@ -86,9 +176,9 @@ public class RangeService : IRangeService
             {
                 Id = Guid.NewGuid(),
                 Timestamp = DateTime.UtcNow,
-                Start = dto.Start,
-                End = dto.End,
-                Description = dto.Description.Trim()
+                Description = dto.Description.Trim(),
+                StartTime = DateTimeOffset.FromUnixTimeMilliseconds(dto.StartTime).ToUnixTimeMilliseconds(),
+                EndTime = -1,
             };
 
             var createdEntity = await repository.AddAsync(entity);
@@ -177,8 +267,8 @@ public class RangeService : IRangeService
                 return null;
             }
 
-            if (dto.Start != existingRange.Start) existingRange.Start = dto.Start;
-            if (dto.End != existingRange.End) existingRange.End = dto.End;
+            if (dto.StartTime != existingRange.StartTime) existingRange.StartTime = dto.StartTime;
+            if (dto.EndTime != existingRange.EndTime) existingRange.EndTime = dto.EndTime;
             if (dto.Description != existingRange.Description) existingRange.Description = dto.Description;
 
             await repository.UpdateAsync(existingRange);
@@ -208,8 +298,8 @@ public class RangeService : IRangeService
             }
 
             // Delete all packets within the range
-            var startTime = DateTimeOffset.FromUnixTimeMilliseconds(range.Start).DateTime;
-            var endTime = DateTimeOffset.FromUnixTimeMilliseconds(range.End).DateTime;
+            var startTime = DateTimeOffset.FromUnixTimeMilliseconds(range.StartTime).DateTime;
+            var endTime = DateTimeOffset.FromUnixTimeMilliseconds(range.EndTime).DateTime;
             
             // Clear packets from all packet types within the time range
             var motionRepo = _influxFactory.Get<MotionPacketEntity>();

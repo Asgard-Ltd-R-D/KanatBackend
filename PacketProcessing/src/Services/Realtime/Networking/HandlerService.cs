@@ -9,8 +9,9 @@ using System.Runtime.InteropServices;
 using System.Buffers;
 using PacketProcessing.Utils.Observers;
 using PacketProcessing.Services.Transmission;
-using PacketProcessing.Telemetry;
 using PacketProcessing.Entities.Packet;
+using PacketProcessing.DTOs.Range;
+using PacketProcessing.DTOs.Conf;
 namespace PacketProcessing.Services.Realtime.Networking;
 
 public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserver<RawPacketEvent>, IObservable<BasePacketEntity>
@@ -28,6 +29,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     // Channels
     private readonly Channel<RawPacketEvent> _rawChannel; // device -> handler
     private readonly Channel<T> _parsedChannel;           // handler -> DbWriter
+    private readonly int _rawCapacity;
 
     private readonly int _workerCount;
     
@@ -42,33 +44,33 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     private IDisposable? _subscription;
 
     private readonly ParseMapper _parseMapper;
+    private readonly string _entityName;
 
     public HandlerService(
         string dataPipeName,
         ITransmissionService transmissionService,
         ILogger<HandlerService<T>> logger,
+        Channel<RawPacketEvent> rawChannel,
+        int rawCapacity,
         Channel<T> parsedChannel,
         IConfiguration configuration,
         ParseMapper parseMapper,
         StatsObserver statsObserver)
     {
         _logger = logger;
+        _rawChannel = rawChannel;
+        _rawCapacity = rawCapacity;
         _parsedChannel = parsedChannel;
         _transmissionService = transmissionService;
         _parseMapper = parseMapper;
         _statsObserver = statsObserver;
-        
-        // bounded channel for raw events with increased capacity
-        // Wait mode ensures no packets are dropped (capture may block if processing too slow)
-        _rawChannel = Channel.CreateBounded<RawPacketEvent>(
-            new BoundedChannelOptions(500_000) { 
-                SingleReader = false,  // Multiple workers read
-                SingleWriter = false,  // DeviceService may write from multiple threads via Task.Run
-                FullMode = BoundedChannelFullMode.Wait  // Block to guarantee delivery
-            });
 
         _protocol = configuration.GetValue<string>($"{dataPipeName}:Network:Protocol") ?? "";
         _ips = configuration.GetSection($"{dataPipeName}:Network:IPs").Get<IEnumerable<string>>() ?? [];
+
+        _entityName = typeof(T) == typeof(MotionPacketEntity) ? "Motion" :
+                      typeof(T) == typeof(SafetyPacketEntity) ? "Safety" :
+                      typeof(T) == typeof(OnVIFPacketEntity) ? "OnVIF" : "Unknown";
 
         var concurrency = configuration.GetSection("Concurrency");
         var min = concurrency.GetValue<int>("MinWorkers", 2);
@@ -80,19 +82,98 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
             configuration.GetValue<int>("HubTransmission:IntervalMs", 30));
 
         _logger.LogInformation(
-            "[HANDLER-SERVICE] {Handler} initialized with {Workers} workers (RawChannelCapacity:500K, ParsedChannelCapacity:{ParsedCap}, every {IntervalMs}ms",
-            typeof(T).Name, _workerCount, parsedChannel.Reader.CanCount ? "?" : "Bounded", _transmissionInterval.TotalMilliseconds);
+            "[HANDLER-SERVICE] {Handler} initialized with {Workers} workers (RawChannelCapacity:{RawCap}, Timeout:{IntervalMs}ms)",
+            typeof(T).Name, _workerCount, _rawCapacity, _transmissionInterval.TotalMilliseconds);
     }
 
     #region IHandlerService
 
+    public async Task SubscribeToDeviceAsync(IDeviceService deviceService, RangeDto.RangeConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(config.BpfConfig);
+
+        // Determine endpoint overrides based on handler entity type
+        EndpointSpecification[] endpoints = [];
+        if (typeof(T) == typeof(MotionPacketEntity))
+            endpoints = config.BpfConfig.Motion ?? [];
+        else if (typeof(T) == typeof(SafetyPacketEntity))
+            endpoints = config.BpfConfig.Safety ?? [];
+        else if (typeof(T) == typeof(OnVIFPacketEntity))
+            endpoints = config.BpfConfig.OnVIF  ?? [];
+
+        if (string.IsNullOrWhiteSpace(config.BpfConfig.Device))
+        {
+            _logger.LogError("[{Entity}] Missing device in RangeConfig.BpfConfig", typeof(T).Name);
+            throw new ArgumentException("Device must be provided in RangeConfig.BpfConfig.Device");
+        }
+
+        if (endpoints.Length == 0)
+        {
+            _logger.LogWarning("[{Entity}] No endpoints provided. Falling back to appsettings IPs.", typeof(T).Name);
+        }
+
+        var filter = BpfFilterBuilder.Build(_protocol, endpoints);
+
+        var deviceName = config.BpfConfig.Device;
+        try
+        {
+            _logger.LogInformation("[HANDLER-SERVICE] [{Entity}] Subscribing device {Device} with filter: {Filter}", typeof(T).Name, deviceName, filter);
+            await deviceService.SubscribeWithFilterAsync(this, deviceName, filter);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HANDLER-SERVICE] [{Entity}] Subscribe failed for device {Device}", typeof(T).Name, deviceName);
+            throw;
+        }
+    }
+
+    public async Task SubscribeToDeviceAsync(IDeviceService deviceService, BPFConfDto bpfConfig)
+    {
+        ArgumentNullException.ThrowIfNull(bpfConfig);
+
+        EndpointSpecification[] endpoints = [];
+        if (typeof(T) == typeof(MotionPacketEntity))
+            endpoints = bpfConfig.Motion ?? [];
+        else if (typeof(T) == typeof(SafetyPacketEntity))
+            endpoints = bpfConfig.Safety ?? [];
+        else if (typeof(T) == typeof(OnVIFPacketEntity))
+            endpoints = bpfConfig.OnVIF  ?? [];
+
+        if (string.IsNullOrWhiteSpace(bpfConfig.Device))
+        {
+            _logger.LogError("[{Entity}] Missing device in BpfConfig", typeof(T).Name);
+            throw new ArgumentException("Device must be provided in BpfConfig.Device");
+        }
+
+        if (endpoints.Length == 0)
+        {
+            _logger.LogWarning("[{Entity}] No endpoints provided. Falling back to appsettings IPs.", typeof(T).Name);
+        }
+
+        var filter = BpfFilterBuilder.Build(_protocol, endpoints);
+        var deviceName = bpfConfig.Device;
+        try
+        {
+            _logger.LogInformation("[HANDLER-SERVICE] [{Entity}] Subscribing device {Device} with filter: {Filter}", typeof(T).Name, deviceName, filter);
+            await deviceService.SubscribeWithFilterAsync(this, deviceName, filter);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HANDLER-SERVICE] [{Entity}] Subscribe failed for device {Device}", typeof(T).Name, deviceName);
+            throw;
+        }
+    }
+
+    [Obsolete("Development only - use SubscribeToDeviceAsync(DeviceService, RangeDto.RangeConfig) instead")]
     public async Task SubscribeToDeviceAsync(IDeviceService deviceService, string deviceName)
     {
         var filter = BpfFilterBuilder.Build(_protocol, _ips);
         await deviceService.SubscribeWithFilterAsync(this, deviceName, filter);
-        _logger.LogInformation("{Handler} subscribed to {Device} with filter {Filter}",
+        _logger.LogInformation("[HANDLER-SERVICE] {Handler} subscribed to {Device} with filter {Filter}",
             typeof(T).Name, deviceName, filter);
     }
+
 
     public async Task UnsubscribeAsync(IDeviceService deviceService)
     {
@@ -103,7 +184,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         _statsObserver.Handler.Reset();
         Interlocked.Exchange(ref _rawChannelCount, 0);
 
-        _logger.LogInformation("{Handler} unsubscribed", typeof(T).Name);
+        _logger.LogInformation("[HANDLER-SERVICE] {Handler} unsubscribed", typeof(T).Name);
     }
 
     public (long Captured, long Parsed, long Dropped, double AvgLatencyMs) GetStats()
@@ -127,7 +208,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         _statsObserver.Handler.Reset();
         // Note: rawChannelCount is not reset as it represents actual queue state
         
-        _logger.LogInformation("{Handler} statistics reset", typeof(T).Name);
+        _logger.LogInformation("[HANDLER-SERVICE] {Handler} statistics reset", typeof(T).Name);
     }
 
     #endregion
@@ -142,17 +223,20 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         if (_rawChannel.Writer.TryWrite(evt))
         {
             Interlocked.Increment(ref _rawChannelCount);
+            // Per-entity capture success
+            _statsObserver.IncrementCaptureFor(_entityName, success: true);
             
             // Update channel stats after incrementing
             var currentCount = Interlocked.Read(ref _rawChannelCount);
-            var utilization = (double)currentCount / 500_000 * 100;
+            var utilization = (double)currentCount / _rawCapacity * 100;
             
+            var avgLatency = _statsObserver.Handler.GetAverageLatency();
             if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
-                _statsObserver.UpdateChannelStats("MotionRaw", 500_000, (int)currentCount, utilization);
+                _statsObserver.UpdateChannelStats("MotionRaw", _rawCapacity, (int)currentCount, utilization, _workerCount, avgLatency);
             else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
-                _statsObserver.UpdateChannelStats("SafetyRaw", 500_000, (int)currentCount, utilization);
+                _statsObserver.UpdateChannelStats("SafetyRaw", _rawCapacity, (int)currentCount, utilization, _workerCount, avgLatency);
             else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
-                _statsObserver.UpdateChannelStats("OnvifRaw", 500_000, (int)currentCount, utilization);
+                _statsObserver.UpdateChannelStats("OnvifRaw", _rawCapacity, (int)currentCount, utilization, _workerCount, avgLatency);
             
             return;
         }
@@ -168,17 +252,19 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
             .GetResult();
         
         Interlocked.Increment(ref _rawChannelCount);
+        _statsObserver.IncrementCaptureFor(_entityName, success: true);
         
         // Update channel stats after incrementing
         var finalCount = Interlocked.Read(ref _rawChannelCount);
-        var finalUtilization = (double)finalCount / 500_000 * 100;
+        var finalUtilization = (double)finalCount / _rawCapacity * 100;
         
+        var avgLatency2 = _statsObserver.Handler.GetAverageLatency();
         if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
-            _statsObserver.UpdateChannelStats("MotionRaw", 500_000, (int)finalCount, finalUtilization);
+            _statsObserver.UpdateChannelStats("MotionRaw", _rawCapacity, (int)finalCount, finalUtilization, _workerCount, avgLatency2);
         else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
-            _statsObserver.UpdateChannelStats("SafetyRaw", 500_000, (int)finalCount, finalUtilization);
+            _statsObserver.UpdateChannelStats("SafetyRaw", _rawCapacity, (int)finalCount, finalUtilization, _workerCount, avgLatency2);
         else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
-            _statsObserver.UpdateChannelStats("OnvifRaw", 500_000, (int)finalCount, finalUtilization);
+            _statsObserver.UpdateChannelStats("OnvifRaw", _rawCapacity, (int)finalCount, finalUtilization, _workerCount, avgLatency2);
     }
 
     public void OnError(Exception error) =>
@@ -242,8 +328,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                     Interlocked.Decrement(ref _rawChannelCount);
                 }
                 
-                // Update raw channel stats
-                UpdateRawChannelStats();
+                // Do not update raw channel stats here to avoid overwriting enqueue-based telemetry with near-zero after drains
 
                 // ---- 3) Parse and forward ----
                 DateTime? firstParsedTimestamp = null;
@@ -261,6 +346,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                         {
                             _statsObserver.Handler.IncrementDropped();
                             batchDropped++;
+                            _statsObserver.IncrementParseFor(_entityName, success: false);
                             continue;
                         }
 
@@ -279,9 +365,17 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                             _statsObserver.Handler.IncrementBackpressure();
                             batchBackpressure++;
                             await _parsedChannel.Writer.WriteAsync(parsed, token);
+                            // Parsed item enqueued to parsed channel -> increment parsed channel count
+                            _statsObserver.DbWriter.IncrementChannelCount();
+                        }
+                        else
+                        {
+                            // Parsed item enqueued to parsed channel -> increment parsed channel count
+                            _statsObserver.DbWriter.IncrementChannelCount();
                         }
 
                         _statsObserver.Handler.IncrementParsed();
+                        _statsObserver.IncrementParseFor(_entityName, success: true);
                         batchParsed++;
                     }
                     catch
@@ -311,8 +405,9 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
                     parsingLatencyMs = (DateTime.UtcNow - lastParsedTimestamp.Value).TotalMilliseconds;
                 }
                 
+                _statsObserver.Handler.AddLatency((long)parsingLatencyMs);
                 _logger.LogInformation(
-                    "[PARSER] {Entity} Worker {Worker}: Batch=(Parsed:{BatchParsed} Dropped:{BatchDropped} BP:{BatchBP} Latency:{Latency:F1}ms) Total=(Captured:{TotalCaptured} Parsed:{TotalParsed} Dropped:{TotalDropped} BP:{TotalBP})",
+                    "[HANDLER-SERVICE] [PARSER] {Entity} Worker {Worker}: Batch=(Parsed:{BatchParsed} Dropped:{BatchDropped} BP:{BatchBP} Latency:{Latency:F1}ms) Total=(Captured:{TotalCaptured} Parsed:{TotalParsed} Dropped:{TotalDropped} BP:{TotalBP})",
                     typeof(T).Name, workerId, batchParsed, batchDropped, batchBackpressure, parsingLatencyMs, totalCaptured, totalParsed, totalDropped, totalBackpressure);
             }
         }
@@ -338,8 +433,8 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     private void UpdateRawChannelStats()
     {
         var rawChannelCount = Interlocked.Read(ref _rawChannelCount);
-        var rawCapacity = 500_000; // Hardcoded capacity from channel creation
-        var rawUtilization = (double)rawChannelCount / rawCapacity * 100;
+        var rawCapacity = _rawCapacity;
+        var rawUtilization = rawCapacity > 0 ? (double)rawChannelCount / rawCapacity * 100 : 0;
         
         // Determine channel name based on packet type
         var channelName = typeof(T).Name switch

@@ -6,6 +6,8 @@ using PacketProcessing.Services.Realtime.Storage;
 using PacketProcessing.DTOs;
 using PacketProcessing.Utils.Enums;
 using PacketProcessing.Telemetry;
+using PacketProcessing.DTOs.Range;
+using PacketProcessing.DTOs.Conf;
 
 namespace PacketProcessing.Services.Realtime;
 
@@ -15,7 +17,6 @@ namespace PacketProcessing.Services.Realtime;
 public class RealtimeService : IRealtimeService
 {
     private readonly ILogger<RealtimeService> _logger;
-    private readonly IConfiguration _config;
     private readonly IDeviceService _deviceService;
     private readonly ITelemetryService _telemetryService;
 
@@ -27,9 +28,12 @@ public class RealtimeService : IRealtimeService
     private readonly IDbWriterService<SafetyPacketEntity> _safetyWriter;
     private readonly IDbWriterService<OnVIFPacketEntity> _onvifWriter;
 
+    private RangeDto? _currentRange;
+
+    public bool IsActive { get; private set; }
+
     public RealtimeService(
         ILogger<RealtimeService> logger,
-        IConfiguration config,
         IDeviceService deviceService,
         ITelemetryService telemetryService,
         IHandlerService<MotionPacketEntity> motionHandler,
@@ -40,7 +44,6 @@ public class RealtimeService : IRealtimeService
         IDbWriterService<OnVIFPacketEntity> onvifWriter)
     {
         _logger = logger;
-        _config = config;
         _deviceService = deviceService;
         _telemetryService = telemetryService;
         _motionHandler = motionHandler;
@@ -51,32 +54,63 @@ public class RealtimeService : IRealtimeService
         _onvifWriter = onvifWriter;
     }
 
+    public async Task StartAsync(CancellationToken cancellationToken, BPFConfDto config)
+    {
+        try
+        {
+            _logger.LogInformation("[REALTIME-SERVICE] Starting with configuration (Device={Device})...", config.Device);
+
+            await _motionHandler.SubscribeToDeviceAsync(_deviceService, config);
+            await _safetyHandler.SubscribeToDeviceAsync(_deviceService, config);
+            await _onvifHandler.SubscribeToDeviceAsync(_deviceService, config);
+
+            IsActive = true;
+            _logger.LogInformation("[REALTIME-SERVICE] Initialized all handlers with configuration");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REALTIME-SERVICE] Start with configuration failed");
+            throw;
+        }
+    }
+
+    [Obsolete("Development only - use StartAsync(CancellationToken, BPFConfDto) instead")]
     public async Task StartAsync(CancellationToken cancellationToken, string deviceName)
     {
-        _logger.LogInformation("Realtime service starting...");
+        _logger.LogInformation("[REALTIME-SERVICE] Starting...");
 
         await _motionHandler.SubscribeToDeviceAsync(_deviceService, deviceName);
         await _safetyHandler.SubscribeToDeviceAsync(_deviceService, deviceName);
         await _onvifHandler.SubscribeToDeviceAsync(_deviceService, deviceName);
 
-        _logger.LogInformation("Realtime service initialized all handlers");
+        IsActive = true;
+        _logger.LogInformation("[REALTIME-SERVICE] Initialized all handlers");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Realtime service stopping...");
+        try
+        {
+            _logger.LogInformation("[REALTIME-SERVICE] Stopping...");
 
-        await _motionHandler.UnsubscribeAsync(_deviceService);
-        await _safetyHandler.UnsubscribeAsync(_deviceService);
-        await _onvifHandler.UnsubscribeAsync(_deviceService);
+            await _motionHandler.UnsubscribeAsync(_deviceService);
+            await _safetyHandler.UnsubscribeAsync(_deviceService);
+            await _onvifHandler.UnsubscribeAsync(_deviceService);
 
-        _logger.LogInformation("Realtime service stopped");
+            IsActive = false;
+            _logger.LogInformation("[REALTIME-SERVICE] Stopped");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REALTIME-SERVICE] Stop failed");
+            throw;
+        }
     }
 
     
     public void ResetStats()
     {
-        _logger.LogInformation("Resetting all pipeline statistics...");
+        _logger.LogInformation("[REALTIME-SERVICE] Resetting all pipeline statistics...");
         
         // Reset handler stats
         _motionHandler.ResetStats();
@@ -91,7 +125,7 @@ public class RealtimeService : IRealtimeService
         // Reset telemetry service
         _telemetryService.Reset();
         
-        _logger.LogInformation("All pipeline statistics reset successfully");
+        _logger.LogInformation("[REALTIME-SERVICE] All pipeline statistics reset successfully");
     }
 
     public TelemetryDto GetStats()
@@ -100,6 +134,22 @@ public class RealtimeService : IRealtimeService
         var telemetrySnapshot = _telemetryService.SnapshotAsync().GetAwaiter().GetResult();
         
         return telemetrySnapshot;
+    }
+
+    public ICollection<string> GetAvailableDeviceNames()
+    {
+        return _deviceService.GetAvailableDeviceNames();
+    }
+
+    public Task<RangeDto?> GetCurrentRangeAsync()
+    {
+        return Task.FromResult(_currentRange);
+    }
+
+    public Task SetCurrentRangeAsync(RangeDto range)
+    {
+        _currentRange = range;
+        return Task.CompletedTask;
     }
 }
 

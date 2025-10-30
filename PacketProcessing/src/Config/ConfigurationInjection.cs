@@ -53,13 +53,14 @@ public class ConfigurationInjection
 
         var config = builder.Configuration;
         
-        // === Channels ===
+        // === Channels (centralized, sizes from DataPipes:{Pipe}:Channel:Members) ===
+        // Parsed channels (handler -> DB) - sizes from DataPipes
         builder.Services.AddSingleton(sp =>
         {
-            var max = config.GetValue<int>("DataPipes:MotionCapture:Channel:Members", 1000000);
+            var max = config.GetValue<int>("DataPipes:MotionCapture:Channel:Members", 1_000_000);
             return Channel.CreateBounded<MotionPacketEntity>(new BoundedChannelOptions(max)
             {
-                FullMode = BoundedChannelFullMode.Wait,  // Block instead of drop - guarantees delivery
+                FullMode = BoundedChannelFullMode.Wait,
                 SingleReader = false,
                 SingleWriter = false
             });
@@ -67,10 +68,10 @@ public class ConfigurationInjection
 
         builder.Services.AddSingleton(sp =>
         {
-            var max = config.GetValue<int>("DataPipes:SafetyCapture:Channel:Members", 1000000);
+            var max = config.GetValue<int>("DataPipes:SafetyCapture:Channel:Members", 1_000_000);
             return Channel.CreateBounded<SafetyPacketEntity>(new BoundedChannelOptions(max)
             {
-                FullMode = BoundedChannelFullMode.Wait,  // Block instead of drop - guarantees delivery
+                FullMode = BoundedChannelFullMode.Wait,
                 SingleReader = false,
                 SingleWriter = false
             });
@@ -78,14 +79,16 @@ public class ConfigurationInjection
 
         builder.Services.AddSingleton(sp =>
         {
-            var max = config.GetValue<int>("DataPipes:OnVIFCapture:Channel:Members", 100000);
+            var max = config.GetValue<int>("DataPipes:OnVIFCapture:Channel:Members", 100_000);
             return Channel.CreateBounded<OnVIFPacketEntity>(new BoundedChannelOptions(max)
             {
-                FullMode = BoundedChannelFullMode.Wait,  // Block instead of drop - guarantees delivery
+                FullMode = BoundedChannelFullMode.Wait,
                 SingleReader = false,
                 SingleWriter = false
             });
         });
+
+        // Raw channels will be created per handler registration with capacity from DataPipes
 
         // === Transmission & Playback Services (register before handlers) ===
         builder.Services.AddSingleton<IInfluxRepositoryFactory, InfluxRepositoryFactory>();
@@ -102,13 +105,29 @@ public class ConfigurationInjection
         builder.Services.AddSingleton<HandlerService<MotionPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<HandlerService<MotionPacketEntity>>>();
-            var channel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
+            var parsedChannel = sp.GetRequiredService<Channel<MotionPacketEntity>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             var parseMapper = sp.GetRequiredService<ParseMapper>();
             var statsObserver = sp.GetRequiredService<Utils.Observers.StatsObserver>();
+            var rawCapacity = cfg.GetValue<int>("DataPipes:MotionCapture:Channel:Members", 500_000);
+            var rawChannel = Channel.CreateBounded<RawPacketEvent>(new BoundedChannelOptions(rawCapacity)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = false,
+                SingleWriter = false
+            });
             
-            var handler = new HandlerService<MotionPacketEntity>("DataPipes:MotionCapture", transmissionService, logger, channel, cfg, parseMapper, statsObserver);
+            var handler = new HandlerService<MotionPacketEntity>(
+                "DataPipes:MotionCapture",
+                transmissionService,
+                logger,
+                rawChannel,
+                rawCapacity,
+                parsedChannel,
+                cfg,
+                parseMapper,
+                statsObserver);
             
             return handler;
         });
@@ -120,12 +139,28 @@ public class ConfigurationInjection
         builder.Services.AddSingleton<HandlerService<SafetyPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<HandlerService<SafetyPacketEntity>>>();
-            var channel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
+            var parsedChannel = sp.GetRequiredService<Channel<SafetyPacketEntity>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             var parseMapper = sp.GetRequiredService<ParseMapper>();
             var statsObserver = sp.GetRequiredService<Utils.Observers.StatsObserver>();
-            var handler = new HandlerService<SafetyPacketEntity>("DataPipes:SafetyCapture", transmissionService, logger, channel, cfg, parseMapper, statsObserver);
+            var rawCapacity = cfg.GetValue<int>("DataPipes:SafetyCapture:Channel:Members", 500_000);
+            var rawChannel = Channel.CreateBounded<RawPacketEvent>(new BoundedChannelOptions(rawCapacity)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = false,
+                SingleWriter = false
+            });
+            var handler = new HandlerService<SafetyPacketEntity>(
+                "DataPipes:SafetyCapture",
+                transmissionService,
+                logger,
+                rawChannel,
+                rawCapacity,
+                parsedChannel,
+                cfg,
+                parseMapper,
+                statsObserver);
             
             return handler;
         });
@@ -137,13 +172,28 @@ public class ConfigurationInjection
         builder.Services.AddSingleton<HandlerService<OnVIFPacketEntity>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<HandlerService<OnVIFPacketEntity>>>();
-            var channel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
+            var parsedChannel = sp.GetRequiredService<Channel<OnVIFPacketEntity>>();
             var cfg = sp.GetRequiredService<IConfiguration>();
             var transmissionService = sp.GetRequiredService<ITransmissionService>();
             var parseMapper = sp.GetRequiredService<ParseMapper>();
             var statsObserver = sp.GetRequiredService<Utils.Observers.StatsObserver>();
-            
-            var handler = new HandlerService<OnVIFPacketEntity>("DataPipes:OnVIFCapture", transmissionService, logger, channel, cfg, parseMapper, statsObserver);
+            var rawCapacity = cfg.GetValue<int>("DataPipes:OnVIFCapture:Channel:Members", 500_000);
+            var rawChannel = Channel.CreateBounded<RawPacketEvent>(new BoundedChannelOptions(rawCapacity)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = false,
+                SingleWriter = false
+            });
+            var handler = new HandlerService<OnVIFPacketEntity>(
+                "DataPipes:OnVIFCapture",
+                transmissionService,
+                logger,
+                rawChannel,
+                rawCapacity,
+                parsedChannel,
+                cfg,
+                parseMapper,
+                statsObserver);
             return handler;
         });
         
@@ -458,7 +508,7 @@ public class ConfigurationInjection
             }
 
             app.UseSwagger();
-            Log.Information("Swagger is enabled on route {Route}", app.Configuration.GetValue<string>("Application:Url")+"/swagger");
+            Log.Information("Swagger is enabled on route {Route}\n", app.Configuration.GetValue<string>("Application:Url")+"/swagger");
             app.UseSwaggerUI(c =>
             {
                 // Always point UI to the v1 endpoint; our middleware overrides it when file exists

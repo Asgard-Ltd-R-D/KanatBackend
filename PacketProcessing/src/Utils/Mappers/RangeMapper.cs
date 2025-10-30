@@ -1,5 +1,7 @@
 using PacketProcessing.DTOs.Range;
+using PacketProcessing.DTOs.Conf;
 using PacketProcessing.Entities.Range;
+using static PacketProcessing.DTOs.Range.RangeDto;
 
 namespace PacketProcessing.Utils.Mappers;
 
@@ -21,9 +23,9 @@ public sealed class RangeMapper : IMapper<RangeDto, RangeEntity>
         {
             Id = entity.Id,
             Timestamp = entity.Timestamp,
-            Start = entity.Start,
-            End = entity.End,
-            Description = entity.Description
+            StartTime = entity.StartTime,
+            EndTime = entity.EndTime,
+            Description = entity.Description,
         };
     }
 
@@ -40,8 +42,8 @@ public sealed class RangeMapper : IMapper<RangeDto, RangeEntity>
         {
             Id = dto.Id,
             Timestamp = dto.Timestamp,
-            Start = dto.Start,
-            End = dto.End,
+            StartTime = dto.StartTime,
+            EndTime = dto.EndTime,
             Description = dto.Description
         };
     }

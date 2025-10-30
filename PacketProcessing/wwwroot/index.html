@@ -2,7 +2,7 @@
 <html>
 <head>
     <title>Kanat Packet Processing - Telemetry Dashboard</title>
-    <link rel="stylesheet" href="css/dashboard.css">
+    <link rel="stylesheet" href="css/dashboard.css?v=2">
     <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@latest/dist/browser/signalr.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -31,14 +31,75 @@
             </button>
         </div>
         
-        <!-- Capture Controls -->
+        <!-- Range Controls -->
         <div class="sidebar-section">
-            <h3>Capture</h3>
+            <h3>Range</h3>
+            <div class="form-group">
+                <label for="rangeDescription">Description (optional)</label>
+                <input id="rangeDescription" type="text" placeholder="Describe the range..." style="width: 100%;">
+            </div>
+
+            <div class="form-group" style="margin-bottom: 10px;">
+                <label for="bpfDeviceSelect">Device</label>
+                <select id="bpfDeviceSelect">
+                    <option value="">Loading devices...</option>
+                </select>
+            </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+                <h4 style="margin: 8px 0;">Motion Endpoints (optional)</h4>
+                <div id="motionEndpoints" class="endpoints-container"></div>
+                <div class="endpoints-actions">
+                    <button class="btn-console btn-small" onclick="addEndpointRow('motionEndpoints')" type="button">Add Motion Endpoint</button>
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+                <h4 style="margin: 8px 0;">Safety Endpoints (optional)</h4>
+                <div id="safetyEndpoints" class="endpoints-container"></div>
+                <div class="endpoints-actions">
+                    <button class="btn-console btn-small" onclick="addEndpointRow('safetyEndpoints')" type="button">Add Safety Endpoint</button>
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+                <h4 style="margin: 8px 0;">OnVIF Endpoints (optional)</h4>
+                <div id="onvifEndpoints" class="endpoints-container"></div>
+                <div class="endpoints-actions">
+                    <button class="btn-console btn-small" onclick="addEndpointRow('onvifEndpoints')" type="button">Add OnVIF Endpoint</button>
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+                <h4 style="margin: 8px 0;">Media MTX (optional)</h4>
+                <div style="display:flex; gap:6px;">
+                    <input id="mtxIp" type="text" placeholder="MTX IP" style="flex:2;">
+                    <input id="mtxPort" type="number" placeholder="Port" style="flex:1;">
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+                <h4 style="margin: 8px 0;">Cameras (optional)</h4>
+                <div id="camsContainer" class="endpoints-container"></div>
+                <div class="endpoints-actions">
+                    <button class="btn-console btn-small" onclick="addCameraRow()" type="button">Add Camera</button>
+                </div>
+            </div>
+
+            <div style="display:flex; gap:8px; margin-top: 12px;">
+                <button class="btn-start" onclick="startRange()" type="button" style="flex:1;">Start Range</button>
+                <button class="btn-stop" onclick="stopRange()" type="button" style="flex:1;">Stop Range</button>
+            </div>
+        </div>
+
+        <!-- Development Only -->
+        <div class="sidebar-section">
+            <h3>Development Only</h3>
             <select id="deviceNameSelect">
                 <option value="">Loading devices...</option>
             </select>
-            <button class="btn-start" onclick="startCapture()">Start Capture</button>
-            <button class="btn-stop" onclick="stopCapture()">Stop Capture</button>
+            <button class="btn-start" onclick="startCaptureDev()">Start Capture (Dev)</button>
+            <button class="btn-stop" onclick="stopCaptureDev()">Stop Capture (Dev)</button>
         </div>
         
         
@@ -86,6 +147,9 @@
             </div>
             <div>Uptime: <span id="uptime">0s</span></div>
         </div>
+        <div id="currentRangeSummary" style="margin-top:10px; font-size: 14px; color: #bbb;">
+            <!-- Filled when a range is started -->
+        </div>
     </div>
     
     <!-- Metrics Grid -->
@@ -103,12 +167,24 @@
                 <span class="metric-value" id="motionCaptured">0</span>
             </div>
             <div class="metric">
+                <span class="metric-label">Motion Capture Fail</span>
+                <span class="metric-value error" id="motionCaptureFail">0</span>
+            </div>
+            <div class="metric">
                 <span class="metric-label">Safety Captured</span>
                 <span class="metric-value" id="safetyCaptured">0</span>
             </div>
             <div class="metric">
+                <span class="metric-label">Safety Capture Fail</span>
+                <span class="metric-value error" id="safetyCaptureFail">0</span>
+            </div>
+            <div class="metric">
                 <span class="metric-label">OnVIF Captured</span>
                 <span class="metric-value" id="onvifCaptured">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">OnVIF Capture Fail</span>
+                <span class="metric-value error" id="onvifCaptureFail">0</span>
             </div>
             <div class="metric">
                 <span class="metric-label">Capture Rate</span>
@@ -128,8 +204,28 @@
                 <span class="metric-value error" id="totalDropped">0</span>
             </div>
             <div class="metric">
-                <span class="metric-label">Backpressure Events</span>
-                <span class="metric-value warn" id="backpressure">0</span>
+                <span class="metric-label">Motion Parse Success</span>
+                <span class="metric-value" id="motionParseSuccess">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Motion Parse Fail</span>
+                <span class="metric-value error" id="motionParseFail">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Safety Parse Success</span>
+                <span class="metric-value" id="safetyParseSuccess">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Safety Parse Fail</span>
+                <span class="metric-value error" id="safetyParseFail">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">OnVIF Parse Success</span>
+                <span class="metric-value" id="onvifParseSuccess">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">OnVIF Parse Fail</span>
+                <span class="metric-value error" id="onvifParseFail">0</span>
             </div>
             <div class="metric">
                 <span class="metric-label">Parse Rate</span>
@@ -149,12 +245,32 @@
                 <span class="metric-value error" id="totalFailed">0</span>
             </div>
             <div class="metric">
-                <span class="metric-label">Flush Rate</span>
-                <span class="metric-value"><span id="flushRate">0</span> <span style="font-size:12px">pps</span></span>
+                <span class="metric-label">Motion Flush Success</span>
+                <span class="metric-value" id="motionFlushSuccess">0</span>
             </div>
             <div class="metric">
-                <span class="metric-label">Avg Latency</span>
-                <span class="metric-value"><span id="avgLatency">0</span> <span style="font-size:12px">ms</span></span>
+                <span class="metric-label">Motion Flush Fail</span>
+                <span class="metric-value error" id="motionFlushFail">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Safety Flush Success</span>
+                <span class="metric-value" id="safetyFlushSuccess">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Safety Flush Fail</span>
+                <span class="metric-value error" id="safetyFlushFail">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">OnVIF Flush Success</span>
+                <span class="metric-value" id="onvifFlushSuccess">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">OnVIF Flush Fail</span>
+                <span class="metric-value error" id="onvifFlushFail">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Flush Rate</span>
+                <span class="metric-value"><span id="flushRate">0</span> <span style="font-size:12px">pps</span></span>
             </div>
         </div>
         
@@ -171,8 +287,12 @@
                 <span class="metric-value" id="motionRawChannelCapacity">500,000</span>
             </div>
             <div class="metric">
-                <span class="metric-label">Current Size</span>
-                <span class="metric-value" id="motionRawChannelSize">0</span>
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="motionRawWorkers">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value" id="motionRawAvgLatency">0 ms</span>
             </div>
             <div class="metric">
                 <span class="metric-label">Utilization</span>
@@ -191,8 +311,12 @@
                 <span class="metric-value" id="safetyRawChannelCapacity">500,000</span>
             </div>
             <div class="metric">
-                <span class="metric-label">Current Size</span>
-                <span class="metric-value" id="safetyRawChannelSize">0</span>
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="safetyRawWorkers">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value" id="safetyRawAvgLatency">0 ms</span>
             </div>
             <div class="metric">
                 <span class="metric-label">Utilization</span>
@@ -211,8 +335,12 @@
                 <span class="metric-value" id="onvifRawChannelCapacity">500,000</span>
             </div>
             <div class="metric">
-                <span class="metric-label">Current Size</span>
-                <span class="metric-value" id="onvifRawChannelSize">0</span>
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="onvifRawWorkers">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value" id="onvifRawAvgLatency">0 ms</span>
             </div>
             <div class="metric">
                 <span class="metric-label">Utilization</span>
@@ -234,8 +362,12 @@
                 <span class="metric-value" id="motionParsedChannelCapacity">1,000,000</span>
             </div>
             <div class="metric">
-                <span class="metric-label">Current Size</span>
-                <span class="metric-value" id="motionParsedChannelSize">0</span>
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="motionParsedWorkers">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value" id="motionParsedAvgLatency">0 ms</span>
             </div>
             <div class="metric">
                 <span class="metric-label">Utilization</span>
@@ -254,8 +386,12 @@
                 <span class="metric-value" id="safetyParsedChannelCapacity">1,000,000</span>
             </div>
             <div class="metric">
-                <span class="metric-label">Current Size</span>
-                <span class="metric-value" id="safetyParsedChannelSize">0</span>
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="safetyParsedWorkers">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value" id="safetyParsedAvgLatency">0 ms</span>
             </div>
             <div class="metric">
                 <span class="metric-label">Utilization</span>
@@ -274,8 +410,12 @@
                 <span class="metric-value" id="onvifParsedChannelCapacity">100,000</span>
             </div>
             <div class="metric">
-                <span class="metric-label">Current Size</span>
-                <span class="metric-value" id="onvifParsedChannelSize">0</span>
+                <span class="metric-label">Workers</span>
+                <span class="metric-value" id="onvifParsedWorkers">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Avg Latency</span>
+                <span class="metric-value" id="onvifParsedAvgLatency">0 ms</span>
             </div>
             <div class="metric">
                 <span class="metric-label">Utilization</span>
@@ -304,10 +444,6 @@
         <div class="log-container packet-hub-container" style="min-height: 800px; padding: 30px;">
             <div class="log-header">
                 <h3 style="color: #4fc3f7; margin: 0;">SIGNALR PACKET HUB</h3>
-                    <div style="display: flex; gap: 10px; align-items: center;">
-                        <span id="packetHubStatus" style="color: #4caf50;">Ready</span>
-                        <button id="packetHubConnectBtn" class="btn-start" onclick="togglePacketHubConnection()" style="height: 32px; padding: 0 12px; font-size: 12px; border-radius: 4px; flex-shrink: 0; min-width: 80px; max-width: 100px;">Connect</button>
-                    </div>
             </div>
             
             <!-- Data Pipe Selection -->

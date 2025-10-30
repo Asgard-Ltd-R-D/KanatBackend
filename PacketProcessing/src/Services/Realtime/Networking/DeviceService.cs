@@ -66,7 +66,7 @@ public class DeviceService : IDeviceService
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "Error notifying observer {Observer}", observer.GetType().Name);
+                    _logger.LogError(ex, "[DEVICE-SERVICE] Error notifying observer {Observer}", observer.GetType().Name);
                         }
                     });
                 }
@@ -91,16 +91,16 @@ public class DeviceService : IDeviceService
                 dev.StartCapture();
                 if (_activeSubscriptions.TryAdd(observer, dev))
                 {
-                    _logger.LogInformation("Observer subscribed on {Device} with filter {Filter}", dev.Name, filter);
+                    _logger.LogInformation("[DEVICE-SERVICE] Observer subscribed on {Device} with filter {Filter}", dev.Name, filter);
                 }
                 else
                 {
-                    _logger.LogError("Failed to add device {Device} to active subscriptions", dev.Name);
+                    _logger.LogError("[DEVICE-SERVICE] Failed to add device {Device} to active subscriptions", dev.Name);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error opening device {Device}", dev.Name);
+                _logger.LogError(ex, "[DEVICE-SERVICE] Error opening device {Device}", dev.Name);
             }
 
 
@@ -118,11 +118,11 @@ public class DeviceService : IDeviceService
                     if (dev.Started) dev.StopCapture();
                     dev.Close();
                     dev.Dispose();
-                    _logger.LogInformation("Observer unsubscribed from {Device}", dev.Name);
+                    _logger.LogInformation("[DEVICE-SERVICE] Observer unsubscribed from {Device}", dev.Name);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Error while cleaning up device {Device}", dev.Name);
+                    _logger.LogWarning(ex, "[DEVICE-SERVICE] Error while cleaning up device {Device}", dev.Name);
                 }
             }
 
@@ -141,7 +141,7 @@ public class DeviceService : IDeviceService
                     if (kvp.Value.Started) kvp.Value.StopCapture();
                     kvp.Value.Close();
                     kvp.Value.Dispose();
-                    _logger.LogInformation("Device {Device} stopped and disposed", kvp.Value.Name);
+                    _logger.LogInformation("[DEVICE-SERVICE] Device {Device} stopped and disposed", kvp.Value.Name);
                 }
                 catch { }
             }

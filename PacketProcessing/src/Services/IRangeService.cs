@@ -31,6 +31,22 @@ public interface IRangeService
     /// Set application mode
     /// </summary>
     void SetMode(States mode);
+
+    /// <summary>
+    /// Start a range session
+    /// </summary>
+    Task<RangeDto> StartRealtimeRangeAsync(CancellationToken cancellationToken, RangeDto range);
+
+    /// <summary>
+    /// Stop a range session
+    /// </summary>
+    Task<RangeDto?> StopRealtimeRangeAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Get available device names
+    /// </summary>
+    /// <returns></returns>
+    ICollection<string> GetAvailableDeviceNames();
     
     // Range Operations
     

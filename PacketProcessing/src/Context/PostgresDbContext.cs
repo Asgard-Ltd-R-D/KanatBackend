@@ -34,16 +34,16 @@ public class PostgresDbContext : DbContext
             // Configure columns
             entity.Property(x => x.Id).HasColumnName("id");
             entity.Property(x => x.Timestamp).HasColumnName("timestamp");
-            entity.Property(x => x.Start).HasColumnName("start_time");
-            entity.Property(x => x.End).HasColumnName("end_time");
+            entity.Property(x => x.StartTime).HasColumnName("start_time");
+            entity.Property(x => x.EndTime).HasColumnName("end_time");
             entity.Property(x => x.Description).HasColumnName("description").HasMaxLength(500);
             
             // Configure indexes
             entity.HasIndex(x => x.Timestamp)
                 .HasDatabaseName("ix_ranges_timestamp");
-            entity.HasIndex(x => x.Start)
+            entity.HasIndex(x => x.StartTime)
                 .HasDatabaseName("ix_ranges_start_time");
-            entity.HasIndex(x => x.End)
+            entity.HasIndex(x => x.EndTime)
                 .HasDatabaseName("ix_ranges_end_time");
             
             // Configure navigation properties

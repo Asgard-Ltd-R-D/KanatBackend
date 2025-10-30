@@ -20,9 +20,9 @@ public class StatsObserver
     /// <summary>
     /// Update channel statistics for both raw and parsed channels
     /// </summary>
-    public void UpdateChannelStats(string channelName, int capacity, int count, double utilization)
+    public void UpdateChannelStats(string channelName, int capacity, int count, double utilization, int workers = 0, double avgLatencyMs = 0)
     {
-        _telemetryService.UpdateChannelStats(channelName, capacity, count, utilization);
+        _telemetryService.UpdateChannelStats(channelName, capacity, count, utilization, workers, avgLatencyMs);
     }
 
     public StatsObserver(ITelemetryService telemetryService, string serviceName)
@@ -31,6 +31,54 @@ public class StatsObserver
         _serviceName = serviceName;
         Handler = new HandlerStats(_telemetryService);
         DbWriter = new DbWriterStats(_telemetryService);
+    }
+
+    public void IncrementCaptureFor(string entity, bool success)
+    {
+        if (entity.Equals("Motion", StringComparison.OrdinalIgnoreCase))
+        {
+            if (success) _telemetryService.IncrementMotionCaptured(); else _telemetryService.IncrementMotionCaptureFail();
+        }
+        else if (entity.Equals("Safety", StringComparison.OrdinalIgnoreCase))
+        {
+            if (success) _telemetryService.IncrementSafetyCaptured(); else _telemetryService.IncrementSafetyCaptureFail();
+        }
+        else if (entity.Equals("OnVIF", StringComparison.OrdinalIgnoreCase))
+        {
+            if (success) _telemetryService.IncrementOnvifCaptured(); else _telemetryService.IncrementOnvifCaptureFail();
+        }
+    }
+
+    public void IncrementParseFor(string entity, bool success)
+    {
+        if (entity.Equals("Motion", StringComparison.OrdinalIgnoreCase))
+        {
+            if (success) _telemetryService.IncrementMotionParseSuccess(); else _telemetryService.IncrementMotionParseFail();
+        }
+        else if (entity.Equals("Safety", StringComparison.OrdinalIgnoreCase))
+        {
+            if (success) _telemetryService.IncrementSafetyParseSuccess(); else _telemetryService.IncrementSafetyParseFail();
+        }
+        else if (entity.Equals("OnVIF", StringComparison.OrdinalIgnoreCase))
+        {
+            if (success) _telemetryService.IncrementOnvifParseSuccess(); else _telemetryService.IncrementOnvifParseFail();
+        }
+    }
+
+    public void IncrementFlushFor(string entity, bool success)
+    {
+        if (entity.Equals("Motion", StringComparison.OrdinalIgnoreCase))
+        {
+            if (success) _telemetryService.IncrementMotionFlushSuccess(); else _telemetryService.IncrementMotionFlushFail();
+        }
+        else if (entity.Equals("Safety", StringComparison.OrdinalIgnoreCase))
+        {
+            if (success) _telemetryService.IncrementSafetyFlushSuccess(); else _telemetryService.IncrementSafetyFlushFail();
+        }
+        else if (entity.Equals("OnVIF", StringComparison.OrdinalIgnoreCase))
+        {
+            if (success) _telemetryService.IncrementOnvifFlushSuccess(); else _telemetryService.IncrementOnvifFlushFail();
+        }
     }
 
     /// <summary>

@@ -1,3 +1,5 @@
+using static PacketProcessing.DTOs.Range.RangeDto;
+
 namespace PacketProcessing.Services.Realtime.Networking;
 
 /// <summary>
@@ -11,6 +13,16 @@ public interface IHandlerService<T> : IObserver<RawPacketEvent>
     /// Explicitly subscribes this handler to the given device service.
     /// </summary>
     Task SubscribeToDeviceAsync(IDeviceService deviceService, string deviceName);
+
+    /// <summary>
+    /// Subscribes this handler using a full range configuration (device + BPF endpoints).
+    /// </summary>
+    Task SubscribeToDeviceAsync(IDeviceService deviceService, RangeConfig config);
+
+    /// <summary>
+    /// Subscribes this handler using only the BPF configuration (device + endpoints).
+    /// </summary>
+    Task SubscribeToDeviceAsync(IDeviceService deviceService, PacketProcessing.DTOs.Conf.BPFConfDto bpfConfig);
 
     /// <summary>
     /// Unsubscribes this handler from the device service.

@@ -11,10 +11,10 @@ namespace PacketProcessing.Entities.Range;
 public class RangeEntity : BaseEntity
 {
     [Column("start_time")]
-    public required long Start { get; set; }
+    public required long StartTime { get; set; }
     
     [Column("end_time")]
-    public required long End { get; set; }
+    public required long EndTime { get; set; }
     
     [Column("description")]
     [MaxLength(500)]

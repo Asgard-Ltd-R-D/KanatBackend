@@ -1,14 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Configuration;
 using PacketProcessing.Config;
 using PacketProcessing.DTOs;
 using PacketProcessing.DTOs.Range;
 using PacketProcessing.Services;
-using PacketProcessing.Services.Realtime.Networking;
-using PacketProcessing.Utils.Enums;
 using Microsoft.AspNetCore.Http;
-using PacketProcessing.Telemetry;
 
 namespace PacketProcessing.Controllers;
 
@@ -16,232 +12,42 @@ namespace PacketProcessing.Controllers;
 /// Controller for managing range operations including mode control, capture, playback, and range entity management.
 /// </summary>
 [ApiController]
-[Route("api/v1/[controller]")]
+[Route("api/range")]
 public class RangeController : ControllerBase
 {
     private readonly ILogger<RangeController> _logger;
-    private readonly IConfiguration _configuration;
     private readonly IRangeService _rangeService;
-    private readonly IDeviceService _deviceService;
-    private readonly ITelemetryService _telemetryService;
 
     public RangeController(
         ILogger<RangeController> logger,
-        IConfiguration configuration,
-        IRangeService rangeService,
-        IDeviceService deviceService,
-        ITelemetryService telemetryService)
+        IRangeService rangeService)
     {
         _logger = logger;
-        _configuration = configuration;
         _rangeService = rangeService;
-        _deviceService = deviceService;
-        _telemetryService = telemetryService;
     }
-
-    #region Mode Management
-
-    /// <summary>
-    /// Changes the application mode between Realtime and Playback.
-    /// </summary>
-    /// <param name="mode">The target mode</param>
-    [HttpPut("mode/{mode}")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
-    [ProducesResponseType(StatusCodes.Status400BadRequest, Type = typeof(ResponseResult))]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
-    public ActionResult<ResponseResult> ChangeMode(States mode)
-    {
-        try
-        {
-            var currentMode = _rangeService.CurrentMode;
-            
-            // Check if already in the target mode
-            if (currentMode == mode)
-            {
-                return Ok(ResponseResult.SuccessResult());
-            }
-
-            // Validate the mode transition
-            var validationResult = ValidateModeTransition(currentMode, mode);
-            if (!validationResult.IsValid)
-            {
-                return BadRequest(ResponseResult.ErrorResult(validationResult.ErrorMessage));
-            }
-
-            // Change the mode
-            _rangeService.SetMode(mode);
-            _logger.LogInformation("Mode changed from {CurrentMode} to {NewMode}", currentMode, mode);
-            
-            return Ok(ResponseResult.SuccessResult());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to change mode to {Mode}", mode);
-            return StatusCode(500, ResponseResult.ServerErrorResult($"Failed to change mode: {ex.Message}"));
-        }
-    }
-
-    /// <summary>
-    /// Gets the current application mode.
-    /// </summary>
-    [HttpGet("mode")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<string>))]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<string>))]
-    public ActionResult<ResponseResult<string>> GetMode()
-    {
-        try
-        {
-            var currentMode = _rangeService.CurrentMode;
-            return Ok(ResponseResult<string>.SuccessResult(currentMode.ToString()));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get current mode");
-            return StatusCode(500, ResponseResult<string>.ServerErrorResult("Failed to get current mode"));
-        }
-    }
-
-    private (bool IsValid, string ErrorMessage) ValidateModeTransition(States currentMode, States targetMode)
-    {
-        // Validate Realtime to Playback transition
-        if (currentMode == States.Realtime && targetMode == States.Playback)
-        {
-            // The mode transition is allowed without checking statistics
-        }
-        
-        // TODO: Add validation for Playback to Realtime when playback is implemented
-        
-        return (true, string.Empty);
-    }
-
-    #endregion
-
-    #region Realtime
-
-    /// <summary>
-    /// Starts all realtime capture services.
-    /// </summary>
-    [HttpPost("realtime/start/{deviceName}")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
-    public async Task<ActionResult<ResponseResult>> StartAllServices(string deviceName, CancellationToken ct)
-    {
-        try
-        {
-            await _rangeService.Realtime.StartAsync(ct, deviceName);
-            _logger.LogInformation("Started pipeline orchestrator for {DeviceName}", deviceName);
-
-            return Ok(ResponseResult.SuccessResult());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to start orchestrator");
-            return StatusCode(500, ResponseResult.ServerErrorResult("Failed to start services"));
-        }
-    }
-
-    /// <summary>
-    /// Stops all realtime capture services.
-    /// </summary>
-    [HttpDelete("realtime/stop")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
-    public async Task<ActionResult<ResponseResult>> StopAllServices(CancellationToken ct)
-    {
-        try
-        {
-            await _rangeService.Realtime.StopAsync(ct);
-            _logger.LogInformation("Stopped pipeline orchestrator");
-
-            return Ok(ResponseResult.SuccessResult());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to stop orchestrator");
-            return StatusCode(500, ResponseResult.ServerErrorResult("Failed to stop services"));
-        }
-    }
-
-    /// <summary>
-    /// Gets the list of available network devices.
-    /// </summary>
-    [HttpGet("realtime/devices")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<ICollection<string>>))]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<ICollection<string>>))]
-    public ActionResult<ResponseResult<ICollection<string>>> GetAvailableDevices()
-    {
-        try
-        {
-            var devices = _deviceService.GetAvailableDeviceNames();
-            return Ok(ResponseResult<ICollection<string>>.SuccessResult(devices));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get available devices");
-            return StatusCode(500, ResponseResult<ICollection<string>>.ServerErrorResult("Failed to get available devices"));
-        }
-    }
-
-
-    /// <summary>
-    /// Resets statistics for the current mode and telemetry service.
-    /// </summary>
-    [HttpPost("reset")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
-    public ActionResult<ResponseResult> ResetStatistics()
-    {
-        try
-        {
-            _rangeService.ResetCurrentModeStatistics();
-            _telemetryService.Reset();
-            _logger.LogInformation("Statistics reset requested via API");
-            return Ok(ResponseResult.SuccessResult());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to reset statistics");
-            return StatusCode(500, ResponseResult.ServerErrorResult("Failed to reset statistics"));
-        }
-    }
-
-    #endregion
-
-    #region Playback
-
-
-    /// <summary>
-    /// Sets the playback pace (speed multiplier).
-    /// </summary>
-    /// <param name="pace">The playback pace multiplier (e.g., 1.0 = normal speed, 2.0 = double speed)</param>
-    [HttpPut("playback/pace/{pace}")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult))]
-    [ProducesResponseType(StatusCodes.Status400BadRequest, Type = typeof(ResponseResult))]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult))]
-    public ActionResult<ResponseResult> SetPlaybackPace(double pace)
-    {
-        try
-        {
-            if (pace <= 0)
-            {
-                return BadRequest(ResponseResult.ErrorResult("Pace must be greater than 0"));
-            }
-
-            // TODO: Implement playback pace in PlaybackService
-            _logger.LogInformation("Playback pace set to {Pace}", pace);
-            
-            return Ok(ResponseResult.SuccessResult());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to set playback pace");
-            return StatusCode(500, ResponseResult.ServerErrorResult("Failed to set playback pace"));
-        }
-    }
-
-    #endregion
 
     #region Range Entity Management
+
+    /// <summary>
+    /// Creates a new range.
+    /// </summary>
+    /// <param name="dto">The range data to create</param>
+    [HttpPost("ranges")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<RangeDto>))]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<RangeDto>))]
+    public async Task<ActionResult<ResponseResult<RangeDto>>> CreateRangeAsync([FromBody] RangeDto dto)
+    {
+        try
+        {
+            var createdDto = await _rangeService.CreateRangeAsync(dto);
+            return Ok(ResponseResult<RangeDto>.SuccessResult(createdDto));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create range");
+            return StatusCode(500, ResponseResult<RangeDto>.ServerErrorResult("Failed to create range"));
+        }
+    }
 
     /// <summary>
     /// Gets a range by ID.
@@ -267,27 +73,6 @@ public class RangeController : ControllerBase
         {
             _logger.LogError(ex, "Failed to get range by ID {Id}", id);
             return StatusCode(500, ResponseResult<RangeDto>.ServerErrorResult("Failed to get range"));
-        }
-    }
-
-    /// <summary>
-    /// Creates a new range.
-    /// </summary>
-    /// <param name="dto">The range data to create</param>
-    [HttpPost("ranges")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResponseResult<RangeDto>))]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError, Type = typeof(ResponseResult<RangeDto>))]
-    public async Task<ActionResult<ResponseResult<RangeDto>>> CreateRangeAsync([FromBody] RangeDto dto)
-    {
-        try
-        {
-            var createdDto = await _rangeService.CreateRangeAsync(dto);
-            return Ok(ResponseResult<RangeDto>.SuccessResult(createdDto));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to create range");
-            return StatusCode(500, ResponseResult<RangeDto>.ServerErrorResult("Failed to create range"));
         }
     }
 

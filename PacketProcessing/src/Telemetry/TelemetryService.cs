@@ -20,6 +20,25 @@ public class TelemetryService : ITelemetryService
     private long _motionCaptured = 0;
     private long _safetyCaptured = 0;
     private long _onvifCaptured = 0;
+    private long _motionCaptureFail = 0;
+    private long _safetyCaptureFail = 0;
+    private long _onvifCaptureFail = 0;
+
+    // Per-entity parse
+    private long _motionParseSuccess = 0;
+    private long _motionParseFail = 0;
+    private long _safetyParseSuccess = 0;
+    private long _safetyParseFail = 0;
+    private long _onvifParseSuccess = 0;
+    private long _onvifParseFail = 0;
+
+    // Per-entity flush
+    private long _motionFlushSuccess = 0;
+    private long _motionFlushFail = 0;
+    private long _safetyFlushSuccess = 0;
+    private long _safetyFlushFail = 0;
+    private long _onvifFlushSuccess = 0;
+    private long _onvifFlushFail = 0;
     private long _totalLatency = 0;
     private long _latencyCount = 0;
     
@@ -45,6 +64,24 @@ public class TelemetryService : ITelemetryService
             MotionCaptured = Interlocked.Read(ref _motionCaptured),
             SafetyCaptured = Interlocked.Read(ref _safetyCaptured),
             OnvifCaptured = Interlocked.Read(ref _onvifCaptured),
+            // Per-entity capture fail
+            MotionCaptureFail = Interlocked.Read(ref _motionCaptureFail),
+            SafetyCaptureFail = Interlocked.Read(ref _safetyCaptureFail),
+            OnvifCaptureFail = Interlocked.Read(ref _onvifCaptureFail),
+            // Per-entity parse
+            MotionParseSuccess = Interlocked.Read(ref _motionParseSuccess),
+            MotionParseFail = Interlocked.Read(ref _motionParseFail),
+            SafetyParseSuccess = Interlocked.Read(ref _safetyParseSuccess),
+            SafetyParseFail = Interlocked.Read(ref _safetyParseFail),
+            OnvifParseSuccess = Interlocked.Read(ref _onvifParseSuccess),
+            OnvifParseFail = Interlocked.Read(ref _onvifParseFail),
+            // Per-entity flush
+            MotionFlushSuccess = Interlocked.Read(ref _motionFlushSuccess),
+            MotionFlushFail = Interlocked.Read(ref _motionFlushFail),
+            SafetyFlushSuccess = Interlocked.Read(ref _safetyFlushSuccess),
+            SafetyFlushFail = Interlocked.Read(ref _safetyFlushFail),
+            OnvifFlushSuccess = Interlocked.Read(ref _onvifFlushSuccess),
+            OnvifFlushFail = Interlocked.Read(ref _onvifFlushFail),
             MotionRawChannel = GetChannelStats("MotionRaw"),
             SafetyRawChannel = GetChannelStats("SafetyRaw"),
             OnvifRawChannel = GetChannelStats("OnvifRaw"),
@@ -145,13 +182,33 @@ public class TelemetryService : ITelemetryService
         _broadcaster?.NotifyChange();
     }
 
-    public void UpdateChannelStats(string channelName, int capacity, int currentSize, double utilizationPercent)
+    public void IncrementMotionCaptureFail(long count = 1) { Interlocked.Add(ref _motionCaptureFail, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementSafetyCaptureFail(long count = 1) { Interlocked.Add(ref _safetyCaptureFail, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementOnvifCaptureFail(long count = 1) { Interlocked.Add(ref _onvifCaptureFail, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+
+    public void IncrementMotionParseSuccess(long count = 1) { Interlocked.Add(ref _motionParseSuccess, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementMotionParseFail(long count = 1) { Interlocked.Add(ref _motionParseFail, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementSafetyParseSuccess(long count = 1) { Interlocked.Add(ref _safetyParseSuccess, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementSafetyParseFail(long count = 1) { Interlocked.Add(ref _safetyParseFail, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementOnvifParseSuccess(long count = 1) { Interlocked.Add(ref _onvifParseSuccess, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementOnvifParseFail(long count = 1) { Interlocked.Add(ref _onvifParseFail, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+
+    public void IncrementMotionFlushSuccess(long count = 1) { Interlocked.Add(ref _motionFlushSuccess, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementMotionFlushFail(long count = 1) { Interlocked.Add(ref _motionFlushFail, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementSafetyFlushSuccess(long count = 1) { Interlocked.Add(ref _safetyFlushSuccess, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementSafetyFlushFail(long count = 1) { Interlocked.Add(ref _safetyFlushFail, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementOnvifFlushSuccess(long count = 1) { Interlocked.Add(ref _onvifFlushSuccess, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+    public void IncrementOnvifFlushFail(long count = 1) { Interlocked.Add(ref _onvifFlushFail, count); _hasChanges = true; _broadcaster?.NotifyChange(); }
+
+    public void UpdateChannelStats(string channelName, int capacity, int currentSize, double utilizationPercent, int workers = 0, double avgLatencyMs = 0)
     {
         var channelStats = new ChannelStatsDto
         {
             Capacity = capacity,
             CurrentSize = currentSize,
-            UtilizationPercent = utilizationPercent
+            UtilizationPercent = utilizationPercent,
+            Workers = workers,
+            AvgLatencyMs = avgLatencyMs
         };
         
         _channelStats.AddOrUpdate(channelName, channelStats, (key, oldValue) => channelStats);
@@ -170,6 +227,21 @@ public class TelemetryService : ITelemetryService
         Interlocked.Exchange(ref _motionCaptured, 0);
         Interlocked.Exchange(ref _safetyCaptured, 0);
         Interlocked.Exchange(ref _onvifCaptured, 0);
+        Interlocked.Exchange(ref _motionCaptureFail, 0);
+        Interlocked.Exchange(ref _safetyCaptureFail, 0);
+        Interlocked.Exchange(ref _onvifCaptureFail, 0);
+        Interlocked.Exchange(ref _motionParseSuccess, 0);
+        Interlocked.Exchange(ref _motionParseFail, 0);
+        Interlocked.Exchange(ref _safetyParseSuccess, 0);
+        Interlocked.Exchange(ref _safetyParseFail, 0);
+        Interlocked.Exchange(ref _onvifParseSuccess, 0);
+        Interlocked.Exchange(ref _onvifParseFail, 0);
+        Interlocked.Exchange(ref _motionFlushSuccess, 0);
+        Interlocked.Exchange(ref _motionFlushFail, 0);
+        Interlocked.Exchange(ref _safetyFlushSuccess, 0);
+        Interlocked.Exchange(ref _safetyFlushFail, 0);
+        Interlocked.Exchange(ref _onvifFlushSuccess, 0);
+        Interlocked.Exchange(ref _onvifFlushFail, 0);
         Interlocked.Exchange(ref _totalLatency, 0);
         Interlocked.Exchange(ref _latencyCount, 0);
         _avgLatency = 0;

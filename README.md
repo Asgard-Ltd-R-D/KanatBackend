@@ -257,13 +257,13 @@ public enum OperationType
 
 ## REST API Endpoints
 
-Base URL: `http://localhost:10901/api/v1/range`
+Base URL: `http://localhost:10901/api/range`
 
 ### Mode Management
 
 #### Change Application Mode
 ```http
-PUT /api/v1/range/mode/{mode}
+PUT /api/range/mode/{mode}
 ```
 
 **Parameters:**
@@ -289,7 +289,7 @@ curl -X PUT "http://localhost:10901/api/v1/range/mode/Realtime"
 
 #### Get Current Mode
 ```http
-GET /api/v1/range/mode
+GET /api/range/mode
 ```
 
 **Returns:** `ResponseResult<string>`
@@ -312,43 +312,57 @@ curl "http://localhost:10901/api/v1/range/mode"
 
 ### Realtime Operations
 
-#### Start All Services
+#### Start Realtime (Configuration)
 ```http
-POST /api/v1/range/realtime/start/{deviceName}
+POST /api/range/realtime/start
 ```
 
-**Parameters:**
-- `deviceName` (path): Network device name
+**Body:** `RangeDto` (includes `Config` with `BpfConfig` device and endpoints)
 
 **Returns:** `ResponseResult`
 
 **Example:**
 ```bash
-curl -X POST "http://localhost:10901/api/v1/range/realtime/start/eth0"
+curl -X POST "http://localhost:10901/api/range/realtime/start" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "00000000-0000-0000-0000-000000000000",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "description": "Session",
+    "startTime": 1730265600000,
+    "endTime": -1,
+    "config": {
+      "bpfConfig": { "device": "any", "motion": [{"ip":"132.8.7.125","port": 1234}] },
+      "mtxConfig": { "ip": "127.0.0.1", "port": 8554 },
+      "cams": [{"alias":"Default","isRecording": false}]
+    }
+  }'
 ```
+
+> Development only (deprecated): `POST /api/range/realtime/start/{deviceName}`
 
 #### Stop All Services
 ```http
-DELETE /api/v1/range/realtime/stop
+DELETE /api/range/realtime/stop
 ```
 
 **Returns:** `ResponseResult`
 
 **Example:**
 ```bash
-curl -X DELETE "http://localhost:10901/api/v1/range/realtime/stop"
+curl -X DELETE "http://localhost:10901/api/range/realtime/stop"
 ```
 
 #### Get Available Devices
 ```http
-GET /api/v1/range/realtime/devices
+GET /api/range/realtime/devices
 ```
 
 **Returns:** `ResponseResult<ICollection<string>>`
 
 **Example:**
 ```bash
-curl "http://localhost:10901/api/v1/range/realtime/devices"
+curl "http://localhost:10901/api/range/realtime/devices"
 ```
 
 **Response:**
@@ -364,21 +378,21 @@ curl "http://localhost:10901/api/v1/range/realtime/devices"
 
 #### Reset Statistics
 ```http
-POST /api/v1/range/reset
+POST /api/range/reset
 ```
 
 **Returns:** `ResponseResult`
 
 **Example:**
 ```bash
-curl -X POST "http://localhost:10901/api/v1/range/reset"
+curl -X POST "http://localhost:10901/api/range/reset"
 ```
 
 ### Playback Operations
 
 #### Set Playback Pace
 ```http
-PUT /api/v1/range/playback/pace/{pace}
+PUT /api/range/playback/pace/{pace}
 ```
 
 **Parameters:**

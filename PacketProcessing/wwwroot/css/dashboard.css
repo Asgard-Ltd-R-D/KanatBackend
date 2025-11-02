@@ -385,7 +385,7 @@ button.btn-mode.active:hover {
     border-color: #764ba2;
 }
 
-input[type="text"], input[type="number"], select {
+input[type="text"], input[type="number"], select, .form-select {
     padding: 10px;
     border: 1px solid #333;
     border-radius: 5px;

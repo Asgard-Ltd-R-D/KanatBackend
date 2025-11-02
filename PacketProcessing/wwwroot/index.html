@@ -117,7 +117,6 @@
             <a href="#metrics" class="nav-link">Metrics</a>
             <a href="#channels" class="nav-link">Channels</a>
             <a href="#throughput" class="nav-link">Throughput Chart</a>
-            <a href="#latency" class="nav-link">Latency Chart</a>
             <a href="#signalr-log" class="nav-link">SignalR Log</a>
             <a href="#system-log" class="nav-link">System Log</a>
         </div>
@@ -434,12 +433,6 @@
         <canvas id="throughputChart"></canvas>
     </div>
     
-    <div id="latency"></div>
-    <div class="chart-container">
-        <h3 style="color: #4fc3f7; margin-bottom: 15px;">LATENCY (Last 60 seconds)</h3>
-        <canvas id="latencyChart"></canvas>
-    </div>
-    
         <!-- SignalR Packet Hub -->
         <div class="log-container packet-hub-container" style="min-height: 800px; padding: 30px;">
             <div class="log-header">
@@ -515,7 +508,7 @@
     
     </div> <!-- End main-content -->
 
-    <script src="js/dashboard.js"></script>
+    <script src="js/dashboard.js?v=4"></script>
     
     <script>
         // Console Access Functions

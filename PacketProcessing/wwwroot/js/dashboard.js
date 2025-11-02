@@ -69,7 +69,7 @@ let latencyData = {
     values: []
 };
 
-let throughputChart, latencyChart;
+let throughputChart;
 
 // === INITIALIZATION ===
 window.addEventListener('load', () => {
@@ -174,24 +174,6 @@ function initCharts() {
         },
         options: chartOptions
     });
-    
-    // Latency Chart
-    const latencyCtx = document.getElementById('latencyChart').getContext('2d');
-    latencyChart = new Chart(latencyCtx, {
-        type: 'line',
-        data: {
-            labels: latencyData.labels,
-            datasets: [{
-                label: 'Latency (ms)',
-                data: latencyData.values,
-                borderColor: '#e91e63',
-                backgroundColor: 'rgba(233, 30, 99, 0.1)',
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: chartOptions
-    });
 }
 
 function updateChart(capturedDelta, parsedDelta, flushedDelta, avgLatency) {
@@ -212,19 +194,6 @@ function updateChart(capturedDelta, parsedDelta, flushedDelta, avgLatency) {
     }
     
     throughputChart.update('none'); // Update without animation for performance
-    
-    // Latency
-    if (avgLatency > 0) {
-        latencyData.labels.push(now);
-        latencyData.values.push(avgLatency);
-        
-        if (latencyData.labels.length > 60) {
-            latencyData.labels.shift();
-            latencyData.values.shift();
-        }
-        
-        latencyChart.update('none');
-    }
 }
 
 // === SIGNALR HUB ===
@@ -350,21 +319,6 @@ async function connectHub() {
             
             if (throughputChart) {
                 throughputChart.update('none'); // Update without animation for performance
-            }
-            
-            // Update latency chart
-            if (stats.avgLatency > 0) {
-                latencyData.labels.push(timeLabel);
-                latencyData.values.push(stats.avgLatency);
-                
-                if (latencyData.labels.length > 20) {
-                    latencyData.labels.shift();
-                    latencyData.values.shift();
-                }
-                
-                if (latencyChart) {
-                    latencyChart.update('none'); // Update without animation for performance
-                }
             }
             
             lastChartUpdate = currentTime;
@@ -843,7 +797,6 @@ async function resetStats() {
         
         latencyData.labels = [];
         latencyData.values = [];
-        latencyChart.update();
         
         // Update UI
         updateTelemetryStats();
@@ -1323,7 +1276,7 @@ function onDataPipeChange() {
         // Populate stream options based on selected pipeline
         let streams = [];
         switch (dataPipe) {
-            case 'MotionPackets':
+            case 'Motion':
                 streams = [
                     // Axis 1 commands
                     { value: 'MOT_GetMotorCurrent|false|1', text: 'MOT_GetMotorCurrent (RPT, Axis 1)' },
@@ -1375,7 +1328,7 @@ function onDataPipeChange() {
                 ];
                 streamInfo.textContent = 'Motion Packets - Select a stream to register';
                 break;
-            case 'SafetyPackets':
+            case 'Safety':
                 streams = [
                     { value: 'DO3_FIRE1|false|0', text: 'DO3_FIRE1 (RPT)' },
                     { value: 'DO3_FIRE1|true|0', text: 'DO3_FIRE1 (CMD)' },
@@ -1392,7 +1345,7 @@ function onDataPipeChange() {
                 ];
                 streamInfo.textContent = 'Safety Packets - Select a stream to register';
                 break;
-            case 'OnVIFPackets':
+            case 'OnVIF':
                 streams = [
                     { value: 'FOV_REQ|false|0', text: 'FOV_REQ (RPT)' },
                     { value: 'FOV_REQ|true|0', text: 'FOV_REQ (CMD)' },

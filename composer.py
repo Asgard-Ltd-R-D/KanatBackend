@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 """
-composer.py - Build and run PacketProcessing with Docker Compose
+composer - Build and run PacketProcessing with Docker Compose
 Usage:
-    python composer.py up [dev|prod] [-d] [--build] [-r [index]]
-    python composer.py stop [dev|prod]
-    python composer.py kill [dev|prod]
-    python composer.py --build [dev|prod] [-r [index]]
-    python composer.py up --build [dev|prod] [-d] [-r [index]]
-    python composer.py release [dev|prod] [win-x64|linux-x64|linux-musl-x64|osx-arm64]
-    python composer.py status
-    python composer.py --help
+    composer up [dev|prod] [-d] [--build] [-r [index]]
+    composer stop [dev|prod]
+    composer kill [dev|prod]
+    composer --build [dev|prod] [-r [index]]
+    composer up --build [dev|prod] [-d] [-r [index]]
+    composer release [dev|prod] [win-x64|linux-x64|linux-musl-x64|osx-arm64]
+    composer status
+    composer help
     
 Examples:
-    python composer.py up                    # Run prod environment (uses newest deploy package if available)
-    python composer.py up dev                # Run dev environment (uses newest deploy package if available)
-    python composer.py stop dev              # Stop dev environment
-    python composer.py kill dev              # Kill dev environment (delete DLL and containers)
-    python composer.py --build               # Build prod environment (uses newest deploy package if available)
-    python composer.py up dev -d             # Run dev in detached mode
-    python composer.py --build -r            # List available deploy versions
-    python composer.py --build -r 2          # Build using deploy version 2
-    python composer.py up --build -r 2       # Build and run using deploy version 2
-    python composer.py release dev linux-x64 # Create release package for dev environment on linux-x64
-    python composer.py release prod osx-arm64 # Create release package for prod environment on osx-arm64
-    python composer.py status                # Show current system status
+    composer up                    # Run prod environment (uses newest deploy package if available)
+    composer up dev                # Run dev environment (uses newest deploy package if available)
+    composer stop dev              # Stop dev environment
+    composer kill dev              # Kill dev environment (delete DLL and containers)
+    composer --build               # Build prod environment (uses newest deploy package if available)
+    composer up dev -d             # Run dev in detached mode
+    composer --build -r            # List available deploy versions
+    composer --build -r 2          # Build using deploy version 2
+    composer up --build -r 2       # Build and run using deploy version 2
+    composer release dev linux-x64 # Create release package for dev environment on linux-x64
+    composer release prod osx-arm64 # Create release package for prod environment on osx-arm64
+    composer status                # Show current system status
 """
 
 import sys
@@ -37,7 +37,14 @@ from pathlib import Path
 from datetime import datetime
 
 # Configuration
-PROJECT_ROOT = Path(__file__).parent
+# Handle PyInstaller bundled executable
+if getattr(sys, 'frozen', False):
+    # Running as compiled executable - use current working directory
+    PROJECT_ROOT = Path.cwd()
+else:
+    # Running as Python script - use script's directory
+    PROJECT_ROOT = Path(__file__).parent.absolute()
+
 PACKET_PROCESSING_DIR = PROJECT_ROOT / "PacketProcessing"
 RELEASE_DIR = PROJECT_ROOT / "release"
 DEPLOY_DIR = PROJECT_ROOT / "deploy"
@@ -156,6 +163,12 @@ def build_dll(environment='prod', show_progress=True):
         print_error(f"Invalid environment: {environment}. Must be 'dev' or 'prod'")
         return False
     
+    # Check if PacketProcessing directory exists
+    if not PACKET_PROCESSING_DIR.exists():
+        print_error(f"PacketProcessing directory not found: {PACKET_PROCESSING_DIR}")
+        print_error("Please run this script from the KanatBackend directory")
+        return False
+    
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print_header(f"Building PacketProcessing for {environment.upper()}... [{timestamp}]")
     
@@ -200,7 +213,7 @@ def build_dll(environment='prod', show_progress=True):
             # Run with live output
             process = subprocess.Popen(
                 build_cmd,
-                cwd=PACKET_PROCESSING_DIR,
+                cwd=str(PACKET_PROCESSING_DIR),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -215,7 +228,7 @@ def build_dll(environment='prod', show_progress=True):
             result_code = process.returncode
         else:
             result = subprocess.run(build_cmd, 
-                                  cwd=PACKET_PROCESSING_DIR,
+                                  cwd=str(PACKET_PROCESSING_DIR),
                                   check=True,
                                   capture_output=True,
                                   text=True)
@@ -932,6 +945,12 @@ def build_dll_for_platform(environment, platform):
         print_error(f"Invalid environment: {environment}. Must be 'dev' or 'prod'")
         return False
     
+    # Check if PacketProcessing directory exists
+    if not PACKET_PROCESSING_DIR.exists():
+        print_error(f"PacketProcessing directory not found: {PACKET_PROCESSING_DIR}")
+        print_error("Please run this script from the KanatBackend directory")
+        return False
+    
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print_header(f"Building PacketProcessing for {environment.upper()} on {platform}... [{timestamp}]")
     
@@ -956,7 +975,7 @@ def build_dll_for_platform(environment, platform):
         # Run with live output
         process = subprocess.Popen(
             build_cmd,
-            cwd=PACKET_PROCESSING_DIR,
+            cwd=str(PACKET_PROCESSING_DIR),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1032,7 +1051,7 @@ def main():
     args = sys.argv[1:]
     
     # Handle help and no arguments
-    if not args or '--help' in args or '-h' in args:
+    if not args or '--help' in args or '-h' in args or 'help' in args:
         print(__doc__)
         return
     
@@ -1095,11 +1114,11 @@ def main():
     if command == 'release':
         if environment is None:
             print_error("Environment must be specified for 'release' command")
-            print("Usage: python composer.py release [dev|prod] [win-x64|linux-x64|linux-musl-x64|osx-arm64]")
+            print("Usage: composer release [dev|prod] [win-x64|linux-x64|linux-musl-x64|osx-arm64]")
             sys.exit(1)
         if platform is None:
             print_error("Platform must be specified for 'release' command")
-            print("Usage: python composer.py release [dev|prod] [win-x64|linux-x64|linux-musl-x64|osx-arm64]")
+            print("Usage: composer release [dev|prod] [win-x64|linux-x64|linux-musl-x64|osx-arm64]")
             sys.exit(1)
         if not create_release_package(environment, platform):
             sys.exit(1)
@@ -1109,7 +1128,7 @@ def main():
     if command == 'stop':
         if environment is None:
             print_error("Environment must be specified for 'stop' command")
-            print("Usage: python composer.py stop [dev|prod]")
+            print("Usage: composer stop [dev|prod]")
             sys.exit(1)
         if not stop_environment(environment):
             sys.exit(1)
@@ -1118,7 +1137,7 @@ def main():
     if command == 'kill':
         if environment is None:
             print_error("Environment must be specified for 'kill' command")
-            print("Usage: python composer.py kill [dev|prod]")
+            print("Usage: composer kill [dev|prod]")
             sys.exit(1)
         if not kill_environment(environment):
             sys.exit(1)

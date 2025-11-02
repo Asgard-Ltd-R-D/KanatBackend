@@ -93,10 +93,10 @@ public class TelemetryBroadcaster : BackgroundService
                     {
                         // Drain all pending notifications (coalesce)
                         while (_notificationReader.TryRead(out _)) { }
-                        
-                        await PushTelemetryData(stoppingToken);
                     }
-                    // No timeout push - only push when there are actual changes
+                    
+                    // Push telemetry on either notification or timeout to keep charts updating
+                    await PushTelemetryData(stoppingToken, ignoreChangeCheck: !hasNotification);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -104,8 +104,8 @@ public class TelemetryBroadcaster : BackgroundService
                 }
                 catch (OperationCanceledException)
                 {
-                    // Timeout occurred - just continue waiting for changes
-                    // No need to push unless there are actual changes
+                    // Timeout occurred - still push to keep charts updating
+                    await PushTelemetryData(stoppingToken, ignoreChangeCheck: true);
                 }
                 catch (Exception ex)
                 {
@@ -123,7 +123,7 @@ public class TelemetryBroadcaster : BackgroundService
         }
     }
 
-    private async Task PushTelemetryData(CancellationToken cancellationToken)
+    private async Task PushTelemetryData(CancellationToken cancellationToken, bool ignoreChangeCheck = false)
     {
         if (_disposed)
             return;
@@ -151,12 +151,12 @@ public class TelemetryBroadcaster : BackgroundService
                 return;
             }
 
-            // Check if there are any changes before pushing (skip check for initial push)
+            // Check if there are any changes before pushing (skip check for initial push or when forced)
             if (!_hasInitialPush)
             {
                 _hasInitialPush = true;
             }
-            else if (!telemetryService.HasChanges())
+            else if (!ignoreChangeCheck && !telemetryService.HasChanges())
             {
                 return; // No changes, skip push
             }

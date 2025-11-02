@@ -5,36 +5,49 @@ import socket
 import struct
 import time
 import protocol # Import our shared module
+import threading
 
 # ===============================
 # Version Information
 # ===============================
-__version__ = "1.4.0" # Added Axis ON/OFF status indicator
-__updated__ = "2025-10-25"
+__version__ = "1.6.18" # Final attempt: Guarantees absolute 20-byte payload fidelity against RdFFFF and 0x00 shift.
+__updated__ = "2025-10-27"
 
 # ===============================
 # UI Constants
 # ===============================
-HOST = '132.8.7.125'
-PORT = 5001
+HOST = '127.0.0.1'
+PORT = 4949
 POLL_INTERVAL_MS = 30
 SYSTEM_AXIS_ID = 0 # For system-level commands like LRF
 SIMULATED_AXES = [1, 2, 4, 5]
+
+# --- UDP Fire Client Constants ---
+FIRE1_DEST_PORT = 1025
+FIRE2_DEST_PORT = 1025
+
+IP_SAFETY1 = "132.8.7.101"
+IP_SAFETY2 = "132.8.7.102"
+
+FIRE_INTERVAL_MS = 10 # 10 ms cycle rate
+
+# --- DEFINITIVE 20-BYTE PAYLOAD CONSTRUCTION ---
+# Guaranteed 20-byte payload (23 30 31 52 64 46 46 46 46 00 00 0f ff 06 01 06 00 27 00 01)
+# NOTE: This string is guaranteed 20 bytes long and contains the correct sequence of 0x46 characters.
+FINAL_PAYLOAD_FIRE1_FIXED = b'\x23\x30\x31\x52\x64\x46\x46\x46\x46\x00\x00\x0f\xff\x06\x01\x06\x00\x27\x00\x01'
+FINAL_PAYLOAD_FIRE2_FIXED = b'\x23\x30\x31\x52\x64\x46\x46\x46\x46\x00\x00\x0f\xff\x06\x01\x06\x00\x28\x00\x01'
+# ---------------------------------------------
+
 
 class TCPClient:
     """Helper class to manage the TCP connection and protocol."""
     def __init__(self):
         self.sock = None
         self.buffer = b''
-
+    
     def connect(self, host, port):
         try:
-            # Create a socket and connect
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # Bind client side to the fake local IP
-            self.sock.bind(('132.8.7.1', 0))  # 0 means choose any source port
-            self.sock.settimeout(2)
-            self.sock.connect((host, port))
+            self.sock = socket.create_connection((host, port), timeout=2)
             self.sock.settimeout(1.0)
             
             # Send initial connection command (COM_Connect)
@@ -120,16 +133,83 @@ class TCPClient:
             self.disconnect()
             return None
 
+class UDPFireClient:
+    """Manages cyclic UDP command sending for fire commands using a fixed 20-byte binary packet."""
+    
+    # --- 20-byte Modbus Block (Payload Only) ---
+    # Static part (16 bytes) + Dynamic part (4 bytes) = 20 bytes
+
+    def __init__(self, command_name, dest_port, button):
+        self.command_name = command_name
+        self.dest_port = dest_port
+        self.button = button
+        self.is_sending = False
+        self.thread = None
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        
+        # Select the correct 20-byte payload based on command name
+        if command_name == "FIRE1_CMD":
+            self.payload = FINAL_PAYLOAD_FIRE1_FIXED
+        else:
+            self.payload = FINAL_PAYLOAD_FIRE2_FIXED
+
+        
+    def start_sending(self):
+        if self.is_sending:
+            return
+            
+        self.is_sending = True
+        self.button.config(text=f"{self.command_name} (STOP)", style='Red.TButton')
+        self.thread = threading.Thread(target=self._send_loop, daemon=True)
+        self.thread.start()
+        print(f"[UDP Client] Started cyclic send for {self.command_name} (Payload length: {len(self.payload)} bytes) to port {self.dest_port}.")
+
+    def stop_sending(self):
+        if self.is_sending:
+            # Send a stop command (optional: set state to 0 if required)
+            # For now, just stop sending the PULSE commands.
+            pass
+            
+        self.is_sending = False
+        self.button.config(text=f"{self.command_name} (START)", style='Green.TButton')
+        print(f"[UDP Client] Stopped cyclic send for {self.command_name}.")
+
+    def _send_loop(self):
+        interval_s = FIRE_INTERVAL_MS / 1000.0
+        while self.is_sending:
+            try:
+                target_host = IP_SAFETY1 if self.command_name == "FIRE1_CMD" else IP_SAFETY2
+                self.sock.sendto(self.payload, (target_host, self.dest_port))
+            except Exception as e:
+                print(f"[UDP Client] Error sending {self.command_name}: {e}")
+                self.is_sending = False
+                # Use self.button.winfo_exists() to safely call Tkinter update if error occurs
+                if self.button.winfo_exists():
+                    self.button.after(0, self.stop_sending) 
+                break
+            time.sleep(interval_s)
+            
+    def toggle_sending(self):
+        if self.is_sending:
+            self.stop_sending()
+        else:
+            self.start_sending()
+
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"Motion UI Client v{__version__}")
-        self.geometry("800x600")
+        self.geometry("800x650") # Adjusted height
         
         self.client = TCPClient()
         self.is_connected = False
         self._polling_job = None
+        
+        # Style definition for buttons
+        s = ttk.Style()
+        s.configure('Red.TButton', foreground='red')
+        s.configure('Green.TButton', foreground='green')
 
         # State Variables
         self.status_var = tk.StringVar(value="Status: Disconnected")
@@ -145,7 +225,6 @@ class App(tk.Tk):
         self.accel_cmd_var = tk.StringVar(value="10.0")
         self.ballistic_offset_var = tk.StringVar(value="0.0")
 
-
         # Data dictionary to hold dynamic status updates for each axis
         self.axis_data = {}
         for axis_id in SIMULATED_AXES:
@@ -159,6 +238,11 @@ class App(tk.Tk):
                 "on_indicator": None # Placeholder for the visual label
             }
 
+        # Initialize UDP Clients (Buttons are created in _create_fire_control_ui)
+        self.fire1_client = None
+        self.fire2_client = None
+
+
         self._build_ui()
 
     def _build_ui(self):
@@ -170,6 +254,7 @@ class App(tk.Tk):
         main_pane.add(control_frame, weight=1)
 
         self._create_connection_ui(control_frame).pack(fill=tk.X, pady=5)
+        self._create_fire_control_ui(control_frame).pack(fill=tk.X, pady=5)
         self._create_lrf_ui(control_frame).pack(fill=tk.X, pady=5)
         self._create_mode_control_ui(control_frame).pack(fill=tk.X, pady=5)
         self._create_motion_commands_ui(control_frame).pack(fill=tk.X, pady=5)
@@ -190,6 +275,25 @@ class App(tk.Tk):
         self.status_label = ttk.Label(conn_frame, textvariable=self.status_var)
         self.status_label.pack(side=tk.LEFT, padx=5)
         return conn_frame
+
+    def _create_fire_control_ui(self, parent):
+        fire_frame = ttk.LabelFrame(parent, text="Fire Control (UDP)")
+        btn_frame = ttk.Frame(fire_frame)
+        btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # FIRE 1 Button setup
+        fire1_btn = ttk.Button(btn_frame, text="FIRE1_CMD (START)", style='Green.TButton')
+        fire1_btn.pack(side=tk.LEFT, expand=True, padx=5)
+        self.fire1_client = UDPFireClient("FIRE1_CMD", FIRE1_DEST_PORT, fire1_btn)
+        fire1_btn.config(command=self.fire1_client.toggle_sending)
+
+        # FIRE 2 Button setup
+        fire2_btn = ttk.Button(btn_frame, text="FIRE2_CMD (START)", style='Green.TButton')
+        fire2_btn.pack(side=tk.LEFT, expand=True, padx=5)
+        self.fire2_client = UDPFireClient("FIRE2_CMD", FIRE2_DEST_PORT, fire2_btn)
+        fire2_btn.config(command=self.fire2_client.toggle_sending)
+        
+        return fire_frame
 
     def _create_lrf_ui(self, parent):
         lrf_frame = ttk.LabelFrame(parent, text="Laser Range Finder")
@@ -216,7 +320,11 @@ class App(tk.Tk):
         self.inner_outer_frame = ttk.Frame(mode_frame)
         self.inner_outer_frame.pack(fill=tk.X, padx=5, pady=2)
         ttk.Label(self.inner_outer_frame, text="Unsync Sub-Mode:").pack(side=tk.LEFT)
+        
+        # FIX 1: Parent must be self.inner_outer_frame
         ttk.Radiobutton(self.inner_outer_frame, text="OUTER", variable=self.inner_mode_var, value=0, command=self.send_mode_control_inner).pack(side=tk.LEFT, padx=5)
+        
+        # FIX 2: Parent must be self.inner_outer_frame
         ttk.Radiobutton(self.inner_outer_frame, text="INNER", variable=self.inner_mode_var, value=1, command=self.send_mode_control_inner).pack(side=tk.LEFT, padx=5)
         
         self.sync_mode_var.trace_add("write", lambda *args: self.toggle_inner_outer_visibility())
@@ -326,7 +434,6 @@ class App(tk.Tk):
         for i, axis_id in enumerate(SIMULATED_AXES):
             row = i // 2
             col = i % 2
-            # Note: _create_single_axis_status_panel returns the inner frame now, not the LabelFrame
             panel = self._create_single_axis_status_panel(status_grid, axis_id)
             panel.grid(row=row, column=col, sticky="NSEW", padx=5, pady=5)
         
@@ -344,6 +451,11 @@ class App(tk.Tk):
                 messagebox.showerror("Error", f"Failed to connect to {HOST}:{PORT}")
         else:
             self.stop_polling()
+            
+            # Stop all UDP sending threads on disconnection
+            if self.fire1_client: self.fire1_client.stop_sending()
+            if self.fire2_client: self.fire2_client.stop_sending()
+            
             self.client.disconnect()
             self.is_connected = False
             self.status_var.set("Status: Disconnected")
@@ -587,6 +699,10 @@ class App(tk.Tk):
 
     def on_closing(self):
         self.stop_polling()
+        # Ensure UDP threads are stopped before exit
+        if self.fire1_client: self.fire1_client.stop_sending()
+        if self.fire2_client: self.fire2_client.stop_sending()
+        
         self.client.disconnect()
         self.destroy()
 

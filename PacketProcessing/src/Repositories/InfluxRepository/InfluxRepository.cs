@@ -42,13 +42,16 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
         
         try
         {
-            _logger.LogDebug("Writing single packet of type {EntityType} with ID {Id} to QuestDB", 
-                typeof(T).Name, entity.Id);
+            _logger.LogDebug("Writing single packet of type {EntityType} to QuestDB", 
+                typeof(T).Name);
             
             // start one transaction for this row
             var table = entity.TableName;
             sender.Transaction(table);
-            sender.Column("id", entity.Id.ToString("N"));
+            
+            // Write subscription key as low-cardinality id for efficient SYMBOL indexing
+            var subscriptionKey = entity.GetSubscriptionKey();
+            sender.Column("id", subscriptionKey);
 
             entity.WriteColumns(sender);
 
@@ -62,21 +65,21 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             // Commit the transaction
             await sender.CommitAsync(ct);
             
-            _logger.LogDebug("Successfully wrote packet of type {EntityType} with ID {Id} to table {Table}", 
-                typeof(T).Name, entity.Id, table);
+            _logger.LogDebug("Successfully wrote packet of type {EntityType} to table {Table}", 
+                typeof(T).Name, table);
         } 
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to write packet of type {EntityType} with ID {Id} to QuestDB", 
-                typeof(T).Name, entity.Id);
+            _logger.LogError(ex, "Failed to write packet of type {EntityType} to QuestDB", 
+                typeof(T).Name);
             try 
             { 
                 sender.Rollback(); 
-                _logger.LogDebug("Successfully rolled back transaction for packet {Id}", entity.Id);
+                _logger.LogDebug("Successfully rolled back transaction for packet");
             } 
             catch (Exception rollbackEx)
             { 
-                _logger.LogWarning(rollbackEx, "Failed to rollback transaction for packet {Id}", entity.Id);
+                _logger.LogWarning(rollbackEx, "Failed to rollback transaction for packet");
             }
             throw;
         }
@@ -113,25 +116,15 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             var table = batch[0].TableName;
             sender.Transaction(table);
 
-            // Pre-allocate buffer for GUID formatting to reduce allocations in hot loop
-            var guidBuffer = new char[32]; // GUID in "N" format is always 32 chars
-            
             for (int i = 0; i < batch.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 var e = batch[i];
                 var tsUtc = e.Timestamp.Kind == DateTimeKind.Utc ? e.Timestamp : DateTime.SpecifyKind(e.Timestamp, DateTimeKind.Utc);
 
-                // Format GUID to reusable buffer to reduce allocations
-                if (e.Id.TryFormat(guidBuffer, out _, "N"))
-                {
-                    sender.Column("id", new string(guidBuffer));
-                }
-                else
-                {
-                    // Fallback to ToString if TryFormat fails (should never happen)
-                    sender.Column("id", e.Id.ToString("N"));
-                }
+                // Write subscription key as low-cardinality id for efficient SYMBOL indexing
+                var subscriptionKey = e.GetSubscriptionKey();
+                sender.Column("id", subscriptionKey);
                 
                 e.WriteColumns(sender);
                 sender.At(tsUtc, ct);

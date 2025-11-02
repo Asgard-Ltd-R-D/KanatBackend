@@ -68,7 +68,7 @@ public class QuestDbContext
         var ddl = $"""
         CREATE TABLE IF NOT EXISTS {Constants.MOTION_PACKETS_TAG} (
             timestamp       TIMESTAMP,
-            id              SYMBOL,
+            id              SYMBOL CAPACITY 4000000 NOCACHE,
             isCmd           BOOLEAN,
             opCode          STRING,
             description     STRING,
@@ -78,7 +78,7 @@ public class QuestDbContext
 
         CREATE TABLE IF NOT EXISTS {Constants.ONVIF_PACKETS_TAG} (
             timestamp          TIMESTAMP,
-            id                 SYMBOL,
+            id                 SYMBOL CAPACITY 4000000 NOCACHE,
             isCmd              BOOLEAN,
             description        STRING,
             zoom               DOUBLE,
@@ -87,7 +87,7 @@ public class QuestDbContext
 
         CREATE TABLE IF NOT EXISTS {Constants.SAFETY_PACKETS_TAG} (
             timestamp         TIMESTAMP,
-            id                SYMBOL,
+            id                SYMBOL CAPACITY 4000000 NOCACHE,
             isCmd             BOOLEAN,
             name              STRING,
             opCode            STRING,
@@ -116,6 +116,28 @@ public class QuestDbContext
             new CommandDefinition($"SELECT count(*) FROM information_schema.tables WHERE table_name IN ({tableList})", cancellationToken: ct));
 
         var created = after > before;
+        
+        // Create index on id for all tables (QuestDB uses ALTER TABLE syntax)
+        try
+        {
+            await conn.ExecuteAsync(new CommandDefinition(
+                $"ALTER TABLE {Constants.MOTION_PACKETS_TAG} ALTER COLUMN id ADD INDEX",
+                cancellationToken: ct));
+
+            await conn.ExecuteAsync(new CommandDefinition(
+                $"ALTER TABLE {Constants.ONVIF_PACKETS_TAG} ALTER COLUMN id ADD INDEX",
+                cancellationToken: ct));
+
+            await conn.ExecuteAsync(new CommandDefinition(
+                $"ALTER TABLE {Constants.SAFETY_PACKETS_TAG} ALTER COLUMN id ADD INDEX",
+                cancellationToken: ct));
+        }
+        catch (Exception ex)
+        {
+            // Index might already exist, log but don't fail
+            _log.LogDebug(ex, "Could not create index on id (may already exist)");
+        }
+        
         _log.LogInformation(created
             ? "QuestDB: one or more tables were created."
             : "QuestDB: all tables already exist.");

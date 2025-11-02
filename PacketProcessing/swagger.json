@@ -20,8 +20,12 @@
       "description": "Operations for managing range mode, realtime services, and playback"
     },
     {
-      "name": "Range Status",
-      "description": "Operations for devices list and resetting statistics"
+      "name": "Realtime",
+      "description": "Realtime range operations"
+    },
+    {
+      "name": "Playback",
+      "description": "Playback operations"
     },
     {
       "name": "Range Repository",
@@ -30,6 +34,10 @@
     {
       "name": "Packet Repository",
       "description": "Operations for managing packet data"
+    },
+    {
+      "name": "Development - Realtime",
+      "description": "Development-only realtime endpoints for testing and debugging"
     },
     {
       "name": "Development",
@@ -146,7 +154,7 @@
     },
     "/api/range/dev/realtime/start/{deviceName}": {
       "post": {
-        "tags": ["Development"],
+        "tags": ["Development - Realtime"],
         "summary": "Start realtime services",
         "description": "Starts all realtime capture services for the specified device",
         "operationId": "StartAllServices",
@@ -195,7 +203,7 @@
     },
     "/api/range/dev/realtime/stop": {
       "delete": {
-        "tags": ["Development"],
+        "tags": ["Development - Realtime"],
         "summary": "Stop realtime services (Development)",
         "description": "Stops all realtime capture services (development-only endpoint)",
         "operationId": "DevStopAllServices",
@@ -232,7 +240,7 @@
     },
     "/api/range/realtime/start": {
       "post": {
-        "tags": ["Range Management"],
+        "tags": ["Realtime"],
         "summary": "Start realtime with configuration",
         "description": "Starts realtime capture using a full Range configuration (device and endpoints).",
         "operationId": "StartRealtimeWithConfig",
@@ -271,7 +279,7 @@
     },
     "/api/range/realtime/stop": {
       "delete": {
-        "tags": ["Range Management"],
+        "tags": ["Realtime"],
         "summary": "Stop realtime services",
         "description": "Stops all realtime capture services",
         "operationId": "StopAllServices",
@@ -308,7 +316,7 @@
     },
     "/api/range/playback/pace/{pace}": {
       "put": {
-        "tags": ["Range Management"],
+        "tags": ["Playback"],
         "summary": "Set playback pace",
         "description": "Sets the playback pace (speed multiplier)",
         "operationId": "SetPlaybackPace",
@@ -369,7 +377,7 @@
     },
     "/api/range/realtime/devices": {
       "get": {
-        "tags": ["Range Status"],
+        "tags": ["Realtime"],
         "summary": "Get available devices",
         "description": "Gets the list of available network devices for packet capture",
         "operationId": "GetAvailableDevices",
@@ -414,7 +422,7 @@
     
     "/api/range/reset": {
       "post": {
-        "tags": ["Range Status"],
+        "tags": ["Range Management"],
         "summary": "Reset statistics",
         "description": "Resets statistics for the current mode",
         "operationId": "ResetStatistics",
@@ -774,32 +782,8 @@
       "delete": {
         "tags": ["Packet Repository"],
         "summary": "Clear packets",
-        "description": "Clears packets within a specified time range",
+        "description": "Clears all packets from base tables (motion, safety, onvif). Session tables are preserved. Start and end parameters are ignored for API compatibility.",
         "operationId": "ClearPackets",
-        "parameters": [
-          {
-            "name": "start",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "description": "Start timestamp (ISO-8601, assumed UTC if with 'Z')",
-            "example": "2024-01-15T00:00:00Z"
-          },
-          {
-            "name": "end",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "description": "End timestamp (ISO-8601, assumed UTC if with 'Z')",
-            "example": "2024-01-15T23:59:59Z"
-          }
-        ],
         "responses": {
           "200": {
             "description": "Packets cleared successfully",
@@ -810,7 +794,7 @@
                 },
                 "example": {
                   "success": true,
-                  "data": "Packets cleared for the requested time range",
+                  "data": "All packets cleared from base tables",
                   "errorMessage": null,
                   "statusCode": 200,
                   "timestamp": "2024-01-15T10:30:00Z"

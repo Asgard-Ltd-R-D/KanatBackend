@@ -152,68 +152,48 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
     }
     
     /// <summary>
-    /// Retrieves all packets of the specified type from QuestDB (newest first).
+    /// Retrieves all packets from a session table for the specified range ID (newest first).
     /// </summary>
-    public async Task<IEnumerable<T>> GetAllFromQuestDbAsync()
+    public async Task<IEnumerable<T>> GetAllPacketsByRangeAsync(Guid rangeId)
     {
         try
         {
-            _logger.LogDebug("Retrieving all packets of type {EntityType} from QuestDB", typeof(T).Name);
+            var baseTable = QuestDbContext.GetTableName<T>();
+            var sessionTableName = $"{baseTable}_{rangeId:N}";
+            _logger.LogDebug("Retrieving all packets of type {EntityType} from session table {SessionTable}", typeof(T).Name, sessionTableName);
 
-            var table  = QuestDbContext.GetTableName<T>();
             var select = QuestDbContext.SelectListFor<T>();
             var sql = $"""
                 SELECT {select}
-                FROM {table}
+                FROM {sessionTableName}
                 ORDER BY timestamp DESC
             """;
 
             await using var conn = await _questDb.OpenPgAsync();
 
             var rows = await conn.QueryAsync<T>(sql);
-            _logger.LogDebug("Retrieved {Count} packets of type {EntityType} from QuestDB", rows.Count(), typeof(T).Name);
+            _logger.LogDebug("Retrieved {Count} packets of type {EntityType} from session table {SessionTable}", rows.Count(), typeof(T).Name, sessionTableName);
             return rows;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error retrieving all packets of type {EntityType} from QuestDB", typeof(T).Name);
+            _logger.LogError(ex, "Error retrieving all packets of type {EntityType} from range {RangeId}", typeof(T).Name, rangeId);
             throw;
         }
     }
     
     /// <summary>
-    /// Deletes all packets of the specified type from QuestDB.
-    public async Task DeleteAllFromQuestDbAsync()
-    {
-        try
-        {
-            var table = QuestDbContext.GetTableName<T>();
-            _logger.LogInformation("Truncating QuestDB table {Table} for {EntityType}", table, typeof(T).Name);
-
-            var sql = $"TRUNCATE TABLE {table}";
-
-            await using var conn = await _questDb.OpenPgAsync();
-            await conn.ExecuteAsync(sql);
-
-            _logger.LogInformation("Successfully truncated table {Table} in QuestDB", table);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error truncating QuestDB table for {EntityType}", typeof(T).Name);
-            throw;
-        }
-    }
-    
-    /// <summary>
-    /// Retrieves paginated packets in a time range using OFFSET/LIMIT (simple).
+    /// Retrieves paginated packets in a time range using OFFSET/LIMIT (simple) from a session table for the specified range ID.
     /// </summary>
+    /// <param name="rangeId">The range ID to fetch packets from</param>
     /// <param name="startTimestamp">The start timestamp for the query range</param>
     /// <param name="endTimestamp">The end timestamp for the query range</param>
     /// <param name="orderBy">The ordering direction (Ascending or Descending)</param>
     /// <param name="page">The page number (1-based)</param>
     /// <param name="pageSize">The number of items per page</param>
     /// <returns>A collection of packets for the specified page</returns>   
-    public async Task<IEnumerable<T>> GetPaginatedFromQuestDbAsync(
+    public async Task<IEnumerable<T>> GetPaginatedPacketsByRangeAsync(
+        Guid rangeId,
         DateTime startTimestamp,
         DateTime endTimestamp,
         OrderBy orderBy = OrderBy.Asc,
@@ -225,13 +205,13 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             if (startTimestamp.Kind != DateTimeKind.Utc || endTimestamp.Kind != DateTimeKind.Utc)
                 _logger.LogWarning("QuestDB expects UTC timestamps; got {StartKind}/{EndKind}", startTimestamp.Kind, endTimestamp.Kind);
 
+            var baseTable = QuestDbContext.GetTableName<T>();
+            var sessionTableName = $"{baseTable}_{rangeId:N}";
             _logger.LogDebug(
-                "QuestDB page for {EntityType}: {Start:u}..{End:u}, page {Page}, size {Size}",
-                typeof(T).Name, startTimestamp, endTimestamp, page, pageSize);
+                "QuestDB page for {EntityType} from {SessionTable}: {Start:u}..{End:u}, page {Page}, size {Size}",
+                typeof(T).Name, sessionTableName, startTimestamp, endTimestamp, page, pageSize);
 
-            var table  = QuestDbContext.GetTableName<T>();
             var select = QuestDbContext.SelectListFor<T>();
-            var order  = orderBy == OrderBy.Asc ? "ASC" : "DESC";
             var offset = Math.Max(0, (page - 1) * pageSize);
 
             var lower = Math.Max(0, offset);
@@ -240,7 +220,7 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
 
             var sql = $"""
                 SELECT {select}
-                FROM {table}
+                FROM {sessionTableName}
                 WHERE timestamp >= @start AND timestamp <= @end
                 ORDER BY timestamp {sorder}
                 LIMIT {lower}, {upper}
@@ -257,15 +237,16 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Error retrieving paginated packets of type {EntityType} from QuestDB between {StartTimestamp} and {EndTimestamp}",
-                typeof(T).Name, startTimestamp, endTimestamp);
+                "Error retrieving paginated packets of type {EntityType} from range {RangeId} between {StartTimestamp} and {EndTimestamp}",
+                typeof(T).Name, rangeId, startTimestamp, endTimestamp);
             throw;
         }
     }
 
     /// <summary>
-    /// Retrieves paginated packets within a specified time range from QuestDB with a specified interval between packets
+    /// Retrieves paginated packets within a specified time range from a session table for the specified range ID with a specified interval between packets
     /// </summary>
+    /// <param name="rangeId">The range ID to fetch packets from</param>
     /// <param name="startTimestamp">The start timestamp for the query range</param>
     /// <param name="endTimestamp">The end timestamp for the query range</param>
     /// <param name="interval">The interval for the query range in milliseconds</param>
@@ -273,7 +254,8 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
     /// <param name="page">The page number (1-based)</param>
     /// <param name="pageSize">The number of items per page</param>
     /// <returns>A collection of packets for the specified page</returns>
-    public async Task<IEnumerable<T>> GetPaginatedFromQuestDbAsyncWithInterval(
+    public async Task<IEnumerable<T>> GetPaginatedPacketsByRangeAsyncWithInterval(
+        Guid rangeId,
         DateTime startTimestamp, 
         DateTime endTimestamp, 
         int interval, 
@@ -291,13 +273,13 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
             if (page <= 0) page = 1;
             if (pageSize <= 0) pageSize = 1_000;
 
+            var baseTable = QuestDbContext.GetTableName<T>();
+            var sessionTableName = $"{baseTable}_{rangeId:N}";
             _logger.LogDebug(
-                "QuestDB page for {EntityType}: {Start:u}..{End:u}, page {Page}, size {Size}",
-                typeof(T).Name, startTimestamp, endTimestamp, page, pageSize);
+                "QuestDB page for {EntityType} from {SessionTable}: {Start:u}..{End:u}, page {Page}, size {Size}",
+                typeof(T).Name, sessionTableName, startTimestamp, endTimestamp, page, pageSize);
 
-            var table  = QuestDbContext.GetTableName<T>();
             var select = QuestDbContext.SelectListFor<T>();
-            var order  = orderBy == OrderBy.Asc ? "ASC" : "DESC";
             var offset = Math.Max(0, (page - 1) * pageSize);
 
             var lower = Math.Max(0, offset);
@@ -310,7 +292,7 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
                     SELECT
                         {select},
                         lag(timestamp) OVER (ORDER BY timestamp {sorder}, id {sorder}) AS prev_ts
-                    FROM {table}
+                    FROM {sessionTableName}
                     WHERE timestamp >= @start AND timestamp < @end
                 )
                 SELECT {select}
@@ -332,27 +314,89 @@ public class InfluxRepository<T> : IInfluxRepository<T> where T : BasePacketEnti
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Error retrieving paginated packets of type {EntityType} from QuestDB between {StartTimestamp} and {EndTimestamp} with interval {Interval}",
-                typeof(T).Name, startTimestamp, endTimestamp, interval);
+                "Error retrieving paginated packets of type {EntityType} from range {RangeId} between {StartTimestamp} and {EndTimestamp} with interval {Interval}",
+                typeof(T).Name, rangeId, startTimestamp, endTimestamp, interval);
             throw;
         }
     }
 
-    public async Task ClearPacketsByRangeAsync(DateTime start, DateTime end)
+    public async Task ClearAllPacketsAsync()
     {
+        var table = QuestDbContext.GetTableName<T>();
         try
         {
-            var table = QuestDbContext.GetTableName<T>();
-            var sql = $"DELETE FROM {table} WHERE timestamp >= @start AND timestamp <= @end";
+            _logger.LogInformation("Truncating QuestDB table {Table} for {EntityType}", table, typeof(T).Name);
+
+            var sql = $"TRUNCATE TABLE {table}";
 
             await using var conn = await _questDb.OpenPgAsync();
-            
-            await conn.ExecuteAsync(sql, new { start = start, end = end });
-            _logger.LogInformation("Successfully cleared packets of type {EntityType} from QuestDB between {Start:u} and {End:u}", typeof(T).Name, start, end);
+            await conn.ExecuteAsync(sql);
+
+            _logger.LogInformation("Successfully truncated table {Table} in QuestDB", table);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error clearing packets of type {EntityType} from QuestDB between {Start} and {End}", typeof(T).Name, start, end);
+            _logger.LogError(ex, "Error truncating QuestDB table {Table} for {EntityType}", table, typeof(T).Name);
+            throw;
+        }
+    }
+
+    public async Task DeletePacketsByRangeAsync(Guid rangeId)
+    {
+        try
+        {
+            var baseTable = QuestDbContext.GetTableName<T>();
+            var sessionTableName = $"{baseTable}_{rangeId:N}";
+            
+            _logger.LogInformation("Deleting session table {SessionTable} for range {RangeId}", sessionTableName, rangeId);
+
+            await using var conn = await _questDb.OpenPgAsync();
+            
+            // Truncate the session table first
+            var truncateSql = $"TRUNCATE TABLE {sessionTableName}";
+            await conn.ExecuteAsync(truncateSql);
+            _logger.LogDebug("Truncated session table {SessionTable}", sessionTableName);
+            
+            // Drop the session table
+            var dropSql = $"DROP TABLE IF EXISTS {sessionTableName}";
+            await conn.ExecuteAsync(dropSql);
+            
+            _logger.LogInformation("Successfully dropped session table {SessionTable}", sessionTableName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting session table for {EntityType} with range ID {RangeId}", typeof(T).Name, rangeId);
+            throw;
+        }
+    }
+
+    public async Task CreateSessionTableAsync(Guid rangeId)
+    {
+        try
+        {
+            var baseTable = QuestDbContext.GetTableName<T>();
+            var sessionTableName = $"{baseTable}_{rangeId:N}";
+            
+            _logger.LogInformation("Creating session table {SessionTable} from base table {BaseTable}", sessionTableName, baseTable);
+
+            var sql = $"""
+                CREATE TABLE {sessionTableName} AS (
+                    SELECT *
+                    FROM {baseTable}
+                )
+                TIMESTAMP(timestamp)
+                PARTITION BY DAY
+                WAL
+                """;
+
+            await using var conn = await _questDb.OpenPgAsync();
+            await conn.ExecuteAsync(sql);
+
+            _logger.LogInformation("Successfully created session table {SessionTable}", sessionTableName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating session table for {EntityType} with range ID {RangeId}", typeof(T).Name, rangeId);
             throw;
         }
     }

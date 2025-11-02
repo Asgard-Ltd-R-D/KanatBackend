@@ -101,6 +101,28 @@ public class RangeService : IRangeService
                 throw new InvalidOperationException("Range configuration is invalid");
             }
 
+            // Set StartTime to current timestamp before creating range
+            validatedRange.StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+            // Truncate base tables before starting a new range
+            try
+            {
+                var motionRepo = _influxFactory.Get<MotionPacketEntity>();
+                var safetyRepo = _influxFactory.Get<SafetyPacketEntity>();
+                var onvifRepo = _influxFactory.Get<OnVIFPacketEntity>();
+                
+                await motionRepo.ClearAllPacketsAsync();
+                await safetyRepo.ClearAllPacketsAsync();
+                await onvifRepo.ClearAllPacketsAsync();
+                
+                _logger.LogInformation("Cleared base tables before starting new range");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to clear base tables before starting range");
+                // Don't fail the start operation if packet clearing fails
+            }
+
             var createdDto = await CreateRangeAsync(validatedRange);
 
             createdDto.Config = validatedRange.Config;
@@ -144,6 +166,44 @@ public class RangeService : IRangeService
                     await Realtime.SetCurrentRangeAsync(updated);
                     currentRange = updated;
                 }
+
+                // Create session tables for the range
+                try
+                {
+                    var motionRepo = _influxFactory.Get<MotionPacketEntity>();
+                    var safetyRepo = _influxFactory.Get<SafetyPacketEntity>();
+                    var onvifRepo = _influxFactory.Get<OnVIFPacketEntity>();
+                    
+                    await motionRepo.CreateSessionTableAsync(currentRange.Id);
+                    await safetyRepo.CreateSessionTableAsync(currentRange.Id);
+                    await onvifRepo.CreateSessionTableAsync(currentRange.Id);
+                    
+                    _logger.LogInformation("Created session tables for range {Id}", currentRange.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to create session tables for range {Id}", currentRange.Id);
+                    // Don't fail the stop operation if session table creation fails
+                }
+
+                // Clear all packets from base tables
+                try
+                {
+                    var motionRepo = _influxFactory.Get<MotionPacketEntity>();
+                    var safetyRepo = _influxFactory.Get<SafetyPacketEntity>();
+                    var onvifRepo = _influxFactory.Get<OnVIFPacketEntity>();
+                    
+                    await motionRepo.ClearAllPacketsAsync();
+                    await safetyRepo.ClearAllPacketsAsync();
+                    await onvifRepo.ClearAllPacketsAsync();
+                    
+                    _logger.LogInformation("Cleared all packets from base tables after range {Id}", currentRange.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to clear packets for range {Id}", currentRange.Id);
+                    // Don't fail the stop operation if packet clearing fails
+                }
             }
 
             _logger.LogInformation("Realtime range stopped (Id={Id})", currentRange?.Id);
@@ -177,7 +237,7 @@ public class RangeService : IRangeService
                 Id = Guid.NewGuid(),
                 Timestamp = DateTime.UtcNow,
                 Description = dto.Description.Trim(),
-                StartTime = DateTimeOffset.FromUnixTimeMilliseconds(dto.StartTime).ToUnixTimeMilliseconds(),
+                StartTime = dto.StartTime,
                 EndTime = -1,
             };
 
@@ -297,18 +357,24 @@ public class RangeService : IRangeService
                 return false;
             }
 
-            // Delete all packets within the range
-            var startTime = DateTimeOffset.FromUnixTimeMilliseconds(range.StartTime).DateTime;
-            var endTime = DateTimeOffset.FromUnixTimeMilliseconds(range.EndTime).DateTime;
-            
-            // Clear packets from all packet types within the time range
-            var motionRepo = _influxFactory.Get<MotionPacketEntity>();
-            var onvifRepo = _influxFactory.Get<OnVIFPacketEntity>();
-            var safetyRepo = _influxFactory.Get<SafetyPacketEntity>();
-            
-            await motionRepo.ClearPacketsByRangeAsync(startTime, endTime);
-            await onvifRepo.ClearPacketsByRangeAsync(startTime, endTime);
-            await safetyRepo.ClearPacketsByRangeAsync(startTime, endTime);
+            // Delete session tables for all packet types before deleting the range entity
+            try
+            {
+                var motionRepo = _influxFactory.Get<MotionPacketEntity>();
+                var safetyRepo = _influxFactory.Get<SafetyPacketEntity>();
+                var onvifRepo = _influxFactory.Get<OnVIFPacketEntity>();
+                
+                await motionRepo.DeletePacketsByRangeAsync(id);
+                await safetyRepo.DeletePacketsByRangeAsync(id);
+                await onvifRepo.DeletePacketsByRangeAsync(id);
+                
+                _logger.LogInformation("Deleted session tables for range {Id}", id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to delete session tables for range {Id}", id);
+                // Continue with range deletion even if session table deletion fails
+            }
 
             var result = await repository.DeleteAsync(id);
             
@@ -358,23 +424,20 @@ public class RangeService : IRangeService
     {
         try
         {
-            var startUtc = start.Kind == DateTimeKind.Utc ? start : DateTime.SpecifyKind(start, DateTimeKind.Utc);
-            var endUtc = end.Kind == DateTimeKind.Utc ? end : DateTime.SpecifyKind(end, DateTimeKind.Utc);
-
-            _logger.LogInformation("Clear packets requested for range {Start:u} to {End:u}", startUtc, endUtc);
+            _logger.LogInformation("Clear all packets requested");
             
             var motionRepo = _influxFactory.Get<MotionPacketEntity>();
             var safetyRepo = _influxFactory.Get<SafetyPacketEntity>();
             var onvifRepo = _influxFactory.Get<OnVIFPacketEntity>();
-            await motionRepo.ClearPacketsByRangeAsync(startUtc, endUtc);
-            await safetyRepo.ClearPacketsByRangeAsync(startUtc, endUtc);
-            await onvifRepo.ClearPacketsByRangeAsync(startUtc, endUtc);
+            await motionRepo.ClearAllPacketsAsync();
+            await safetyRepo.ClearAllPacketsAsync();
+            await onvifRepo.ClearAllPacketsAsync();
             
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error clearing packets for range {Start} to {End}", start, end);
+            _logger.LogError(ex, "Error clearing all packets");
             throw;
         }
     }

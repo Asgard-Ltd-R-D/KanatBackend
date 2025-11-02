@@ -556,6 +556,8 @@ async function startRange() {
         if (response.ok) {
             const range = result.data || result;
             renderCurrentRange(range);
+            // Disable Development Only section when range starts
+            disableDevSection();
             logMessage(`Range started (Id=${range.id})`, 'success');
         } else {
             logMessage(`Failed to start range: ${result.errorMessage || 'Unknown error'}`, 'error');
@@ -575,6 +577,8 @@ async function stopRange() {
             // Reset all stats (frontend + backend) and clear range header
             try { await resetStats(); } catch (_) {}
             renderCurrentRange(null);
+            // Re-enable Development Only section when range stops
+            enableDevSection();
             logMessage(`Range stopped (Id=${range?.id || 'N/A'})`, 'success');
         } else {
             logMessage(`Failed to stop range: ${result.errorMessage || 'Unknown error'}`, 'error');
@@ -591,6 +595,35 @@ function renderCurrentRange(range) {
     const desc = range.description || '';
     const cfg = range.config || {};
     el.textContent = `Range: ${range.id} | Created: ${ts} ${desc ? '| ' + desc : ''} | Device: ${cfg?.bpfConfig?.device || 'N/A'}`;
+}
+
+// === SECTION ENABLE/DISABLE HELPERS ===
+function disableDevSection() {
+    const devSection = document.getElementById('devControlsSection');
+    if (devSection) {
+        devSection.classList.add('disabled');
+    }
+}
+
+function enableDevSection() {
+    const devSection = document.getElementById('devControlsSection');
+    if (devSection) {
+        devSection.classList.remove('disabled');
+    }
+}
+
+function disableRangeSection() {
+    const rangeSection = document.getElementById('rangeControlsSection');
+    if (rangeSection) {
+        rangeSection.classList.add('disabled');
+    }
+}
+
+function enableRangeSection() {
+    const rangeSection = document.getElementById('rangeControlsSection');
+    if (rangeSection) {
+        rangeSection.classList.remove('disabled');
+    }
 }
 
 async function startCaptureDev() {
@@ -617,6 +650,8 @@ async function startCaptureDev() {
             activeDevice = deviceName;
             captureActive = true;
             updateDashboardTitle();
+            // Disable Range Controls section when dev capture starts
+            disableRangeSection();
             logMessage(`Capture started successfully on ${deviceName}`, 'success');
         } else {
             logMessage(`Failed to start capture: ${result.message || 'Unknown error'}`, 'error');
@@ -643,6 +678,8 @@ async function stopCaptureDev() {
             activeDevice = null;
             captureActive = false;
             updateDashboardTitle();
+            // Re-enable Range Controls section when dev capture stops
+            enableRangeSection();
             logMessage('Capture stopped successfully', 'success');
         } else {
             logMessage(`Failed to stop capture: ${result.message || 'Unknown error'}`, 'error');

@@ -124,6 +124,18 @@ body {
 
 .sidebar-section {
     margin-bottom: 30px;
+    transition: opacity 0.3s ease, filter 0.3s ease;
+}
+
+.sidebar-section.disabled {
+    opacity: 0.5;
+    filter: grayscale(0.8);
+    pointer-events: none;
+}
+
+.sidebar-section.disabled * {
+    pointer-events: none;
+    cursor: not-allowed;
 }
 
 .sidebar-section h3 {

@@ -27,6 +27,7 @@ public class LoggingConfiguration
                 outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss}] [{Level:u3}]: {Message:lj}{NewLine}{Exception}",
                 restrictedToMinimumLevel: LogEventLevel.Debug
             )
+            .WriteTo.Seq(serverUrl: "http://localhost:5341")
             .Enrich.WithProperty("Application", "PacketProcessing")
             .Enrich.WithProperty("Environment", builder.Environment.EnvironmentName)
             .Enrich.FromLogContext()

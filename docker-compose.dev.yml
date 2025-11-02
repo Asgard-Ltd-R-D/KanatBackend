@@ -42,7 +42,24 @@ services:
       timeout: 10s
       retries: 3
 
+  seq:
+    image: datalust/seq:latest
+    container_name: seq
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_ADMINPASSWORD: "admin"
+      SEQ_FIRSTRUN_ADMINUSERNAME: "admin"
+      SEQ_BINDINGS__0__URI: "http://0.0.0.0:80"
+      SEQ_BINDINGS__1__URI: "http://0.0.0.0:5341"
+    ports:
+      - "5341:80"      
+      - "5342:5341"
+    volumes:
+      - seq-data:/data 
+
 volumes:
   questdb_data:
   questdb_logs:
   postgres_data:
+  seq-data:

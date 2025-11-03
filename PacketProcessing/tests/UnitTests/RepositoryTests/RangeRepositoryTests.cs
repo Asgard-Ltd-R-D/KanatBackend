@@ -113,8 +113,8 @@ public class RangeRepositoryTests : IDisposable
 
         var range = new RangeEntity
         {
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Test Range",
             Timestamp = DateTime.UtcNow
         };
@@ -152,22 +152,22 @@ public class RangeRepositoryTests : IDisposable
             new RangeEntity
             {
                 Description = "Test Range 1",
-                Start = now,
-                End = now + 3600000, // 1 hour in milliseconds
+                StartTime = now,
+                EndTime = now + 3600000, // 1 hour in milliseconds
                 Timestamp = DateTime.UtcNow
             },
             new RangeEntity
             {
                 Description = "Test Range 2", 
-                Start = now + 3600000,
-                End = now + 7200000, // 2 hours in milliseconds
+                StartTime = now + 3600000,
+                EndTime = now + 7200000, // 2 hours in milliseconds
                 Timestamp = DateTime.UtcNow
             },
             new RangeEntity
             {
                 Description = "Test Range 3",
-                Start = now + 7200000,
-                End = now + 10800000, // 3 hours in milliseconds
+                StartTime = now + 7200000,
+                EndTime = now + 10800000, // 3 hours in milliseconds
                 Timestamp = DateTime.UtcNow
             }
         };
@@ -197,8 +197,8 @@ public class RangeRepositoryTests : IDisposable
         var range = new RangeEntity
         {
             Id = Guid.NewGuid(),
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Test Range for GetById",
             Timestamp = DateTime.UtcNow
         };
@@ -229,15 +229,15 @@ public class RangeRepositoryTests : IDisposable
 
         var range1 = new RangeEntity
         {
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Test Range 1",
             Timestamp = DateTime.UtcNow
         };
         var range2 = new RangeEntity
         {
-            Start = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(3).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(3).ToUnixTimeMilliseconds(),
             Description = "Test Range 2",
             Timestamp = DateTime.UtcNow
         };
@@ -262,8 +262,8 @@ public class RangeRepositoryTests : IDisposable
         var range = new RangeEntity
         {
             Id = Guid.NewGuid(),
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Original Description",
             Timestamp = DateTime.UtcNow
         };
@@ -298,7 +298,7 @@ public class RangeRepositoryTests : IDisposable
         
         // Setup mock to return null for GetByIdAsync after deletion
         _mockRangeRepository.Setup(x => x.GetByIdAsync(It.IsAny<Guid>()))
-            .ReturnsAsync((RangeEntity)null);
+            .ReturnsAsync((RangeEntity?)null);
 
         // Act
         await _mockRangeRepository.Object.DeleteAsync(rangeId);
@@ -320,8 +320,8 @@ public class RangeRepositoryTests : IDisposable
         
         var eventEntity = new EventEntity
         {
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds(),
+            Start = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            End = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeMilliseconds(),
             RangeId = rangeId,
             Timestamp = DateTime.UtcNow
         };
@@ -471,8 +471,8 @@ public class RangeRepositoryTests : IDisposable
         var nonExistentRange = new RangeEntity
         {
             Id = Guid.NewGuid(),
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Non-existent Range",
             Timestamp = DateTime.UtcNow
         };
@@ -525,8 +525,8 @@ public class RangeRepositoryTests : IDisposable
         // due to database constraints or validation handling
         var rangeWithInvalidData = new RangeEntity
         {
-            Start = -1, // Invalid negative timestamp
-            End = -1,   // Invalid negative timestamp
+            StartTime = -1, // Invalid negative timestamp
+            EndTime = -1,   // Invalid negative timestamp
             Description = "", // Empty description
             Timestamp = DateTime.UtcNow
         };
@@ -558,8 +558,8 @@ public class RangeRepositoryTests : IDisposable
 
         var validRange = new RangeEntity
         {
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Valid Test Range",
             Timestamp = DateTime.UtcNow
         };
@@ -593,8 +593,8 @@ public class RangeRepositoryTests : IDisposable
         _output.WriteLine("Testing mock range repository add operation (True Positive)...");
         var range = new RangeEntity
         {
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Mock Test Range",
             Timestamp = DateTime.UtcNow
         };
@@ -622,8 +622,8 @@ public class RangeRepositoryTests : IDisposable
         var mockRange = new RangeEntity
         {
             Id = rangeId,
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Mock Range",
             Timestamp = DateTime.UtcNow
         };
@@ -651,8 +651,8 @@ public class RangeRepositoryTests : IDisposable
         var range = new RangeEntity
         {
             Id = Guid.NewGuid(),
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Updated Mock Range",
             Timestamp = DateTime.UtcNow
         };
@@ -698,8 +698,8 @@ public class RangeRepositoryTests : IDisposable
         _output.WriteLine("Testing mock event repository add operation (True Positive)...");
         var eventEntity = new EventEntity
         {
-            Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            End = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds(),
+            Start = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            End = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeMilliseconds(),
             RangeId = Guid.NewGuid(),
             Timestamp = DateTime.UtcNow
         };
@@ -828,7 +828,7 @@ public class RangeRepositoryTests : IDisposable
         
         // Setup mock service provider to return null
         _mockServiceProvider.Setup(x => x.GetService(typeof(IEfRepository<RangeEntity>)))
-            .Returns(null);
+            .Returns((IEfRepository<RangeEntity>?)null);
 
         // Act
         var result = _mockServiceProvider.Object.GetService(typeof(IEfRepository<RangeEntity>));
@@ -882,8 +882,8 @@ public class RangeRepositoryTests : IDisposable
             { 
                 Id = Guid.NewGuid(), 
                 Description = "Concurrent Test",
-                Start = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+                StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
                 Timestamp = DateTime.UtcNow
             });
 

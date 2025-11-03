@@ -34,7 +34,7 @@ public sealed class XunitLoggerProvider : ILoggerProvider
             _filter = filter;
         }
 
-        public IDisposable BeginScope<TState>(TState state) => NullScope.Instance;
+        IDisposable ILogger.BeginScope<TState>(TState state) => NullScope.Instance;
 
         public bool IsEnabled(LogLevel logLevel) =>
             _filter?.Invoke(_name, logLevel) ?? true;

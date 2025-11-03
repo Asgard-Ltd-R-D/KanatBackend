@@ -170,12 +170,13 @@ public class CustomHubTests : IDisposable
             IsCmd = true,
             Axis = 1
         };
+        var subscriptionKey = request.SubscriptionKey;
         
         // Act
-        await _hub.UnregisterFromMethod(request);
+        await _hub.UnregisterFromMethod(subscriptionKey);
         
         // Assert
-        _mockTransmissionService.Verify(x => x.DeregisterStreamAsync(request), Times.Once);
+        _mockTransmissionService.Verify(x => x.DeregisterStreamAsync(subscriptionKey), Times.Once);
         _mockLogger.Verify(
             x => x.Log(
                 LogLevel.Information,
@@ -242,8 +243,8 @@ public class CustomHubTests : IDisposable
         // Arrange
         _output.WriteLine("Testing SignalR hub unregistration with null request (True Negative)...");
         
-        // Act & Assert - The hub doesn't validate null parameters, so it will throw NullReferenceException
-        await Assert.ThrowsAsync<NullReferenceException>(() => _hub.UnregisterFromMethod(null!));
+        // Act & Assert - The hub validates null parameters and throws ArgumentNullException
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _hub.UnregisterFromMethod(null!));
         
         _output.WriteLine("SignalR hub unregistration with null request test passed successfully");
     }
@@ -433,12 +434,13 @@ public class CustomHubTests : IDisposable
             IsCmd = true,
             Axis = 1
         };
+        var subscriptionKey = request.SubscriptionKey;
         
         // Act
-        await _mockTransmissionService.Object.DeregisterStreamAsync(request);
+        await _mockTransmissionService.Object.DeregisterStreamAsync(subscriptionKey);
         
         // Assert
-        _mockTransmissionService.Verify(x => x.DeregisterStreamAsync(request), Times.Once);
+        _mockTransmissionService.Verify(x => x.DeregisterStreamAsync(subscriptionKey), Times.Once);
         
         _output.WriteLine("Mock transmission service deregister operation test passed successfully");
     }

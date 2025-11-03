@@ -634,8 +634,8 @@ public class DbWriterServiceTests : IDisposable
                 LogLevel.Information,
                 It.IsAny<EventId>(),
                 It.Is<It.IsAnyType>((v, t) => 
-                    v.ToString()!.Contains("BatchSize=1000") && 
-                    v.ToString()!.Contains("Timeout=30ms")),
+                    v.ToString()!.Contains("BatchSize:1000") && 
+                    v.ToString()!.Contains("Timeout:30ms")),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);

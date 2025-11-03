@@ -13,6 +13,7 @@ using QuestDB.Senders;
 using QuestDB;
 using Xunit;
 using Xunit.Abstractions;
+using It = Moq.It;
 
 namespace PacketProcessing.Tests.UnitTests.RepositoryTests;
 
@@ -197,14 +198,15 @@ public class InfluxRepositoryTests : IDisposable
         };
         
         // Setup mock to return the entity after write operation
-        _mockMotionRepository.Setup(x => x.GetAllFromQuestDbAsync())
+        var testRangeId = Guid.NewGuid();
+        _mockMotionRepository.Setup(x => x.GetAllPacketsByRangeAsync(It.IsAny<Guid>()))
             .ReturnsAsync(new List<MotionPacketEntity> { entity });
                 
         // Act - Write entity
         await _mockMotionRepository.Object.WriteQuestDbAsync(null!, entity);
         
         // Assert - Verify data can be fetched
-        var fetchedEntities = await _mockMotionRepository.Object.GetAllFromQuestDbAsync();
+        var fetchedEntities = await _mockMotionRepository.Object.GetAllPacketsByRangeAsync(testRangeId);
         Assert.NotEmpty(fetchedEntities);
         Assert.Contains(fetchedEntities, e => e.OpCode == "VALID_TEST");
         
@@ -250,14 +252,15 @@ public class InfluxRepositoryTests : IDisposable
         };
         
         // Setup mock to return entities including our test entity
-        _mockMotionRepository.Setup(x => x.GetAllFromQuestDbAsync())
+        var testRangeId2 = Guid.NewGuid();
+        _mockMotionRepository.Setup(x => x.GetAllPacketsByRangeAsync(It.IsAny<Guid>()))
             .ReturnsAsync(new List<MotionPacketEntity> { entity });
 
         // Act & Assert - This should not fail (mock will handle the write operation)
         await _mockMotionRepository.Object.WriteQuestDbAsync(null!, entity);
         
         // Verify the write was successful
-        var fetchedEntities = await _mockMotionRepository.Object.GetAllFromQuestDbAsync();
+        var fetchedEntities = await _mockMotionRepository.Object.GetAllPacketsByRangeAsync(testRangeId2);
         Assert.Contains(fetchedEntities, e => e.OpCode == "VALID_DATA_TEST");
         
         _output.WriteLine("Single entity write with valid data succeeded as expected");
@@ -282,23 +285,25 @@ public class InfluxRepositoryTests : IDisposable
         };
         
         // Setup mock to return the batch entities
-        _mockMotionRepository.Setup(x => x.GetAllFromQuestDbAsync())
+        var testRangeId3 = Guid.NewGuid();
+        _mockMotionRepository.Setup(x => x.GetAllPacketsByRangeAsync(It.IsAny<Guid>()))
             .ReturnsAsync(entities);
                 
         // Act - Write batch (mock will handle the write operation)
         await _mockMotionRepository.Object.WriteBatchQuestDbAsync(null!, entities);
         
         // Verify data can be fetched
-        var fetchedEntities = await _mockMotionRepository.Object.GetAllFromQuestDbAsync();
+        var fetchedEntities = await _mockMotionRepository.Object.GetAllPacketsByRangeAsync(testRangeId3);
         Assert.Equal(10, fetchedEntities.Count());
         Assert.Contains(fetchedEntities, e => e.OpCode == "BATCH1");
         Assert.Contains(fetchedEntities, e => e.OpCode == "BATCH10");
     }
 
     [Fact]
-    public async Task InfluxRepository_GetAllFromQuestDbAsync_ShouldWork()
+    public async Task InfluxRepository_GetAllPacketsByRangeAsync_ShouldWork()
     {
         // Arrange - Test data
+        var testRangeId4 = Guid.NewGuid();
         var testEntities = new List<MotionPacketEntity>
         {
             new() { IsCmd = true, OpCode = "GETALL1", Description = "GetAll Test 1", Axis = 1, Value = 1.0, Timestamp = DateTime.UtcNow },
@@ -307,11 +312,11 @@ public class InfluxRepositoryTests : IDisposable
         };
         
         // Setup mock to return the test entities
-        _mockMotionRepository.Setup(x => x.GetAllFromQuestDbAsync())
+        _mockMotionRepository.Setup(x => x.GetAllPacketsByRangeAsync(It.IsAny<Guid>()))
             .ReturnsAsync(testEntities);
         
         // Act - Get all data
-        var fetchedEntities = await _mockMotionRepository.Object.GetAllFromQuestDbAsync();
+        var fetchedEntities = await _mockMotionRepository.Object.GetAllPacketsByRangeAsync(testRangeId4);
         
         // Assert - Verify all data can be fetched
         Assert.Equal(3, fetchedEntities.Count());
@@ -321,9 +326,10 @@ public class InfluxRepositoryTests : IDisposable
     }
 
     [Fact]
-    public async Task InfluxRepository_GetPaginatedFromQuestDbAsync_ShouldWork()
+    public async Task InfluxRepository_GetPaginatedPacketsByRangeAsync_ShouldWork()
     {
         // Arrange - Test data
+        var testRangeId5 = Guid.NewGuid();
         var page1Entities = new List<MotionPacketEntity>
         {
             new() { IsCmd = true, OpCode = "PAGE1", Description = "Page Test 1", Axis = 1, Value = 1.0, Timestamp = DateTime.UtcNow.AddMinutes(-30) },
@@ -340,14 +346,14 @@ public class InfluxRepositoryTests : IDisposable
         var endTime = DateTime.UtcNow.AddHours(1);
 
         // Setup mock to return paginated results
-        _mockMotionRepository.Setup(x => x.GetPaginatedFromQuestDbAsync(startTime, endTime, OrderBy.Asc, 1, 2))
+        _mockMotionRepository.Setup(x => x.GetPaginatedPacketsByRangeAsync(It.IsAny<Guid>(), startTime, endTime, OrderBy.Asc, 1, 2))
             .ReturnsAsync(page1Entities);
-        _mockMotionRepository.Setup(x => x.GetPaginatedFromQuestDbAsync(startTime, endTime, OrderBy.Asc, 2, 2))
+        _mockMotionRepository.Setup(x => x.GetPaginatedPacketsByRangeAsync(It.IsAny<Guid>(), startTime, endTime, OrderBy.Asc, 2, 2))
             .ReturnsAsync(page2Entities);
 
         // Act - Test pagination
-        var page1 = await _mockMotionRepository.Object.GetPaginatedFromQuestDbAsync(startTime, endTime, OrderBy.Asc, 1, 2);
-        var page2 = await _mockMotionRepository.Object.GetPaginatedFromQuestDbAsync(startTime, endTime, OrderBy.Asc, 2, 2);
+        var page1 = await _mockMotionRepository.Object.GetPaginatedPacketsByRangeAsync(testRangeId5, startTime, endTime, OrderBy.Asc, 1, 2);
+        var page2 = await _mockMotionRepository.Object.GetPaginatedPacketsByRangeAsync(testRangeId5, startTime, endTime, OrderBy.Asc, 2, 2);
         
         // Assert - Verify pagination works
         Assert.Equal(2, page1.Count());
@@ -359,9 +365,10 @@ public class InfluxRepositoryTests : IDisposable
     }
 
     [Fact]
-    public async Task InfluxRepository_GetPaginatedFromQuestDbAsyncWithInterval_ShouldWork()
+    public async Task InfluxRepository_GetPaginatedPacketsByRangeAsyncWithInterval_ShouldWork()
     {
         // Arrange - Test data with interval
+        var testRangeId6 = Guid.NewGuid();
         var intervalEntities = new List<MotionPacketEntity>
         {
             new() { IsCmd = true, OpCode = "INTERVAL1", Description = "Interval Test 1", Axis = 1, Value = 1.0, Timestamp = DateTime.UtcNow.AddMinutes(-30) },
@@ -374,11 +381,11 @@ public class InfluxRepositoryTests : IDisposable
         var interval = 1000; // 1 second interval
 
         // Setup mock to return interval-based results
-        _mockMotionRepository.Setup(x => x.GetPaginatedFromQuestDbAsyncWithInterval(startTime, endTime, interval, OrderBy.Asc, 1, 10))
+        _mockMotionRepository.Setup(x => x.GetPaginatedPacketsByRangeAsyncWithInterval(It.IsAny<Guid>(), startTime, endTime, interval, OrderBy.Asc, 1, 10))
             .ReturnsAsync(intervalEntities);
 
         // Act - Test interval-based pagination
-        var result = await _mockMotionRepository.Object.GetPaginatedFromQuestDbAsyncWithInterval(startTime, endTime, interval, OrderBy.Asc, 1, 10);
+        var result = await _mockMotionRepository.Object.GetPaginatedPacketsByRangeAsyncWithInterval(testRangeId6, startTime, endTime, interval, OrderBy.Asc, 1, 10);
         
         // Assert - Verify interval-based pagination works
         Assert.Equal(3, result.Count());
@@ -388,21 +395,18 @@ public class InfluxRepositoryTests : IDisposable
     }
 
     [Fact]
-    public async Task InfluxRepository_ClearPacketsByRangeAsync_ShouldWork()
+    public async Task InfluxRepository_ClearAllPacketsAsync_ShouldWork()
     {
         // Arrange
-        var startTime = DateTime.UtcNow.AddHours(-1);
-        var endTime = DateTime.UtcNow.AddHours(1);
-
         // Setup mock to handle clear operation
-        _mockMotionRepository.Setup(x => x.ClearPacketsByRangeAsync(startTime, endTime))
+        _mockMotionRepository.Setup(x => x.ClearAllPacketsAsync())
             .Returns(Task.CompletedTask);
 
-        // Act - Clear packets in time range
-        await _mockMotionRepository.Object.ClearPacketsByRangeAsync(startTime, endTime);
+        // Act - Clear all packets
+        await _mockMotionRepository.Object.ClearAllPacketsAsync();
         
         // Assert - Verify the operation completed without exception
-        _mockMotionRepository.Verify(x => x.ClearPacketsByRangeAsync(startTime, endTime), Times.Once);
+        _mockMotionRepository.Verify(x => x.ClearAllPacketsAsync(), Times.Once);
     }
 
     [Fact]
@@ -438,11 +442,12 @@ public class InfluxRepositoryTests : IDisposable
         };
         
         // Setup mocks to return the entities
-        _mockMotionRepository.Setup(x => x.GetAllFromQuestDbAsync())
+        var testRangeId7 = Guid.NewGuid();
+        _mockMotionRepository.Setup(x => x.GetAllPacketsByRangeAsync(It.IsAny<Guid>()))
             .ReturnsAsync(new List<MotionPacketEntity> { motionEntity });
-        _mockOnvifRepository.Setup(x => x.GetAllFromQuestDbAsync())
+        _mockOnvifRepository.Setup(x => x.GetAllPacketsByRangeAsync(It.IsAny<Guid>()))
             .ReturnsAsync(new List<OnVIFPacketEntity> { onvifEntity });
-        _mockSafetyRepository.Setup(x => x.GetAllFromQuestDbAsync())
+        _mockSafetyRepository.Setup(x => x.GetAllPacketsByRangeAsync(It.IsAny<Guid>()))
             .ReturnsAsync(new List<SafetyPacketEntity> { safetyEntity });
 
         // Act - Write all entity types (mocks will handle the write operations)
@@ -451,9 +456,9 @@ public class InfluxRepositoryTests : IDisposable
         await _mockSafetyRepository.Object.WriteQuestDbAsync(null!, safetyEntity);
         
         // Verify data can be fetched for all entity types
-        var motionEntities = await _mockMotionRepository.Object.GetAllFromQuestDbAsync();
-        var onvifEntities = await _mockOnvifRepository.Object.GetAllFromQuestDbAsync();
-        var safetyEntities = await _mockSafetyRepository.Object.GetAllFromQuestDbAsync();
+        var motionEntities = await _mockMotionRepository.Object.GetAllPacketsByRangeAsync(testRangeId7);
+        var onvifEntities = await _mockOnvifRepository.Object.GetAllPacketsByRangeAsync(testRangeId7);
+        var safetyEntities = await _mockSafetyRepository.Object.GetAllPacketsByRangeAsync(testRangeId7);
         
         Assert.Single(motionEntities);
         Assert.Contains(motionEntities, e => e.OpCode == "MOTION_TEST");
@@ -528,10 +533,11 @@ public class InfluxRepositoryTests : IDisposable
     }
 
     [Fact]
-    public async Task MockMotionRepository_GetAllFromQuestDbAsync_ShouldReturnMockData_TruePositive()
+    public async Task MockMotionRepository_GetAllPacketsByRangeAsync_ShouldReturnMockData_TruePositive()
     {
         // Arrange
-        _output.WriteLine("Testing mock motion repository get all operation (True Positive)...");
+        _output.WriteLine("Testing mock motion repository get all by range operation (True Positive)...");
+        var testRangeId8 = Guid.NewGuid();
         var mockEntities = new List<MotionPacketEntity>
         {
             new() { IsCmd = true, OpCode = "MOCK_GET_1", Description = "Mock Get 1", Axis = 1, Value = 1.0, Timestamp = DateTime.UtcNow },
@@ -539,11 +545,11 @@ public class InfluxRepositoryTests : IDisposable
         };
 
         // Setup mock to return test data
-        _mockMotionRepository.Setup(x => x.GetAllFromQuestDbAsync())
+        _mockMotionRepository.Setup(x => x.GetAllPacketsByRangeAsync(It.IsAny<Guid>()))
             .ReturnsAsync(mockEntities);
 
         // Act
-        var result = await _mockMotionRepository.Object.GetAllFromQuestDbAsync();
+        var result = await _mockMotionRepository.Object.GetAllPacketsByRangeAsync(testRangeId8);
 
         // Assert
         Assert.NotNull(result);
@@ -551,28 +557,29 @@ public class InfluxRepositoryTests : IDisposable
         Assert.Contains(result, e => e.OpCode == "MOCK_GET_1");
         Assert.Contains(result, e => e.OpCode == "MOCK_GET_2");
         
-        _mockMotionRepository.Verify(x => x.GetAllFromQuestDbAsync(), Times.Once);
-        _output.WriteLine("Mock motion repository get all operation verified successfully");
+        _mockMotionRepository.Verify(x => x.GetAllPacketsByRangeAsync(testRangeId8), Times.Once);
+        _output.WriteLine("Mock motion repository get all by range operation verified successfully");
     }
 
     [Fact]
-    public async Task MockMotionRepository_GetAllFromQuestDbAsync_ShouldReturnEmpty_TrueNegative()
+    public async Task MockMotionRepository_GetAllPacketsByRangeAsync_ShouldReturnEmpty_TrueNegative()
     {
         // Arrange
-        _output.WriteLine("Testing mock motion repository get all with empty result (True Negative)...");
+        _output.WriteLine("Testing mock motion repository get all by range with empty result (True Negative)...");
+        var testRangeId9 = Guid.NewGuid();
         
         // Setup mock to return empty collection
-        _mockMotionRepository.Setup(x => x.GetAllFromQuestDbAsync())
+        _mockMotionRepository.Setup(x => x.GetAllPacketsByRangeAsync(It.IsAny<Guid>()))
             .ReturnsAsync(new List<MotionPacketEntity>());
 
         // Act
-        var result = await _mockMotionRepository.Object.GetAllFromQuestDbAsync();
+        var result = await _mockMotionRepository.Object.GetAllPacketsByRangeAsync(testRangeId9);
 
         // Assert
         Assert.NotNull(result);
         Assert.Empty(result);
         
-        _mockMotionRepository.Verify(x => x.GetAllFromQuestDbAsync(), Times.Once);
+        _mockMotionRepository.Verify(x => x.GetAllPacketsByRangeAsync(testRangeId9), Times.Once);
         _output.WriteLine("Mock motion repository correctly returned empty collection");
     }
 
@@ -624,10 +631,11 @@ public class InfluxRepositoryTests : IDisposable
     }
 
     [Fact]
-    public async Task MockMotionRepository_GetPaginatedFromQuestDbAsync_ShouldReturnPagedData_TruePositive()
+    public async Task MockMotionRepository_GetPaginatedPacketsByRangeAsync_ShouldReturnPagedData_TruePositive()
     {
         // Arrange
-        _output.WriteLine("Testing mock motion repository paginated get operation (True Positive)...");
+        _output.WriteLine("Testing mock motion repository paginated get by range operation (True Positive)...");
+        var testRangeId10 = Guid.NewGuid();
         var mockEntities = new List<MotionPacketEntity>
         {
             new() { IsCmd = true, OpCode = "PAGE_MOCK_1", Description = "Page Mock 1", Axis = 1, Value = 1.0, Timestamp = DateTime.UtcNow },
@@ -638,11 +646,11 @@ public class InfluxRepositoryTests : IDisposable
         var endTime = DateTime.UtcNow.AddHours(1);
         
         // Setup mock to return test data
-        _mockMotionRepository.Setup(x => x.GetPaginatedFromQuestDbAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<OrderBy>(), It.IsAny<int>(), It.IsAny<int>()))
+        _mockMotionRepository.Setup(x => x.GetPaginatedPacketsByRangeAsync(It.IsAny<Guid>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<OrderBy>(), It.IsAny<int>(), It.IsAny<int>()))
             .ReturnsAsync(mockEntities);
 
         // Act
-        var result = await _mockMotionRepository.Object.GetPaginatedFromQuestDbAsync(startTime, endTime, OrderBy.Asc, 1, 10);
+        var result = await _mockMotionRepository.Object.GetPaginatedPacketsByRangeAsync(testRangeId10, startTime, endTime, OrderBy.Asc, 1, 10);
 
         // Assert
         Assert.NotNull(result);
@@ -650,26 +658,27 @@ public class InfluxRepositoryTests : IDisposable
         Assert.Contains(result, e => e.OpCode == "PAGE_MOCK_1");
         Assert.Contains(result, e => e.OpCode == "PAGE_MOCK_2");
         
-        _mockMotionRepository.Verify(x => x.GetPaginatedFromQuestDbAsync(startTime, endTime, OrderBy.Asc, 1, 10), Times.Once);
-        _output.WriteLine("Mock motion repository paginated get operation verified successfully");
+        _mockMotionRepository.Verify(x => x.GetPaginatedPacketsByRangeAsync(testRangeId10, startTime, endTime, OrderBy.Asc, 1, 10), Times.Once);
+        _output.WriteLine("Mock motion repository paginated get by range operation verified successfully");
     }
 
     [Fact]
-    public async Task MockMotionRepository_DeleteAllFromQuestDbAsync_ShouldComplete_TruePositive()
+    public async Task MockMotionRepository_DeletePacketsByRangeAsync_ShouldComplete_TruePositive()
     {
         // Arrange
-        _output.WriteLine("Testing mock motion repository delete all operation (True Positive)...");
+        _output.WriteLine("Testing mock motion repository delete packets by range operation (True Positive)...");
+        var testRangeId11 = Guid.NewGuid();
         
         // Setup mock to return completed task
-        _mockMotionRepository.Setup(x => x.DeleteAllFromQuestDbAsync())
+        _mockMotionRepository.Setup(x => x.DeletePacketsByRangeAsync(It.IsAny<Guid>()))
             .Returns(Task.CompletedTask);
 
         // Act
-        await _mockMotionRepository.Object.DeleteAllFromQuestDbAsync();
+        await _mockMotionRepository.Object.DeletePacketsByRangeAsync(testRangeId11);
 
         // Assert
-        _mockMotionRepository.Verify(x => x.DeleteAllFromQuestDbAsync(), Times.Once);
-        _output.WriteLine("Mock motion repository delete all operation verified successfully");
+        _mockMotionRepository.Verify(x => x.DeletePacketsByRangeAsync(testRangeId11), Times.Once);
+        _output.WriteLine("Mock motion repository delete packets by range operation verified successfully");
     }
 
     [Fact]
@@ -767,7 +776,7 @@ public class InfluxRepositoryTests : IDisposable
         
         // Setup mock service provider to return null
         _mockServiceProvider.Setup(x => x.GetService(typeof(IInfluxRepository<MotionPacketEntity>)))
-            .Returns(null);
+            .Returns((IInfluxRepository<MotionPacketEntity>?)null);
 
         // Act
         var result = _mockServiceProvider.Object.GetService(typeof(IInfluxRepository<MotionPacketEntity>));

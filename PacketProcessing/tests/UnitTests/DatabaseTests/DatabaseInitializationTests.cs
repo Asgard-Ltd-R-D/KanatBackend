@@ -149,8 +149,8 @@ public class DatabaseInitializationTests : IDisposable
         var testRange = new RangeEntity
         {
             Id = Guid.NewGuid(),
-            Start = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            End = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
+            StartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EndTime = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds(),
             Description = "Test Description",
             Timestamp = DateTime.UtcNow
         };
@@ -167,8 +167,8 @@ public class DatabaseInitializationTests : IDisposable
         // Assert
         Assert.NotNull(retrievedRange);
         Assert.Equal(testRange.Description, retrievedRange.Description);
-        Assert.Equal(testRange.Start, retrievedRange.Start);
-        Assert.Equal(testRange.End, retrievedRange.End);
+        Assert.Equal(testRange.StartTime, retrievedRange.StartTime);
+        Assert.Equal(testRange.EndTime, retrievedRange.EndTime);
         _output.WriteLine($"Successfully retrieved range: {retrievedRange.Description}");
 
         // Act - Update

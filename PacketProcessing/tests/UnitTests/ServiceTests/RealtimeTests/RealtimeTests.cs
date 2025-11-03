@@ -140,7 +140,6 @@ public class RealtimeTests : IDisposable
     {
         return new RealtimeService(
             _mockLogger.Object,
-            _mockConfiguration.Object,
             _mockDeviceService.Object,
             _mockTelemetryService.Object,
             _mockMotionHandler.Object,
@@ -192,7 +191,7 @@ public class RealtimeTests : IDisposable
             x => x.Log(
                 LogLevel.Information,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Realtime service starting")),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("[REALTIME-SERVICE] Starting...")),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
@@ -201,7 +200,7 @@ public class RealtimeTests : IDisposable
             x => x.Log(
                 LogLevel.Information,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("initialized all handlers")),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("[REALTIME-SERVICE] Initialized all handlers")),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
@@ -228,7 +227,7 @@ public class RealtimeTests : IDisposable
             x => x.Log(
                 LogLevel.Information,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Realtime service stopping")),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("[REALTIME-SERVICE] Stopping...")),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
@@ -237,7 +236,7 @@ public class RealtimeTests : IDisposable
             x => x.Log(
                 LogLevel.Information,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Realtime service stopped")),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("[REALTIME-SERVICE] Stopped")),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
@@ -434,7 +433,6 @@ public class RealtimeTests : IDisposable
         // Arrange & Act & Assert - The service doesn't validate null parameters, so it will create successfully
         var service = new RealtimeService(
             null!,
-            _mockConfiguration.Object,
             _mockDeviceService.Object,
             _mockTelemetryService.Object,
             _mockMotionHandler.Object,
@@ -450,33 +448,11 @@ public class RealtimeTests : IDisposable
     }
 
     [Fact]
-    public void RealtimeService_Constructor_WithNullConfiguration_ShouldThrow_TrueNegative()
-    {
-        // Arrange & Act & Assert - The service doesn't validate null parameters, so it will create successfully
-        var service = new RealtimeService(
-            _mockLogger.Object,
-            null!,
-            _mockDeviceService.Object,
-            _mockTelemetryService.Object,
-            _mockMotionHandler.Object,
-            _mockSafetyHandler.Object,
-            _mockOnvifHandler.Object,
-            _mockMotionWriter.Object,
-            _mockSafetyWriter.Object,
-            _mockOnvifWriter.Object);
-        
-        // Assert - Service should be created successfully (no validation performed)
-        Assert.NotNull(service);
-        _output.WriteLine("Null configuration constructor test passed - no validation performed");
-    }
-
-    [Fact]
     public void RealtimeService_Constructor_WithNullDeviceService_ShouldThrow_TrueNegative()
     {
         // Arrange & Act & Assert - The service doesn't validate null parameters, so it will create successfully
         var service = new RealtimeService(
             _mockLogger.Object,
-            _mockConfiguration.Object,
             null!,
             _mockTelemetryService.Object,
             _mockMotionHandler.Object,

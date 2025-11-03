@@ -1294,6 +1294,16 @@ function convertPipelineToEnum(pipelineName) {
     }
 }
 
+// Build subscription key exactly like server (lowercased)
+function buildSubscriptionKeyFromRequest(streamRequest) {
+    const dataPipe = String(streamRequest.dataPipe ?? '').trim();
+    const description = String(streamRequest.description ?? '').trim();
+    const isCmd = streamRequest.isCmd === true ? 'True' : 'False';
+    const axisPart = (dataPipe === 'Motion') ? String(streamRequest.axis ?? '') : String(streamRequest.axis ?? '');
+    // Server includes axis position even if empty; keep delimiter
+    return `${dataPipe}|${description}|${isCmd}|${axisPart}`.toLowerCase();
+}
+
 // Define onDataPipeChange function early so it's available when HTML loads
 function onDataPipeChange() {
     console.log('onDataPipeChange called');
@@ -1462,8 +1472,9 @@ async function unregisterSpecificStream(streamKey) {
     }
     
     try {
-        logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)}`, 'info');
-        await packetHubConnection.invoke('UnregisterFromMethod', streamRequest);
+        const subscriptionKey = streamKey;
+        logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)} (key: ${subscriptionKey})`, 'info');
+        await packetHubConnection.invoke('UnregisterFromMethod', subscriptionKey);
         activeStreams.delete(streamKey);
         updateActiveStreamsList();
         logPacketHubMessage('Stream unregistration request sent', 'success');
@@ -1583,35 +1594,47 @@ async function connectPacketHub() {
         updateActiveStreamsList();
     });
 
-    // Handle packet data - new format: subscriptionKey, plainData
-    packetHubConnection.on('OnReceivePacket', (subscriptionKey, plainData) => {
+    // Handle packet data - support both (subscriptionKey, data) and (data)
+    packetHubConnection.on('OnReceivePacket', (...args) => {
         try {
-            console.log('Raw packet data received:', JSON.stringify({ subscriptionKey, plainData }, null, 2));
+            let plainData = null;
+            let subKey = 'N/A';
+            if (args.length === 2) {
+                // Legacy: (subscriptionKey, data)
+                subKey = args[0] || 'N/A';
+                plainData = args[1] || null;
+            } else {
+                plainData = args[0] || null;
+                subKey = plainData?.SubscriptionKey || plainData?.subscriptionKey || 'N/A';
+            }
+
+            console.log('Raw packet data received:', JSON.stringify({ subKey, plainData }, null, 2));
             console.log('plainData type:', typeof plainData);
             console.log('plainData keys:', plainData ? Object.keys(plainData) : 'null');
-            
-            // Safely extract values with null checks - handle both camelCase and PascalCase
-            const subKey = subscriptionKey || 'N/A';
-            
-            // Try both camelCase and PascalCase property names
-            const dataPipe = plainData?.DataPipe || plainData?.dataPipe || plainData?.DataPipe || 'N/A';
-            const method = plainData?.MethodName || plainData?.methodName || plainData?.MethodName || 'N/A';
-            const value = plainData?.Value != null ? String(plainData.Value) : (plainData?.value != null ? String(plainData.value) : 'N/A');
+
+            const value = (plainData?.Value != null) ? String(plainData.Value) : (plainData?.value != null ? String(plainData.value) : 'N/A');
             const timestamp = plainData?.Timestamp ? new Date(plainData.Timestamp).toLocaleString() : (plainData?.timestamp ? new Date(plainData.timestamp).toLocaleString() : 'N/A');
-            
+
+            // Derive dataPipe and method from subscription key if available
+            let dataPipe = 'N/A';
+            let method = 'N/A';
+            if (typeof subKey === 'string' && subKey.includes('|')) {
+                const parts = subKey.split('|');
+                dataPipe = parts[0] || 'N/A';
+                method = parts[1] || 'N/A';
+            }
+
             console.log('Extracted values:', { subKey, dataPipe, method, value, timestamp });
-            
-            // Format the packet for display with ASCII characters only
+
             const displayMessage = `[${subKey}] Received:
                 Data Pipe: ${dataPipe}
                 Method: ${method}
                 Value: ${value}
                 Timestamp: ${timestamp}`;
-            
+
             logPacketHubMessage(displayMessage, 'info');
             console.log('Packet received:', { subscriptionKey: subKey, plainData });
-            
-            // Also show compact version in console
+
             console.log(`[PACKET] ${subKey} | ${dataPipe}.${method} = ${value}`);
         } catch (err) {
             logPacketHubMessage(`Error processing packet: ${err.message}`, 'error');
@@ -1758,7 +1781,7 @@ async function registerSelectedStream() {
         axis: axis
     };
 
-    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = buildSubscriptionKeyFromRequest(streamRequest);
     
     if (activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is already registered`, 'warning');
@@ -1803,7 +1826,7 @@ async function unregisterSelectedStream() {
         axis: axis
     };
 
-    const streamKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd}|${streamRequest.axis}`.toLowerCase();
+    const streamKey = buildSubscriptionKeyFromRequest(streamRequest);
     
     if (!activeStreams.has(streamKey)) {
         logPacketHubMessage(`Stream ${streamKey} is not registered`, 'warning');
@@ -1811,8 +1834,9 @@ async function unregisterSelectedStream() {
     }
 
     try {
-        logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)}`, 'info');
-        await packetHubConnection.invoke('UnregisterFromMethod', streamRequest);
+        const subscriptionKey = streamKey;
+        logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)} (key: ${subscriptionKey})`, 'info');
+        await packetHubConnection.invoke('UnregisterFromMethod', subscriptionKey);
         activeStreams.delete(streamKey);
         updateActiveStreamsList();
         logPacketHubMessage('Stream unregistration request sent', 'success');
@@ -1962,8 +1986,9 @@ async function unregisterStream() {
     }
 
     try {
-        logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)}`, 'info');
-        await packetHubConnection.invoke('UnregisterFromMethod', streamRequest);
+        const subscriptionKey = streamKey;
+        logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)} (key: ${subscriptionKey})`, 'info');
+        await packetHubConnection.invoke('UnregisterFromMethod', subscriptionKey);
         activeStreams.delete(streamKey);
         updateActiveStreamsList();
         logPacketHubMessage('Stream unregistration request sent', 'success');

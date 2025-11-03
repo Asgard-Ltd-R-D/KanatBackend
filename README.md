@@ -29,7 +29,7 @@ A high-performance, real-time telemetry ingestion and analysis system built with
 - **QuestDB Integration**: Time-series database optimized for 6000+ packets per second with WAL enabled
 - **Session Management**: Create, manage, and archive range sessions with automatic table partitioning
 - **Web Dashboard**: Real-time telemetry visualization with live charts and statistics
-- **SignalR Streaming**: Push packet data to connected clients in real-time
+- **SignalR Streaming**: Push packet data to connected clients in real-time with configurable sampling intervals
 - **Playback Mode**: Replay historical data at configurable speeds
 
 ### Performance
@@ -295,7 +295,7 @@ Open your browser to:
    - Packets Per Second (PPS)
    - Channel Utilization
    - Latency metrics
-4. **Stream Registration**: Register for specific packet streams
+4. **Stream Registration**: Register for specific packet streams with optional sampling intervals
 5. **Console Access**: Quick links to:
    - Swagger API documentation
    - QuestDB console
@@ -305,7 +305,7 @@ Open your browser to:
 
 - **THROUGHPUT (Last 60 seconds)**: Live PPS chart for all packet types
 - **Channel Utilization Tables**: Real-time buffer usage per packet type
-- **Stream Management**: Add/remove packet streams dynamically
+- **Stream Management**: Add/remove packet streams dynamically with configurable sampling intervals
 
 ---
 
@@ -500,6 +500,23 @@ await connection.invoke("RegisterToMethod", {
 ```javascript
 await connection.invoke("UnregisterFromMethod", "motion|mot_getmotorcurrent|false|1");
 ```
+
+#### Set Sampling Interval
+
+Configure packet sampling interval to reduce transmission frequency:
+
+```javascript
+await connection.invoke("SetTimeInterval", {
+    subscriptionKey: "motion|mot_getmotorcurrent|false|1",
+    intervalMs: 100  // Transmit only every 100ms
+});
+```
+
+**Notes:**
+- Setting `intervalMs` to 0 or omitting it results in **no sampling** (all packets transmitted)
+- Intervals are per-stream; each subscription key has its own timer
+- Timers reset automatically after each transmission
+- Packets arriving before the interval elapses are discarded
 
 ### Client Events
 
@@ -715,6 +732,7 @@ Logs are written to console and can be viewed via:
 2. **Adjust Batching**: Increase `BatchSize` to 5000 for high-throughput
 3. **Channel Capacity**: Ensure sufficient buffer size
 4. **QuestDB Settings**: Tune WAL and partition settings
+5. **SignalR Sampling**: Use `SetTimeInterval` to reduce packet transmission frequency on high-rate streams
 
 ---
 

@@ -55,9 +55,13 @@ public sealed class StreamRequestDto
         sb.Append(DataPipe).Append('|')
         .Append(Description)
         .Append('|')
-        .Append(IsCmd.HasValue ? IsCmd.Value.ToString() : "false")
-        .Append('|')
-        .Append(Axis.HasValue ? Axis.Value.ToString() : "");
+        .Append(IsCmd.HasValue ? IsCmd.Value.ToString() : "false");
+        
+        // Only Motion packets include axis in subscription key
+        if (DataPipe == DataPipes.Motion)
+        {
+            sb.Append('|').Append(Axis.HasValue ? Axis.Value.ToString() : "");
+        }
 
         _subscriptionKey = sb.ToString().ToLower(); // Lowercased before returning, and setting the private member
         return _subscriptionKey;

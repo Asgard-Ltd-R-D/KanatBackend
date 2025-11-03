@@ -1122,6 +1122,7 @@ function clearLogs() {
 let packetHubConnection = null;
 let packetHubConnected = false;
 let activeStreams = new Map(); // Track active streams by pipeline
+let streamIntervals = new Map(); // Track intervals by subscription key
 
 // === AXIS CONTROL FUNCTIONS ===
 function getSelectedAxis() {
@@ -1299,9 +1300,13 @@ function buildSubscriptionKeyFromRequest(streamRequest) {
     const dataPipe = String(streamRequest.dataPipe ?? '').trim();
     const description = String(streamRequest.description ?? '').trim();
     const isCmd = streamRequest.isCmd === true ? 'True' : 'False';
-    const axisPart = (dataPipe === 'Motion') ? String(streamRequest.axis ?? '') : String(streamRequest.axis ?? '');
-    // Server includes axis position even if empty; keep delimiter
-    return `${dataPipe}|${description}|${isCmd}|${axisPart}`.toLowerCase();
+    // Motion includes axis in subscription key, Safety and OnVIF don't
+    if (dataPipe === 'Motion') {
+        const axisPart = String(streamRequest.axis ?? '');
+        return `${dataPipe}|${description}|${isCmd}|${axisPart}`.toLowerCase();
+    } else {
+        return `${dataPipe}|${description}|${isCmd}`.toLowerCase();
+    }
 }
 
 // Define onDataPipeChange function early so it's available when HTML loads
@@ -1377,18 +1382,26 @@ function onDataPipeChange() {
                 break;
             case 'Safety':
                 streams = [
+                    // DO_PBE streams (PBE IP)
+                    { value: '1|false|0', text: '1 (RPT)' },
+                    { value: '1|true|0', text: '1 (CMD)' },
                     { value: 'DO3_FIRE1|false|0', text: 'DO3_FIRE1 (RPT)' },
                     { value: 'DO3_FIRE1|true|0', text: 'DO3_FIRE1 (CMD)' },
-                    { value: 'DO3_FIRE2|false|0', text: 'DO3_FIRE2 (RPT)' },
-                    { value: 'DO3_FIRE2|true|0', text: 'DO3_FIRE2 (CMD)' },
-                    { value: 'DO3_FIRE3|false|0', text: 'DO3_FIRE3 (RPT)' },
-                    { value: 'DO3_FIRE3|true|0', text: 'DO3_FIRE3 (CMD)' },
-                    { value: 'DO3_FIRE4|false|0', text: 'DO3_FIRE4 (RPT)' },
-                    { value: 'DO3_FIRE4|true|0', text: 'DO3_FIRE4 (CMD)' },
-                    { value: 'DO3_FIRE5|false|0', text: 'DO3_FIRE5 (RPT)' },
-                    { value: 'DO3_FIRE5|true|0', text: 'DO3_FIRE5 (CMD)' },
-                    { value: 'DO3_FIRE6|false|0', text: 'DO3_FIRE6 (RPT)' },
-                    { value: 'DO3_FIRE6|true|0', text: 'DO3_FIRE6 (CMD)' }
+                    { value: 'DO2_MOTION|false|0', text: 'DO2_MOTION (RPT)' },
+                    { value: 'DO2_MOTION|true|0', text: 'DO2_MOTION (CMD)' },
+                    { value: 'DO4_LED_FIRE_EN|false|0', text: 'DO4_LED_FIRE_EN (RPT)' },
+                    { value: 'DO4_LED_FIRE_EN|true|0', text: 'DO4_LED_FIRE_EN (CMD)' },
+                    // DO_SBE streams (SBE IP)
+                    { value: 'DO0_RLD|false|0', text: 'DO0_RLD (RPT)' },
+                    { value: 'DO0_RLD|true|0', text: 'DO0_RLD (CMD)' },
+                    { value: 'DO1_RLD_SFTY|false|0', text: 'DO1_RLD_SFTY (RPT)' },
+                    { value: 'DO1_RLD_SFTY|true|0', text: 'DO1_RLD_SFTY (CMD)' },
+                    { value: 'DO2_PWR|false|0', text: 'DO2_PWR (RPT)' },
+                    { value: 'DO2_PWR|true|0', text: 'DO2_PWR (CMD)' },
+                    { value: 'DO4_FIRE2|false|0', text: 'DO4_FIRE2 (RPT)' },
+                    { value: 'DO4_FIRE2|true|0', text: 'DO4_FIRE2 (CMD)' },
+                    { value: 'X5|false|0', text: 'X5 (RPT)' },
+                    { value: 'X5|true|0', text: 'X5 (CMD)' }
                 ];
                 streamInfo.textContent = 'Safety Packets - Select a stream to register';
                 break;
@@ -1439,23 +1452,58 @@ function updateActiveStreamsList() {
     
     let html = '';
     activeStreams.forEach((streamRequest, streamKey) => {
-        const displayName = `${streamRequest.description} (${streamRequest.isCmd ? 'CMD' : 'RPT'}, Axis ${streamRequest.axis})`;
+        // Only show axis for Motion packets
+        const axisDisplay = streamRequest.dataPipe === 'Motion' ? `, Axis ${streamRequest.axis}` : '';
+        const displayName = `${streamRequest.description} (${streamRequest.isCmd ? 'CMD' : 'RPT'}${axisDisplay})`;
         const pipelineName = streamRequest.dataPipe;
+        const interval = streamIntervals.get(streamKey) || 0;
+        const intervalDisplay = interval > 0 ? ` | Interval: ${interval}ms` : '';
         
         html += `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; margin: 5px 0; background: rgba(255,255,255,0.05); border-radius: 6px; border-left: 3px solid #4caf50;">
-                <div style="flex: 1; margin-right: 10px; min-width: 0;">
+                <div style="flex: 1; margin-right: 20px; min-width: 0;">
                     <div style="font-weight: bold; color: #4caf50; font-size: 14px;">${displayName}</div>
-                    <div style="font-size: 12px; color: #888;">Pipeline: ${pipelineName}</div>
+                    <div style="font-size: 12px; color: #888; margin-top: 4px;">Pipeline: ${pipelineName}${intervalDisplay}</div>
                 </div>
-                <button onclick="unregisterSpecificStream('${streamKey}')" style="height: 24px; padding: 0 8px; font-size: 11px; border-radius: 4px; background: #f44336; color: white; border: none; cursor: pointer; transition: all 0.2s ease; font-weight: 500; flex-shrink: 0; min-width: 60px; max-width: 80px;" onmouseover="this.style.background='#d32f2f'; this.style.transform='translateY(-1px)'" onmouseout="this.style.background='#f44336'; this.style.transform='translateY(0)'">
-                    Remove
-                </button>
+                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-right: 35px; margin-top: 10px">
+                    <input type="number" id="intervalInput-${streamKey}" placeholder="Interval (ms)" min="0" value="${interval}" style="width: 100px; padding: 4px; border: 1px solid #333; border-radius: 4px; background: #2a2a2a; color: #e0e0e0; font-size: 12px; height: 28px;" title="Sampling interval in milliseconds (0 = no sampling)">
+                    <button onclick="updateStreamInterval('${streamKey}')" style="height: 28px; padding: 0 8px; font-size: 11px; border-radius: 4px; background:rgb(38, 142, 69); color: white; border: none; cursor: pointer; transition: all 0.2s ease; font-weight: 500; flex-shrink: 0; min-width: 60px; max-width: 80px;" onmouseover="this.style.background='#1976d2'; this.style.transform='translateY(-1px)'" onmouseout="this.style.background='#2196f3'; this.style.transform='translateY(0)'">
+                        Update
+                    </button>
+                    <button onclick="unregisterSpecificStream('${streamKey}')" style="height: 28px; padding: 0 8px; font-size: 11px; border-radius: 4px; background: #f44336; color: white; border: none; cursor: pointer; transition: all 0.2s ease; font-weight: 500; flex-shrink: 0; min-width: 60px; max-width: 80px;" onmouseover="this.style.background='#d32f2f'; this.style.transform='translateY(-1px)'" onmouseout="this.style.background='#f44336'; this.style.transform='translateY(0)'">
+                        Remove
+                    </button>
+                </div>
+
             </div>
         `;
     });
     
     activeStreamsList.innerHTML = html;
+}
+
+// Update interval for a specific stream
+async function updateStreamInterval(streamKey) {
+    if (!packetHubConnection || !packetHubConnected) {
+        logPacketHubMessage('Not connected to Packet Hub', 'error');
+        return;
+    }
+    
+    const streamRequest = activeStreams.get(streamKey);
+    if (!streamRequest) {
+        logPacketHubMessage(`Stream ${streamKey} not found`, 'warning');
+        return;
+    }
+    
+    const intervalInput = document.getElementById(`intervalInput-${streamKey}`);
+    if (!intervalInput) {
+        logPacketHubMessage(`Interval input for ${streamKey} not found`, 'warning');
+        return;
+    }
+    
+    const intervalMs = parseInt(intervalInput.value) || 0;
+    
+    await setStreamInterval(streamKey, intervalMs);
 }
 
 // Unregister a specific stream by key
@@ -1476,6 +1524,7 @@ async function unregisterSpecificStream(streamKey) {
         logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)} (key: ${subscriptionKey})`, 'info');
         await packetHubConnection.invoke('UnregisterFromMethod', subscriptionKey);
         activeStreams.delete(streamKey);
+        streamIntervals.delete(streamKey);
         updateActiveStreamsList();
         logPacketHubMessage('Stream unregistration request sent', 'success');
     } catch (err) {
@@ -1552,6 +1601,7 @@ async function connectPacketHub() {
         
         // Clear all active streams when connection is lost
         activeStreams.clear();
+        streamIntervals.clear();
         updateActiveStreamsList();
         
         updatePacketHubStatus('disconnected');
@@ -1564,6 +1614,7 @@ async function connectPacketHub() {
         
         // Clear all active streams when reconnecting starts
         activeStreams.clear();
+        streamIntervals.clear();
         updateActiveStreamsList();
         
         updatePacketHubStatus('reconnecting');
@@ -1736,6 +1787,7 @@ async function disconnectPacketHub() {
             
             // Clear all active streams when disconnecting
             activeStreams.clear();
+            streamIntervals.clear();
             updateActiveStreamsList();
             
             updatePacketHubStatus('disconnected');
@@ -1763,6 +1815,8 @@ async function registerSelectedStream() {
 
     const dataPipe = document.getElementById('dataPipeSelect').value;
     const streamValue = document.getElementById('streamSelect').value;
+    const intervalInput = document.getElementById('intervalInput');
+    const intervalMs = parseInt(intervalInput.value) || 0;
     
     if (!dataPipe || !streamValue) {
         logPacketHubMessage('Please select both pipeline and stream', 'warning');
@@ -1789,13 +1843,45 @@ async function registerSelectedStream() {
     }
 
     try {
-        logPacketHubMessage(`Registering Stream: ${JSON.stringify(streamRequest)}`, 'info');
+        logPacketHubMessage(`Registering Stream: ${JSON.stringify(streamRequest)}${intervalMs > 0 ? ` with interval ${intervalMs}ms` : ''}`, 'info');
         await packetHubConnection.invoke('RegisterToMethod', streamRequest);
         activeStreams.set(streamKey, streamRequest);
+        
+        // Set interval if specified (> 0)
+        if (intervalMs > 0) {
+            await setStreamInterval(streamKey, intervalMs);
+        } else {
+            streamIntervals.set(streamKey, 0); // Mark as no sampling
+        }
+        
         updateActiveStreamsList();
         logPacketHubMessage('Stream registration request sent', 'success');
     } catch (err) {
         logPacketHubMessage(`Error registering stream: ${err.message}`, 'error');
+    }
+}
+
+// Set interval for a stream
+async function setStreamInterval(subscriptionKey, intervalMs) {
+    if (!packetHubConnection || !packetHubConnected) {
+        logPacketHubMessage('Not connected to Packet Hub', 'error');
+        return;
+    }
+    
+    try {
+        if (intervalMs === 0) {
+            logPacketHubMessage(`Removing sampling interval for ${subscriptionKey}`, 'info');
+            await packetHubConnection.invoke('SetTimeInterval', { subscriptionKey, intervalMs: 0 });
+            streamIntervals.set(subscriptionKey, 0);
+        } else {
+            logPacketHubMessage(`Setting interval for ${subscriptionKey} to ${intervalMs}ms`, 'info');
+            await packetHubConnection.invoke('SetTimeInterval', { subscriptionKey, intervalMs });
+            streamIntervals.set(subscriptionKey, intervalMs);
+        }
+        updateActiveStreamsList();
+        logPacketHubMessage(`Interval updated`, 'success');
+    } catch (err) {
+        logPacketHubMessage(`Error setting interval: ${err.message}`, 'error');
     }
 }
 
@@ -1838,6 +1924,7 @@ async function unregisterSelectedStream() {
         logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)} (key: ${subscriptionKey})`, 'info');
         await packetHubConnection.invoke('UnregisterFromMethod', subscriptionKey);
         activeStreams.delete(streamKey);
+        streamIntervals.delete(streamKey);
         updateActiveStreamsList();
         logPacketHubMessage('Stream unregistration request sent', 'success');
     } catch (err) {
@@ -1990,6 +2077,7 @@ async function unregisterStream() {
         logPacketHubMessage(`Unregistering Stream: ${JSON.stringify(streamRequest)} (key: ${subscriptionKey})`, 'info');
         await packetHubConnection.invoke('UnregisterFromMethod', subscriptionKey);
         activeStreams.delete(streamKey);
+        streamIntervals.delete(streamKey);
         updateActiveStreamsList();
         logPacketHubMessage('Stream unregistration request sent', 'success');
     } catch (err) {

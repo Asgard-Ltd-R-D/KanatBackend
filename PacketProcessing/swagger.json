@@ -1040,6 +1040,57 @@
         }
       }
     },
+    "/hubs/packets/SetTimeInterval": {
+      "post": {
+        "tags": ["SignalR Hub"],
+        "summary": "Invoke SetTimeInterval (SignalR)",
+        "description": "Logical documentation endpoint for invoking the SignalR hub method SetTimeInterval. This is not an HTTP API call; use a SignalR client to call the hub method.",
+        "operationId": "HubSetTimeInterval",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/IntervalRequestDto" },
+              "example": {
+                "subscriptionKey": "motion|mot_getmotorcurrent|false|1",
+                "intervalMs": 100
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ACK emitted by the hub via the 'Ack' event",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AckDto" },
+                "examples": {
+                  "success": {
+                    "summary": "Interval set success",
+                    "value": {
+                      "operationType": "SetTimeInterval",
+                      "success": true,
+                      "message": {
+                        "subscriptionKey": "motion|mot_getmotorcurrent|false|1",
+                        "intervalMs": 100
+                      }
+                    }
+                  },
+                  "failure": {
+                    "summary": "Interval set failure",
+                    "value": {
+                      "operationType": "SetTimeInterval",
+                      "success": false,
+                      "message": "Interval must be at least 1ms, got 0"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "OnReceivePacket": {
       "get": {
         "tags": ["SignalR Hub"],
@@ -1610,6 +1661,46 @@
                       "operationType": "UnregisterFromMethod",
                       "success": false,
                       "message": "motion|mot_getmotorspeed|false|0"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "SetTimeInterval",
+            "direction": "client->server",
+            "description": "Sets a sampling interval for a specific stream. Packets for this stream will only be transmitted if the specified interval (in milliseconds) has elapsed since the last transmission. Setting intervalMs to 0 will disable sampling for the stream.",
+            "parameters": [
+              {
+                "name": "request",
+                "in": "body",
+                "schema": { "$ref": "#/components/schemas/IntervalRequestDto" }
+              }
+            ],
+            "responses": [
+              {
+                "event": "Ack",
+                "description": "ACK on interval setting result",
+                "schema": { "$ref": "#/components/schemas/AckDto" },
+                "examples": {
+                  "success": {
+                    "summary": "Interval set success",
+                    "value": {
+                      "operationType": "SetTimeInterval",
+                      "success": true,
+                      "message": {
+                        "subscriptionKey": "motion|mot_getmotorcurrent|false|1",
+                        "intervalMs": 100
+                      }
+                    }
+                  },
+                  "failure": {
+                    "summary": "Interval set failure",
+                    "value": {
+                      "operationType": "SetTimeInterval",
+                      "success": false,
+                      "message": "Invalid interval or subscription not found"
                     }
                   }
                 }

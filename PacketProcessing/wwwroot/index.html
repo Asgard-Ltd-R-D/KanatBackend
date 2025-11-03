@@ -466,10 +466,11 @@
                     <!-- Add Stream Section -->
                     <div style="margin-bottom: 40px; padding: 30px; background: rgba(79, 195, 247, 0.1); border-radius: 8px; border-left: 4px solid #4fc3f7;">
                         <h5 style="color: #4fc3f7; margin: 0 0 20px 0; font-size: 18px;">Add New Stream</h5>
-                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 15px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px;">
                             <select id="streamSelect" class="form-select" style="flex: 1; height: 40px; font-size: 14px; min-width: 0;">
                                 <!-- Options will be populated dynamically -->
                             </select>
+                            <input id="intervalInput" type="number" placeholder="Interval (ms)" min="0" style="width: 120px; padding: 8px; border: 1px solid #333; border-radius: 5px; background: #2a2a2a; color: #e0e0e0; font-size: 14px; height: 40px;" title="Sampling interval in milliseconds (0 = no sampling)">
                             <button id="registerStreamBtn" class="btn-start" onclick="registerSelectedStream()" disabled style="height: 32px; padding: 0 12px; font-size: 12px; border-radius: 4px; flex-shrink: 0; min-width: 60px; max-width: 80px;">
                                 Add
                             </button>
@@ -511,7 +512,7 @@
     
     </div> <!-- End main-content -->
 
-    <script src="js/dashboard.js?v=5"></script>
+    <script src="js/dashboard.js?v=11"></script>
     
     <script>
         // Console Access Functions

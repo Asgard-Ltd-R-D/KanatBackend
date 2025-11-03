@@ -34,4 +34,14 @@ public interface ITransmissionService : IObserver<BasePacketEntity>
     /// Get all registered streams for a specific connection ID
     /// </summary>
     ICollection<string> GetRegisteredStreamKeys(string connectionId);
+
+    /// <summary>
+    /// Set the interval for a specific subscription key
+    /// </summary>
+    /// <param name="request">The interval request DTO</param>
+    /// <param name="connectionId">The connection ID</param>
+    /// <returns>A task representing the asynchronous operation</returns>
+    /// <exception cref="ArgumentNullException">Thrown when request or connectionId is null</exception>
+    /// <exception cref="ArgumentException">Thrown when interval is less than 1</exception>
+    Task SetTimeIntervalAsync(IntervalRequestDto request, string connectionId);
 }

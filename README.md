@@ -1,302 +1,331 @@
 # Kanat Packet Processing System
 
-A real-time system for monitoring packets over shared LAN, storing them, and passing them to analysis over time.
+A high-performance, real-time telemetry ingestion and analysis system built with .NET 8, QuestDB, PostgreSQL, and SignalR. The system captures network packets from multiple sources, processes them in real-time, and provides a web-based dashboard for monitoring and analysis.
 
 ## Table of Contents
 
-- [DTOs (Data Transfer Objects)](#dtos-data-transfer-objects)
-- [REST API Endpoints](#rest-api-endpoints)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Running the System](#running-the-system)
+- [Dashboard](#dashboard)
+- [API Reference](#api-reference)
 - [SignalR Hub](#signalr-hub)
-- [Examples](#examples)
+- [Database Schema](#database-schema)
+- [Development](#development)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-## DTOs (Data Transfer Objects)
+## Features
 
-### Core DTOs
+### Core Capabilities
 
-#### `ResponseResult<T>` / `ResponseResult`
-Generic response wrapper for all API operations.
+- **Multi-Source Packet Capture**: Capture packets from Motion, Safety, OnVIF, and Weather sources over TCP/UDP
+- **Real-Time Processing**: High-throughput packet processing with configurable worker pools (2-8 workers)
+- **QuestDB Integration**: Time-series database optimized for 6000+ packets per second with WAL enabled
+- **Session Management**: Create, manage, and archive range sessions with automatic table partitioning
+- **Web Dashboard**: Real-time telemetry visualization with live charts and statistics
+- **SignalR Streaming**: Push packet data to connected clients in real-time
+- **Playback Mode**: Replay historical data at configurable speeds
 
-```csharp
-public class ResponseResult<T>
+### Performance
+
+- **Throughput**: Sustains 6000+ rows per second without stalling
+- **Latency**: Sub-100ms packet-to-storage latency
+- **Scalability**: Configurable worker pools and batch processing
+- **Efficient Storage**: WAL-enabled QuestDB tables with daily partitioning
+
+---
+
+## Architecture
+
+### System Components
+
+```
+┌─────────────────┐
+│  Network Device │
+│   (eth0, etc.)  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────┐
+│              HandlerService                             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
+│  │  Motion  │  │  Safety  │  │  OnVIF   │             │
+│  │  Handler │  │  Handler │  │  Handler │             │
+│  └─────┬────┘  └─────┬────┘  └─────┬────┘             │
+└────────┼─────────────┼──────────────┼──────────────────┘
+         │             │              │
+         ▼             ▼              ▼
+    ┌─────────────────────────────────────────┐
+    │        Channels (High-Capacity)         │
+    │  Motion: 1M | Safety: 1M | OnVIF: 100K │
+    └─────────────────┬───────────────────────┘
+                      │
+                      ▼
+    ┌─────────────────────────────────────────┐
+    │        DbWriterService (ILP)            │
+    │  Workers: 2-8 | Batch: 2000 | 1000ms   │
+    └─────────────────┬───────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────┐
+│                    QuestDB                              │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │  motion_packets   (WAL, PARTITION BY DAY)       │   │
+│  │  safety_packets   (WAL, PARTITION BY DAY)       │   │
+│  │  onvif_packets    (WAL, PARTITION BY DAY)       │   │
+│  │  motion_packets_{rangeId} (Session Tables)      │   │
+│  └─────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│                TelemetryBroadcaster                     │
+│          (Push stats to SignalR clients)                │
+└────────────────────┬────────────────────────────────────┘
+                     │
+                     ▼
+         ┌───────────────────────┐
+         │    SignalR Hub        │
+         │  /hubs/packets        │
+         └───────────┬───────────┘
+                     │
+                     ▼
+         ┌───────────────────────┐
+         │  Web Dashboard        │
+         │  (Real-time Charts)   │
+         └───────────────────────┘
+```
+
+### Database Architecture
+
+**PostgreSQL** (Range Entities):
+- Stores range metadata, events, hits, targets
+- Used for session management and historical queries
+- Connection: Port 5432
+
+**QuestDB** (Packet Entities):
+- Time-series database for high-frequency packet data
+- WAL-enabled with daily partitioning
+- ILP ingestion on Port 9000, PostgreSQL wire protocol on 8812, HTTP on 9009
+- Indexed subscription keys for fast filtering
+
+---
+
+## Prerequisites
+
+### Required Software
+
+- **.NET 8 SDK** or later
+- **Docker** and **Docker Compose** (for database containers)
+- **Linux** or **macOS** (for packet capture)
+- **Windows** users should use WSL2
+
+### Network Access
+
+- Permission to capture packets on network interfaces
+- Access to target packet sources (configure IPs/ports in `appsettings.json`)
+
+---
+
+## Installation
+
+### 1. Clone Repository
+
+```bash
+git clone <repository-url>
+cd KanatBackend
+```
+
+### 2. Start Databases with Docker
+
+```bash
+# Start PostgreSQL and QuestDB
+docker-compose -f docker-compose.dev.yml up -d
+
+# Or for production
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+### 3. Configure Application
+
+Edit `PacketProcessing/appsettings.Development.json` or `appsettings.Production.json`:
+
+```json
 {
-    public bool Success { get; set; }
-    public T? Data { get; set; }
-    public string? ErrorMessage { get; set; }
-    public int StatusCode { get; set; }
-    public DateTime Timestamp { get; set; }
+  "Application": {
+    "Url": "http://0.0.0.0:10901"
+  },
+  "Postgres": {
+    "Host": "localhost",
+    "Port": 5432,
+    "Database": "RangeDBDev",
+    "Username": "postgres",
+    "Password": "postgres"
+  },
+  "QuestDb": {
+    "Host": "localhost",
+    "PostgresPort": 8812,
+    "InfluxPort": 9000,
+    "HttpPort": 9009,
+    "Username": "quest",
+    "Password": "quest",
+    "Database": "PacketDBDev"
+  }
 }
 ```
 
-#### `PaginatedResult<T>`
-Generic paginated result for API operations that return paginated data.
+### 4. Build and Run
 
-```csharp
-public class PaginatedResult<T>
-{
-    public IEnumerable<T> Items { get; set; }
-    public int Page { get; set; }
-    public int PageSize { get; set; }
-    public int TotalCount { get; set; }
-    public int TotalPages { get; set; }
-    public bool HasPreviousPage { get; set; }
-    public bool HasNextPage { get; set; }
-    public DateTime Timestamp { get; set; }
-}
-```
-
-### Stream DTOs
-
-#### `StreamRequestDto`
-Stream request for packet transmission.
-
-```csharp
-public sealed class StreamRequestDto
-{
-    public required DataPipes DataPipe { get; init; }
-    public required string Description { get; init; }
-    public bool? IsCmd { get; init; } = false;
-    public int? Axis { get; init; } = 0;
-    public string SubscriptionKey { get; } // Auto-generated
-}
-```
-
-### Packet DTOs
-
-#### `MotionPacketDto`
-Data Transfer Object for MotionPacketEntity.
-
-```csharp
-public class MotionPacketDto
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public bool IsCmd { get; set; }
-    public string OpCode { get; set; }
-    public string Description { get; set; }
-    public int Axis { get; set; }
-    public double? Value { get; set; }
-}
-```
-
-#### `SafetyPacketDto`
-Data Transfer Object for SafetyPacketEntity.
-
-```csharp
-public class SafetyPacketDto
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public string Name { get; set; }
-    public bool IsCmd { get; set; }
-    public string OpCode { get; set; }
-    public string Description { get; set; }
-    public string State { get; set; }
-}
-```
-
-#### `OnVIFPacketDto`
-Data Transfer Object for OnVIFPacketEntity.
-
-```csharp
-public class OnVIFPacketDto
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public bool IsCmd { get; set; }
-    public string Description { get; set; }
-    public double? Zoom { get; set; }
-    public double? Measurement { get; set; }
-}
-```
-
-### Range DTOs
-
-#### `RangeDto`
-Data Transfer Object for RangeEntity.
-
-```csharp
-public class RangeDto
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public long Start { get; set; }
-    public long End { get; set; }
-    public string Description { get; set; }
-}
-```
-
-#### `EventDto`
-Data Transfer Object for EventEntity.
-
-```csharp
-public class EventDto
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public long Start { get; set; }
-    public long End { get; set; }
-    public Guid RangeId { get; set; }
-}
-```
-
-#### `HitDto`
-Data Transfer Object for HitEntity.
-
-```csharp
-public class HitDto
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public float RangeToTarget { get; set; }
-    public int PosX { get; set; }
-    public int PosY { get; set; }
-    public int CenterX { get; set; }
-    public int CenterY { get; set; }
-    public Guid TargetId { get; set; }
-    public Guid EventId { get; set; }
-}
-```
-
-#### `TargetDto`
-Data Transfer Object for TargetEntity.
-
-```csharp
-public class TargetDto
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public int PosX { get; set; }
-    public int PosY { get; set; }
-    public int CenterX { get; set; }
-    public int CenterY { get; set; }
-}
-```
-
-### SignalR DTOs
-
-#### `AckDto`
-Acknowledgement DTO for SignalR operations.
-
-```csharp
-public class AckDto
-{
-    public required OperationType OperationType { get; init; }
-    public required bool Success { get; init; }
-    public object? Message { get; init; }
-}
-```
-
-### Utility DTOs
-
-#### `PlainDataDto`
-Plain data DTO for telemetry.
-
-```csharp
-public class PlainDataDto
-{
-    public long Timestamp { get; set; }
-    public double Value { get; set; }
-    public DataPipes DataPipe { get; set; }
-    public string MethodName { get; set; }
-}
-```
-
-#### `DeviceSubscriptionStatusDto`
-Device subscription status DTO.
-
-```csharp
-public class DeviceSubscriptionStatusDto
-{
-    public string DeviceName { get; set; }
-    public string Filter { get; set; }
-    public bool IsCapturing { get; set; }
-}
-```
-
-### Enums
-
-#### `DataPipes`
-Data pipe types for packet processing.
-
-```csharp
-public enum DataPipes
-{
-    Motion,
-    OnVIF,
-    Safety
-}
-```
-
-#### `States`
-Application states.
-
-```csharp
-public enum States
-{
-    Realtime,
-    Playback
-}
-```
-
-#### `OperationType`
-SignalR operation types.
-
-```csharp
-public enum OperationType
-{
-    RegisterToMethod,
-    UnregisterFromMethod,
-    ConnectionEstablished,
-    ConnectionClosed
-}
+```bash
+cd PacketProcessing
+dotnet restore
+dotnet build
+dotnet run --environment Development
 ```
 
 ---
 
-## REST API Endpoints
+## Configuration
 
-Base URL: `http://localhost:10901/api/range`
+### Application Configuration
+
+Location: `PacketProcessing/appsettings.json`
+
+#### Concurrency Settings
+
+```json
+{
+  "Concurrency": {
+    "SingleReader": false,
+    "SingleWriter": false,
+    "MinWorkers": 2,
+    "MaxWorkers": 4,
+    "BatchSize": 2000,
+    "BatchTimeoutMs": 1000
+  }
+}
+```
+
+- **MinWorkers / MaxWorkers**: Number of worker threads for packet processing (2-8)
+- **BatchSize**: Rows to buffer before flushing to QuestDB (default: 2000)
+- **BatchTimeoutMs**: Maximum time to wait before flushing incomplete batches
+
+#### Data Pipe Configuration
+
+Configure each packet source:
+
+```json
+{
+  "DataPipes": {
+    "MotionCapture": {
+      "Network": {
+        "Device": "any",
+        "Protocol": "tcp",
+        "IPs": ["132.8.7.125"],
+        "Ports": []  // Optional, empty means all ports
+      },
+      "Channel": {
+        "Members": 1000000  // Channel capacity
+      },
+      "Sampling": {
+        "IntervalMs": 30
+      }
+    }
+  }
+}
+```
+
+- **Device**: Network interface name or "any" for all interfaces
+- **Protocol**: "tcp" or "udp"
+- **IPs**: Array of source IP addresses to filter
+- **Ports**: Array of ports to filter (optional, empty = all)
+- **Members**: Channel capacity (buffer size)
+- **IntervalMs**: Sampling interval for metrics
+
+---
+
+## Running the System
+
+### Development Mode
+
+```bash
+cd PacketProcessing
+dotnet run --environment Development
+```
+
+Dashboard available at: http://localhost:10901
+
+### Production Mode
+
+```bash
+dotnet publish -c Release -o ./publish
+cd publish
+dotnet PacketProcessing.dll --environment Production
+```
+
+Dashboard available at: http://localhost:10900
+
+### Using Docker
+
+```bash
+docker build -t kanat-backend .
+docker run -p 10901:10901 kanat-backend
+```
+
+---
+
+## Dashboard
+
+### Accessing the Dashboard
+
+Open your browser to:
+- **Development**: http://localhost:10901
+- **Production**: http://localhost:10900
+
+### Features
+
+1. **Mode Selector**: Switch between Realtime and Playback modes
+2. **Range Management**: Create and manage packet capture sessions
+3. **Live Telemetry**: Real-time charts showing:
+   - Packets Per Second (PPS)
+   - Channel Utilization
+   - Latency metrics
+4. **Stream Registration**: Register for specific packet streams
+5. **Console Access**: Quick links to:
+   - Swagger API documentation
+   - QuestDB console
+   - Seq log viewer
+
+### Telemetry Dashboard Sections
+
+- **THROUGHPUT (Last 60 seconds)**: Live PPS chart for all packet types
+- **Channel Utilization Tables**: Real-time buffer usage per packet type
+- **Stream Management**: Add/remove packet streams dynamically
+
+---
+
+## API Reference
+
+### Base URL
+
+- **Development**: `http://localhost:10901/api/range`
+- **Production**: `http://localhost:10900/api/range`
+
+### Authentication
+
+Currently none (configure as needed for production).
 
 ### Mode Management
 
-#### Change Application Mode
-```http
-PUT /api/range/mode/{mode}
-```
-
-**Parameters:**
-- `mode` (path): `Realtime` or `Playback`
-
-**Returns:** `ResponseResult`
-
-**Example:**
-```bash
-curl -X PUT "http://localhost:10901/api/v1/range/mode/Realtime"
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": null,
-  "errorMessage": null,
-  "statusCode": 200,
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
 #### Get Current Mode
+
 ```http
 GET /api/range/mode
-```
-
-**Returns:** `ResponseResult<string>`
-
-**Example:**
-```bash
-curl "http://localhost:10901/api/v1/range/mode"
 ```
 
 **Response:**
@@ -304,640 +333,404 @@ curl "http://localhost:10901/api/v1/range/mode"
 {
   "success": true,
   "data": "Realtime",
-  "errorMessage": null,
-  "statusCode": 200,
-  "timestamp": "2024-01-15T10:30:00Z"
+  "statusCode": 200
 }
 ```
 
+#### Change Mode
+
+```http
+PUT /api/range/mode/{mode}
+```
+
+**Parameters:**
+- `mode`: `Realtime` or `Playback`
+
+---
+
 ### Realtime Operations
 
-#### Start Realtime (Configuration)
+#### Start Realtime Capture
+
 ```http
 POST /api/range/realtime/start
-```
+Content-Type: application/json
 
-**Body:** `RangeDto` (includes `Config` with `BpfConfig` device and endpoints)
-
-**Returns:** `ResponseResult`
-
-**Example:**
-```bash
-curl -X POST "http://localhost:10901/api/range/realtime/start" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "00000000-0000-0000-0000-000000000000",
-    "timestamp": "2024-01-15T10:30:00Z",
-    "description": "Session",
-    "startTime": 1730265600000,
-    "endTime": -1,
-    "config": {
-      "bpfConfig": { "device": "any", "motion": [{"ip":"132.8.7.125","port": 1234}] },
-      "mtxConfig": { "ip": "127.0.0.1", "port": 8554 },
-      "cams": [{"alias":"Default","isRecording": false}]
+{
+  "description": "My Range Session",
+  "config": {
+    "bpfConfig": {
+      "device": "eth0",
+      "motion": [{ "ip": "132.8.7.125", "port": 1234 }],
+      "safety": [{ "ip": "132.8.7.101", "port": 5678 }],
+      "onvif": [{ "ip": "132.8.7.121", "port": 8080 }]
+    },
+    "mtxConfig": {
+      "ip": "127.0.0.1",
+      "port": 8554
     }
-  }'
+  }
+}
 ```
 
-> Development only (deprecated): `POST /api/range/realtime/start/{deviceName}`
+#### Stop Capture
 
-#### Stop All Services
 ```http
 DELETE /api/range/realtime/stop
 ```
 
-**Returns:** `ResponseResult`
-
-**Example:**
-```bash
-curl -X DELETE "http://localhost:10901/api/range/realtime/stop"
-```
-
 #### Get Available Devices
+
 ```http
 GET /api/range/realtime/devices
-```
-
-**Returns:** `ResponseResult<ICollection<string>>`
-
-**Example:**
-```bash
-curl "http://localhost:10901/api/range/realtime/devices"
 ```
 
 **Response:**
 ```json
 {
   "success": true,
-  "data": ["eth0", "wlan0", "lo"],
-  "errorMessage": null,
-  "statusCode": 200,
-  "timestamp": "2024-01-15T10:30:00Z"
+  "data": ["eth0", "wlan0", "lo"]
 }
 ```
 
 #### Reset Statistics
+
 ```http
 POST /api/range/reset
 ```
 
-**Returns:** `ResponseResult`
+---
 
-**Example:**
-```bash
-curl -X POST "http://localhost:10901/api/range/reset"
+### Range Management
+
+#### Get All Ranges (Paginated)
+
+```http
+GET /api/range/ranges?page=1&pageSize=10
 ```
+
+#### Get Range by ID
+
+```http
+GET /api/range/ranges/{id}
+```
+
+#### Create Range
+
+```http
+POST /api/range/ranges
+Content-Type: application/json
+
+{
+  "description": "Test Range",
+  "startTime": 1642248600000,
+  "endTime": 1642248660000
+}
+```
+
+#### Update Range
+
+```http
+PUT /api/range/ranges/{id}
+Content-Type: application/json
+
+{
+  "description": "Updated Range",
+  "startTime": 1642248600000,
+  "endTime": 1642248660000
+}
+```
+
+#### Delete Range
+
+```http
+DELETE /api/range/ranges/{id}
+```
+
+#### Clear Packets
+
+```http
+DELETE /api/range/packets/clear
+```
+
+Note: This truncates ALL base tables regardless of time range.
+
+---
 
 ### Playback Operations
 
 #### Set Playback Pace
+
 ```http
 PUT /api/range/playback/pace/{pace}
 ```
 
 **Parameters:**
-- `pace` (path): Playback speed multiplier (e.g., 1.0 = normal, 2.0 = double speed)
-
-**Returns:** `ResponseResult`
-
-**Example:**
-```bash
-curl -X PUT "http://localhost:10901/api/v1/range/playback/pace/2.0"
-```
-
-### Range Entity Management
-
-#### Get Range by ID
-```http
-GET /api/v1/range/ranges/{id}
-```
-
-**Parameters:**
-- `id` (path): Range GUID
-
-**Returns:** `ResponseResult<RangeDto>`
-
-**Example:**
-```bash
-curl "http://localhost:10901/api/v1/range/ranges/123e4567-e89b-12d3-a456-426614174000"
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "123e4567-e89b-12d3-a456-426614174000",
-    "timestamp": "2024-01-15T10:30:00Z",
-    "start": 1642248600000,
-    "end": 1642248660000,
-    "description": "Test Range Session"
-  },
-  "errorMessage": null,
-  "statusCode": 200,
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-#### Create Range
-```http
-POST /api/v1/range/ranges
-```
-
-**Body:** `RangeDto`
-
-**Returns:** `ResponseResult<RangeDto>`
-
-**Example:**
-```bash
-curl -X POST "http://localhost:10901/api/v1/range/ranges" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "timestamp": "2024-01-15T10:30:00Z",
-    "start": 1642248600000,
-    "end": 1642248660000,
-    "description": "New Range Session"
-  }'
-```
-
-#### Get All Ranges (Paginated)
-```http
-GET /api/v1/range/ranges?page=1&pageSize=100
-```
-
-**Parameters:**
-- `page` (query): Page number (default: 1)
-- `pageSize` (query): Items per page (default: 1000)
-
-**Returns:** `ResponseResult<PaginatedResult<RangeDto>>`
-
-**Example:**
-```bash
-curl "http://localhost:10901/api/v1/range/ranges?page=1&pageSize=10"
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "items": [
-      {
-        "id": "123e4567-e89b-12d3-a456-426614174000",
-        "timestamp": "2024-01-15T10:30:00Z",
-        "start": 1642248600000,
-        "end": 1642248660000,
-        "description": "Test Range Session"
-      }
-    ],
-    "page": 1,
-    "pageSize": 10,
-    "totalCount": 1,
-    "totalPages": 1,
-    "hasPreviousPage": false,
-    "hasNextPage": false,
-    "timestamp": "2024-01-15T10:30:00Z"
-  },
-  "errorMessage": null,
-  "statusCode": 200,
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-#### Update Range
-```http
-PUT /api/v1/range/ranges/{id}
-```
-
-**Parameters:**
-- `id` (path): Range GUID
-
-**Body:** `RangeDto`
-
-**Returns:** `ResponseResult<RangeDto>`
-
-**Example:**
-```bash
-curl -X PUT "http://localhost:10901/api/v1/range/ranges/123e4567-e89b-12d3-a456-426614174000" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "timestamp": "2024-01-15T10:30:00Z",
-    "start": 1642248600000,
-    "end": 1642248660000,
-    "description": "Updated Range Session"
-  }'
-```
-
-#### Delete Range
-```http
-DELETE /api/v1/range/ranges/{id}
-```
-
-**Parameters:**
-- `id` (path): Range GUID
-
-**Returns:** `ResponseResult`
-
-**Example:**
-```bash
-curl -X DELETE "http://localhost:10901/api/v1/range/ranges/123e4567-e89b-12d3-a456-426614174000"
-```
-
-#### Clear Packets
-```http
-DELETE /api/v1/range/packets/clear?start=2024-01-15T10:00:00Z&end=2024-01-15T11:00:00Z
-```
-
-**Parameters:**
-- `start` (query): Start timestamp (ISO-8601)
-- `end` (query): End timestamp (ISO-8601)
-
-**Returns:** `ResponseResult<string>`
-
-**Example:**
-```bash
-curl -X DELETE "http://localhost:10901/api/v1/range/packets/clear?start=2024-01-15T10:00:00Z&end=2024-01-15T11:00:00Z"
-```
-
-### Development Endpoints
-
-#### Get All Ranges (Development Only)
-```http
-GET /api/v1/range/dev/ranges/all
-```
-
-**Returns:** `ResponseResult<IEnumerable<RangeDto>>`
-
-#### Delete All Ranges (Development Only)
-```http
-DELETE /api/v1/range/dev/ranges/all
-```
-
-**Returns:** `ResponseResult<int>` (count of deleted ranges)
+- `pace`: Speed multiplier (1.0 = normal, 2.0 = double)
 
 ---
 
 ## SignalR Hub
 
-**Hub URL:** `http://localhost:10901/hubs/packets`
+### Connection
 
-### Connection Events
+```javascript
+const connection = new signalR.HubConnectionBuilder()
+    .withUrl("http://localhost:10901/hubs/packets")
+    .build();
 
-#### OnConnectedAsync
-Automatically called when a client connects.
-
-**Returns:** Array of `AckDto` with previously registered streams.
-
-**Example Response:**
-```json
-[
-  {
-    "operationType": "ConnectionEstablished",
-    "success": true,
-    "message": "motion|mot_getmotorcurrent|false|1"
-  },
-  {
-    "operationType": "ConnectionEstablished", 
-    "success": true,
-    "message": "safety|do3_fire1|true|"
-  }
-]
-```
-
-#### OnDisconnectedAsync
-Automatically called when a client disconnects.
-
-**Returns:** `AckDto` with connection closed status.
-
-**Example Response:**
-```json
-{
-  "operationType": "ConnectionClosed",
-  "success": true,
-  "message": null
-}
+await connection.start();
 ```
 
 ### Hub Methods
 
-#### RegisterToMethod
-Register to receive packets for a specific stream.
+#### Register to Stream
 
-**Parameters:** `StreamRequestDto`
-
-**Returns:** `AckDto`
-
-**Example:**
 ```javascript
-// JavaScript client
-const streamRequest = {
-  dataPipe: "Motion",
-  description: "MOT_GetMotorCurrent",
-  isCmd: false,
-  axis: 1
-};
-
-await connection.invoke("RegisterToMethod", streamRequest);
+await connection.invoke("RegisterToMethod", {
+    dataPipe: "Motion",
+    description: "MOT_GetMotorCurrent",
+    isCmd: false,
+    axis: 1
+});
 ```
 
-**Response:**
-```json
-{
-  "operationType": "RegisterToMethod",
-  "success": true,
-  "message": {
-    "dataPipe": "Motion",
-    "description": "MOT_GetMotorCurrent",
-    "isCmd": false,
-    "axis": 1,
-    "subscriptionKey": "motion|mot_getmotorcurrent|false|1"
-  }
-}
-```
+#### Unregister from Stream
 
-#### UnregisterFromMethod
-Unregister from receiving packets for a specific stream.
-
-**Parameters:** `string subscriptionKey`
-
-**Returns:** `AckDto`
-
-**Example:**
 ```javascript
-// JavaScript client
-const streamRequest = {
-  dataPipe: "Motion",
-  description: "MOT_GetMotorCurrent", 
-  isCmd: false,
-  axis: 1
-};
-
-// Build subscription key exactly like the server and lowercase it
-const subscriptionKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd ?? false}|${streamRequest.axis ?? ""}`.toLowerCase();
-
-await connection.invoke("UnregisterFromMethod", subscriptionKey);
-```
-
-**Response:**
-```json
-{
-  "operationType": "UnregisterFromMethod",
-  "success": true,
-  "message": "motion|mot_getmotorcurrent|false|1"
-}
+await connection.invoke("UnregisterFromMethod", "motion|mot_getmotorcurrent|false|1");
 ```
 
 ### Client Events
 
-#### Ack
-Received when operations complete.
-
-**Parameters:** `AckDto` or `AckDto[]`
-
-**Example:**
-```javascript
-// JavaScript client
-connection.on("Ack", (ackData) => {
-  if (Array.isArray(ackData)) {
-    // Multiple ACKs (on connect)
-    ackData.forEach(ack => {
-      console.log(`ACK Received: ${JSON.stringify(ack)}`);
-    });
-  } else {
-    // Single ACK (on register/unregister/disconnect)
-    console.log(`ACK Received: ${JSON.stringify(ackData)}`);
-  }
-});
-```
-
 #### OnReceivePacket
-Received when packet data is transmitted.
 
-**Parameters:** `PlainDataDto`
-
-Plain payload from server:
-
-```json
-{
-  "subscriptionKey": "motion|mot_getmotorcurrent|false|1",
-  "timestamp": 1730093700000,
-  "value": 42.5
-}
+```javascript
+connection.on("OnReceivePacket", (data) => {
+    console.log("Packet:", data.subscriptionKey, data.value, data.timestamp);
+});
 ```
 
-**Example:**
+#### Ack
+
 ```javascript
-// JavaScript client
-connection.on("OnReceivePacket", (plainData) => {
-  console.log("Packet Received:", plainData);
-  // plainData.subscriptionKey, plainData.timestamp (ms), plainData.value
+connection.on("Ack", (ack) => {
+    console.log("Operation:", ack.operationType, ack.success);
 });
 ```
 
 ---
 
-## Examples
+## Database Schema
 
-### Complete JavaScript Client Example
+### QuestDB Tables
 
-```javascript
-// SignalR connection setup
-const connection = new signalR.HubConnectionBuilder()
-    .withUrl("http://localhost:10901/hubs/packets")
-    .withAutomaticReconnect([0, 1000, 2000, 5000])
-    .build();
+#### motion_packets
 
-// Connection event handlers
-connection.onclose((error) => {
-    console.log("Connection closed:", error);
-});
+```sql
+CREATE TABLE motion_packets (
+    timestamp   TIMESTAMP,
+    id          SYMBOL CAPACITY 256 CACHE,
+    isCmd       BOOLEAN,
+    opCode      STRING,
+    description STRING,
+    axis        INT,
+    value       DOUBLE
+) TIMESTAMP(timestamp) PARTITION BY DAY WAL;
 
-connection.onreconnecting((error) => {
-    console.log("Reconnecting...");
-});
-
-connection.onreconnected((connectionId) => {
-    console.log("Reconnected successfully");
-});
-
-// ACK handler
-connection.on("Ack", (ackData) => {
-    if (Array.isArray(ackData)) {
-        console.log("Multiple ACKs received:", ackData);
-    } else {
-        console.log("Single ACK received:", ackData);
-    }
-});
-
-// Packet data handler
-connection.on("OnReceivePacket", (packetData) => {
-    console.log("Packet received:", packetData);
-    
-    // Process different packet types
-    switch (packetData.dataPipe) {
-        case "Motion":
-            console.log(`Motion: ${packetData.description} - Axis ${packetData.axis} = ${packetData.value}`);
-            break;
-        case "Safety":
-            console.log(`Safety: ${packetData.description} - State: ${packetData.state}`);
-            break;
-        case "OnVIF":
-            console.log(`OnVIF: ${packetData.description} - Zoom: ${packetData.zoom}, Measurement: ${packetData.measurement}`);
-            break;
-    }
-});
-
-// Start connection
-async function startConnection() {
-    try {
-        await connection.start();
-        console.log("Connected to SignalR hub");
-        
-        // Register for motion packets
-        await registerForMotionPackets();
-        
-    } catch (err) {
-        console.error("Connection failed:", err);
-    }
-}
-
-// Register for motion packets
-async function registerForMotionPackets() {
-    const streamRequest = {
-        dataPipe: "Motion",
-        description: "MOT_GetMotorCurrent",
-        isCmd: false,
-        axis: 1
-    };
-    
-    try {
-        await connection.invoke("RegisterToMethod", streamRequest);
-        console.log("Registered for motion packets");
-    } catch (err) {
-        console.error("Registration failed:", err);
-    }
-}
-
-// Unregister from motion packets
-async function unregisterFromMotionPackets() {
-    const streamRequest = {
-        dataPipe: "Motion", 
-        description: "MOT_GetMotorCurrent",
-        isCmd: false,
-        axis: 1
-    };
-    
-    try {
-        const subscriptionKey = `${streamRequest.dataPipe}|${streamRequest.description}|${streamRequest.isCmd ?? false}|${streamRequest.axis ?? ""}`.toLowerCase();
-        await connection.invoke("UnregisterFromMethod", subscriptionKey);
-        console.log("Unregistered from motion packets");
-    } catch (err) {
-        console.error("Unregistration failed:", err);
-    }
-}
-
-// Start the connection
-startConnection();
+ALTER TABLE motion_packets ALTER COLUMN id ADD INDEX;
 ```
 
-### REST API Usage Examples
+#### safety_packets
 
-#### Start Capture and Register for Streams
+```sql
+CREATE TABLE safety_packets (
+    timestamp   TIMESTAMP,
+    id          SYMBOL CAPACITY 256 CACHE,
+    name        STRING,
+    isCmd       BOOLEAN,
+    opCode      STRING,
+    description STRING,
+    state       STRING
+) TIMESTAMP(timestamp) PARTITION BY DAY WAL;
 
-```bash
-#!/bin/bash
-
-# 1. Get available devices
-DEVICES=$(curl -s "http://localhost:10901/api/v1/range/realtime/devices" | jq -r '.data[]')
-echo "Available devices: $DEVICES"
-
-# 2. Start capture on first device
-DEVICE=$(echo $DEVICES | head -n1)
-curl -X POST "http://localhost:10901/api/v1/range/realtime/start/$DEVICE"
-
-# 3. Wait a moment for services to start
-sleep 2
-
-# 4. Now connect to SignalR and register for streams
-# (Use the JavaScript example above for SignalR connection)
+ALTER TABLE safety_packets ALTER COLUMN id ADD INDEX;
 ```
 
-#### Get Range Data and Statistics
+#### onvif_packets
 
-```bash
-#!/bin/bash
+```sql
+CREATE TABLE onvif_packets (
+    timestamp    TIMESTAMP,
+    id           SYMBOL CAPACITY 256 CACHE,
+    isCmd        BOOLEAN,
+    description  STRING,
+    zoom         DOUBLE,
+    measurement  DOUBLE
+) TIMESTAMP(timestamp) PARTITION BY DAY WAL;
 
-# Get all ranges with pagination
-curl -s "http://localhost:10901/api/v1/range/ranges?page=1&pageSize=10" | jq '.'
-
-# Get specific range by ID
-RANGE_ID="123e4567-e89b-12d3-a456-426614174000"
-curl -s "http://localhost:10901/api/v1/range/ranges/$RANGE_ID" | jq '.'
-
-# Reset statistics
-curl -X POST "http://localhost:10901/api/v1/range/reset"
+ALTER TABLE onvif_packets ALTER COLUMN id ADD INDEX;
 ```
 
-### Stream Request Examples
+### PostgreSQL Tables
 
-#### Motion Packets
-```json
-{
-  "dataPipe": "Motion",
-  "description": "MOT_GetMotorCurrent",
-  "isCmd": false,
-  "axis": 1
-}
-```
-
-#### Safety Packets
-```json
-{
-  "dataPipe": "Safety", 
-  "description": "DO3_FIRE1",
-  "isCmd": true,
-  "axis": 0
-}
-```
-
-#### OnVIF Packets
-```json
-{
-  "dataPipe": "OnVIF",
-  "description": "LRF_REQ",
-  "isCmd": false,
-  "axis": 0
-}
-```
-
-### Error Handling Examples
-
-#### API Error Response
-```json
-{
-  "success": false,
-  "data": null,
-  "errorMessage": "Range not found",
-  "statusCode": 404,
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-#### SignalR Error ACK
-```json
-{
-  "operationType": "RegisterToMethod",
-  "success": false,
-  "message": "Invalid stream request parameters"
-}
-```
+See `PacketProcessing/src/Context/PostgresDbContext.cs` for Entity Framework models:
+- RangeEntity
+- EventEntity
+- HitEntity
+- TargetEntity
 
 ---
 
-## Notes
+## Development
 
-- All timestamps are in UTC format (ISO-8601)
-- SignalR connection automatically reconnects with exponential backoff
-- Stream subscription keys are auto-generated based on DataPipe, Description, IsCmd, and Axis
-- Development endpoints are only available in development environment
-- All API responses follow the `ResponseResult<T>` pattern for consistent error handling
+### Project Structure
+
+```
+PacketProcessing/
+├── src/
+│   ├── Controllers/        # API endpoints
+│   ├── Services/           # Business logic
+│   │   ├── Realtime/       # Capture and processing
+│   │   ├── Playback/       # Historical playback
+│   │   └── Transmission/   # SignalR broadcasting
+│   ├── Repositories/       # Data access
+│   ├── Entities/           # Domain models
+│   ├── DTOs/              # Data transfer objects
+│   ├── Config/            # Configuration classes
+│   ├── Context/           # EF Core and QuestDB contexts
+│   ├── Hubs/              # SignalR hub
+│   ├── Telemetry/         # Metrics collection
+│   └── Utils/             # Utilities and parsers
+├── tests/                 # Unit and integration tests
+├── wwwroot/              # Web dashboard
+└── appsettings.json      # Configuration
+```
+
+### Running Tests
+
+```bash
+# All tests
+dotnet test
+
+# Unit tests only
+dotnet test --filter "Category=Unit"
+
+# Integration tests only
+dotnet test --filter "Category=Integration"
+
+# Specific test
+dotnet test --filter "FullyQualifiedName~TestName"
+```
+
+### Code Style
+
+- Use `Async` suffix for async methods
+- Use dependency injection for all services
+- Follow repository pattern for data access
+- Use structured logging with Serilog
+
+---
+
+## Testing
+
+### Unit Tests
+
+- Repository tests with Moq
+- Service tests with mocked dependencies
+- Hub tests for SignalR logic
+
+### Integration Tests
+
+- Full HTTP API testing
+- Database integration
+- End-to-end workflows
+
+### Manual Testing
+
+1. **Start Development Environment**:
+   ```bash
+   dotnet run --environment Development
+   ```
+
+2. **Access Dashboard**: http://localhost:10901
+
+3. **Start Capture**: Use dashboard or API
+
+4. **Monitor Telemetry**: Watch charts update in real-time
+
+5. **Check Databases**:
+   - PostgreSQL: Use pgAdmin or `psql`
+   - QuestDB: http://localhost:9009
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### Port Already in Use
+
+```bash
+# Find process using port
+lsof -i :10901
+
+# Kill process
+kill -9 <PID>
+```
+
+#### Permission Denied for Packet Capture
+
+```bash
+# Linux: Grant capabilities
+sudo setcap cap_net_raw,cap_net_admin=eip /path/to/PacketProcessing
+
+# Or run with sudo (not recommended)
+sudo dotnet run
+```
+
+#### Database Connection Failed
+
+- Verify Docker containers are running: `docker ps`
+- Check connection strings in `appsettings.json`
+- Review logs for connection errors
+
+#### No Packets Received
+
+- Verify network device is correct
+- Check IP/port filters in configuration
+- Ensure source is sending packets
+- Review logs for filtering details
+
+### Logs
+
+Logs are written to console and can be viewed via:
+- Dashboard console buttons
+- Seq (if configured)
+- Standard output/error streams
+
+### Performance Tuning
+
+1. **Increase Workers**: Set `MaxWorkers` to 4-8
+2. **Adjust Batching**: Increase `BatchSize` to 5000 for high-throughput
+3. **Channel Capacity**: Ensure sufficient buffer size
+4. **QuestDB Settings**: Tune WAL and partition settings
+
+---
+
+## Additional Resources
+
+- [QuestDB Documentation](https://questdb.io/docs/)
+- [SignalR Documentation](https://docs.microsoft.com/en-us/aspnet/core/signalr/)
+- [.NET Documentation](https://docs.microsoft.com/en-us/dotnet/)
+- [SharpPcap Documentation](https://github.com/chmorgan/sharppcap)
+
+---
+
+## License
+
+[Specify license]
+
+## Support
+
+For issues, questions, or contributions, please contact [your team/email] or open an issue in the repository.

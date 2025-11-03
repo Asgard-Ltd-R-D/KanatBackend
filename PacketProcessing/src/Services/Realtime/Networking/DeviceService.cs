@@ -82,7 +82,6 @@ public class DeviceService : IDeviceService
                 {
                     Mode = DeviceModes.Promiscuous, // Promiscuous mode for highest throughput
                     ReadTimeout = 10, // 10ms timeout for packet arrival
-                    KernelBufferSize = OperatingSystem.IsLinux() ? 1024 * 1024 * 128 : null, // KernelBufferSize only supported on Linux, not macOS
                     Immediate = true // Immediate mode for lowest latency
                 };
 

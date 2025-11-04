@@ -100,7 +100,7 @@ public class CustomHub : Hub
             if (requestStream.IntervalMs.HasValue)
             {
                 _logger.LogInformation("Client {ConnectionId} provided IntervalMs={IntervalMs} for {SubscriptionKey} - applying post registration", Context.ConnectionId, requestStream.IntervalMs, requestStream.SubscriptionKey);
-                await _transmissionService.SetTimeIntervalAsync(requestStream, Context.ConnectionId);
+                await _transmissionService.SetTimeIntervalAsync(requestStream.SubscriptionKey, requestStream.IntervalMs.Value, Context.ConnectionId);
             }
         }
         catch (Exception ex)
@@ -131,24 +131,20 @@ public class CustomHub : Hub
     /// Packets for this stream will only be transmitted if the specified interval (in milliseconds) has elapsed since the last transmission.
     /// Setting intervalMs to 0 will disable sampling for the stream.
     /// </summary>
-    /// <param name="request">The stream request (must include SubscriptionKey and IntervalMs).</param>
-    public async Task SetTimeInterval(StreamRequestDto request)
+    /// <param name="subscriptionKey">The subscription key to update</param>
+    /// <param name="intervalMs">Interval in milliseconds (0 disables sampling)</param>
+    public async Task SetTimeInterval(string subscriptionKey, int intervalMs)
     {
         try
         {
-            ArgumentNullException.ThrowIfNull(request);
-            if (!request.IntervalMs.HasValue)
-            {
-                _logger.LogWarning("Client {ConnectionId} called SetTimeInterval without IntervalMs for subscription {SubscriptionKey}", Context.ConnectionId, request.SubscriptionKey);
-                throw new ArgumentException("IntervalMs is required when calling SetTimeInterval");
-            }
-            _logger.LogInformation("Client {ConnectionId} is setting interval to {Interval} for subscription {SubscriptionKey}", Context.ConnectionId, request.IntervalMs, request.SubscriptionKey);
-            await _transmissionService.SetTimeIntervalAsync(request, Context.ConnectionId);
-            _logger.LogInformation("Client {ConnectionId} set interval to {Interval} for subscription {SubscriptionKey}", Context.ConnectionId, request.IntervalMs, request.SubscriptionKey);
+            ArgumentNullException.ThrowIfNull(subscriptionKey);
+            _logger.LogInformation("Client {ConnectionId} is setting interval to {Interval} for subscription {SubscriptionKey}", Context.ConnectionId, intervalMs, subscriptionKey);
+            await _transmissionService.SetTimeIntervalAsync(subscriptionKey, intervalMs, Context.ConnectionId);
+            _logger.LogInformation("Client {ConnectionId} set interval to {Interval} for subscription {SubscriptionKey}", Context.ConnectionId, intervalMs, subscriptionKey);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error setting interval to {Interval} for subscription {SubscriptionKey}", request.IntervalMs, request.SubscriptionKey);
+            _logger.LogError(ex, "Error setting interval to {Interval} for subscription {SubscriptionKey}", intervalMs, subscriptionKey);
             throw;
         }
     }

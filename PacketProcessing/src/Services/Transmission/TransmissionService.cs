@@ -70,7 +70,7 @@ public class TransmissionService : ITransmissionService
                 if (request.IntervalMs.HasValue)
                 {
                     _logger.LogInformation("Applying initial IntervalMs={IntervalMs} for {Key} after registration", request.IntervalMs, key);
-                    await SetTimeIntervalAsync(request, connectionId);
+                    await SetTimeIntervalAsync(key, request.IntervalMs.Value, connectionId);
                 }
             }
             else
@@ -160,23 +160,11 @@ public class TransmissionService : ITransmissionService
         }
     }
 
-    public async Task SetTimeIntervalAsync(StreamRequestDto request, string connectionId)
+    public async Task SetTimeIntervalAsync(string subscriptionKey, int intervalMs, string connectionId)
     {
-        ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(connectionId);
-        var key = request.SubscriptionKey;
-        if (!request.IntervalMs.HasValue)
-        {
-            await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
-                new AckDto { 
-                    OperationType = OperationType.SetTimeInterval, 
-                    Message = "IntervalMs is required",
-                    Success = false 
-                });
-            _logger.LogWarning("IntervalMs not provided for SetTimeInterval on {Key}", key);
-            return;
-        }
-        var intervalMs = request.IntervalMs.Value;
+        ArgumentNullException.ThrowIfNull(subscriptionKey);
+        var key = subscriptionKey;
 
         try
         {
@@ -225,7 +213,7 @@ public class TransmissionService : ITransmissionService
             await _hubContext.Clients.Client(existingConnectionId).SendAsync(Constants.SIGNALR_ACK, 
                 new AckDto { 
                     OperationType = OperationType.SetTimeInterval, 
-                    Message = request, 
+                    Message = new { subscriptionKey = key, intervalMs }, 
                     Success = true 
                 });
 

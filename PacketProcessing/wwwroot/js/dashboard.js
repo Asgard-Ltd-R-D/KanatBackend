@@ -1887,18 +1887,13 @@ async function setStreamInterval(subscriptionKey, intervalMs) {
     }
     
     try {
-        const baseReq = activeStreams.get(subscriptionKey);
-        if (!baseReq) {
-            logPacketHubMessage(`Cannot set interval; stream ${subscriptionKey} not found`, 'error');
-            return;
-        }
         if (intervalMs === 0) {
             logPacketHubMessage(`Removing sampling interval for ${subscriptionKey}`, 'info');
-            await packetHubConnection.invoke('SetTimeInterval', { ...baseReq, intervalMs: 0 });
+            await packetHubConnection.invoke('SetTimeInterval', subscriptionKey, 0);
             streamIntervals.set(subscriptionKey, 0);
         } else {
             logPacketHubMessage(`Setting interval for ${subscriptionKey} to ${intervalMs}ms`, 'info');
-            await packetHubConnection.invoke('SetTimeInterval', { ...baseReq, intervalMs });
+            await packetHubConnection.invoke('SetTimeInterval', subscriptionKey, intervalMs);
             streamIntervals.set(subscriptionKey, intervalMs);
         }
         updateActiveStreamsList();

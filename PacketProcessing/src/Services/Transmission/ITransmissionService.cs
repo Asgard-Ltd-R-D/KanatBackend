@@ -38,10 +38,11 @@ public interface ITransmissionService : IObserver<BasePacketEntity>
     /// <summary>
     /// Set the interval for a specific subscription key
     /// </summary>
-    /// <param name="request">The stream request (must include SubscriptionKey and IntervalMs)</param>
+    /// <param name="subscriptionKey">The stream subscription key</param>
+    /// <param name="intervalMs">Interval in milliseconds (0 disables sampling)</param>
     /// <param name="connectionId">The connection ID</param>
     /// <returns>A task representing the asynchronous operation</returns>
     /// <exception cref="ArgumentNullException">Thrown when request or connectionId is null</exception>
     /// <exception cref="ArgumentException">Thrown when interval is invalid</exception>
-    Task SetTimeIntervalAsync(StreamRequestDto request, string connectionId);
+    Task SetTimeIntervalAsync(string subscriptionKey, int intervalMs, string connectionId);
 }

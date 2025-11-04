@@ -954,7 +954,8 @@
                 "dataPipe": "Motion",
                 "description": "MOT_GetMotorSpeed",
                 "isCmd": false,
-                "axis": 0
+                "axis": 0,
+                "intervalMs": 100
               }
             }
           }
@@ -1046,21 +1047,10 @@
         "summary": "Invoke SetTimeInterval (SignalR)",
         "description": "Logical documentation endpoint for invoking the SignalR hub method SetTimeInterval. This is not an HTTP API call; use a SignalR client to call the hub method.",
         "operationId": "HubSetTimeInterval",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/StreamRequestDto" },
-              "example": {
-                "dataPipe": "Motion",
-                "description": "MOT_GetMotorCurrent",
-                "isCmd": false,
-                "axis": 1,
-                "intervalMs": 100
-              }
-            }
-          }
-        },
+        "parameters": [
+          { "name": "subscriptionKey", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "intervalMs", "in": "query", "required": true, "schema": { "type": "integer" } }
+        ],
         "responses": {
           "200": {
             "description": "ACK emitted by the hub via the 'Ack' event",
@@ -1690,7 +1680,7 @@
               {
                 "name": "request",
                 "in": "body",
-                "schema": { "$ref": "#/components/schemas/StreamRequestDto" }
+                "schema": { "$ref": "#/components/schemas/IntervalRequestDto" }
               }
             ],
             "responses": [

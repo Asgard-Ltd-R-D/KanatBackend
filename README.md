@@ -362,7 +362,7 @@ Content-Type: application/json
     "bpfConfig": {
       "device": "eth0",
       "motion": [{ "ip": "132.8.7.125", "port": 1234 }],
-      "safety": [{ "ip": "132.8.7.101", "port": 5678 }],
+      "safety": { "sbe": { "ip": "132.8.7.101", "port": 5678 } },
       "onvif": [{ "ip": "132.8.7.121", "port": 8080 }]
     },
     "mtxConfig": {

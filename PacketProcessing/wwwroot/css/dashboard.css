@@ -114,6 +114,17 @@ body {
     min-width: 80px !important; 
 }
 
+/* Safety SBE/PBE inputs sizing to prevent sidebar overflow */
+#sbeIp, #pbeIp {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+}
+
+#sbePort, #pbePort {
+    flex: 0 0 100px !important;
+    min-width: 80px !important;
+}
+
 .sidebar h2 {
     color: #4fc3f7;
     font-size: 18px;

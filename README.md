@@ -491,7 +491,9 @@ await connection.invoke("RegisterToMethod", {
     dataPipe: "Motion",
     description: "MOT_GetMotorCurrent",
     isCmd: false,
-    axis: 1
+    axis: 1,
+    // Optional: apply sampling interval immediately on registration
+    // intervalMs: 100
 });
 ```
 
@@ -503,20 +505,27 @@ await connection.invoke("UnregisterFromMethod", "motion|mot_getmotorcurrent|fals
 
 #### Set Sampling Interval
 
-Configure packet sampling interval to reduce transmission frequency:
+Configure packet sampling interval to reduce transmission frequency. The hub now accepts a full `StreamRequestDto` and updates a running subscription by `subscriptionKey`.
 
 ```javascript
+// Using the same fields as registration (must match the subscription key)
 await connection.invoke("SetTimeInterval", {
-    subscriptionKey: "motion|mot_getmotorcurrent|false|1",
+    dataPipe: "Motion",
+    description: "MOT_GetMotorCurrent",
+    isCmd: false,
+    axis: 1,
     intervalMs: 100  // Transmit only every 100ms
 });
-```
 
-**Notes:**
-- Setting `intervalMs` to 0 or omitting it results in **no sampling** (all packets transmitted)
-- Intervals are per-stream; each subscription key has its own timer
-- Timers reset automatically after each transmission
-- Packets arriving before the interval elapses are discarded
+// Remove sampling (send every packet)
+await connection.invoke("SetTimeInterval", {
+    dataPipe: "Motion",
+    description: "MOT_GetMotorCurrent",
+    isCmd: false,
+    axis: 1,
+    intervalMs: 0
+});
+```
 
 ### Client Events
 

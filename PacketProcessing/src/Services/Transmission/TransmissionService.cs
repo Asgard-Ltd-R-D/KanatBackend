@@ -65,6 +65,13 @@ public class TransmissionService : ITransmissionService
                         Message = request, 
                         Success = true 
                     });
+
+                // If IntervalMs provided on registration, apply interval now
+                if (request.IntervalMs.HasValue)
+                {
+                    _logger.LogInformation("Applying initial IntervalMs={IntervalMs} for {Key} after registration", request.IntervalMs, key);
+                    await SetTimeIntervalAsync(request, connectionId);
+                }
             }
             else
             {
@@ -153,12 +160,23 @@ public class TransmissionService : ITransmissionService
         }
     }
 
-    public async Task SetTimeIntervalAsync(IntervalRequestDto request, string connectionId)
+    public async Task SetTimeIntervalAsync(StreamRequestDto request, string connectionId)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(connectionId);
         var key = request.SubscriptionKey;
-        var intervalMs = request.IntervalMs;
+        if (!request.IntervalMs.HasValue)
+        {
+            await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 
+                new AckDto { 
+                    OperationType = OperationType.SetTimeInterval, 
+                    Message = "IntervalMs is required",
+                    Success = false 
+                });
+            _logger.LogWarning("IntervalMs not provided for SetTimeInterval on {Key}", key);
+            return;
+        }
+        var intervalMs = request.IntervalMs.Value;
 
         try
         {

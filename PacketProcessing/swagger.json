@@ -1050,9 +1050,12 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/IntervalRequestDto" },
+              "schema": { "$ref": "#/components/schemas/StreamRequestDto" },
               "example": {
-                "subscriptionKey": "motion|mot_getmotorcurrent|false|1",
+                "dataPipe": "Motion",
+                "description": "MOT_GetMotorCurrent",
+                "isCmd": false,
+                "axis": 1,
                 "intervalMs": 100
               }
             }
@@ -1505,6 +1508,11 @@
             "default": 0,
             "description": "Axis of the motion packet specifically to MOT_* commands, for other data pipes and other motion commands, this will be ignored."
           },
+          "intervalMs": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Optional sampling interval in milliseconds. If provided on registration, the server applies it post-registration. 0 disables sampling; >0 sets interval."
+          },
           "subscriptionKey": {
             "type": "string",
             "readOnly": true,
@@ -1675,7 +1683,7 @@
               {
                 "name": "request",
                 "in": "body",
-                "schema": { "$ref": "#/components/schemas/IntervalRequestDto" }
+                "schema": { "$ref": "#/components/schemas/StreamRequestDto" }
               }
             ],
             "responses": [

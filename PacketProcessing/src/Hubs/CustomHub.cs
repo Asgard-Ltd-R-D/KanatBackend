@@ -95,6 +95,13 @@ public class CustomHub : Hub
             _logger.LogInformation("Client {ConnectionId} performing registration to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
             await _transmissionService.RegisterStreamAsync(requestStream, Context.ConnectionId);
             _logger.LogInformation("Client {ConnectionId} registered to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
+
+            // If IntervalMs was provided on registration, apply it immediately
+            if (requestStream.IntervalMs.HasValue)
+            {
+                _logger.LogInformation("Client {ConnectionId} provided IntervalMs={IntervalMs} for {SubscriptionKey} - applying post registration", Context.ConnectionId, requestStream.IntervalMs, requestStream.SubscriptionKey);
+                await _transmissionService.SetTimeIntervalAsync(requestStream, Context.ConnectionId);
+            }
         }
         catch (Exception ex)
         {
@@ -124,12 +131,17 @@ public class CustomHub : Hub
     /// Packets for this stream will only be transmitted if the specified interval (in milliseconds) has elapsed since the last transmission.
     /// Setting intervalMs to 0 will disable sampling for the stream.
     /// </summary>
-    /// <param name="request">The interval request DTO containing the subscription key and interval in milliseconds.</param>
-    public async Task SetTimeInterval(IntervalRequestDto request)
+    /// <param name="request">The stream request (must include SubscriptionKey and IntervalMs).</param>
+    public async Task SetTimeInterval(StreamRequestDto request)
     {
         try
         {
             ArgumentNullException.ThrowIfNull(request);
+            if (!request.IntervalMs.HasValue)
+            {
+                _logger.LogWarning("Client {ConnectionId} called SetTimeInterval without IntervalMs for subscription {SubscriptionKey}", Context.ConnectionId, request.SubscriptionKey);
+                throw new ArgumentException("IntervalMs is required when calling SetTimeInterval");
+            }
             _logger.LogInformation("Client {ConnectionId} is setting interval to {Interval} for subscription {SubscriptionKey}", Context.ConnectionId, request.IntervalMs, request.SubscriptionKey);
             await _transmissionService.SetTimeIntervalAsync(request, Context.ConnectionId);
             _logger.LogInformation("Client {ConnectionId} set interval to {Interval} for subscription {SubscriptionKey}", Context.ConnectionId, request.IntervalMs, request.SubscriptionKey);

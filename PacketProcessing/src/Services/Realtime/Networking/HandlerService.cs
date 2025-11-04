@@ -98,7 +98,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         if (typeof(T) == typeof(MotionPacketEntity))
             endpoints = config.BpfConfig.Motion ?? [];
         else if (typeof(T) == typeof(SafetyPacketEntity))
-            endpoints = config.BpfConfig.Safety ?? [];
+            endpoints = ToSafetyArray(config.BpfConfig.Safety);
         else if (typeof(T) == typeof(OnVIFPacketEntity))
             endpoints = config.BpfConfig.OnVIF  ?? [];
 
@@ -136,7 +136,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         if (typeof(T) == typeof(MotionPacketEntity))
             endpoints = bpfConfig.Motion ?? [];
         else if (typeof(T) == typeof(SafetyPacketEntity))
-            endpoints = bpfConfig.Safety ?? [];
+            endpoints = ToSafetyArray(bpfConfig.Safety);
         else if (typeof(T) == typeof(OnVIFPacketEntity))
             endpoints = bpfConfig.OnVIF  ?? [];
 
@@ -422,6 +422,21 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         if (raw.IsEmpty) return null;
         try { return _parseMapper.Map<T>(raw); }
         catch { return null; }
+    }
+
+    private static EndpointSpecification[] ToSafetyArray(BPFConfDto.SafetyConf? safety)
+    {
+        if (safety is null) return [];
+        var list = new List<EndpointSpecification>(2);
+        if (safety.Sbe is EndpointSpecification sbe)
+        {
+            list.Add(new EndpointSpecification(sbe.IP, sbe.Port));
+        }
+        if (safety.Pbe is EndpointSpecification pbe)
+        {
+            list.Add(new EndpointSpecification(pbe.IP, pbe.Port));
+        }
+        return [.. list];
     }
 
     public IDisposable Subscribe(IObserver<BasePacketEntity> observer)

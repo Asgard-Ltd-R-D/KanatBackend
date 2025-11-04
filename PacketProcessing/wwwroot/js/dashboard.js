@@ -97,8 +97,8 @@ window.addEventListener('load', () => {
     logMessage('Dashboard loaded. Connecting to SignalR automatically...', 'info');
     connectHub();
 
-    // Initialize endpoint input rows
-    ['motionEndpoints','safetyEndpoints','onvifEndpoints'].forEach(id => addEndpointRow(id));
+    // Initialize endpoint input rows (Safety has dedicated SBE/PBE fields)
+    ['motionEndpoints','onvifEndpoints'].forEach(id => addEndpointRow(id));
     // Initialize cameras container with one row
     addCameraRow();
 });
@@ -526,7 +526,7 @@ async function startRange() {
         return;
     }
     const motion = collectEndpoints('motionEndpoints');
-    const safety = collectEndpoints('safetyEndpoints');
+    const safety = collectSafety();
     const onvif = collectEndpoints('onvifEndpoints');
     const mtxIp = document.getElementById('mtxIp').value.trim();
     const mtxPortStr = document.getElementById('mtxPort').value.trim();
@@ -538,7 +538,7 @@ async function startRange() {
             bpfConfig: {
                 device: device || 'any',
                 motion: motion.length > 0 ? motion : undefined,
-                safety: safety.length > 0 ? safety : undefined,
+                safety: (safety && (safety.sbe || safety.pbe)) ? safety : undefined,
                 onVIF: onvif.length > 0 ? onvif : undefined
             },
             mtxConfig: (mtxIp || mtxPort) ? { ip: mtxIp || null, port: mtxPort || null } : undefined,
@@ -907,6 +907,24 @@ function collectEndpoints(containerId) {
         }
     });
     return endpoints;
+}
+
+function collectSafety() {
+    const sbeIp = (document.getElementById('sbeIp')?.value || '').trim();
+    const sbePortStr = (document.getElementById('sbePort')?.value || '').trim();
+    const pbeIp = (document.getElementById('pbeIp')?.value || '').trim();
+    const pbePortStr = (document.getElementById('pbePort')?.value || '').trim();
+
+    const sbePort = sbePortStr ? parseInt(sbePortStr) : null;
+    const pbePort = pbePortStr ? parseInt(pbePortStr) : null;
+
+    const sbeValid = (sbeIp && sbeIp.length > 0) || (sbePort !== null && !isNaN(sbePort));
+    const pbeValid = (pbeIp && pbeIp.length > 0) || (pbePort !== null && !isNaN(pbePort));
+
+    const safety = { sbe: null, pbe: null };
+    if (sbeValid) safety.sbe = { ip: sbeIp || null, port: sbePort };
+    if (pbeValid) safety.pbe = { ip: pbeIp || null, port: pbePort };
+    return safety;
 }
 
 function addCameraRow() {

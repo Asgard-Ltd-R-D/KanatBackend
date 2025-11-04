@@ -249,13 +249,13 @@
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/RangeStartRequest" },
-              "example": {
+                "example": {
                 "description": "Range session",
                 "config": {
                   "bpfConfig": {
                     "device": "any",
                     "motion": [ { "ip": "132.8.7.125", "port": 5000 } ],
-                    "safety": [ { "ip": "132.8.7.101", "port": 5000 }, { "ip": "132.8.7.102", "port": 5001 } ],
+                    "safety": { "sbe": { "ip": "132.8.7.101", "port": 5000 }, "pbe": { "ip": "132.8.7.102", "port": 5001 } },
                     "onVIF": [ { "ip": "132.8.7.121", "port": 5000 } ]
                   },
                   "mtxConfig": { "ip": "127.0.0.1", "port": 8554 },
@@ -1171,12 +1171,19 @@
       "BPFConfDto": {
         "type": "object",
         "properties": {
-          "safety": { "type": "array", "items": { "$ref": "#/components/schemas/EndpointSpecification" } },
+          "safety": { "$ref": "#/components/schemas/SafetyConf" },
           "motion": { "type": "array", "items": { "$ref": "#/components/schemas/EndpointSpecification" } },
           "onVIF":  { "type": "array", "items": { "$ref": "#/components/schemas/EndpointSpecification" } },
           "device": { "type": "string" }
         },
         "required": ["device"]
+      },
+      "SafetyConf": {
+        "type": "object",
+        "properties": {
+          "sbe": { "$ref": "#/components/schemas/EndpointSpecification" },
+          "pbe": { "$ref": "#/components/schemas/EndpointSpecification" }
+        }
       },
       "CameraConfDto": {
         "type": "object",

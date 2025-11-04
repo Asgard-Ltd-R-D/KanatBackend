@@ -1508,7 +1508,7 @@
           "intervalMs": {
             "type": "integer",
             "nullable": true,
-            "description": "Optional sampling interval in milliseconds. If provided on registration, the server applies it post-registration. 0 disables sampling; >0 sets interval."
+            "description": "Optional sampling interval in milliseconds. On first registration, sets the interval. On re-registration of an existing stream: providing a value updates the interval; omitting it removes the interval (no sampling). 0 disables sampling; >0 sets interval."
           },
           "subscriptionKey": {
             "type": "string",

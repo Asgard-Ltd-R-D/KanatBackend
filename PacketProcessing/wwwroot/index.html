@@ -484,7 +484,7 @@
                             </button>
                         </div>
                         <div style="margin-top: 10px; font-size: 13px; color: #888;">
-                            <span id="streamInfo">Select a pipeline above to see available streams. You can set a sampling interval later via SetTimeInterval, or include <code>intervalMs</code> when registering.</span>
+                            <span id="streamInfo">Select a pipeline above to see available streams. Include <code>intervalMs</code> on registration to set/update sampling. Re-registering without <code>intervalMs</code> removes sampling (instant send).</span>
                         </div>
                     </div>
                     
@@ -520,7 +520,7 @@
     
     </div> <!-- End main-content -->
 
-    <script src="js/dashboard.js?v=11"></script>
+    <script src="js/dashboard.js?v=12"></script>
     
     <script>
         // Console Access Functions

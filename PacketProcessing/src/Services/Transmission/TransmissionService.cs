@@ -75,7 +75,20 @@ public class TransmissionService : ITransmissionService
             }
             else
             {
-                _logger.LogInformation("Client {ConnectionId} already registered on stream {Key}, ignoring registration", connectionId, key);
+                _logger.LogInformation("Client {ConnectionId} already registered on stream {Key}, updating interval if provided", connectionId, key);
+                
+                // If IntervalMs provided, update the existing interval
+                if (request.IntervalMs.HasValue)
+                {
+                    _logger.LogInformation("Updating IntervalMs={IntervalMs} for existing stream {Key}", request.IntervalMs, key);
+                    await SetTimeIntervalAsync(key, request.IntervalMs.Value, connectionId);
+                }
+                else
+                {
+                    // If IntervalMs not provided (null), remove interval (send instantly, no sampling)
+                    _logger.LogInformation("Removing interval for existing stream {Key} (no sampling, instant transmission)", key);
+                    await SetTimeIntervalAsync(key, 0, connectionId);
+                }
                 
                 // Send success ACK even if already registered
                 await _hubContext.Clients.Client(connectionId).SendAsync(Constants.SIGNALR_ACK, 

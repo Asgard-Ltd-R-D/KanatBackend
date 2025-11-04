@@ -1856,7 +1856,13 @@ async function registerSelectedStream() {
     const streamKey = buildSubscriptionKeyFromRequest(streamRequest);
     
     if (activeStreams.has(streamKey)) {
-        logPacketHubMessage(`Stream ${streamKey} is already registered`, 'warning');
+        // Already registered: override interval if provided; otherwise no-op
+        if (intervalMs >= 0) {
+            logPacketHubMessage(`Stream ${streamKey} already registered - applying interval override: ${intervalMs}ms`, 'info');
+            await setStreamInterval(streamKey, intervalMs);
+        } else {
+            logPacketHubMessage(`Stream ${streamKey} already registered - no interval change provided`, 'warning');
+        }
         return;
     }
 

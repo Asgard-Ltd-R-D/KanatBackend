@@ -95,13 +95,6 @@ public class CustomHub : Hub
             _logger.LogInformation("Client {ConnectionId} performing registration to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
             await _transmissionService.RegisterStreamAsync(requestStream, Context.ConnectionId);
             _logger.LogInformation("Client {ConnectionId} registered to method {SubscriptionKey}", Context.ConnectionId, requestStream.SubscriptionKey);
-
-            // If IntervalMs was provided on registration, apply it immediately
-            if (requestStream.IntervalMs.HasValue)
-            {
-                _logger.LogInformation("Client {ConnectionId} provided IntervalMs={IntervalMs} for {SubscriptionKey} - applying post registration", Context.ConnectionId, requestStream.IntervalMs, requestStream.SubscriptionKey);
-                await _transmissionService.SetTimeIntervalAsync(requestStream.SubscriptionKey, requestStream.IntervalMs.Value, Context.ConnectionId);
-            }
         }
         catch (Exception ex)
         {

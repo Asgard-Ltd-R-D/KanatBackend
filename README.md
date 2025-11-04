@@ -495,6 +495,10 @@ await connection.invoke("RegisterToMethod", {
     // Optional: apply sampling interval immediately on registration
     // intervalMs: 100
 });
+
+Note:
+- If you register a stream that is already running and include `intervalMs`, the interval is updated to the new value.
+- If you register a running stream without `intervalMs`, the interval is removed (no sampling; packets send instantly).
 ```
 
 #### Unregister from Stream

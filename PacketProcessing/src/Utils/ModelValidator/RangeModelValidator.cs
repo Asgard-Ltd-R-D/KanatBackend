@@ -53,7 +53,7 @@ public static class RangeModelValidator
 
         // Endpoints: if provided is null/empty, hydrate from defaults; if provided exists, do NOT override missing fields
         range.Config.BpfConfig.Motion = HydrateEndpoints(range.Config.BpfConfig.Motion, motionIps, motionPorts);
-        range.Config.BpfConfig.Safety = HydrateEndpoints(range.Config.BpfConfig.Safety, safetyIps, safetyPorts);
+        range.Config.BpfConfig.Safety = HydrateSafetyEndpoints(range.Config.BpfConfig.Safety, safetyIps, safetyPorts);
         range.Config.BpfConfig.OnVIF  = HydrateEndpoints(range.Config.BpfConfig.OnVIF,  onvifIps, onvifPorts);
 
         // Ensure MtxConfig (default from configuration)
@@ -96,6 +96,48 @@ public static class RangeModelValidator
         }
 
         return [.. result];
+    }
+
+    private static BPFConfDto.SafetyConf HydrateSafetyEndpoints(BPFConfDto.SafetyConf? provided, string[] defaultIps, int[] defaultPorts)
+    {
+        // If caller provided anything for safety, return as-is (do NOT override missing Sbe/Pbe)
+        if (provided is not null && (provided.Sbe is not null || provided.Pbe is not null))
+        {
+            return provided;
+        }
+
+        // Otherwise, build from defaults (if any). If no defaults, return nulls
+        EndpointSpecification? BuildAt(int index)
+        {
+            string? ip = null;
+            int? port = null;
+
+            if (defaultIps.Length > 0)
+            {
+                ip = index < defaultIps.Length ? defaultIps[index] : defaultIps[0];
+            }
+
+            if (defaultPorts.Length > 0)
+            {
+                port = index < defaultPorts.Length ? defaultPorts[index] : defaultPorts[0];
+            }
+
+            if (string.IsNullOrWhiteSpace(ip) && port is null)
+            {
+                return null;
+            }
+
+            return new EndpointSpecification(ip, port);
+        }
+
+        var sbe = BuildAt(0);
+        var pbe = BuildAt(1);
+
+        return new BPFConfDto.SafetyConf
+        {
+            Sbe = sbe,
+            Pbe = pbe
+        };
     }
 
     private static EndpointSpecification HydrateEndpoint(EndpointSpecification? provided, EndpointSpecification @default)

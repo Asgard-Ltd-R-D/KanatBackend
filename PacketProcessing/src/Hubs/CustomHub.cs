@@ -119,6 +119,29 @@ public class CustomHub : Hub
         }
     }
 
+    /// <summary>
+    /// Sets a sampling interval for a specific stream.
+    /// Packets for this stream will only be transmitted if the specified interval (in milliseconds) has elapsed since the last transmission.
+    /// Setting intervalMs to 0 will disable sampling for the stream.
+    /// </summary>
+    /// <param name="subscriptionKey">The subscription key to update</param>
+    /// <param name="intervalMs">Interval in milliseconds (0 disables sampling)</param>
+    public async Task SetTimeInterval(string subscriptionKey, int intervalMs)
+    {
+        try
+        {
+            ArgumentNullException.ThrowIfNull(subscriptionKey);
+            _logger.LogInformation("Client {ConnectionId} is setting interval to {Interval} for subscription {SubscriptionKey}", Context.ConnectionId, intervalMs, subscriptionKey);
+            await _transmissionService.SetTimeIntervalAsync(subscriptionKey, intervalMs, Context.ConnectionId);
+            _logger.LogInformation("Client {ConnectionId} set interval to {Interval} for subscription {SubscriptionKey}", Context.ConnectionId, intervalMs, subscriptionKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error setting interval to {Interval} for subscription {SubscriptionKey}", intervalMs, subscriptionKey);
+            throw;
+        }
+    }
+
     public Task ReceiveHitDetectionData()
     {
         //TODO: Implement on version 2.0

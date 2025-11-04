@@ -31,6 +31,12 @@ public sealed class StreamRequestDto
     public int? Axis { get; init; } = 0; // If zero it will be ignored
 
     /// <summary>
+    /// Optional sampling interval in milliseconds. If provided on registration, the server will set the interval for this subscription key after successful registration.
+    /// If provided to SetTimeInterval, values: 0 disables sampling, >0 sets the interval, <0 is invalid.
+    /// </summary>
+    public int? IntervalMs { get; init; }
+
+    /// <summary>
     /// Subscription key for the stream request, this is used to identify the stream request and to filter the packets.
     /// </summary>
     private string? _subscriptionKey;
@@ -55,9 +61,13 @@ public sealed class StreamRequestDto
         sb.Append(DataPipe).Append('|')
         .Append(Description)
         .Append('|')
-        .Append(IsCmd.HasValue ? IsCmd.Value.ToString() : "false")
-        .Append('|')
-        .Append(Axis.HasValue ? Axis.Value.ToString() : "");
+        .Append(IsCmd.HasValue ? IsCmd.Value.ToString() : "false");
+        
+        // Only Motion packets include axis in subscription key
+        if (DataPipe == DataPipes.Motion)
+        {
+            sb.Append('|').Append(Axis.HasValue ? Axis.Value.ToString() : "");
+        }
 
         _subscriptionKey = sb.ToString().ToLower(); // Lowercased before returning, and setting the private member
         return _subscriptionKey;

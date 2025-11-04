@@ -48,9 +48,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         var concurrency = configuration.GetSection("Concurrency");
         _batchSize = concurrency.GetValue<int>("BatchSize", 1000);
         _batchTimeout = TimeSpan.FromMilliseconds(concurrency.GetValue<int>("BatchTimeoutMs", 30));
-        _entityName = typeof(T) == typeof(Entities.Packet.MotionPacketEntity) ? "Motion" :
-                      typeof(T) == typeof(Entities.Packet.SafetyPacketEntity) ? "Safety" :
-                      typeof(T) == typeof(Entities.Packet.OnVIFPacketEntity) ? "OnVIF" : "Unknown";
+        _entityName = GetEntityName();
         var min = concurrency.GetValue<int>("MinWorkers", 2);
         var max = concurrency.GetValue<int>("MaxWorkers", 8);
         _workerCount = Math.Clamp(Environment.ProcessorCount, min, max);
@@ -111,83 +109,32 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             while (!token.IsCancellationRequested) 
             {
                 var dataAvailableTask = _channel.Reader.WaitToReadAsync(token).AsTask();
-
                 var completed = await Task.WhenAny(dataAvailableTask, tickTask);
 
                 if (completed == dataAvailableTask)
                 {
-                    // Channel signaled; may be false if completed
-                    if (dataAvailableTask.Result) {
-                        // Aggressive draining: Read first item, then drain as many as possible
-                        // This minimizes context switches and maximizes throughput
-                        if (_channel.Reader.TryRead(out var firstItem))
-                        {
-                            rentedArray[bufferCount] = firstItem;
-                            bufferCount++;
-                            
-                            if (!oldestInBufferUtc.HasValue || firstItem.Timestamp < oldestInBufferUtc.Value)
-                                oldestInBufferUtc = firstItem.Timestamp;
-                            
-                            // Now drain remaining items without blocking
-                            // Loop unrolled for better performance - check 8 items at once
-                            while (bufferCount < _batchSize)
-                            {
-                                // Try to read in chunks for better cache performance
-                                int itemsToRead = Math.Min(8, _batchSize - bufferCount);
-                                int itemsRead = 0;
-                                
-                                for (int i = 0; i < itemsToRead; i++)
-                                {
-                                    if (_channel.Reader.TryRead(out var more))
-                                    {
-                                        rentedArray[bufferCount] = more;
-                                        bufferCount++;
-                                        itemsRead++;
-                                        
-                                        if (!oldestInBufferUtc.HasValue || more.Timestamp < oldestInBufferUtc.Value)
-                                            oldestInBufferUtc = more.Timestamp;
-                                    }
-                                    else
-                                    {
-                                        break;
-                                    }
-                                }
-                                
-                                // If we couldn't read any items, channel is temporarily empty
-                                if (itemsRead == 0)
-                                    break;
-                            }
-                        }
-                        
-                        // Decrement channel count as items are read from channel into buffer
+                    if (!dataAvailableTask.Result)
+                        break; // Channel completed
+                    
+                    // Read items from channel into buffer
+                    bufferCount = ReadFromChannel(rentedArray, bufferCount, ref oldestInBufferUtc);
+                    
+                    if (bufferCount > 0)
+                    {
                         _statsObserver.DbWriter.AddChannelCount(-bufferCount);
-                        
-                        // Update channel stats after reading (items are now in buffer, not in channel)
                         UpdateParsedChannelStats();
 
-                        // Flush if full or latency cap reached
-                        if (bufferCount >= _batchSize ||
-                            (bufferCount > 0 && oldestInBufferUtc.HasValue &&
-                                (DateTime.UtcNow - oldestInBufferUtc.Value) >= _batchTimeout))
+                        // Flush if batch is full or timeout reached
+                        if (ShouldFlush(bufferCount, oldestInBufferUtc))
                         {
-                            // Create ArraySegment view - zero-copy wrapper around filled portion
-                            var segment = new ArraySegment<T>(rentedArray, 0, bufferCount);
-                            await FlushInternalAsync(sender, segment, workerId, oldestInBufferUtc, token);
+                            await FlushBatchAsync(sender, rentedArray, bufferCount, oldestInBufferUtc, workerId, token);
                             bufferCount = 0;
                             oldestInBufferUtc = null;
-                            
-                            // Update parsed channel stats after flushing
                             UpdateParsedChannelStats();
                         }
                     }
-                    else
-                    {
-                        // Channel completed; break and final-drain below
-                        break;
-                    }
                 }
-
-                else // tick fired
+                else // Timer tick
                 {
                     var ticked = await tickTask; // will be true unless timer disposed
                     if (!ticked) break; // safety; normally only false when timer disposed
@@ -195,8 +142,7 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
                     // Timer tick: if there is anything pending -> flush.
                     if (bufferCount > 0)
                     {
-                        var segment = new ArraySegment<T>(rentedArray, 0, bufferCount);
-                        await FlushInternalAsync(sender, segment, workerId, oldestInBufferUtc, token);
+                        await FlushBatchAsync(sender, rentedArray, bufferCount, oldestInBufferUtc, workerId, token);
                         bufferCount = 0;
                         oldestInBufferUtc = null;
                     }
@@ -206,25 +152,9 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
                 }
             }
         }
-        catch (ChannelClosedException)
+        catch (Exception ex) when (ex is ChannelClosedException || ex is OperationCanceledException)
         {
-            // Final drain after close
-            if (bufferCount > 0 && sender is not null)
-            {
-                var segment = new ArraySegment<T>(rentedArray, 0, bufferCount);
-                await FlushInternalAsync(sender, segment, workerId, oldestInBufferUtc, token);
-                bufferCount = 0;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Shutdown requested — final flush
-            if (bufferCount > 0 && sender is not null)
-            {
-                var segment = new ArraySegment<T>(rentedArray, 0, bufferCount);
-                await FlushInternalAsync(sender, segment, workerId, oldestInBufferUtc, token);
-                bufferCount = 0;
-            }
+            await FinalFlushAsync(sender, rentedArray, bufferCount, oldestInBufferUtc, workerId);
         }
         catch (Exception ex)
         {
@@ -234,12 +164,74 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         finally
         {
             sender?.Dispose();
+            ArrayPool<T>.Shared.Return(rentedArray, clearArray: false);
+        }
+    }
+
+    private int ReadFromChannel(T[] buffer, int startIndex, ref DateTime? oldestUtc)
+    {
+        int currentIndex = startIndex;
+
+        // Read first item if available
+        if (_channel.Reader.TryRead(out var firstItem))
+        {
+            buffer[currentIndex] = firstItem;
+            currentIndex++;
             
-            // Return rented array to pool if we used it
-            if (rentedArray != null)
+            if (!oldestUtc.HasValue || firstItem.Timestamp < oldestUtc.Value)
+                oldestUtc = firstItem.Timestamp;
+            
+            // Drain remaining items in chunks
+            while (currentIndex < _batchSize)
             {
-                ArrayPool<T>.Shared.Return(rentedArray, clearArray: false);
+                int itemsToRead = Math.Min(8, _batchSize - currentIndex);
+                int itemsRead = 0;
+                
+                for (int i = 0; i < itemsToRead; i++)
+                {
+                    if (_channel.Reader.TryRead(out var item))
+                    {
+                        buffer[currentIndex] = item;
+                        currentIndex++;
+                        itemsRead++;
+                        
+                        if (!oldestUtc.HasValue || item.Timestamp < oldestUtc.Value)
+                            oldestUtc = item.Timestamp;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+                
+                if (itemsRead == 0)
+                    break;
             }
+        }
+
+        return currentIndex; // Return the new total count
+    }
+
+    private bool ShouldFlush(int bufferCount, DateTime? oldestUtc)
+    {
+        if (bufferCount < _batchSize && bufferCount > 0 && oldestUtc.HasValue)
+            return (DateTime.UtcNow - oldestUtc.Value) >= _batchTimeout;
+        return bufferCount >= _batchSize;
+    }
+
+    private async Task FlushBatchAsync(ISender sender, T[] buffer, int count, DateTime? oldestUtc, int workerId, CancellationToken ct)
+    {
+        if (count == 0) return;
+        var segment = new ArraySegment<T>(buffer, 0, count);
+        await FlushInternalAsync(sender, segment, workerId, oldestUtc, ct);
+    }
+
+    private async Task FinalFlushAsync(ISender? sender, T[] buffer, int count, DateTime? oldestUtc, int workerId)
+    {
+        if (count > 0 && sender is not null)
+        {
+            var segment = new ArraySegment<T>(buffer, 0, count);
+            await FlushInternalAsync(sender, segment, workerId, oldestUtc, CancellationToken.None);
         }
     }
 
@@ -260,7 +252,6 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
     public void ResetStats()
     {
         _statsObserver.DbWriter.Reset();
-        
         _logger.LogInformation("[DB-WRITER] {Entity} statistics reset", typeof(T).Name);
     }
 
@@ -272,31 +263,10 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         var batchSize = batch.Count;
         var oldest = oldestInBufferUtc ?? DateTime.UtcNow;
         var writeStartTime = DateTime.UtcNow;
-        var dbWriteLatencyMs = 0.0;           // Pure DB write duration
-        var queueLatencyMs = 0.0;             // Time spent buffered before write starts
 
         try
         {
-            // Measure queue time up to the start of DB write
-            queueLatencyMs = (writeStartTime - oldest).TotalMilliseconds;
-            await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
-            var writeEndTime = DateTime.UtcNow;
-            dbWriteLatencyMs = (writeEndTime - writeStartTime).TotalMilliseconds; // Pure DB write time
-            
-            _statsObserver.DbWriter.AddFlushed(batch.Count);
-            var entityName = typeof(T) == typeof(Entities.Packet.MotionPacketEntity) ? "Motion" :
-                             typeof(T) == typeof(Entities.Packet.SafetyPacketEntity) ? "Safety" :
-                             typeof(T) == typeof(Entities.Packet.OnVIFPacketEntity) ? "OnVIF" : "Unknown";
-            _statsObserver.IncrementFlushFor(entityName, success: true, count: batch.Count);
-            _statsObserver.DbWriter.AddParsed(batch.Count); // Increment parsed count when actually written to DB
-            
-            // Track queue latency for parsed channel telemetry (more indicative of backpressure)
-            _statsObserver.DbWriter.AddLatency((long)queueLatencyMs);
-            
-            var stats = GetStats();
-            _logger.LogInformation(
-                "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Queue:{QueueMs:F1}ms Write:{WriteMs:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgQueue:{AvgLatency:F1}ms)",
-                typeof(T).Name, workerId, batchSize, queueLatencyMs, dbWriteLatencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
+            await WriteBatchWithRetryAsync(sender, batch, oldest, writeStartTime, workerId, batchSize, ct);
         }
         catch (Exception ex) when (ex is IOException || ex is SocketException || ex.GetType().Name.Contains("Ingress"))
         {
@@ -305,37 +275,48 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             sender = Sender.New(_connectionString);
             try
             {
-                // Recompute queue time relative to the original oldest timestamp
-                queueLatencyMs = (writeStartTime - oldest).TotalMilliseconds;
-                await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
-                var writeEndTime = DateTime.UtcNow;
-                dbWriteLatencyMs = (writeEndTime - writeStartTime).TotalMilliseconds; // Pure DB write time
-                
-                _statsObserver.DbWriter.AddFlushed(batch.Count);
-                _statsObserver.IncrementFlushFor(_entityName, success: true, count: batch.Count);
-                _statsObserver.DbWriter.AddParsed(batch.Count); // Increment parsed count when actually written to DB
-                
-                // Track queue latency for parsed channel telemetry
-                _statsObserver.DbWriter.AddLatency((long)queueLatencyMs);
-
-                var stats = GetStats();
-                _logger.LogInformation(
-                    "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Queue:{QueueMs:F1}ms Write:{WriteMs:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgQueue:{AvgLatency:F1}ms)",
-                    typeof(T).Name, workerId, batchSize, queueLatencyMs, dbWriteLatencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
+                await WriteBatchWithRetryAsync(sender, batch, oldest, writeStartTime, workerId, batchSize, ct);
             }
             catch
             {
-                _statsObserver.DbWriter.AddFailed(batch.Count);
-                _statsObserver.IncrementFlushFor(_entityName, success: false, count: batch.Count);
+                RecordFlushFailure(batch.Count);
                 throw;
             }
         }
         catch (Exception ex)
         {
-            _statsObserver.DbWriter.AddFailed(batch.Count);
-            _statsObserver.IncrementFlushFor(_entityName, success: false, count: batch.Count);
+            RecordFlushFailure(batch.Count);
             _logger.LogError(ex, "Batch insert failed for {Entity}", typeof(T).Name);
         }
+    }
+
+    private async Task WriteBatchWithRetryAsync(ISender sender, IReadOnlyList<T> batch, DateTime oldest, DateTime writeStartTime, int workerId, int batchSize, CancellationToken ct)
+    {
+        var queueLatencyMs = (writeStartTime - oldest).TotalMilliseconds;
+        await _repository.WriteBatchQuestDbAsync(sender, batch, ct);
+        var writeEndTime = DateTime.UtcNow;
+        var dbWriteLatencyMs = (writeEndTime - writeStartTime).TotalMilliseconds;
+        
+        RecordFlushSuccess(batch.Count, queueLatencyMs);
+        
+        var stats = GetStats();
+        _logger.LogInformation(
+            "[DB-WRITER] {Entity} Worker {Worker}: Batch=(Size:{BatchSize} Queue:{QueueMs:F1}ms Write:{WriteMs:F1}ms) Total=(Flushed:{TotalFlushed} Failed:{TotalFailed} AvgQueue:{AvgLatency:F1}ms)",
+            typeof(T).Name, workerId, batchSize, queueLatencyMs, dbWriteLatencyMs, stats.Flushed, stats.Failed, stats.AvgLatencyMs);
+    }
+
+    private void RecordFlushSuccess(int count, double queueLatencyMs)
+    {
+        _statsObserver.DbWriter.AddFlushed(count);
+        _statsObserver.IncrementFlushFor(_entityName, success: true, count: count);
+        _statsObserver.DbWriter.AddParsed(count);
+        _statsObserver.DbWriter.AddLatency((long)queueLatencyMs);
+    }
+
+    private void RecordFlushFailure(int count)
+    {
+        _statsObserver.DbWriter.AddFailed(count);
+        _statsObserver.IncrementFlushFor(_entityName, success: false, count: count);
     }
     
     private void UpdateParsedChannelStats()
@@ -346,18 +327,31 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
         // Get capacity from configuration
         var capacity = GetChannelCapacity();
         var utilization = capacity > 0 ? (double) channelCount / capacity * 100 : 0;
-        
-        // Determine channel name based on packet type
-        var channelName = typeof(T).Name switch
+        var channelName = GetChannelName();
+        var avgLatency = _statsObserver.DbWriter.GetAverageLatency();
+        _statsObserver.UpdateChannelStats(channelName, capacity, channelCount, utilization, _workerCount, avgLatency);
+    }
+    
+    private string GetEntityName()
+    {
+        return typeof(T).Name switch
+        {
+            nameof(MotionPacketEntity) => "Motion",
+            nameof(SafetyPacketEntity) => "Safety",
+            nameof(OnVIFPacketEntity) => "OnVIF",
+            _ => "Unknown"
+        };
+    }
+
+    private string GetChannelName()
+    {
+        return typeof(T).Name switch
         {
             nameof(MotionPacketEntity) => "MotionParsed",
             nameof(SafetyPacketEntity) => "SafetyParsed",
             nameof(OnVIFPacketEntity) => "OnvifParsed",
             _ => "UnknownParsed"
         };
-        
-        var avgLatency = _statsObserver.DbWriter.GetAverageLatency();
-        _statsObserver.UpdateChannelStats(channelName, capacity, channelCount, utilization, _workerCount, avgLatency);
     }
     
     private int GetChannelCapacity()
@@ -373,25 +367,6 @@ public class DbWriterService<T> : BackgroundService, IDbWriterService<T> where T
             _ => string.Empty
         };
 
-        if (!string.IsNullOrEmpty(capacityKey))
-        {
-            // IConfiguration is available via constructor (variable name 'configuration')
-            try
-            {
-                var cfg = (IConfiguration?)typeof(DbWriterService<T>)
-                    .GetField("configuration", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-                    .GetValue(this);
-
-                // Fallback: use options injected earlier if reflection fails
-                if (cfg == null)
-                {
-                    // 'configuration' was passed in constructor; keep a private field for it
-                }
-            }
-            catch { }
-        }
-
-        // Direct read from constructor-captured configuration (added private field)
         return _configuration.GetValue<int>(capacityKey,
             typeof(T).Name switch
             {

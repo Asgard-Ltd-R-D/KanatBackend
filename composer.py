@@ -668,17 +668,21 @@ def run_dll(environment='prod', detached=False):
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print_header(f"Running PacketProcessing for {environment.upper()}... [{timestamp}]")
-    print_info(f"Executing: dotnet {dll_path}")
+    print_info(f"Executing: sudo dotnet {dll_path}")
     
     try:
-        cmd = ['dotnet', str(dll_path)]
+        # Prepare environment variables to pass through sudo
         env = os.environ.copy()
         # Set the correct ASP.NET Core environment
         env['ASPNETCORE_ENVIRONMENT'] = 'Development' if environment == 'dev' else 'Production'
         print_info(f"Environment: {env['ASPNETCORE_ENVIRONMENT']}")
         
+        # Build command with sudo, preserving environment variables
+        # Use sudo -E to preserve environment variables
+        cmd = ['sudo', '-E', 'dotnet', str(dll_path)]
+        
         if detached:
-            print_info("Starting application in background...")
+            print_info("Starting application in background with sudo...")
             process = subprocess.Popen(
                 cmd,
                 env=env,
@@ -686,10 +690,10 @@ def run_dll(environment='prod', detached=False):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-            print_success(f"Application started with PID: {process.pid} in detached mode")
+            print_success(f"Application started with PID: {process.pid} in detached mode (running as root)")
             print_info("Application is running in background (no logs will be shown)")
         else:
-            print_info("Running application (Press Ctrl+C to stop)")
+            print_info("Running application with sudo (Press Ctrl+C to stop)")
             process = subprocess.Popen(
                 cmd,
                 env=env,

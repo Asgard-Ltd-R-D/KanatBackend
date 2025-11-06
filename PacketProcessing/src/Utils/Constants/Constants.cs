@@ -27,4 +27,14 @@ public static class Constants {
     public const string MOTION_PACKETS_TAG = "motion_packets";
     public const string ONVIF_PACKETS_TAG = "onvif_packets";
     public const string SAFETY_PACKETS_TAG = "safety_packets";
+
+    // Entity names
+    public const string MOTION_ENTITY_NAME = "Motion";
+    public const string ONVIF_ENTITY_NAME = "OnVIF";
+    public const string SAFETY_ENTITY_NAME = "Safety";
+
+    // Raw channel names
+    public const string MOTION_RAW_CHANNEL_NAME = "MotionRaw";
+    public const string ONVIF_RAW_CHANNEL_NAME = "OnVIFRaw";
+    public const string SAFETY_RAW_CHANNEL_NAME = "SafetyRaw";
 }

@@ -12,6 +12,7 @@ using PacketProcessing.Services.Transmission;
 using PacketProcessing.Entities.Packet;
 using PacketProcessing.DTOs.Range;
 using PacketProcessing.DTOs.Conf;
+using PacketProcessing.Utils.Constants;
 namespace PacketProcessing.Services.Realtime.Networking;
 
 public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserver<RawPacketEvent>, IObservable<BasePacketEntity>
@@ -68,9 +69,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         _protocol = configuration.GetValue<string>($"{dataPipeName}:Network:Protocol") ?? "";
         _ips = configuration.GetSection($"{dataPipeName}:Network:IPs").Get<IEnumerable<string>>() ?? [];
 
-        _entityName = typeof(T) == typeof(MotionPacketEntity) ? "Motion" :
-                      typeof(T) == typeof(SafetyPacketEntity) ? "Safety" :
-                      typeof(T) == typeof(OnVIFPacketEntity) ? "OnVIF" : "Unknown";
+        _entityName = GetEntityName();
 
         var concurrency = configuration.GetSection("Concurrency");
         var min = concurrency.GetValue<int>("MinWorkers", 2);
@@ -93,16 +92,11 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(config.BpfConfig);
 
-        // Determine endpoint overrides based on handler entity type
-        EndpointSpecification[] endpoints = [];
-        if (typeof(T) == typeof(MotionPacketEntity))
-            endpoints = config.BpfConfig.Motion ?? [];
-        else if (typeof(T) == typeof(SafetyPacketEntity))
-            endpoints = ToSafetyArray(config.BpfConfig.Safety);
-        else if (typeof(T) == typeof(OnVIFPacketEntity))
-            endpoints = config.BpfConfig.OnVIF  ?? [];
+        var endpoints = GetEndpointsFromRangeConfig(config.BpfConfig);
+        var filter = BpfFilterBuilder.Build(_protocol, endpoints);
+        var deviceName = config.BpfConfig.Device;
 
-        if (string.IsNullOrWhiteSpace(config.BpfConfig.Device))
+        if (string.IsNullOrWhiteSpace(deviceName))
         {
             _logger.LogError("[{Entity}] Missing device in RangeConfig.BpfConfig", typeof(T).Name);
             throw new ArgumentException("Device must be provided in RangeConfig.BpfConfig.Device");
@@ -113,9 +107,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
             _logger.LogWarning("[{Entity}] No endpoints provided. Falling back to appsettings IPs.", typeof(T).Name);
         }
 
-        var filter = BpfFilterBuilder.Build(_protocol, endpoints);
-
-        var deviceName = config.BpfConfig.Device;
         try
         {
             _logger.LogInformation("[HANDLER-SERVICE] [{Entity}] Subscribing device {Device} with filter: {Filter}", typeof(T).Name, deviceName, filter);
@@ -132,15 +123,11 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
     {
         ArgumentNullException.ThrowIfNull(bpfConfig);
 
-        EndpointSpecification[] endpoints = [];
-        if (typeof(T) == typeof(MotionPacketEntity))
-            endpoints = bpfConfig.Motion ?? [];
-        else if (typeof(T) == typeof(SafetyPacketEntity))
-            endpoints = ToSafetyArray(bpfConfig.Safety);
-        else if (typeof(T) == typeof(OnVIFPacketEntity))
-            endpoints = bpfConfig.OnVIF  ?? [];
+        var endpoints = GetEndpointsFromBpfConfig(bpfConfig);
+        var filter = BpfFilterBuilder.Build(_protocol, endpoints);
+        var deviceName = bpfConfig.Device;
 
-        if (string.IsNullOrWhiteSpace(bpfConfig.Device))
+        if (string.IsNullOrWhiteSpace(deviceName))
         {
             _logger.LogError("[{Entity}] Missing device in BpfConfig", typeof(T).Name);
             throw new ArgumentException("Device must be provided in BpfConfig.Device");
@@ -151,8 +138,6 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
             _logger.LogWarning("[{Entity}] No endpoints provided. Falling back to appsettings IPs.", typeof(T).Name);
         }
 
-        var filter = BpfFilterBuilder.Build(_protocol, endpoints);
-        var deviceName = bpfConfig.Device;
         try
         {
             _logger.LogInformation("[HANDLER-SERVICE] [{Entity}] Subscribing device {Device} with filter: {Filter}", typeof(T).Name, deviceName, filter);
@@ -225,26 +210,12 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
             Interlocked.Increment(ref _rawChannelCount);
             // Per-entity capture success
             _statsObserver.IncrementCaptureFor(_entityName, success: true);
-            
-            // Update channel stats after incrementing
-            var currentCount = Interlocked.Read(ref _rawChannelCount);
-            var utilization = (double)currentCount / _rawCapacity * 100;
-            
-            var avgLatency = _statsObserver.Handler.GetAverageLatency();
-            if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
-                _statsObserver.UpdateChannelStats("MotionRaw", _rawCapacity, (int)currentCount, utilization, _workerCount, avgLatency);
-            else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
-                _statsObserver.UpdateChannelStats("SafetyRaw", _rawCapacity, (int)currentCount, utilization, _workerCount, avgLatency);
-            else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
-                _statsObserver.UpdateChannelStats("OnvifRaw", _rawCapacity, (int)currentCount, utilization, _workerCount, avgLatency);
-            
+            UpdateRawChannelStats();
             return;
         }
 
         // Channel full - Wait mode will block to guarantee delivery
         _statsObserver.Handler.IncrementBackpressure();
-        
-        // This blocks until space available (guarantees packet is written)
         _rawChannel.Writer
             .WriteAsync(evt, CancellationToken.None)
             .AsTask()
@@ -253,18 +224,7 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         
         Interlocked.Increment(ref _rawChannelCount);
         _statsObserver.IncrementCaptureFor(_entityName, success: true);
-        
-        // Update channel stats after incrementing
-        var finalCount = Interlocked.Read(ref _rawChannelCount);
-        var finalUtilization = (double)finalCount / _rawCapacity * 100;
-        
-        var avgLatency2 = _statsObserver.Handler.GetAverageLatency();
-        if (typeof(T) == typeof(PacketProcessing.Entities.Packet.MotionPacketEntity))
-            _statsObserver.UpdateChannelStats("MotionRaw", _rawCapacity, (int)finalCount, finalUtilization, _workerCount, avgLatency2);
-        else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.SafetyPacketEntity))
-            _statsObserver.UpdateChannelStats("SafetyRaw", _rawCapacity, (int)finalCount, finalUtilization, _workerCount, avgLatency2);
-        else if (typeof(T) == typeof(PacketProcessing.Entities.Packet.OnVIFPacketEntity))
-            _statsObserver.UpdateChannelStats("OnvifRaw", _rawCapacity, (int)finalCount, finalUtilization, _workerCount, avgLatency2);
+        UpdateRawChannelStats();
     }
 
     public void OnError(Exception error) =>
@@ -303,119 +263,146 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
             while (!token.IsCancellationRequested)
             {
                 rawBatch.Clear();
-                int batchParsed = 0;
-                int batchDropped = 0;
-                int batchBackpressure = 0;
 
-                // ---- 1) Block for first item (start a mini-batch) ----
-                RawPacketEvent first;
-                try
-                {
-                    first = await _rawChannel.Reader.ReadAsync(token);
-                }
-                catch (ChannelClosedException)
-                {
-                    break; // upstream completed
-                }
-                rawBatch.Add(first);
-
-                // ---- 2) Aggressively drain what's immediately available ----
-                Interlocked.Decrement(ref _rawChannelCount);
+                // Read batch from channel
+                if (!await ReadBatchFromChannelAsync(rawBatch, token))
+                    break;
                 
-                while (rawBatch.Count < RAW_READ_BURST && _rawChannel.Reader.TryRead(out var more))
-                {
-                    rawBatch.Add(more);
-                    Interlocked.Decrement(ref _rawChannelCount);
-                }
-                
-                // Do not update raw channel stats here to avoid overwriting enqueue-based telemetry with near-zero after drains
+                // Process batch: parse and forward
+                var batchResult = await ProcessBatchAsync(rawBatch, token);
 
-                // ---- 3) Parse and forward ----
-                DateTime? firstParsedTimestamp = null;
-                DateTime? lastParsedTimestamp = null;
-                
-                for (int i = 0; i < rawBatch.Count; i++)
-                {
-                    var raw = rawBatch[i];
-                    ArraySegment<byte> segment = default;
-                    try
-                    {
-                        var parsed = Parse(raw.Data.Span);
-
-                        if (parsed is null)
-                        {
-                            _statsObserver.Handler.IncrementDropped();
-                            batchDropped++;
-                            _statsObserver.IncrementParseFor(_entityName, success: false);
-                            continue;
-                        }
-
-                        parsed.Timestamp = raw.Timestamp; // Override the timestamp to the actual timestamp of the packet
-
-                        _transmissionService?.OnNext(parsed);
-    
-                        // Track timestamps for latency measurement
-                        if (firstParsedTimestamp == null)
-                            firstParsedTimestamp = parsed.Timestamp;
-                        lastParsedTimestamp = parsed.Timestamp;
-                        
-                        // Try fast path to parsed channel; otherwise await (true backpressure)
-                        if (!_parsedChannel.Writer.TryWrite(parsed))
-                        {
-                            _statsObserver.Handler.IncrementBackpressure();
-                            batchBackpressure++;
-                            await _parsedChannel.Writer.WriteAsync(parsed, token);
-                            // Parsed item enqueued to parsed channel -> increment parsed channel count
-                            _statsObserver.DbWriter.IncrementChannelCount();
-                        }
-                        else
-                        {
-                            // Parsed item enqueued to parsed channel -> increment parsed channel count
-                            _statsObserver.DbWriter.IncrementChannelCount();
-                        }
-
-                        _statsObserver.Handler.IncrementParsed();
-                        _statsObserver.IncrementParseFor(_entityName, success: true);
-                        batchParsed++;
-                    }
-                    catch
-                    {
-                        _statsObserver.Handler.IncrementDropped();
-                        batchDropped++;
-                    }
-                    finally
-                    {
-                        // Return pooled memory *after* processing is done
-                        if (MemoryMarshal.TryGetArray(raw.Data, out segment) && segment.Array is not null)
-                            ArrayPool<byte>.Shared.Return(segment.Array);
-                    }
-                }
-
-                // ---- 4) Log every parsing batch with stats ----
-                var totalCaptured = _statsObserver.Handler.GetCaptured();
-                var totalParsed = _statsObserver.Handler.GetParsed();
-                var totalDropped = _statsObserver.Handler.GetDropped();
-                var totalBackpressure = _statsObserver.Handler.GetBackpressure();
-                
-                // Calculate parsing latency from this batch
-                var parsingLatencyMs = 0.0;
-                if (batchParsed > 0 && lastParsedTimestamp.HasValue)
-                {
-                    // Measure actual time from packet creation to being sent to DB writer
-                    parsingLatencyMs = (DateTime.UtcNow - lastParsedTimestamp.Value).TotalMilliseconds;
-                }
-                
-                _statsObserver.Handler.AddLatency((long)parsingLatencyMs);
-                _logger.LogInformation(
-                    "[HANDLER-SERVICE] [PARSER] {Entity} Worker {Worker}: Batch=(Parsed:{BatchParsed} Dropped:{BatchDropped} BP:{BatchBP} Latency:{Latency:F1}ms) Total=(Captured:{TotalCaptured} Parsed:{TotalParsed} Dropped:{TotalDropped} BP:{TotalBP})",
-                    typeof(T).Name, workerId, batchParsed, batchDropped, batchBackpressure, parsingLatencyMs, totalCaptured, totalParsed, totalDropped, totalBackpressure);
+                // Log batch statistics
+                LogBatchStats(workerId, batchResult);
             }
         }
-
         catch (OperationCanceledException) { }
     }
 
+    private async Task<bool> ReadBatchFromChannelAsync(List<RawPacketEvent> batch, CancellationToken token)
+    {
+        // Block for first item
+        RawPacketEvent first;
+        try
+        {
+            first = await _rawChannel.Reader.ReadAsync(token);
+        }
+        catch (ChannelClosedException)
+        {
+            return false; // upstream completed
+        }
+        
+        batch.Add(first);
+        Interlocked.Decrement(ref _rawChannelCount);
+        
+        // Aggressively drain what's immediately available
+        while (batch.Count < RAW_READ_BURST && _rawChannel.Reader.TryRead(out var more))
+        {
+            batch.Add(more);
+            Interlocked.Decrement(ref _rawChannelCount);
+        }
+        
+        return true;
+    }
+
+    private async Task<BatchProcessResult> ProcessBatchAsync(List<RawPacketEvent> batch, CancellationToken token)
+    {
+        int parsed = 0;
+        int dropped = 0;
+        int backpressure = 0;
+        DateTime? lastParsedTimestamp = null;
+
+        foreach (var raw in batch)
+        {
+            ArraySegment<byte> segment = default;
+            try
+            {
+                var parsedEntity = Parse(raw.Data.Span);
+                if (parsedEntity is null)
+                {
+                    RecordParseFailure();
+                    dropped++;
+                    continue;
+                }
+
+                parsedEntity.Timestamp = raw.Timestamp;
+                _transmissionService?.OnNext(parsedEntity);
+                
+                if (lastParsedTimestamp == null || parsedEntity.Timestamp > lastParsedTimestamp.Value)
+                    lastParsedTimestamp = parsedEntity.Timestamp;
+                
+                // Forward to parsed channel
+                if (await ForwardToParsedChannelAsync(parsedEntity, token))
+                    backpressure++;
+
+                RecordParseSuccess();
+                parsed++;
+            }
+            catch
+            {
+                RecordParseFailure();
+                dropped++;
+            }
+            finally
+            {
+                // Return pooled memory after processing
+                if (MemoryMarshal.TryGetArray(raw.Data, out segment) && segment.Array is not null)
+                    ArrayPool<byte>.Shared.Return(segment.Array);
+            }
+        }
+
+        // Calculate latency for this batch
+        var latencyMs = lastParsedTimestamp.HasValue 
+            ? (DateTime.UtcNow - lastParsedTimestamp.Value).TotalMilliseconds 
+            : 0.0;
+        _statsObserver.Handler.AddLatency((long)latencyMs);
+
+        return new BatchProcessResult(parsed, dropped, backpressure, latencyMs);
+    }
+
+    private async Task<bool> ForwardToParsedChannelAsync(T parsed, CancellationToken token)
+    {
+        // Try fast path first
+        if (_parsedChannel.Writer.TryWrite(parsed))
+        {
+            _statsObserver.DbWriter.IncrementChannelCount();
+            return false; // No backpressure
+        }
+
+        // Slow path - await write
+        _statsObserver.Handler.IncrementBackpressure();
+        await _parsedChannel.Writer.WriteAsync(parsed, token);
+        _statsObserver.DbWriter.IncrementChannelCount();
+        return true; // Had backpressure
+    }
+
+    private void RecordParseSuccess()
+    {
+        _statsObserver.Handler.IncrementParsed();
+        _statsObserver.IncrementParseFor(_entityName, success: true);
+    }
+
+    private void RecordParseFailure()
+    {
+        _statsObserver.Handler.IncrementDropped();
+        _statsObserver.IncrementParseFor(_entityName, success: false);
+    }
+
+    private void LogBatchStats(int workerId, BatchProcessResult result)
+    {
+        var totalCaptured = _statsObserver.Handler.GetCaptured();
+        var totalParsed = _statsObserver.Handler.GetParsed();
+        var totalDropped = _statsObserver.Handler.GetDropped();
+        var totalBackpressure = _statsObserver.Handler.GetBackpressure();
+        
+        _logger.LogInformation(
+            "[HANDLER-SERVICE] [PARSER] {Entity} Worker {Worker}: Batch=(Parsed:{BatchParsed} Dropped:{BatchDropped} BP:{BatchBP} Latency:{Latency:F1}ms) Total=(Captured:{TotalCaptured} Parsed:{TotalParsed} Dropped:{TotalDropped} BP:{TotalBP})",
+            typeof(T).Name, workerId, result.Parsed, result.Dropped, result.Backpressure, result.LatencyMs, 
+            totalCaptured, totalParsed, totalDropped, totalBackpressure);
+    }
+
     #endregion
+
+    #region Helper Methods
 
     private T? Parse(ReadOnlySpan<byte> raw)
     {
@@ -424,42 +411,81 @@ public class HandlerService<T> : BackgroundService, IHandlerService<T>, IObserve
         catch { return null; }
     }
 
+    private string GetEntityName()
+    {
+        return typeof(T).Name switch
+        {
+            nameof(MotionPacketEntity) => Constants.MOTION_ENTITY_NAME,
+            nameof(SafetyPacketEntity) => Constants.SAFETY_ENTITY_NAME,
+            nameof(OnVIFPacketEntity) => Constants.ONVIF_ENTITY_NAME,
+            _ => "Unknown"
+        };
+    }
+
+    private string GetRawChannelName()
+    {
+        return typeof(T).Name switch
+        {
+            nameof(MotionPacketEntity) => Constants.MOTION_RAW_CHANNEL_NAME,
+            nameof(SafetyPacketEntity) => Constants.SAFETY_RAW_CHANNEL_NAME,
+            nameof(OnVIFPacketEntity) => Constants.ONVIF_RAW_CHANNEL_NAME,
+            _ => "UnknownRaw"
+        };
+    }
+
+    private EndpointSpecification[] GetEndpointsFromRangeConfig(BPFConfDto bpfConfig)
+    {
+        return typeof(T).Name switch
+        {
+            nameof(MotionPacketEntity) => bpfConfig.Motion ?? [],
+            nameof(SafetyPacketEntity) => ToSafetyArray(bpfConfig.Safety),
+            nameof(OnVIFPacketEntity) => bpfConfig.OnVIF ?? [],
+            _ => []
+        };
+    }
+
+    private EndpointSpecification[] GetEndpointsFromBpfConfig(BPFConfDto bpfConfig)
+    {
+        return typeof(T).Name switch
+        {
+            nameof(MotionPacketEntity) => bpfConfig.Motion ?? [],
+            nameof(SafetyPacketEntity) => ToSafetyArray(bpfConfig.Safety),
+            nameof(OnVIFPacketEntity) => bpfConfig.OnVIF ?? [],
+            _ => []
+        };
+    }
+
     private static EndpointSpecification[] ToSafetyArray(BPFConfDto.SafetyConf? safety)
     {
         if (safety is null) return [];
         var list = new List<EndpointSpecification>(2);
         if (safety.Sbe is EndpointSpecification sbe)
-        {
             list.Add(new EndpointSpecification(sbe.IP, sbe.Port));
-        }
         if (safety.Pbe is EndpointSpecification pbe)
-        {
             list.Add(new EndpointSpecification(pbe.IP, pbe.Port));
-        }
         return [.. list];
     }
+
+    private void UpdateRawChannelStats()
+    {
+        var channelCount = Interlocked.Read(ref _rawChannelCount);
+        var utilization = (double)channelCount / _rawCapacity * 100;
+        var avgLatency = _statsObserver.Handler.GetAverageLatency();
+        var channelName = GetRawChannelName();
+        _statsObserver.UpdateChannelStats(channelName, _rawCapacity, (int)channelCount, utilization, _workerCount, avgLatency);
+    }
+
+    #endregion
+
+    #region IObservable<BasePacketEntity>
 
     public IDisposable Subscribe(IObserver<BasePacketEntity> observer)
     {
         ArgumentNullException.ThrowIfNull(observer);
         return new Unsubscriber<BasePacketEntity>([observer], observer);
     }
-    
-    private void UpdateRawChannelStats()
-    {
-        var rawChannelCount = Interlocked.Read(ref _rawChannelCount);
-        var rawCapacity = _rawCapacity;
-        var rawUtilization = rawCapacity > 0 ? (double)rawChannelCount / rawCapacity * 100 : 0;
-        
-        // Determine channel name based on packet type
-        var channelName = typeof(T).Name switch
-        {
-            nameof(MotionPacketEntity) => "MotionRaw",
-            nameof(SafetyPacketEntity) => "SafetyRaw", 
-            nameof(OnVIFPacketEntity) => "OnvifRaw",
-            _ => "UnknownRaw"
-        };
-        
-        _statsObserver.UpdateChannelStats(channelName, rawCapacity, (int)rawChannelCount, rawUtilization);
-    }
+
+    #endregion
+
+    private record BatchProcessResult(int Parsed, int Dropped, int Backpressure, double LatencyMs);
 }

@@ -1,6 +1,7 @@
 services:
   # Database Services
   questdb-dev:
+    image: kanatbackend-questdb-dev
     build:
       context: ./QuestDB
     container_name: questdb-packets-dev
@@ -44,7 +45,7 @@ services:
 
   seq:
     image: datalust/seq:latest
-    container_name: seq
+    container_name: seq-dev
     restart: unless-stopped
     environment:
       ACCEPT_EULA: "Y"

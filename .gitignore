@@ -319,6 +319,42 @@ paket-files/
 ## Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+*.pyi_*
+.venv/
+.pytest_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
+composer
+.pyi_build/
+.pyi_spec/
+installer.run
+artifacts/
+.venv/
+.pytest_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
 
 ## Cake - Uncomment if you are using it
 # tools/**

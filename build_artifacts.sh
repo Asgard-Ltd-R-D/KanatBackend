@@ -133,15 +133,22 @@ source .venv/bin/activate
 echo "Installing PyInstaller..."
 python -m pip install --upgrade pip pyinstaller --quiet
 
-# Clean previous builds
+# Clean previous builds and PyInstaller cache
+echo "Cleaning previous builds and cache..."
 rm -rf build dist .pyi_build .pyi_spec composer
+# Also clean PyInstaller's global cache
+python -m PyInstaller --clean > /dev/null 2>&1 || true
 
-# Build executable
-echo "Building composer executable..."
-pyinstaller --onefile --clean --name composer \
+# Build executable from scratch (no cache)
+echo "Building composer executable from scratch (no cache)..."
+pyinstaller --onefile \
+  --clean \
+  --noconfirm \
+  --name composer \
   --distpath . \
   --workpath .pyi_build \
   --specpath .pyi_spec \
+  --log-level=WARN \
   composer.py
 
 if [ ! -f "./composer" ]; then
@@ -155,6 +162,13 @@ echo -e "${GREEN}✓ Composer executable created${NC}"
 echo -e "${YELLOW}Step 3: Creating installer.run...${NC}"
 
 INSTALLER_FILE="installer.run"
+
+# Remove existing installer.run if it exists (will be overwritten)
+if [ -f "$INSTALLER_FILE" ]; then
+    echo "Removing existing installer.run..."
+    rm -f "$INSTALLER_FILE"
+fi
+
 TEMP_DIR=$(mktemp -d)
 INSTALL_DIR="$TEMP_DIR/installer"
 

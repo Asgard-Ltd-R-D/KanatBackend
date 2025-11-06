@@ -4,6 +4,7 @@ services:
     image: kanatbackend-questdb-dev
     build:
       context: ./QuestDB
+    pull_policy: never
     container_name: questdb-packets-dev
     ports:
       - "8812:8812" # HTTP/Web Console

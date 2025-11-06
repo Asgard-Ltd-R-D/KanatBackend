@@ -403,6 +403,129 @@ def is_environment_running(environment):
     except Exception:
         return False
 
+def check_and_load_missing_images(compose_file, environment):
+    """Check if required images exist, and try to load them from package tar files if missing"""
+    # Get required base images from compose file
+    required_images = get_required_images_from_compose(compose_file)
+    
+    # Also check for built QuestDB images (kanatbackend-questdb-dev/prod)
+    # These are built from questdb/questdb:latest base image
+    built_questdb_image = f"kanatbackend-questdb-{environment}"
+    
+    # Check which images are missing
+    missing_images = []
+    for image in required_images:
+        # Skip questdb/questdb:latest - we check for the built image instead
+        if 'questdb/questdb' in image:
+            continue
+        
+        # Check if image exists locally
+        result = subprocess.run(['docker', 'images', '-q', image], 
+                              capture_output=True, text=True)
+        if not result.stdout.strip():
+            missing_images.append(image)
+    
+    # Check for built QuestDB image
+    questdb_result = subprocess.run(['docker', 'images', '-q', built_questdb_image], 
+                                  capture_output=True, text=True)
+    if not questdb_result.stdout.strip():
+        missing_images.append(built_questdb_image)
+    
+    if not missing_images:
+        return True
+    
+    print_warning(f"Missing Docker images: {', '.join(missing_images)}")
+    print_info("Attempting to load images from package tar files...")
+    
+    # Try to find package directory and load images
+    package_dir = get_latest_package_dir(environment)
+    if not package_dir or not package_dir.exists():
+        print_warning("Package directory not found. Images need to be loaded manually.")
+        return False
+    
+    # Look for tar files in package directory
+    tar_files = list(package_dir.glob("*.tar"))
+    if not tar_files:
+        print_warning("No tar files found in package directory.")
+        return False
+    
+    # Try to load each missing image
+    loaded_count = 0
+    for missing_image in missing_images:
+        # Tar files are named by replacing '/' and ':' with '_'
+        # e.g., postgres:15-alpine -> postgres_15-alpine.tar
+        # e.g., datalust/seq:latest -> datalust_seq_latest.tar
+        # e.g., kanatbackend-questdb-dev -> kanatbackend-questdb-dev.tar (no replacement needed)
+        if 'kanatbackend-questdb' in missing_image:
+            # Built QuestDB images use the image name directly as tar filename
+            expected_tar_name = missing_image
+        else:
+            expected_tar_name = missing_image.replace('/', '_').replace(':', '_')
+        matching_tar = None
+        
+        # Try exact match first
+        for tar_file in tar_files:
+            if tar_file.stem == expected_tar_name:
+                matching_tar = tar_file
+                break
+        
+        # If no exact match, try case-insensitive match
+        if not matching_tar:
+            for tar_file in tar_files:
+                if tar_file.stem.lower() == expected_tar_name.lower():
+                    matching_tar = tar_file
+                    break
+        
+        # If still no match, try partial match (for edge cases)
+        if not matching_tar:
+            image_parts = missing_image.split(':')
+            image_base = image_parts[0].split('/')[-1]  # Get last part of image name
+            for tar_file in tar_files:
+                tar_name = tar_file.stem.lower()
+                # Check if tar name contains the image base and tag
+                if image_base.lower() in tar_name:
+                    if len(image_parts) > 1:
+                        # Also check for tag match
+                        tag = image_parts[1].lower()
+                        if tag in tar_name:
+                            matching_tar = tar_file
+                            break
+                    else:
+                        matching_tar = tar_file
+                        break
+        
+        if matching_tar:
+            print_info(f"Loading {missing_image} from {matching_tar.name}...")
+            try:
+                result = subprocess.run(['docker', 'load', '-i', str(matching_tar)],
+                                      capture_output=True, text=True, check=True)
+                # Verify the image was loaded
+                verify_result = subprocess.run(['docker', 'images', '-q', missing_image],
+                                             capture_output=True, text=True)
+                if verify_result.stdout.strip():
+                    print_success(f"Loaded {missing_image}")
+                    loaded_count += 1
+                else:
+                    # Image might have been loaded with a different name, check what was loaded
+                    loaded_output = result.stdout
+                    if 'Loaded image' in loaded_output:
+                        print_warning(f"Tar file loaded but {missing_image} not found. Check output: {loaded_output}")
+                    else:
+                        print_warning(f"Tar file loaded but {missing_image} not found. Image may have different name.")
+            except subprocess.CalledProcessError as e:
+                print_warning(f"Failed to load {matching_tar.name}: {e.stderr if e.stderr else e.stdout}")
+        else:
+            print_warning(f"No matching tar file found for {missing_image} (expected: {expected_tar_name}.tar)")
+    
+    if loaded_count == len(missing_images):
+        print_success(f"All missing images loaded successfully")
+        return True
+    elif loaded_count > 0:
+        print_warning(f"Loaded {loaded_count}/{len(missing_images)} images. Some images may still be missing.")
+        return False
+    else:
+        return False
+
 def run_docker_compose(environment='prod', detached=False, show_logs=True, project_name=None):
     """Run Docker Compose for the specified environment"""
     if environment not in ['dev', 'prod']:
@@ -425,10 +548,48 @@ def run_docker_compose(environment='prod', detached=False, show_logs=True, proje
     if work_dir != PROJECT_ROOT:
         print_info(f"Using compose file from package: {compose_file}")
     
+    # Check and load missing images from package tar files
+    if not check_and_load_missing_images(compose_file, environment):
+        print_warning("Some images may still be missing. Continuing anyway...")
+    
     try:
+        # Check if built images already exist (e.g., just loaded from tar files)
+        # If they exist, we can skip the build to avoid needing base images
+        built_questdb_image = f"kanatbackend-questdb-{environment}"
+        questdb_exists = subprocess.run(['docker', 'images', '-q', built_questdb_image],
+                                      capture_output=True, text=True)
+        images_exist = bool(questdb_exists.stdout.strip())
+        
+        if images_exist:
+            print_info("Built images already exist, skipping build (use --no-cache to force rebuild)")
+        else:
+            # First, build images that have build: sections (this prevents Docker Compose from trying to pull them)
+            # This is important because Docker Compose will try to pull images with image: tags before building
+            # The pull_policy: never in compose files ensures built images aren't pulled
+            # Use --no-cache to force rebuild even if images already exist
+            print_info("Building Docker images (rebuilding if they already exist)...")
+            build_cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'build', '--no-cache']
+            build_result = subprocess.run(build_cmd, cwd=work_dir, capture_output=True, text=True)
+            if build_result.returncode != 0:
+                # If build fails, check if it's because base images are missing
+                error_output = build_result.stdout + build_result.stderr
+                if 'pull access denied' in error_output.lower() or 'failed to resolve' in error_output.lower() or 'no such host' in error_output.lower():
+                    print_warning("Build failed - base images may need to be loaded from tar files first")
+                    print_warning("If images were just loaded, they should work. Continuing with 'up' phase...")
+                else:
+                    # Other build errors - show them
+                    print_error("Build failed:")
+                    print_error(build_result.stderr if build_result.stderr else build_result.stdout)
+            else:
+                print_success("Docker images built successfully")
+        
         if detached:
-            # Start in detached mode first
-            cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'up', '-d']
+            # Start in detached mode
+            # Only use --build if images don't exist (to avoid rebuilding when images are already loaded)
+            # --pull never prevents trying to pull built images (kanatbackend-questdb-*)
+            cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'up', '-d', '--pull', 'never']
+            if not images_exist:
+                cmd.insert(-1, '--build')  # Insert --build before --pull never
             print_info("Starting services in detached mode...")
             
             result = subprocess.run(cmd, cwd=work_dir, check=True, capture_output=True, text=True)
@@ -438,14 +599,17 @@ def run_docker_compose(environment='prod', detached=False, show_logs=True, proje
                 print_header("Docker Compose Logs:")
                 log_cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'logs', '-f']
                 try:
-                    subprocess.run(log_cmd, cwd=PROJECT_ROOT)
+                    subprocess.run(log_cmd, cwd=work_dir)
                 except KeyboardInterrupt:
                     print_warning("\nStopping log view (services still running)")
         else:
             # Run normally with output
-            cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'up']
+            # Only use --build if images don't exist (to avoid rebuilding when images are already loaded)
+            cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'up', '--pull', 'never']
+            if not images_exist:
+                cmd.insert(-1, '--build')  # Insert --build before --pull never
             print_info(f"Running: {' '.join(cmd)}")
-            subprocess.run(cmd, cwd=PROJECT_ROOT, check=True)
+            subprocess.run(cmd, cwd=work_dir, check=True)
         
         return True
         
@@ -456,18 +620,38 @@ def run_docker_compose(environment='prod', detached=False, show_logs=True, proje
         if error_output:
             # Extract the actual error message
             error_lines = error_output.strip().split('\n')
-            # Find the error line (usually contains "Error" or "failed")
+            # Find all error lines (usually contains "Error" or "failed" or "No such image")
+            error_found = False
             for line in error_lines:
-                if 'Error' in line or 'error' in line or 'failed' in line:
+                line_lower = line.lower()
+                if ('error' in line_lower or 'failed' in line_lower or 'no such image' in line_lower or 
+                    'pull access denied' in line_lower or 'failed to resolve' in line_lower):
                     print_error(f"Error: {line}")
-                    break
-            # If no specific error line found, print the last few lines
-            if len(error_lines) > 0:
-                # Print the last meaningful error line
-                for line in reversed(error_lines):
-                    if line.strip() and ('Error' in line or 'error' in line or 'failed' in line or 'port' in line.lower()):
-                        print_error(f"Error: {line}")
-                        break
+                    error_found = True
+            
+            # If no error line found, print the last few non-empty lines
+            if not error_found and len(error_lines) > 0:
+                # Print the last few meaningful lines (skip build progress messages)
+                meaningful_lines = [line for line in reversed(error_lines) 
+                                  if line.strip() and not line.strip().startswith('#') 
+                                  and 'done' not in line.lower() and 'DONE' not in line]
+                if meaningful_lines:
+                    print_error(f"Error: {meaningful_lines[0]}")
+                else:
+                    # Fallback: show last few lines
+                    print_error("Last output:")
+                    for line in error_lines[-5:]:
+                        if line.strip():
+                            print_error(f"  {line}")
+            
+            # Check if it's a missing image error and provide helpful message
+            error_text = error_output.lower()
+            if 'no such image' in error_text:
+                print_warning("\nMissing Docker images detected.")
+                print_info("You may need to load images from tar files first:")
+                print_info("  cd artifacts/packages/<package_dir>/")
+                print_info("  docker load -i <image_name>.tar")
+                print_info("Or run 'composer build' to build/pull required images.")
         return False
 
 def run_dll(environment='prod', detached=False):
@@ -1310,10 +1494,10 @@ def build_both_environments():
                 compose_file = DOCKER_COMPOSE_DEV_FILE if environment == 'dev' else DOCKER_COMPOSE_PROD_FILE
                 work_dir = PROJECT_ROOT
             
-            print_info(f"Building {environment.upper()} compose services...")
+            print_info(f"Building {environment.upper()} compose services (rebuilding if they already exist)...")
             if work_dir != PROJECT_ROOT:
                 print_info(f"Using compose file from package: {compose_file}")
-            cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'build']
+            cmd = ['docker', 'compose', '-p', project_name, '-f', str(compose_file), 'build', '--no-cache']
             # Show Docker's native progress output
             if sys.stdout.isatty():
                 subprocess.run(cmd, cwd=work_dir, check=True)
@@ -1505,6 +1689,38 @@ def main():
                 print_error(f"Failed to stop {other_environment.upper()} environment")
                 sys.exit(1)
             print_success(f"Stopped {other_environment.upper()} environment")
+        
+        # Check if required Docker images are missing
+        compose_file, work_dir = get_compose_file(environment)
+        if compose_file and compose_file.exists():
+            required_images = get_required_images_from_compose(compose_file)
+            built_questdb_image = f"kanatbackend-questdb-{environment}"
+            missing_images = []
+            
+            # Check base images
+            for image in required_images:
+                # Skip questdb/questdb:latest - we check for the built image instead
+                if 'questdb/questdb' in image:
+                    continue
+                result = subprocess.run(['docker', 'images', '-q', image], 
+                                      capture_output=True, text=True)
+                if not result.stdout.strip():
+                    missing_images.append(image)
+            
+            # Check built QuestDB image
+            questdb_result = subprocess.run(['docker', 'images', '-q', built_questdb_image], 
+                                          capture_output=True, text=True)
+            if not questdb_result.stdout.strip():
+                missing_images.append(built_questdb_image)
+            
+            # If images are missing, build first
+            if missing_images:
+                print_warning(f"Missing Docker images: {', '.join(missing_images)}")
+                print_info("Running build to create missing images...")
+                if not build_both_environments():
+                    print_error("Build failed, cannot start environment")
+                    sys.exit(1)
+                print_success("Build completed, continuing with up...")
         
         with ProgressBar(total=3, desc="Starting environment", unit="step") as pbar:
             # Check if release exists, if not build both

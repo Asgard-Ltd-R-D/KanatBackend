@@ -336,6 +336,7 @@ coverage.xml
 .pytest_cache/
 cover/
 composer
+BackendApplication/
 .pyi_build/
 .pyi_spec/
 installer.run

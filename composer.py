@@ -618,7 +618,7 @@ def kill_environment(environment):
     return True
 
 def get_required_images_from_compose(compose_file):
-    """Get list of Docker images required by compose file (from image: tags and build base images)"""
+    """Get list of Docker images required by compose file (only pullable base images, not built images)"""
     images = []
     
     try:
@@ -630,54 +630,105 @@ def get_required_images_from_compose(compose_file):
         image_pattern = r'^\s*image:\s*(.+)$'
         # Look for build context lines
         context_pattern = r'^\s*context:\s*(.+)$'
+        # Look for service names (indented under services:, not top-level keys)
+        # Service names are indented with 2 spaces and followed by a colon
+        service_pattern = r'^  (\w[\w-]*):\s*$'
         
         i = 0
+        services = {}  # service_name -> {'has_build': bool, 'image': str, 'build_context': str}
+        in_services_section = False
+        
+        # First pass: parse all services to understand their structure
+        current_service = None
         while i < len(lines):
             line = lines[i]
-            # Check for image: tag
-            match = re.match(image_pattern, line)
-            if match:
-                image_name = match.group(1).strip().strip('"\'')
-                if image_name and image_name not in images:
-                    images.append(image_name)
             
-            # Check for build: section
-            if re.match(r'^\s*build:', line):
-                # Look for context: in the next few lines (within the build section)
-                j = i + 1
-                while j < len(lines):
-                    next_line = lines[j]
-                    next_stripped = next_line.strip()
-                    
-                    # Check if we've left the build section (new service or top-level key)
-                    if next_stripped and not next_line.startswith(' ') and not next_line.startswith('\t'):
-                        break
-                    if next_stripped and ':' in next_stripped and not next_stripped.startswith('context:'):
-                        # Check if it's still part of build section (indented)
-                        if next_line.startswith('    '):  # 4 spaces = still in build section
-                            pass
-                        else:
+            # Check if we're in the services section
+            if re.match(r'^services:\s*$', line):
+                in_services_section = True
+                i += 1
+                continue
+            
+            # Check if we've left the services section (hit a top-level key)
+            if in_services_section and re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*:\s*$', line) and not line.startswith(' '):
+                in_services_section = False
+                current_service = None
+            
+            # Only look for services when we're in the services section
+            if in_services_section:
+                # Check if this is a new service definition (2 spaces indent)
+                service_match = re.match(service_pattern, line)
+                if service_match:
+                    current_service = service_match.group(1)
+                    if current_service not in services:
+                        services[current_service] = {'has_build': False, 'image': None, 'build_context': None}
+                    i += 1
+                    continue
+            
+            if current_service:
+                # Check for image: tag
+                image_match = re.match(image_pattern, line)
+                if image_match:
+                    image_name = image_match.group(1).strip().strip('"\'')
+                    services[current_service]['image'] = image_name
+                
+                # Check for build: section
+                if re.match(r'^\s*build:', line):
+                    services[current_service]['has_build'] = True
+                    # Look for context: in the next few lines
+                    j = i + 1
+                    while j < len(lines):
+                        next_line = lines[j]
+                        next_stripped = next_line.strip()
+                        
+                        # Check if we've left the build section
+                        if next_stripped and not next_line.startswith(' ') and not next_line.startswith('\t'):
                             break
-                    
-                    context_match = re.match(context_pattern, next_line)
-                    if context_match:
-                        context_path_str = context_match.group(1).strip().strip('"\'')
-                        context_path = PROJECT_ROOT / context_path_str
-                        dockerfile_path = context_path / 'Dockerfile'
-                        if dockerfile_path.exists():
-                            # Read Dockerfile to get base image
-                            with open(dockerfile_path, 'r') as df:
-                                for df_line in df:
-                                    if df_line.strip().startswith('FROM'):
-                                        base_image = df_line.strip().split('FROM', 1)[1].strip().split()[0]
-                                        if base_image and base_image not in images:
-                                            images.append(base_image)
-                                        break
-                        break
-                    j += 1
-                    if j - i > 10:  # Safety limit
-                        break
+                        if next_stripped and ':' in next_stripped and not next_stripped.startswith('context:'):
+                            if not next_line.startswith('    '):  # Not indented = new section
+                                break
+                        
+                        context_match = re.match(context_pattern, next_line)
+                        if context_match:
+                            context_path_str = context_match.group(1).strip().strip('"\'')
+                            services[current_service]['build_context'] = context_path_str
+                            break
+                        j += 1
+                        if j - i > 10:  # Safety limit
+                            break
+            
             i += 1
+        
+        # Second pass: collect images based on service structure
+        for service_name, service_info in services.items():
+            if service_info['has_build']:
+                # Service has build: - get base image from Dockerfile, ignore image: tag
+                if service_info['build_context']:
+                    # Resolve context path relative to compose file directory
+                    context_path_str = service_info['build_context']
+                    # Handle relative paths like ./QuestDB
+                    if context_path_str.startswith('./'):
+                        context_path_str = context_path_str[2:]
+                    context_path = compose_file.parent / context_path_str
+                    dockerfile_path = context_path / 'Dockerfile'
+                    if dockerfile_path.exists():
+                        # Read Dockerfile to get base image
+                        with open(dockerfile_path, 'r') as df:
+                            for df_line in df:
+                                if df_line.strip().startswith('FROM'):
+                                    base_image = df_line.strip().split('FROM', 1)[1].strip().split()[0]
+                                    if base_image and base_image not in images:
+                                        images.append(base_image)
+                                    break
+            else:
+                # Service has no build: - use image: tag (but skip built image names)
+                if service_info['image']:
+                    image_name = service_info['image']
+                    # Skip built image names (kanatbackend-questdb-*)
+                    if 'kanatbackend-questdb' not in image_name:
+                        if image_name not in images:
+                            images.append(image_name)
+    
     except Exception as e:
         print_warning(f"Could not parse compose file for required images: {e}")
     

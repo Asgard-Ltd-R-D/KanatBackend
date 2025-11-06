@@ -118,10 +118,10 @@ The `installer.run` file is a self-extracting shell script that contains all nec
 
 ### Contents of installer.run
 
-When extracted, the installer creates a `KanatBackend` directory with:
+When extracted, the installer creates a `BackendApplication` directory with:
 
 ```
-KanatBackend/
+BackendApplication/
 ├── README.md
 ├── DEPLOY_README.md
 ├── composer                    # Executable tool
@@ -166,21 +166,21 @@ KanatBackend/
 
 3. **Run the installer**:
    ```bash
-   # Extract to ./KanatBackend/ (current directory)
+   # Extract to ./BackendApplication/ (current directory)
    ./installer.run
 
    # Or extract to a specific base directory
-   # Files will be in /opt/KanatBackend/
+   # Files will be in /opt/BackendApplication/
    ./installer.run /opt
    ```
 
-   **Note**: The installer automatically creates a `KanatBackend` directory. If the directory already exists, the installer will exit with an error to prevent overwriting.
+   **Note**: The installer automatically creates a `BackendApplication` directory. If the directory already exists, the installer will exit with an error to prevent overwriting.
 
 4. **Navigate to the installation directory**:
    ```bash
-   cd KanatBackend
+   cd BackendApplication
    # or
-   cd /opt/KanatBackend  # if you specified a base directory
+   cd /opt/BackendApplication  # if you specified a base directory
    ```
 
 5. **Use composer** to manage the application:
@@ -306,7 +306,7 @@ Display help information:
 
 2. **Transfer installer to target machine**:
    ```bash
-   scp installer.run user@target:/opt/kanatbackend/
+   scp installer.run user@target:/opt/
    ```
 
 3. **On target machine, extract installer**:
@@ -314,12 +314,12 @@ Display help information:
    cd /opt
    chmod +x installer.run
    ./installer.run
-   # This creates /opt/KanatBackend/
+   # This creates /opt/BackendApplication/
    ```
 
 4. **Navigate to installation directory**:
    ```bash
-   cd KanatBackend
+   cd BackendApplication
    ```
 
 5. **Load Docker images** (if needed):
@@ -347,10 +347,10 @@ Display help information:
 
 2. **Extract new installer** (or update files manually):
    ```bash
-   # If updating in place, remove old KanatBackend directory first
-   rm -rf KanatBackend
+   # If updating in place, remove old BackendApplication directory first
+   rm -rf BackendApplication
    ./installer.run
-   cd KanatBackend
+   cd BackendApplication
    ```
 
 3. **Load new Docker images** (if updated):
@@ -386,7 +386,7 @@ The release packages are designed for offline deployment:
 3. **On offline machine, extract and run**:
    ```bash
    ./installer.run
-   cd KanatBackend
+   cd BackendApplication
    cd artifacts/packages/prod_<timestamp>/
    
    # Load Docker images from tarballs
@@ -405,7 +405,7 @@ After installation, your directory structure will be:
 
 ```
 <base_directory>/
-└── KanatBackend/              # Created by installer
+└── BackendApplication/        # Created by installer
     ├── README.md
     ├── DEPLOY_README.md
     ├── composer                # Executable

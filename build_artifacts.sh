@@ -183,7 +183,7 @@ chmod +x "$INSTALL_DIR/composer"
 # Create the self-extracting installer.run file
 cat > "$INSTALLER_FILE" << 'INSTALLER_EOF'
 #!/bin/bash
-# Self-extracting installer for KanatBackend
+# Self-extracting installer for BackendApplication
 
 set -e
 
@@ -192,13 +192,13 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}=== KanatBackend Installer ===${NC}"
+echo -e "${BLUE}=== BackendApplication Installer ===${NC}"
 
 # Determine base extraction directory (current directory by default)
 BASE_DIR="${1:-.}"
 
-# Create KanatBackend directory
-EXTRACT_DIR="$BASE_DIR/KanatBackend"
+# Create BackendApplication directory
+EXTRACT_DIR="$BASE_DIR/BackendApplication"
 
 if [ -d "$EXTRACT_DIR" ]; then
     echo "Warning: Directory $EXTRACT_DIR already exists."
@@ -212,7 +212,7 @@ mkdir -p "$EXTRACT_DIR"
 # Get the line number where the archive starts
 ARCHIVE_START=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$0")
 
-# Extract the archive directly to the KanatBackend directory
+# Extract the archive directly to the BackendApplication directory
 echo -e "${BLUE}Extracting files to $EXTRACT_DIR...${NC}"
 tail -n +$ARCHIVE_START "$0" | tar -xz -C "$EXTRACT_DIR"
 
@@ -271,6 +271,6 @@ echo ""
 echo "To install, run:"
 echo "  ./installer.run [base_directory]"
 echo ""
-echo "Files will be extracted to: <base_directory>/KanatBackend/"
-echo "If no base directory is specified, files will be extracted to: ./KanatBackend/"
+echo "Files will be extracted to: <base_directory>/BackendApplication/"
+echo "If no base directory is specified, files will be extracted to: ./BackendApplication/"
 

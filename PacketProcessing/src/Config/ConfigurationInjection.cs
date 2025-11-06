@@ -343,6 +343,7 @@ public class ConfigurationInjection
         });
         builder.Services.AddControllers().AddJsonOptions(options => {
             options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter<DataPipes>());
+            options.JsonSerializerOptions.Converters.Add(new Utils.Converters.NullableIntJsonConverter());
         });
         builder.Services.AddRouting(options => options.LowercaseUrls = true);
 
@@ -354,6 +355,7 @@ public class ConfigurationInjection
             options.KeepAliveInterval = TimeSpan.FromSeconds(15);
         }).AddJsonProtocol(options => {
             options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter<DataPipes>());
+            options.PayloadSerializerOptions.Converters.Add(new Utils.Converters.NullableIntJsonConverter());
         });
         
         

@@ -2,7 +2,7 @@
 <html>
 <head>
     <title>Kanat Packet Processing - Telemetry Dashboard</title>
-    <link rel="stylesheet" href="css/dashboard.css?v=2">
+    <link rel="stylesheet" href="css/dashboard.css?v=3">
     <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@latest/dist/browser/signalr.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -50,27 +50,35 @@
             </div>
 
             <div class="form-group" style="margin-top: 12px;">
-                <h4 style="margin: 8px 0;">Motion Endpoints (optional)</h4>
-                <div id="motionEndpoints" class="endpoints-container"></div>
-                <div class="endpoints-actions">
-                    <button class="btn-console btn-small" onclick="addEndpointRow('motionEndpoints')" type="button">Add Motion Endpoint</button>
+                <div style="display:flex; align-items:center; justify-content: space-between; margin: 8px 0;">
+                    <h4 style="margin: 0;">Motion Endpoints (optional)</h4>
+                    <button class="btn-start btn-small" onclick="addEndpointRow('motionEndpoints')" type="button" style="width:auto; padding: 4px 10px; font-weight:700;">+</button>
                 </div>
+                <div id="motionEndpoints" class="endpoints-container"></div>
             </div>
 
             <div class="form-group" style="margin-top: 12px;">
                 <h4 style="margin: 8px 0;">Safety Endpoints (optional)</h4>
-                <div id="safetyEndpoints" class="endpoints-container"></div>
-                <div class="endpoints-actions">
-                    <button class="btn-console btn-small" onclick="addEndpointRow('safetyEndpoints')" type="button">Add Safety Endpoint</button>
+                <div class="endpoints-container">
+                    <div style="display:flex; gap:6px; align-items:center; margin: 6px 0;">
+                        <label style="width:50px;color:#b0b0b0;">SBE</label>
+                        <input id="sbeIp" type="text" placeholder="SBE IP" style="flex:2;">
+                        <input id="sbePort" type="number" placeholder="Port" style="flex:1;">
+                    </div>
+                    <div style="display:flex; gap:6px; align-items:center; margin: 6px 0;">
+                        <label style="width:50px;color:#b0b0b0;">PBE</label>
+                        <input id="pbeIp" type="text" placeholder="PBE IP" style="flex:2;">
+                        <input id="pbePort" type="number" placeholder="Port" style="flex:1;">
+                    </div>
                 </div>
             </div>
 
             <div class="form-group" style="margin-top: 12px;">
-                <h4 style="margin: 8px 0;">OnVIF Endpoints (optional)</h4>
-                <div id="onvifEndpoints" class="endpoints-container"></div>
-                <div class="endpoints-actions">
-                    <button class="btn-console btn-small" onclick="addEndpointRow('onvifEndpoints')" type="button">Add OnVIF Endpoint</button>
+                <div style="display:flex; align-items:center; justify-content: space-between; margin: 8px 0;">
+                    <h4 style="margin: 0;">OnVIF Endpoints (optional)</h4>
+                    <button class="btn-start btn-small" onclick="addEndpointRow('onvifEndpoints')" type="button" style="width:auto; padding: 4px 10px; font-weight:700;">+</button>
                 </div>
+                <div id="onvifEndpoints" class="endpoints-container"></div>
             </div>
 
             <div class="form-group" style="margin-top: 12px;">
@@ -82,11 +90,11 @@
             </div>
 
             <div class="form-group" style="margin-top: 12px;">
-                <h4 style="margin: 8px 0;">Cameras (optional)</h4>
-                <div id="camsContainer" class="endpoints-container"></div>
-                <div class="endpoints-actions">
-                    <button class="btn-console btn-small" onclick="addCameraRow()" type="button">Add Camera</button>
+                <div style="display:flex; align-items:center; justify-content: space-between; margin: 8px 0;">
+                    <h4 style="margin: 0;">Cameras (optional)</h4>
+                    <button class="btn-start btn-small" onclick="addCameraRow()" type="button" style="width:auto; padding: 4px 10px; font-weight:700;">+</button>
                 </div>
+                <div id="camsContainer" class="endpoints-container"></div>
             </div>
 
             <div style="display:flex; gap:8px; margin-top: 12px;">
@@ -466,16 +474,17 @@
                     <!-- Add Stream Section -->
                     <div style="margin-bottom: 40px; padding: 30px; background: rgba(79, 195, 247, 0.1); border-radius: 8px; border-left: 4px solid #4fc3f7;">
                         <h5 style="color: #4fc3f7; margin: 0 0 20px 0; font-size: 18px;">Add New Stream</h5>
-                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 15px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px;">
                             <select id="streamSelect" class="form-select" style="flex: 1; height: 40px; font-size: 14px; min-width: 0;">
                                 <!-- Options will be populated dynamically -->
                             </select>
+                            <input id="intervalInput" type="number" placeholder="Interval (ms)" min="0" style="width: 120px; padding: 8px; border: 1px solid #333; border-radius: 5px; background: #2a2a2a; color: #e0e0e0; font-size: 14px; height: 40px;" title="Sampling interval in milliseconds (0 = no sampling)">
                             <button id="registerStreamBtn" class="btn-start" onclick="registerSelectedStream()" disabled style="height: 32px; padding: 0 12px; font-size: 12px; border-radius: 4px; flex-shrink: 0; min-width: 60px; max-width: 80px;">
                                 Add
                             </button>
                         </div>
                         <div style="margin-top: 10px; font-size: 13px; color: #888;">
-                            <span id="streamInfo">Select a pipeline above to see available streams</span>
+                            <span id="streamInfo">Select a pipeline above to see available streams. Include <code>intervalMs</code> on registration to set/update sampling. Re-registering without <code>intervalMs</code> removes sampling (instant send).</span>
                         </div>
                     </div>
                     
@@ -511,7 +520,7 @@
     
     </div> <!-- End main-content -->
 
-    <script src="js/dashboard.js?v=5"></script>
+    <script src="js/dashboard.js?v=12"></script>
     
     <script>
         // Console Access Functions

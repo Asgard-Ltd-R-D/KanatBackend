@@ -249,13 +249,13 @@
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/RangeStartRequest" },
-              "example": {
+                "example": {
                 "description": "Range session",
                 "config": {
                   "bpfConfig": {
                     "device": "any",
                     "motion": [ { "ip": "132.8.7.125", "port": 5000 } ],
-                    "safety": [ { "ip": "132.8.7.101", "port": 5000 }, { "ip": "132.8.7.102", "port": 5001 } ],
+                    "safety": { "sbe": { "ip": "132.8.7.101", "port": 5000 }, "pbe": { "ip": "132.8.7.102", "port": 5001 } },
                     "onVIF": [ { "ip": "132.8.7.121", "port": 5000 } ]
                   },
                   "mtxConfig": { "ip": "127.0.0.1", "port": 8554 },
@@ -954,7 +954,8 @@
                 "dataPipe": "Motion",
                 "description": "MOT_GetMotorSpeed",
                 "isCmd": false,
-                "axis": 0
+                "axis": 0,
+                "intervalMs": 100
               }
             }
           }
@@ -1031,6 +1032,49 @@
                       "operationType": "UnregisterFromMethod",
                       "success": false,
                       "message": "motion|mot_getmotorspeed|false|0"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/hubs/packets/SetTimeInterval": {
+      "post": {
+        "tags": ["SignalR Hub"],
+        "summary": "Invoke SetTimeInterval (SignalR)",
+        "description": "Logical documentation endpoint for invoking the SignalR hub method SetTimeInterval. This is not an HTTP API call; use a SignalR client to call the hub method.",
+        "operationId": "HubSetTimeInterval",
+        "parameters": [
+          { "name": "subscriptionKey", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "intervalMs", "in": "query", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "ACK emitted by the hub via the 'Ack' event",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AckDto" },
+                "examples": {
+                  "success": {
+                    "summary": "Interval set success",
+                    "value": {
+                      "operationType": "SetTimeInterval",
+                      "success": true,
+                      "message": {
+                        "subscriptionKey": "motion|mot_getmotorcurrent|false|1",
+                        "intervalMs": 100
+                      }
+                    }
+                  },
+                  "failure": {
+                    "summary": "Interval set failure",
+                    "value": {
+                      "operationType": "SetTimeInterval",
+                      "success": false,
+                      "message": "Interval must be at least 1ms, got 0"
                     }
                   }
                 }
@@ -1117,12 +1161,19 @@
       "BPFConfDto": {
         "type": "object",
         "properties": {
-          "safety": { "type": "array", "items": { "$ref": "#/components/schemas/EndpointSpecification" } },
+          "safety": { "$ref": "#/components/schemas/SafetyConf" },
           "motion": { "type": "array", "items": { "$ref": "#/components/schemas/EndpointSpecification" } },
           "onVIF":  { "type": "array", "items": { "$ref": "#/components/schemas/EndpointSpecification" } },
           "device": { "type": "string" }
         },
         "required": ["device"]
+      },
+      "SafetyConf": {
+        "type": "object",
+        "properties": {
+          "sbe": { "$ref": "#/components/schemas/EndpointSpecification" },
+          "pbe": { "$ref": "#/components/schemas/EndpointSpecification" }
+        }
       },
       "CameraConfDto": {
         "type": "object",
@@ -1454,6 +1505,11 @@
             "default": 0,
             "description": "Axis of the motion packet specifically to MOT_* commands, for other data pipes and other motion commands, this will be ignored."
           },
+          "intervalMs": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Optional sampling interval in milliseconds. On first registration, sets the interval. On re-registration of an existing stream: providing a value updates the interval; omitting it removes the interval (no sampling). 0 disables sampling; >0 sets interval."
+          },
           "subscriptionKey": {
             "type": "string",
             "readOnly": true,
@@ -1610,6 +1666,46 @@
                       "operationType": "UnregisterFromMethod",
                       "success": false,
                       "message": "motion|mot_getmotorspeed|false|0"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "SetTimeInterval",
+            "direction": "client->server",
+            "description": "Sets a sampling interval for a specific stream. Packets for this stream will only be transmitted if the specified interval (in milliseconds) has elapsed since the last transmission. Setting intervalMs to 0 will disable sampling for the stream.",
+            "parameters": [
+              {
+                "name": "request",
+                "in": "body",
+                "schema": { "$ref": "#/components/schemas/IntervalRequestDto" }
+              }
+            ],
+            "responses": [
+              {
+                "event": "Ack",
+                "description": "ACK on interval setting result",
+                "schema": { "$ref": "#/components/schemas/AckDto" },
+                "examples": {
+                  "success": {
+                    "summary": "Interval set success",
+                    "value": {
+                      "operationType": "SetTimeInterval",
+                      "success": true,
+                      "message": {
+                        "subscriptionKey": "motion|mot_getmotorcurrent|false|1",
+                        "intervalMs": 100
+                      }
+                    }
+                  },
+                  "failure": {
+                    "summary": "Interval set failure",
+                    "value": {
+                      "operationType": "SetTimeInterval",
+                      "success": false,
+                      "message": "Invalid interval or subscription not found"
                     }
                   }
                 }

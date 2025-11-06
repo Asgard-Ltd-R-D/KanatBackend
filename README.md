@@ -29,7 +29,7 @@ A high-performance, real-time telemetry ingestion and analysis system built with
 - **QuestDB Integration**: Time-series database optimized for 6000+ packets per second with WAL enabled
 - **Session Management**: Create, manage, and archive range sessions with automatic table partitioning
 - **Web Dashboard**: Real-time telemetry visualization with live charts and statistics
-- **SignalR Streaming**: Push packet data to connected clients in real-time
+- **SignalR Streaming**: Push packet data to connected clients in real-time with configurable sampling intervals
 - **Playback Mode**: Replay historical data at configurable speeds
 
 ### Performance
@@ -295,7 +295,7 @@ Open your browser to:
    - Packets Per Second (PPS)
    - Channel Utilization
    - Latency metrics
-4. **Stream Registration**: Register for specific packet streams
+4. **Stream Registration**: Register for specific packet streams with optional sampling intervals
 5. **Console Access**: Quick links to:
    - Swagger API documentation
    - QuestDB console
@@ -305,7 +305,7 @@ Open your browser to:
 
 - **THROUGHPUT (Last 60 seconds)**: Live PPS chart for all packet types
 - **Channel Utilization Tables**: Real-time buffer usage per packet type
-- **Stream Management**: Add/remove packet streams dynamically
+- **Stream Management**: Add/remove packet streams dynamically with configurable sampling intervals
 
 ---
 
@@ -362,7 +362,7 @@ Content-Type: application/json
     "bpfConfig": {
       "device": "eth0",
       "motion": [{ "ip": "132.8.7.125", "port": 1234 }],
-      "safety": [{ "ip": "132.8.7.101", "port": 5678 }],
+      "safety": { "sbe": { "ip": "132.8.7.101", "port": 5678 } },
       "onvif": [{ "ip": "132.8.7.121", "port": 8080 }]
     },
     "mtxConfig": {
@@ -491,14 +491,32 @@ await connection.invoke("RegisterToMethod", {
     dataPipe: "Motion",
     description: "MOT_GetMotorCurrent",
     isCmd: false,
-    axis: 1
+    axis: 1,
+    // Optional: apply sampling interval immediately on registration
+    // intervalMs: 100
 });
+
+Note:
+- If you register a stream that is already running and include `intervalMs`, the interval is updated to the new value.
+- If you register a running stream without `intervalMs`, the interval is removed (no sampling; packets send instantly).
 ```
 
 #### Unregister from Stream
 
 ```javascript
 await connection.invoke("UnregisterFromMethod", "motion|mot_getmotorcurrent|false|1");
+```
+
+#### Set Sampling Interval
+
+Configure packet sampling interval to reduce transmission frequency. The hub method now takes two arguments: `subscriptionKey` and `intervalMs`.
+
+```javascript
+// Set interval to 100ms
+await connection.invoke("SetTimeInterval", "motion|mot_getmotorcurrent|false|1", 100);
+
+// Remove sampling (send every packet)
+await connection.invoke("SetTimeInterval", "motion|mot_getmotorcurrent|false|1", 0);
 ```
 
 ### Client Events
@@ -715,6 +733,7 @@ Logs are written to console and can be viewed via:
 2. **Adjust Batching**: Increase `BatchSize` to 5000 for high-throughput
 3. **Channel Capacity**: Ensure sufficient buffer size
 4. **QuestDB Settings**: Tune WAL and partition settings
+5. **SignalR Sampling**: Use `SetTimeInterval` to reduce packet transmission frequency on high-rate streams
 
 ---
 

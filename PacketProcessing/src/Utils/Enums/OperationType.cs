@@ -5,5 +5,6 @@ public enum OperationType
     RegisterToMethod,
     UnregisterFromMethod,
     ConnectionEstablished,
-    ConnectionClosed
+    ConnectionClosed,
+    SetTimeInterval
 }

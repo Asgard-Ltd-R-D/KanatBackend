@@ -1,0 +1,67 @@
+name: Deploy PacketProcessing
+
+on:
+  workflow_run:
+    workflows: ["Build Cross-Platform Artifacts"]
+    types: [completed]
+  workflow_dispatch: # Allows manual and act testing
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬆️ Check out repository
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------
+      # Detect whether running locally under act or on GitHub
+      # --------------------------------------------------
+      - name: 🔎 Detect environment
+        id: detect
+        run: |
+          if [ "$ACT" = "true" ]; then
+            echo "Running under act (local)"
+            echo "is_act=true" >> "$GITHUB_ENV"
+          else
+            echo "Running on GitHub Actions"
+            echo "is_act=false" >> "$GITHUB_ENV"
+          fi
+
+      # --------------------------------------------------
+      # Artifact handling
+      # --------------------------------------------------
+      - name: 📦 Download all build artifacts (GitHub)
+        if: ${{ env.is_act != 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: 💾 Use local artifacts (act)
+        if: ${{ env.is_act == 'true' }}
+        run: |
+          echo "Running locally with act — skipping GitHub artifact download."
+          mkdir -p artifacts/
+          if [ -d ./artifacts ]; then
+            echo "✅ Found existing local artifacts:"
+            ls -R ./artifacts || true
+          else
+            echo "⚠️ No artifacts found locally; continuing for dry-run."
+          fi
+
+      # --------------------------------------------------
+      # Diagnostics
+      # --------------------------------------------------
+      - name: 🧾 Show artifacts
+        run: |
+          echo "Listing artifact contents:"
+          ls -R artifacts || echo "No artifacts to show."
+
+      # --------------------------------------------------
+      # Deploy placeholder
+      # --------------------------------------------------
+      - name: 🚀 Deploy placeholder
+        run: |
+          echo "Starting deployment..."
+          echo "Add deployment commands here to push artifacts to your target environment."
+          echo "✅ Deployment simulation complete."

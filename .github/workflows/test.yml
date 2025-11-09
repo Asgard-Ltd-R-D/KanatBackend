@@ -1,0 +1,50 @@
+name: Test PacketProcessing
+
+on:
+  push:
+    paths:
+      - PacketProcessing/**
+      - .github/workflows/test.yml
+  pull_request:
+    paths:
+      - PacketProcessing/**
+
+jobs:
+  test:
+    name: 🧪 Test on ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: PacketProcessing/tests
+
+    steps:
+      - name: ⬆️ Check out repository
+        uses: actions/checkout@v4
+
+      - name: 🧰 Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: 🔄 Restore dependencies
+        run: dotnet restore PacketProcessing.Tests.csproj
+
+      - name: 🧪 Run tests
+        run: |
+          echo "Running tests for branch ${{ github.ref_name }}..."
+          dotnet test PacketProcessing.Tests.csproj --configuration Release --no-build | tee test-log.txt
+
+      - name: 📤 Upload test logs
+        run: |
+          # Sanitize the ref name: replace / : * \ with -
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[\/:*\\]/-/g')
+          echo "Sanitized branch name: $SAFE_BRANCH"
+          mv test-log.txt "test-log-$SAFE_BRANCH.txt"
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+
+      - name: 📤 Upload test log artifact
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ env.SAFE_BRANCH }}
+          path: PacketProcessing/tests/test-log-${{ env.SAFE_BRANCH }}.txt

@@ -1,7 +1,7 @@
 services:
   # Database Services
   questdb-prod:
-    image: kanatbackend-questdb-prod
+    image: kanatbackend-questdb
     build:
       context: ./QuestDB
     pull_policy: never

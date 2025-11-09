@@ -133,15 +133,22 @@ source .venv/bin/activate
 echo "Installing PyInstaller..."
 python -m pip install --upgrade pip pyinstaller --quiet
 
-# Clean previous builds
+# Clean previous builds and PyInstaller cache
+echo "Cleaning previous builds and cache..."
 rm -rf build dist .pyi_build .pyi_spec composer
+# Also clean PyInstaller's global cache
+python -m PyInstaller --clean > /dev/null 2>&1 || true
 
-# Build executable
-echo "Building composer executable..."
-pyinstaller --onefile --clean --name composer \
+# Build executable from scratch (no cache)
+echo "Building composer executable from scratch (no cache)..."
+pyinstaller --onefile \
+  --clean \
+  --noconfirm \
+  --name composer \
   --distpath . \
   --workpath .pyi_build \
   --specpath .pyi_spec \
+  --log-level=WARN \
   composer.py
 
 if [ ! -f "./composer" ]; then
@@ -155,6 +162,13 @@ echo -e "${GREEN}✓ Composer executable created${NC}"
 echo -e "${YELLOW}Step 3: Creating installer.run...${NC}"
 
 INSTALLER_FILE="installer.run"
+
+# Remove existing installer.run if it exists (will be overwritten)
+if [ -f "$INSTALLER_FILE" ]; then
+    echo "Removing existing installer.run..."
+    rm -f "$INSTALLER_FILE"
+fi
+
 TEMP_DIR=$(mktemp -d)
 INSTALL_DIR="$TEMP_DIR/installer"
 
@@ -183,7 +197,7 @@ chmod +x "$INSTALL_DIR/composer"
 # Create the self-extracting installer.run file
 cat > "$INSTALLER_FILE" << 'INSTALLER_EOF'
 #!/bin/bash
-# Self-extracting installer for KanatBackend
+# Self-extracting installer for BackendApplication
 
 set -e
 
@@ -192,13 +206,13 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}=== KanatBackend Installer ===${NC}"
+echo -e "${BLUE}=== BackendApplication Installer ===${NC}"
 
 # Determine base extraction directory (current directory by default)
 BASE_DIR="${1:-.}"
 
-# Create KanatBackend directory
-EXTRACT_DIR="$BASE_DIR/KanatBackend"
+# Create BackendApplication directory
+EXTRACT_DIR="$BASE_DIR/BackendApplication"
 
 if [ -d "$EXTRACT_DIR" ]; then
     echo "Warning: Directory $EXTRACT_DIR already exists."
@@ -212,7 +226,7 @@ mkdir -p "$EXTRACT_DIR"
 # Get the line number where the archive starts
 ARCHIVE_START=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$0")
 
-# Extract the archive directly to the KanatBackend directory
+# Extract the archive directly to the BackendApplication directory
 echo -e "${BLUE}Extracting files to $EXTRACT_DIR...${NC}"
 tail -n +$ARCHIVE_START "$0" | tar -xz -C "$EXTRACT_DIR"
 
@@ -271,6 +285,6 @@ echo ""
 echo "To install, run:"
 echo "  ./installer.run [base_directory]"
 echo ""
-echo "Files will be extracted to: <base_directory>/KanatBackend/"
-echo "If no base directory is specified, files will be extracted to: ./KanatBackend/"
+echo "Files will be extracted to: <base_directory>/BackendApplication/"
+echo "If no base directory is specified, files will be extracted to: ./BackendApplication/"
 

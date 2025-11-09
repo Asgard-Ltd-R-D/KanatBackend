@@ -32,7 +32,7 @@ jobs:
       - name: 🧪 Run tests
         run: |
           echo "Running tests for branch ${{ github.ref_name }}..."
-          dotnet test PacketProcessing.Tests.csproj --configuration Release --no-build | tee test-log.txt
+          dotnet test PacketProcessing.Tests.csproj --configuration Release --verbosity normal | tee test-log.txt
 
       - name: 📤 Upload test logs
         run: |

@@ -19,6 +19,11 @@ This document ships with the extracted `BackendApplication/` directory to help o
    cd BackendApplication
    ```
 
+5. Ensure the `composer` executable has run permissions (required on Unix-like systems):
+   ```bash
+   chmod +x composer
+   ```
+
 ## 2. Launch the Composer Dashboard
 
 - Double-click `composer` (macOS Finder / Windows Explorer) **or** run `./composer --gui` from the installation directory.

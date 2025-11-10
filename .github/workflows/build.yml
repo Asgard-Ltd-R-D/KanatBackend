@@ -47,16 +47,16 @@ jobs:
             skip_docker: "false"
           - os: windows-latest
             platform: win-x64
-            skip_docker: "true"
+            skip_docker: "false"
           - os: windows-latest
             platform: win-arm64
-            skip_docker: "true"
+            skip_docker: "false"
           - os: macos-latest
             platform: osx-arm64
-            skip_docker: "true"
+            skip_docker: "false"
           - os: macos-13
             platform: osx-x64
-            skip_docker: "true"
+            skip_docker: "false"
 
     env:
       KANAT_TARGET_RID: ${{ matrix.platform }}

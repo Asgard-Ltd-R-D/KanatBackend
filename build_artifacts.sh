@@ -223,8 +223,7 @@ INSTALL_DIR="$TEMP_DIR/installer"
 mkdir -p "$INSTALL_DIR"
 
 echo "Copying files into installer image..."
-copy_with_progress README.md "$INSTALL_DIR/README.md" "Copying README.md"
-copy_with_progress Composer_cli/DEPLOY_README.md "$INSTALL_DIR/DEPLOY_README.md" "Copying DEPLOY_README.md"
+copy_with_progress Composer_cli/INSTALL_README.md "$INSTALL_DIR/README.md" "Copying Composer README"
 copy_with_progress composer "$INSTALL_DIR/composer" "Copying composer binary"
 copy_with_progress artifacts "$INSTALL_DIR/artifacts" "Copying artifacts directory"
 
@@ -354,8 +353,7 @@ echo
 echo "Installed to: $EXTRACT_DIR"
 echo
 echo "Contents:"
-echo "  - README.md"
-echo "  - DEPLOY_README.md"
+echo "  - README.md (Composer usage guide)"
 echo "  - composer (executable)"
 echo "  - artifacts/ (directory with releases, packages, docker-compose files, QuestDB)"
 echo

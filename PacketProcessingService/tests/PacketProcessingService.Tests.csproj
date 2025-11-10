@@ -40,7 +40,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\PacketProcessing.csproj" />
+    <ProjectReference Include="..\PacketProcessingService.csproj" />
   </ItemGroup>
 
   <!-- Temporarily exclude tests that reference non-existent services -->

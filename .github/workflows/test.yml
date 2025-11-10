@@ -1,13 +1,13 @@
-name: Test PacketProcessing
+name: Test PacketProcessingService
 
 on:
   push:
     paths:
-      - PacketProcessing/**
+      - PacketProcessingService/**
       - .github/workflows/test.yml
   pull_request:
     paths:
-      - PacketProcessing/**
+      - PacketProcessingService/**
 
 jobs:
   test:
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: PacketProcessing/tests
+        working-directory: PacketProcessingService/tests
 
     steps:
       - name: ⬆️ Check out repository
@@ -27,12 +27,12 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: 🔄 Restore dependencies
-        run: dotnet restore PacketProcessing.Tests.csproj
+        run: dotnet restore PacketProcessingService.Tests.csproj
 
       - name: 🧪 Run tests
         run: |
           echo "Running tests for branch ${{ github.ref_name }}..."
-          dotnet test PacketProcessing.Tests.csproj --configuration Release --verbosity normal | tee test-log.txt
+          dotnet test PacketProcessingService.Tests.csproj --configuration Release --verbosity normal | tee test-log.txt
 
       - name: 📤 Upload test logs
         run: |
@@ -47,4 +47,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-logs-${{ env.SAFE_BRANCH }}
-          path: PacketProcessing/tests/test-log-${{ env.SAFE_BRANCH }}.txt
+          path: PacketProcessingService/tests/test-log-${{ env.SAFE_BRANCH }}.txt

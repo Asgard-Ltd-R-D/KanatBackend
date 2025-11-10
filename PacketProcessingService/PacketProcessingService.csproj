@@ -18,7 +18,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyTitle>PacketProcessing</AssemblyTitle>
+    <AssemblyTitle>PacketProcessingService</AssemblyTitle>
     <AssemblyDescription>Packet Processing Service</AssemblyDescription>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
@@ -29,7 +29,7 @@
   <!-- Allow test project to access internal members -->
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
-      <_Parameter1>PacketProcessing.Tests</_Parameter1>
+      <_Parameter1>PacketProcessingService.Tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
   

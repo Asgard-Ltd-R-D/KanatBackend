@@ -78,6 +78,7 @@ The `clean` command removes all build artifacts:
 ```
 
 This removes:
+
 - `composer` executable
 - `installer.run` file
 - `artifacts/` directory
@@ -89,19 +90,21 @@ Use this to start fresh or free up disk space.
 
 #### What It Does
 
-1. **Builds Release Packages**: Runs `composer.py release <platform>`. If source code is available, PacketProcessing is recompiled; otherwise existing package tarballs are reused. The output is:
+1. **Builds Release Packages**: Runs `composer.py release <platform>`. If source code is available, PacketProcessingService is recompiled; otherwise existing package tarballs are reused. The output is:
+
    - `artifacts/releases/{dev,prod}` (DLLs rebuilt when source is present)
    - `artifacts/packages/dev` containing only `packetprocessing_dev_<platform>.tar`
    - `artifacts/packages/prod` containing only `packetprocessing_prod_<platform>.tar`
    - Root-level shared Docker image tarballs (`kanatbackend-questdb.tar`, `postgres_15-alpine.tar`, `datalust_seq_latest.tar`)
    - Root-level compose files (`docker-compose.dev.yml`, `docker-compose.prod.yml`) and `QuestDB/`
 
-2. **Creates Composer Executable**: 
+2. **Creates Composer Executable**:
+
    - Sets up Python virtual environment
    - Installs PyInstaller
    - Builds standalone `composer` executable (no Python required)
 
-3. **Creates Installer**: 
+3. **Creates Installer**:
    - Packages everything into `installer.run`
    - Self-extracting archive containing:
      - README.md
@@ -152,16 +155,19 @@ BackendApplication/
 ### Installation
 
 1. **Transfer the installer** to your target machine:
+
    ```bash
    scp installer.run user@target-machine:/path/to/install/
    ```
 
 2. **Make it executable**:
+
    ```bash
    chmod +x installer.run
    ```
 
 3. **Run the installer**:
+
    ```bash
    # Extract to ./BackendApplication/ (current directory)
    ./installer.run
@@ -174,6 +180,7 @@ BackendApplication/
    **Note**: The installer automatically creates a `BackendApplication` directory. If the directory already exists, the installer will exit with an error to prevent overwriting.
 
 4. **Navigate to the installation directory**:
+
    ```bash
    cd BackendApplication
    # or
@@ -200,6 +207,7 @@ Build both dev and prod environments (rehydrates from packages when running insi
 ```
 
 This ensures:
+
 - DLL builds are present in `artifacts/releases/dev/` and `artifacts/releases/prod/` (rebuilt from source when available, otherwise extracted from package tarballs)
 - Docker images are loaded from the cache tarballs or rebuilt/pulled and re-cached
 
@@ -223,9 +231,10 @@ Start in detached mode (background):
 ./composer up dev -d
 ```
 
-Detached mode launches the containers and opens a new Terminal window that runs `PacketProcessing.dll`, leaving the originating shell free.
+Detached mode launches the containers and opens a new Terminal window that runs `PacketProcessingService.dll`, leaving the originating shell free.
 
-**Note**: 
+**Note**:
+
 - Starting one environment automatically stops the other if it's running.
 - Composer automatically uses the bundled compose files in the installation root, ensuring you're using the same configuration that was packaged for deployment.
 
@@ -264,6 +273,7 @@ Create a release package for a specific platform:
 Platforms: `win-x64`, `linux-x64`, `linux-musl-x64`, `osx-arm64`
 
 This creates release assets under `artifacts/`:
+
 - `artifacts/packages/dev_<timestamp>/` and `prod_<timestamp>/` containing only the environment-specific `packetprocessing_<env>_<platform>.tar`
 - Shared Docker image tarballs (`kanatbackend-questdb.tar`, `postgres_15-alpine.tar`, `datalust_seq_latest.tar`) stored once in `artifacts/packages/`
 - The root-level compose files (`docker-compose.dev.yml`, `docker-compose.prod.yml`) and `QuestDB/` directory are reused when building the installer.
@@ -277,8 +287,9 @@ View current system status:
 ```
 
 Shows:
+
 - Running Docker containers
-- PacketProcessing build status and whether the process is currently running (with environment/port)
+- PacketProcessingService build status and whether the process is currently running (with environment/port)
 - Available release packages
 
 #### Help
@@ -294,23 +305,26 @@ Display help information:
 
 - The packaged `composer` executable launches the dashboard GUI automatically when started without arguments (for example, by double-clicking it in Finder/Explorer). This is equivalent to running `./composer --gui`.
 - On macOS, the launcher minimizes the originating Terminal window before showing the GUI for a cleaner experience. Command-line usage remains unchanged—supplying arguments bypasses the auto-GUI behavior.
-- The GUI offers environment management (Up/Stop/Restart/Kill), Quick Build, log streaming, and live component status for PacketProcessing, Postgres, QuestDB, and Seq.
+- The GUI offers environment management (Up/Stop/Restart/Kill), Quick Build, log streaming, and live component status for PacketProcessingService, Postgres, QuestDB, and Seq.
 
 ## Deployment Workflow
 
 ### Initial Deployment
 
 1. **Build artifacts on build machine**:
+
    ```bash
    ./build_artifacts.sh linux-x64
    ```
 
 2. **Transfer installer to target machine**:
+
    ```bash
    scp installer.run user@target:/opt/
    ```
 
 3. **On target machine, extract installer**:
+
    ```bash
    cd /opt
    chmod +x installer.run
@@ -319,11 +333,13 @@ Display help information:
    ```
 
 4. **Navigate to installation directory**:
+
    ```bash
    cd BackendApplication
    ```
 
 5. **Load Docker images** (if needed):
+
    ```bash
    docker load -i artifacts/packages/kanatbackend-questdb.tar
    docker load -i artifacts/packages/postgres_15-alpine.tar
@@ -331,20 +347,23 @@ Display help information:
    ```
 
 6. **Start the application**:
+
    ```bash
    ./composer up prod
    ```
-   
+
    Composer will automatically use the bundled compose files in the installation root.
 
 ### Updating Deployment
 
 1. **Stop current environment**:
+
    ```bash
    ./composer stop prod
    ```
 
 2. **Extract new installer** (or update files manually):
+
    ```bash
    # If updating in place, remove old BackendApplication directory first
    rm -rf BackendApplication
@@ -353,6 +372,7 @@ Display help information:
    ```
 
 3. **Load new Docker images** (if updated):
+
    ```bash
    docker load -i artifacts/packages/kanatbackend-questdb.tar
    docker load -i artifacts/packages/postgres_15-alpine.tar
@@ -360,10 +380,11 @@ Display help information:
    ```
 
 4. **Start updated environment**:
+
    ```bash
    ./composer up prod
    ```
-   
+
    Composer will automatically use the refreshed compose files in the installation root.
 
 ### Offline Deployment
@@ -371,16 +392,19 @@ Display help information:
 The release packages are designed for offline deployment:
 
 1. **Build on machine with internet**:
+
    ```bash
    ./build_artifacts.sh linux-x64
    ```
 
 2. **Transfer installer to offline machine**:
+
    ```bash
    # Copy installer.run to USB drive or internal network
    ```
 
 3. **On offline machine, extract and run**:
+
    ```bash
    ./installer.run
    cd BackendApplication
@@ -458,6 +482,7 @@ To remove all build artifacts and start fresh:
 ```
 
 This removes:
+
 - Composer executable
 - Installer.run file
 - Artifacts directory
@@ -469,6 +494,7 @@ This removes:
 If build fails:
 
 1. Check prerequisites are installed:
+
    ```bash
    docker --version
    dotnet --version
@@ -506,7 +532,7 @@ sudo usermod -aG docker $USER
 ## Support
 
 For issues or questions:
-1. Check the troubleshooting section above
-2. Review application logs in `PacketProcessing/logs/`
-3. Check Docker container logs: `docker compose logs`
 
+1. Check the troubleshooting section above
+2. Review application logs in `PacketProcessingService/logs/`
+3. Check Docker container logs: `docker compose logs`

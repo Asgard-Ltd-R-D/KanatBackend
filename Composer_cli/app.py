@@ -18,7 +18,7 @@ from .services.packaging import DefaultPackagingService
 from .utils.parse_compose import required_images_from_compose
 
 class ComposerApp(ComposerUseCases):
-    """Orchestrates build, compose, and runtime operations for PacketProcessing."""
+    """Orchestrates build, compose, and runtime operations for PacketProcessingService."""
 
     def __init__(self, command_registry, paths: Paths | None = None) -> None:
         """Wire default service implementations; callers may inject alternatives (e.g. tests)."""
@@ -55,7 +55,7 @@ class ComposerApp(ComposerUseCases):
         return ComposeContext(environment=env, compose_file=compose_file, work_dir=work_dir, project_name=project_name)
 
     def up(self, environment: str, detached: bool) -> int:
-        """Ensure prerequisites exist, start Docker services, and optionally launch PacketProcessing."""
+        """Ensure prerequisites exist, start Docker services, and optionally launch PacketProcessingService."""
         if not self.docker.is_available():
             print("✗ Docker is not available")
             return 1
@@ -78,7 +78,7 @@ class ComposerApp(ComposerUseCases):
 
         ctx = self._compose_ctx(environment)
 
-        # Bring up (always detached so we can launch PacketProcessing below)
+        # Bring up (always detached so we can launch PacketProcessingService below)
         ok = self.compose.up(ctx, detached=True, build_if_missing=True)
         if not ok:
             print("✗ docker compose up failed")
@@ -87,19 +87,19 @@ class ComposerApp(ComposerUseCases):
         print("✓ Environment started")
 
         if detached:
-            print("ℹ Launching PacketProcessing in a new Terminal window (detached mode)")
-            dll_path = self.paths.release_dir / environment / "PacketProcessing.dll"
+            print("ℹ Launching PacketProcessingService in a new Terminal window (detached mode)")
+            dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
             time.sleep(1) # Await for docker containers to run
             self.dotnet.run_packetprocessing(dll_path, environment, detach=True)
             return 0
 
-        dll_path = self.paths.release_dir / environment / "PacketProcessing.dll"
+        dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
         time.sleep(1) # Await for docker containers to run
         return self.dotnet.run_packetprocessing(dll_path, environment)
 
     def stop(self, environment: str) -> int:
         """Issue docker compose stop for the selected environment."""
-        dll_path = self.paths.release_dir / environment / "PacketProcessing.dll"
+        dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
         self.dotnet.terminate_packetprocessing(dll_path, environment)
         ctx = self._compose_ctx(environment)
         self.compose.stop(ctx)
@@ -108,7 +108,7 @@ class ComposerApp(ComposerUseCases):
 
     def kill(self, environment: str) -> int:
         """Stop services, remove containers, and delete release artifacts for the environment."""
-        dll_path = self.paths.release_dir / environment / "PacketProcessing.dll"
+        dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
         self.dotnet.terminate_packetprocessing(dll_path, environment)
         ctx = self._compose_ctx(environment)
         self.env.kill_env(ctx)
@@ -125,7 +125,7 @@ class ComposerApp(ComposerUseCases):
         print(self.docker.ps_table() or "  <none>")
         # Quick DLL presence
         for env in ("dev", "prod"):
-            dll = self.paths.release_dir / env / "PacketProcessing.dll"
+            dll = self.paths.release_dir / env / "PacketProcessingService.dll"
             built = dll.exists()
             running, platform, port = self.dotnet.is_process_running(dll)
             status = "✓ Built" if built else "✗ Missing DLL"
@@ -134,7 +134,7 @@ class ComposerApp(ComposerUseCases):
         return 0
 
     def build_all(self) -> int:
-        """Publish PacketProcessing and ensure required Docker images exist for dev and prod."""
+        """Publish PacketProcessingService and ensure required Docker images exist for dev and prod."""
         if not self.dotnet.is_available():
             print("✗ .NET SDK is not available")
             return 1

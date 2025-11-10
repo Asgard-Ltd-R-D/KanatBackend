@@ -23,7 +23,7 @@ This document ships with the extracted `BackendApplication/` directory to help o
 
 - Double-click `composer` (macOS Finder / Windows Explorer) **or** run `./composer --gui` from the installation directory.
 - When launched without arguments the GUI opens automatically and minimizes the originating Terminal window on macOS.
-- Use the dashboard buttons to **Quick Build**, **Up**, **Stop**, **Restart**, or **Kill** the `dev`/`prod` environments. The sidebar shows live status for PacketProcessing, Postgres, QuestDB, and Seq.
+- Use the dashboard buttons to **Quick Build**, **Up**, **Stop**, **Restart**, or **Kill** the `dev`/`prod` environments. The sidebar shows live status for PacketProcessingService, Postgres, QuestDB, and Seq.
 
 ## 3. Command-Line Usage (Optional)
 
@@ -47,5 +47,3 @@ Docker images are loaded automatically from the packaged tarballs when needed; i
 - If the GUI does not launch, fall back to the CLI commands above and consult `artifacts/logs/` for service output.
 
 For detailed deployment documentation, refer to `Composer_cli/DEPLOY_README.md` in the full KanatBackend repository.
-
-

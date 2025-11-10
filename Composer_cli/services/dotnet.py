@@ -25,7 +25,7 @@ class DefaultDotnetService(DotnetService):
         return BuildResult(ok=(rc == 0), message=f"dotnet publish rc={rc}")
 
     def build_environment(self, env: str, release_dir: Path) -> bool:
-        """Publish PacketProcessing for an environment and mirror assets into the release directory."""
+        """Publish PacketProcessingService for an environment and mirror assets into the release directory."""
         release_dir.mkdir(parents=True, exist_ok=True)
         res = self.publish(self._infer_rid(), release_dir)
         if not res.ok:
@@ -50,14 +50,14 @@ class DefaultDotnetService(DotnetService):
             shutil.copytree(www_src, www_dest)
 
     def run_packetprocessing(self, dll_path: Path, environment: str, detach: bool = False) -> int:
-        """Launch PacketProcessing.dll via sudo and stream its output until completion."""
+        """Launch PacketProcessingService.dll via sudo and stream its output until completion."""
         if not dll_path.exists():
-            print(f"✗ PacketProcessing.dll not found at {dll_path}")
+            print(f"✗ PacketProcessingService.dll not found at {dll_path}")
             return 1
         if detach:
             self.terminate_packetprocessing(dll_path, environment)
         dotnet_env = "Development" if environment == "dev" else "Production"
-        print(f"▶ Starting PacketProcessing ({dotnet_env})…\n")
+        print(f"▶ Starting PacketProcessingService ({dotnet_env})…\n")
         cmd = ["dotnet", str(dll_path), "--environment", dotnet_env]
         if detach:
             self.sh.open_new_terminal(
@@ -66,22 +66,22 @@ class DefaultDotnetService(DotnetService):
                 title=self._terminal_title(environment),
                 close_existing=True,
             )
-            pid_file = dll_path.parent / "PacketProcessing.pid"
+            pid_file = dll_path.parent / "PacketProcessingService.pid"
             pid_file.write_text("detached\n")
             return 0
         rc = self.sh.popen_stream(cmd, cwd=dll_path.parent)
         if rc != 0:
-            print(f"✗ PacketProcessing exited with code {rc}")
+            print(f"✗ PacketProcessingService exited with code {rc}")
         return rc
 
     def terminate_packetprocessing(self, dll_path: Path, environment: str) -> None:
-        """Stop PacketProcessing by terminating the process and closing its terminal window."""
+        """Stop PacketProcessingService by terminating the process and closing its terminal window."""
         # Attempt to kill the running process
         if dll_path.exists():
             self.sh.run(["pkill", "-f", str(dll_path)], check=False)
 
         # Remove PID markers if present
-        pid_file = dll_path.parent / "PacketProcessing.pid"
+        pid_file = dll_path.parent / "PacketProcessingService.pid"
         if pid_file.exists():
             try:
                 pid_file.unlink()
@@ -118,4 +118,4 @@ class DefaultDotnetService(DotnetService):
     @staticmethod
     def _terminal_title(environment: str) -> str:
         env_name = "DEV" if environment == "dev" else "PROD"
-        return f"PacketProcessing {env_name}"
+        return f"PacketProcessingService {env_name}"

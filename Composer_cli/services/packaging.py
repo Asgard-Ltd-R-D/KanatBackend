@@ -20,7 +20,7 @@ SHARED_IMAGES = (
 
 class DefaultPackagingService(PackagingService):
     """
-    Create versioned release packages that bundle PacketProcessing outputs,
+    Create versioned release packages that bundle PacketProcessingService outputs,
     Docker images, and compose assets for offline deployment.
     """
 
@@ -80,13 +80,13 @@ class DefaultPackagingService(PackagingService):
 
     def _validate_release_builds(self) -> bool:
         required = {
-            "dev": RELEASE_DIR / "dev" / "PacketProcessing.dll",
-            "prod": RELEASE_DIR / "prod" / "PacketProcessing.dll",
+            "dev": RELEASE_DIR / "dev" / "PacketProcessingService.dll",
+            "prod": RELEASE_DIR / "prod" / "PacketProcessingService.dll",
         }
         missing = [env for env, path in required.items() if not path.exists()]
         if missing:
             missing_str = ", ".join(missing)
-            print(f"✗ Missing PacketProcessing builds for: {missing_str}. Run 'composer build' first.")
+            print(f"✗ Missing PacketProcessingService builds for: {missing_str}. Run 'composer build' first.")
             return False
         return True
 
@@ -114,7 +114,7 @@ class DefaultPackagingService(PackagingService):
                     arcname = path.relative_to(source_dir)
                     tar.add(path, arcname=str(arcname))
         except Exception as exc:
-            print(f"✗ Failed to create PacketProcessing archive for {env}: {exc}")
+            print(f"✗ Failed to create PacketProcessingService archive for {env}: {exc}")
             return False
         return True
 

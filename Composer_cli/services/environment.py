@@ -10,7 +10,7 @@ from ..paths import Paths
 
 
 class EnvironmentManager:
-    """Handle building PacketProcessing and preparing Docker artifacts for environments."""
+    """Handle building PacketProcessingService and preparing Docker artifacts for environments."""
 
     def __init__(self, paths: Paths, docker: DockerService, dotnet: DotnetService) -> None:
         self.paths = paths
@@ -48,8 +48,8 @@ class EnvironmentManager:
 
     def ensure_releases_present(self, required_images_provider: Callable[[str], List[str]]) -> bool:
         """Ensure release DLLs exist for dev and prod, triggering a build if necessary."""
-        dev = self.paths.release_dir / "dev" / "PacketProcessing.dll"
-        prod = self.paths.release_dir / "prod" / "PacketProcessing.dll"
+        dev = self.paths.release_dir / "dev" / "PacketProcessingService.dll"
+        prod = self.paths.release_dir / "prod" / "PacketProcessingService.dll"
         if dev.exists() and prod.exists():
             return True
         if not self.dotnet.project_exists():
@@ -67,7 +67,7 @@ class EnvironmentManager:
     def ensure_environment_ready(self, env: str, required_images: List[str]) -> bool:
         """Verify artifacts for an environment and prepare Docker images."""
         dll_dir = self.paths.release_dir / env
-        dll_path = dll_dir / "PacketProcessing.dll"
+        dll_path = dll_dir / "PacketProcessingService.dll"
         have_dll = dll_path.exists()
 
         dotnet_env = "Development" if env == "dev" else "Production"
@@ -80,7 +80,7 @@ class EnvironmentManager:
 
         if self.dotnet.project_exists():
             if not have_dll:
-                print(f"⚠ Building PacketProcessing for '{env}'…")
+                print(f"⚠ Building PacketProcessingService for '{env}'…")
                 if not self.dotnet.build_environment(env, dll_dir):
                     return False
             elif assets_missing:

@@ -211,7 +211,7 @@ class ComposerDashboard:
         # Component sidebar
         ttk.Label(right, text="Components", font=("TkDefaultFont", 12, "bold")).pack(anchor=tk.W)
 
-        for cfg in ("packetprocessing", "questdb", "postgres", "seq"):
+        for cfg in ("PacketProcessingService", "questdb", "postgres", "seq"):
             row = ComponentRow(right)
             row.pack(fill=tk.X, pady=6)
             self._status_rows[cfg] = row
@@ -384,7 +384,7 @@ def _needs_quick_build(paths: Paths) -> bool:
         env_dir = release_dir / env
         if not env_dir.exists():
             return True
-        dll = env_dir / "PacketProcessing.dll"
+        dll = env_dir / "PacketProcessingService.dll"
         if not dll.exists():
             return True
     return False
@@ -401,13 +401,13 @@ def _gather_component_statuses(paths: Paths, env: str) -> List[ComponentStatus]:
 
 def _packetprocessing_status(paths: Paths, env: str) -> ComponentStatus:
     release_dir = paths.release_dir / env
-    dll_path = release_dir / "PacketProcessing.dll"
-    name = f"PacketProcessing ({env})"
+    dll_path = release_dir / "PacketProcessingService.dll"
+    name = f"PacketProcessingService ({env})"
     port = "10901" if env == "dev" else "10900"
 
     if not release_dir.exists() or not dll_path.exists():
         return ComponentStatus(
-            key="packetprocessing",
+            key="PacketProcessingService",
             name=name,
             state=STATUS_MISSING,
             ip="-",
@@ -420,7 +420,7 @@ def _packetprocessing_status(paths: Paths, env: str) -> ComponentStatus:
     state = STATUS_ACTIVE if running else STATUS_INACTIVE
 
     return ComponentStatus(
-        key="packetprocessing",
+        key="PacketProcessingService",
         name=name,
         state=state,
         ip="127.0.0.1" if running else "-",

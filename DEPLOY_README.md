@@ -33,7 +33,7 @@ Before building artifacts, ensure you have:
 
 ### Using build_artifacts.sh
 
-The `build_artifacts.sh` script builds release packages for a specific platform and creates a self-extracting installer.
+The `build_artifacts.sh` script builds a release for a specific platform and creates a self-extracting installer.
 
 #### Usage
 
@@ -85,10 +85,12 @@ Use this to start fresh or free up disk space.
 
 #### What It Does
 
-1. **Builds Release Packages**: Runs `composer.py release <platform>` to create:
-   - DLL builds for dev and prod environments
-   - Docker image tarballs (QuestDB, PostgreSQL, Seq)
-   - Release packages in `artifacts/packages/`
+1. **Builds Release Packages**: Runs `composer.py release <platform>`. If source code is available, PacketProcessing is recompiled; otherwise existing package tarballs are reused. The output is:
+   - `artifacts/releases/{dev,prod}` (DLLs rebuilt when source is present)
+   - `artifacts/packages/dev` containing only `packetprocessing_dev_<platform>.tar`
+   - `artifacts/packages/prod` containing only `packetprocessing_prod_<platform>.tar`
+   - Root-level shared Docker image tarballs (`kanatbackend-questdb.tar`, `postgres_15-alpine.tar`, `datalust_seq_latest.tar`)
+   - Root-level compose files (`docker-compose.dev.yml`, `docker-compose.prod.yml`) and `QuestDB/`
 
 2. **Creates Composer Executable**: 
    - Sets up Python virtual environment
@@ -101,7 +103,7 @@ Use this to start fresh or free up disk space.
      - README.md
      - DEPLOY_README.md
      - composer executable
-     - artifacts/ directory with all release files
+     - artifacts/ directory with all release assets (structure described below)
 
 #### Output
 
@@ -125,29 +127,20 @@ BackendApplication/
 ├── README.md
 ├── DEPLOY_README.md
 ├── composer                    # Executable tool
+├── docker-compose.dev.yml
+├── docker-compose.prod.yml
+├── QuestDB/
+│   └── Dockerfile
 └── artifacts/
-    ├── releases/
-    │   ├── dev/               # Development DLL build
-    │   └── prod/              # Production DLL build
-    ├── packages/
-    │   ├── dev_<timestamp>/   # Dev release package
-    │   │   ├── packetprocessing_dev_<platform>.tar
-    │   │   ├── kanatbackend-questdb-dev.tar
-    │   │   ├── postgres_15-alpine.tar
-    │   │   ├── datalust_seq_latest.tar
-    │   │   ├── docker-compose.dev.yml
-    │   │   └── QuestDB/
-    │   └── prod_<timestamp>/  # Prod release package
-    │       ├── packetprocessing_prod_<platform>.tar
-    │       ├── kanatbackend-questdb-prod.tar
-    │       ├── postgres_15-alpine.tar
-    │       ├── datalust_seq_latest.tar
-    │       ├── docker-compose.prod.yml
-    │       └── QuestDB/
-    ├── docker-compose.dev.yml
-    ├── docker-compose.prod.yml
-    └── QuestDB/
-        └── Dockerfile
+    ├── releases/               # Initially empty (composer will rebuild from packages)
+    └── packages/
+        ├── dev/                # Dev release package
+        │   └── packetprocessing_dev_<platform>.tar
+        ├── prod/               # Prod release package
+        │   └── packetprocessing_prod_<platform>.tar
+        ├── kanatbackend-questdb.tar
+        ├── postgres_15-alpine.tar
+        └── datalust_seq_latest.tar
 ```
 
 ## Using the Installer
@@ -196,17 +189,15 @@ The `composer` tool is a standalone executable (no Python required) for managing
 
 #### Build Environments
 
-Build both dev and prod environments:
+Build both dev and prod environments (rehydrates from packages when running inside the installer):
 
 ```bash
-./composer --build
+./composer build
 ```
 
-This creates:
-- DLL builds in `artifacts/releases/dev/` and `artifacts/releases/prod/`
-- Docker images (QuestDB, PostgreSQL, Seq)
-
-**Note**: When packages exist in `artifacts/packages/`, composer automatically uses the compose files and QuestDB Dockerfile from the most recent package directory. This ensures consistency between build and deployment environments.
+This ensures:
+- DLL builds are present in `artifacts/releases/dev/` and `artifacts/releases/prod/` (rebuilt from source when available, otherwise extracted from package tarballs)
+- Docker images are loaded from the cache tarballs or rebuilt/pulled and re-cached
 
 #### Run Application
 
@@ -228,9 +219,11 @@ Start in detached mode (background):
 ./composer up dev -d
 ```
 
+Detached mode launches the containers and opens a new Terminal window that runs `PacketProcessing.dll`, leaving the originating shell free.
+
 **Note**: 
 - Starting one environment automatically stops the other if it's running.
-- Composer automatically uses compose files from `artifacts/packages/` if available, ensuring you're using the same configuration as the release package.
+- Composer automatically uses the bundled compose files in the installation root, ensuring you're using the same configuration that was packaged for deployment.
 
 #### Stop Application
 
@@ -266,11 +259,10 @@ Create a release package for a specific platform:
 
 Platforms: `win-x64`, `linux-x64`, `linux-musl-x64`, `osx-arm64`
 
-This creates release packages in `artifacts/packages/` with:
-- DLL tarballs for dev and prod
-- Docker image tarballs
-- Docker Compose files
-- QuestDB Dockerfile
+This creates release assets under `artifacts/`:
+- `artifacts/packages/dev_<timestamp>/` and `prod_<timestamp>/` containing only the environment-specific `packetprocessing_<env>_<platform>.tar`
+- Shared Docker image tarballs (`kanatbackend-questdb.tar`, `postgres_15-alpine.tar`, `datalust_seq_latest.tar`) stored once in `artifacts/packages/`
+- The root-level compose files (`docker-compose.dev.yml`, `docker-compose.prod.yml`) and `QuestDB/` directory are reused when building the installer.
 
 #### Check Status
 
@@ -282,8 +274,7 @@ View current system status:
 
 Shows:
 - Running Docker containers
-- Active PacketProcessing processes
-- Release build status
+- PacketProcessing build status and whether the process is currently running (with environment/port)
 - Available release packages
 
 #### Help
@@ -292,7 +283,7 @@ Display help information:
 
 ```bash
 ./composer --help
-./composer help
+./composer -h
 ```
 
 ## Deployment Workflow
@@ -324,11 +315,9 @@ Display help information:
 
 5. **Load Docker images** (if needed):
    ```bash
-   cd artifacts/packages/prod_<timestamp>/
-   docker load -i kanatbackend-questdb-prod.tar
-   docker load -i postgres_15-alpine.tar
-   docker load -i datalust_seq_latest.tar
-   cd ../..
+   docker load -i artifacts/packages/kanatbackend-questdb.tar
+   docker load -i artifacts/packages/postgres_15-alpine.tar
+   docker load -i artifacts/packages/datalust_seq_latest.tar
    ```
 
 6. **Start the application**:
@@ -336,7 +325,7 @@ Display help information:
    ./composer up prod
    ```
    
-   Composer will automatically use the compose files from the package directory.
+   Composer will automatically use the bundled compose files in the installation root.
 
 ### Updating Deployment
 
@@ -355,11 +344,9 @@ Display help information:
 
 3. **Load new Docker images** (if updated):
    ```bash
-   cd artifacts/packages/prod_<new_timestamp>/
-   docker load -i kanatbackend-questdb-prod.tar
-   docker load -i postgres_15-alpine.tar
-   docker load -i datalust_seq_latest.tar
-   cd ../..
+   docker load -i artifacts/packages/kanatbackend-questdb.tar
+   docker load -i artifacts/packages/postgres_15-alpine.tar
+   docker load -i artifacts/packages/datalust_seq_latest.tar
    ```
 
 4. **Start updated environment**:
@@ -367,7 +354,7 @@ Display help information:
    ./composer up prod
    ```
    
-   Composer will automatically use the new compose files from the latest package directory.
+   Composer will automatically use the refreshed compose files in the installation root.
 
 ### Offline Deployment
 
@@ -387,15 +374,13 @@ The release packages are designed for offline deployment:
    ```bash
    ./installer.run
    cd BackendApplication
-   cd artifacts/packages/prod_<timestamp>/
-   
+
    # Load Docker images from tarballs
-   docker load -i kanatbackend-questdb-prod.tar
-   docker load -i postgres_15-alpine.tar
-   docker load -i datalust_seq_latest.tar
-   
-   # Start application (composer uses compose files from package automatically)
-   cd ../../..
+   docker load -i artifacts/packages/kanatbackend-questdb.tar
+   docker load -i artifacts/packages/postgres_15-alpine.tar
+   docker load -i artifacts/packages/datalust_seq_latest.tar
+
+   # Start application (composer uses bundled compose files automatically)
    ./composer up prod
    ```
 
@@ -409,28 +394,23 @@ After installation, your directory structure will be:
     ├── README.md
     ├── DEPLOY_README.md
     ├── composer                # Executable
+    ├── docker-compose.dev.yml
+    ├── docker-compose.prod.yml
+    ├── QuestDB/
+    │   └── Dockerfile
     └── artifacts/
         ├── releases/
-        │   ├── dev/           # Dev DLL build
-        │   └── prod/          # Prod DLL build
+        │   ├── dev/           # Populated after running composer build/up
+        │   └── prod/
         └── packages/
-            ├── dev_<timestamp>/   # Dev release package
-            │   ├── packetprocessing_dev_<platform>.tar
-            │   ├── kanatbackend-questdb-dev.tar
-            │   ├── postgres_15-alpine.tar
-            │   ├── datalust_seq_latest.tar
-            │   ├── docker-compose.dev.yml
-            │   └── QuestDB/
-            └── prod_<timestamp>/  # Prod release package
-                ├── packetprocessing_prod_<platform>.tar
-                ├── kanatbackend-questdb-prod.tar
-                ├── postgres_15-alpine.tar
-                ├── datalust_seq_latest.tar
-                ├── docker-compose.prod.yml
-                └── QuestDB/
+            ├── dev/           # packetprocessing_dev_<platform>.tar
+            ├── prod/          # packetprocessing_prod_<platform>.tar
+            ├── kanatbackend-questdb.tar
+            ├── postgres_15-alpine.tar
+            └── datalust_seq_latest.tar
 ```
 
-**Important**: Composer automatically uses compose files from the most recent package directory in `artifacts/packages/` when running `up` or `--build`. This ensures you're always using the compose files and QuestDB Dockerfile from your release package.
+**Important**: Composer automatically uses the bundled compose files located next to the `composer` executable when running `up` or `build`, falling back to repository defaults only if those files are missing.
 
 ## Troubleshooting
 
@@ -453,11 +433,9 @@ If Docker images are missing:
 
 ```bash
 # Load images from release package
-cd artifacts/packages/prod_<timestamp>/
-docker load -i kanatbackend-questdb-prod.tar
-docker load -i postgres_15-alpine.tar
-docker load -i datalust_seq_latest.tar
-cd ../..
+docker load -i artifacts/packages/kanatbackend-questdb.tar
+docker load -i artifacts/packages/postgres_15-alpine.tar
+docker load -i artifacts/packages/datalust_seq_latest.tar
 ```
 
 ### Clean Build Artifacts

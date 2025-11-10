@@ -75,7 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # release
     p_rel = sub.add_parser("release", help="Create release packages for a platform")
-    p_rel.add_argument("platform", choices=["win-x64", "linux-x64", "linux-musl-x64", "osx-arm64"])
+    p_rel.add_argument(
+        "platform",
+        choices=["win-x64", "linux-x64", "linux-musl-x64", "osx-arm64", "linux-arm64", "win-arm64", "osx-x64"],
+    )
 
     return p
 

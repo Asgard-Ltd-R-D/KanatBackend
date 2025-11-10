@@ -119,10 +119,13 @@ if [ $# -eq 0 ]; then
     echo "  $0 clean"
     echo ""
     echo "Available OS platforms:"
-    echo "  1  win-x64        - Windows 64-bit"
-    echo "  2  linux-x64      - Linux 64-bit"
-    echo "  3  linux-musl-x64 - Linux 64-bit (musl)"
-    echo "  4  osx-arm64      - macOS ARM64 (Apple Silicon)"
+    echo "  1  win-x64         - Windows 64-bit"
+    echo "  2  linux-x64       - Linux 64-bit"
+    echo "  3  linux-musl-x64  - Linux 64-bit (musl)"
+    echo "  4  osx-arm64       - macOS ARM64 (Apple Silicon)"
+    echo "  5  linux-arm64     - Linux ARM64"
+    echo "  6  win-arm64       - Windows ARM64"
+    echo "  7  osx-x64         - macOS x64 (Intel)"
     echo ""
     echo "Examples:"
     echo "  $0 4"
@@ -141,8 +144,11 @@ case "$OS_PLATFORM" in
     2) OS_PLATFORM="linux-x64" ;;
     3) OS_PLATFORM="linux-musl-x64" ;;
     4) OS_PLATFORM="osx-arm64" ;;
+    5) OS_PLATFORM="linux-arm64" ;;
+    6) OS_PLATFORM="win-arm64" ;;
+    7) OS_PLATFORM="osx-x64" ;;
 esac
-VALID_PLATFORMS=("win-x64" "linux-x64" "linux-musl-x64" "osx-arm64")
+VALID_PLATFORMS=("win-x64" "linux-x64" "linux-musl-x64" "osx-arm64" "linux-arm64" "win-arm64" "osx-x64")
 
 VALID=false
 for platform in "${VALID_PLATFORMS[@]}"; do
@@ -156,10 +162,13 @@ if [ "$VALID" = false ]; then
     echo -e "${RED}Error: Invalid OS platform: $OS_PLATFORM${NC}"
     echo ""
     echo "Available OS platforms:"
-    echo "  1  win-x64        - Windows 64-bit"
-    echo "  2  linux-x64      - Linux 64-bit"
-    echo "  3  linux-musl-x64 - Linux 64-bit (musl)"
-    echo "  4  osx-arm64      - macOS ARM64 (Apple Silicon)"
+    echo "  1  win-x64         - Windows 64-bit"
+    echo "  2  linux-x64       - Linux 64-bit"
+    echo "  3  linux-musl-x64  - Linux 64-bit (musl)"
+    echo "  4  osx-arm64       - macOS ARM64 (Apple Silicon)"
+    echo "  5  linux-arm64     - Linux ARM64"
+    echo "  6  win-arm64       - Windows ARM64"
+    echo "  7  osx-x64         - macOS x64 (Intel)"
     echo ""
     exit 1
 fi

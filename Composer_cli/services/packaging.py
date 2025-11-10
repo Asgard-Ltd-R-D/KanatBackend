@@ -11,7 +11,7 @@ from ..progress import Progress
 from ..shell import SubprocessShell
 from ..paths import Paths, RELEASE_DIR
 
-ALLOWED_PLATFORMS = {"win-x64", "linux-x64", "linux-musl-x64", "osx-arm64"}
+ALLOWED_PLATFORMS = {"win-x64", "win-arm64", "linux-x64", "linux-musl-x64", "linux-arm64", "osx-arm64", "osx-x64"}
 CUSTOM_IMAGE = ("kanatbackend-questdb", "kanatbackend-questdb.tar")
 SHARED_IMAGES = (
     ("postgres:15-alpine", "postgres_15-alpine.tar"),

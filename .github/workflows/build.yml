@@ -26,13 +26,19 @@ jobs:
             platform: linux-x64
             skip_docker: "false"
           - os: ubuntu-latest
-            platform: linux-musl-x64
+            platform: linux-arm64
             skip_docker: "false"
+          - os: windows-latest
+            platform: win-x64
+            skip_docker: "true"
+          - os: windows-latest
+            platform: win-arm64
+            skip_docker: "true"
           - os: macos-latest
             platform: osx-arm64
             skip_docker: "true"
-          - os: windows-latest
-            platform: win-x64
+          - os: macos-13
+            platform: osx-x64
             skip_docker: "true"
     env:
       KANAT_TARGET_RID: ${{ matrix.platform }}
@@ -154,15 +160,17 @@ jobs:
           Automated build produced platform installers packaged as `.tar` files containing `installer-<platform>.run`.
 
           - linux-x64
-          - linux-musl-x64
-          - osx-arm64 (composer only; Docker payload skipped)
+          - linux-arm64
           - win-x64 (composer only; Docker payload skipped)
+          - win-arm64 (composer only; Docker payload skipped)
+          - osx-arm64 (composer only; Docker payload skipped)
+          - osx-x64 (composer only; Docker payload skipped)
           EOF
 
       - name: 🚀 Publish GitHub release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: build-${{ github.run_id }}
+          tag_name: Installers
           name: Kanat Installer build ${{ github.run_id }}
           prerelease: true
           body_path: notes.md

@@ -2,7 +2,7 @@ name: Build Cross-Platform Artifacts
 
 on:
   workflow_run:
-    workflows: ["Test PacketProcessing"] # Waits for test.yml to complete (tests must pass)
+    workflows: ["Test PacketProcessingService"] # Waits for test.yml to complete (tests must pass)
     types:
       - completed
   workflow_dispatch: # Allow manual run
@@ -23,7 +23,7 @@ jobs:
 
       - name: 🏗️ Build project
         run: |
-          dotnet publish PacketProcessing/PacketProcessing.csproj \
+          dotnet publish PacketProcessingService/PacketProcessingService.csproj \
             -c Release \
             -r ${{ matrix.os == 'ubuntu-latest' && 'linux-x64' || (matrix.os == 'windows-latest' && 'win-x64' || 'osx-x64') }} \
             --self-contained true \

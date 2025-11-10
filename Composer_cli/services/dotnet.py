@@ -54,11 +54,18 @@ class DefaultDotnetService(DotnetService):
         if not dll_path.exists():
             print(f"✗ PacketProcessing.dll not found at {dll_path}")
             return 1
+        if detach:
+            self.terminate_packetprocessing(dll_path, environment)
         dotnet_env = "Development" if environment == "dev" else "Production"
         print(f"▶ Starting PacketProcessing ({dotnet_env})…\n")
         cmd = ["dotnet", str(dll_path), "--environment", dotnet_env]
         if detach:
-            self.sh.open_new_terminal(cmd, cwd=dll_path.parent)
+            self.sh.open_new_terminal(
+                cmd,
+                cwd=dll_path.parent,
+                title=self._terminal_title(environment),
+                close_existing=True,
+            )
             pid_file = dll_path.parent / "PacketProcessing.pid"
             pid_file.write_text("detached\n")
             return 0
@@ -66,6 +73,23 @@ class DefaultDotnetService(DotnetService):
         if rc != 0:
             print(f"✗ PacketProcessing exited with code {rc}")
         return rc
+
+    def terminate_packetprocessing(self, dll_path: Path, environment: str) -> None:
+        """Stop PacketProcessing by terminating the process and closing its terminal window."""
+        # Attempt to kill the running process
+        if dll_path.exists():
+            self.sh.run(["pkill", "-f", str(dll_path)], check=False)
+
+        # Remove PID markers if present
+        pid_file = dll_path.parent / "PacketProcessing.pid"
+        if pid_file.exists():
+            try:
+                pid_file.unlink()
+            except OSError:
+                pass
+
+        # Close any terminal windows associated with this environment
+        self.sh.close_terminal_windows(self._terminal_title(environment))
 
     def project_exists(self) -> bool:
         return self.project_dir.exists()
@@ -90,3 +114,8 @@ class DefaultDotnetService(DotnetService):
         if os_name == "Windows":
             return "win-x64"
         return None
+
+    @staticmethod
+    def _terminal_title(environment: str) -> str:
+        env_name = "DEV" if environment == "dev" else "PROD"
+        return f"PacketProcessing {env_name}"

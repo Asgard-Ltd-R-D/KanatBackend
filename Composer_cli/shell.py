@@ -5,6 +5,8 @@ from typing import Optional, Sequence, Tuple, Union
 import subprocess
 from pathlib import Path
 from typing import Sequence, Optional, Tuple
+import shlex
+import sys
 
 StrOrBytesPath = Union[str, bytes, PathLike[str], PathLike[bytes]]
 
@@ -24,11 +26,46 @@ class SubprocessShell:
         proc = subprocess.Popen(list(cmd), cwd=str(cwd) if cwd else None)
         return proc.wait()
 
-    def open_new_terminal(self, cmd: Sequence[str], cwd: Optional[Path] = None) -> None:
-        script = (
-            "tell application \"Terminal\" to do script \""
-            + (f"cd {cwd} && " if cwd else "")
-            + " ".join(cmd)
-            + "\""
-        )
-        subprocess.run(["osascript", "-e", script])
+    def open_new_terminal(
+        self,
+        cmd: Sequence[str],
+        cwd: Optional[Path] = None,
+        title: Optional[str] = None,
+        close_existing: bool = False,
+    ) -> None:
+        if sys.platform != "darwin":
+            subprocess.Popen(list(cmd), cwd=str(cwd) if cwd else None)
+            return
+
+        if title and close_existing:
+            self.close_terminal_windows(title)
+
+        cmd_parts = list(cmd)
+        command = " ".join(shlex.quote(part) for part in cmd_parts)
+        if cwd:
+            command = f"cd {shlex.quote(str(cwd))} && {command}"
+        escaped = command.replace('"', '\\"')
+        title_line = f'set custom title of front window to "{title}"' if title else ""
+        script_lines = [
+            'tell application "Terminal"',
+            "activate",
+            f'do script "{escaped}"',
+        ]
+        if title_line:
+            script_lines.append(title_line)
+        script_lines.append("end tell")
+        subprocess.run(["osascript", "-e", "\n".join(script_lines)], check=False)
+
+    def close_terminal_windows(self, title: str) -> None:
+        if sys.platform != "darwin":
+            return
+        script = f'''
+tell application "Terminal"
+    repeat with w in windows
+        if custom title of w is "{title}" then
+            close w
+        end if
+    end repeat
+end tell
+'''
+        subprocess.run(["osascript", "-e", script], check=False)

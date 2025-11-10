@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import sys
+import subprocess
 import argparse
 import textwrap
 
@@ -25,12 +26,15 @@ def build_parser() -> argparse.ArgumentParser:
               python composer.py status
               python composer.py build
               python composer.py release osx-arm64
+              python composer.py --gui
             """
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    sub = p.add_subparsers(dest="command", required=True)
+    p.add_argument("--gui", action="store_true", help="Launch the graphical dashboard")
+
+    sub = p.add_subparsers(dest="command")
 
     # up
     p_up = sub.add_parser("up", help="Run environment (builds/loads if needed)")
@@ -76,10 +80,47 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _hide_terminal_window() -> None:
+    if sys.platform != "darwin":
+        return
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'tell application "Terminal" to if (count of windows) > 0 then set miniaturized of front window to true',
+            ],
+            check=False,
+        )
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
-    argv = argv or sys.argv[1:]
+    if argv is None:
+        argv = sys.argv[1:]
+
+    if not argv and getattr(sys, "frozen", False):
+        argv = ["--gui"]
+        _hide_terminal_window()
+
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if getattr(args, "gui", False):
+        try:
+            from Composer_cli.gui import launch_gui
+        except Exception as exc:  # pragma: no cover - GUI import fallback
+            print(f"✗ Unable to launch GUI: {exc}")
+            return 1
+        launch_gui()
+        return 0
+
+    if not getattr(args, "command", None):
+        parser.print_help()
+        return 1
 
     # Register commands
     registry = CommandRegistry()

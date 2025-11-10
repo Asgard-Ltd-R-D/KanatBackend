@@ -99,6 +99,8 @@ class ComposerApp(ComposerUseCases):
 
     def stop(self, environment: str) -> int:
         """Issue docker compose stop for the selected environment."""
+        dll_path = self.paths.release_dir / environment / "PacketProcessing.dll"
+        self.dotnet.terminate_packetprocessing(dll_path, environment)
         ctx = self._compose_ctx(environment)
         self.compose.stop(ctx)
         print(f"✓ {environment.upper()} stopped")
@@ -106,6 +108,8 @@ class ComposerApp(ComposerUseCases):
 
     def kill(self, environment: str) -> int:
         """Stop services, remove containers, and delete release artifacts for the environment."""
+        dll_path = self.paths.release_dir / environment / "PacketProcessing.dll"
+        self.dotnet.terminate_packetprocessing(dll_path, environment)
         ctx = self._compose_ctx(environment)
         self.env.kill_env(ctx)
         dll_dir = self.paths.release_dir / environment

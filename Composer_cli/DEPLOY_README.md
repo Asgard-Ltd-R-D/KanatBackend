@@ -11,6 +11,9 @@ This guide explains how to build and deploy the KanatBackend application using t
 - [Using the Installer](#using-the-installer)
 - [Composer Tool](#composer-tool)
 - [Deployment Workflow](#deployment-workflow)
+- [Composer GUI](#composer-gui)
+
+> This deployment guide lives alongside the CLI under `Composer_cli/DEPLOY_README.md` so it ships with the packaged installer.
 
 ## Overview
 
@@ -285,6 +288,12 @@ Display help information:
 ./composer --help
 ./composer -h
 ```
+
+## Composer GUI
+
+- The packaged `composer` executable launches the dashboard GUI automatically when started without arguments (for example, by double-clicking it in Finder/Explorer). This is equivalent to running `./composer --gui`.
+- On macOS, the launcher minimizes the originating Terminal window before showing the GUI for a cleaner experience. Command-line usage remains unchanged—supplying arguments bypasses the auto-GUI behavior.
+- The GUI offers environment management (Up/Stop/Restart/Kill), Quick Build, log streaming, and live component status for PacketProcessing, Postgres, QuestDB, and Seq.
 
 ## Deployment Workflow
 

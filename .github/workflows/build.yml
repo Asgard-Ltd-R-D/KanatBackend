@@ -45,6 +45,32 @@ jobs:
       - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
+      - name: ♻️ Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.sln', '**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: ♻️ Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: ♻️ Cache Docker image exports
+        if: matrix.skip_docker != 'true'
+        uses: actions/cache@v4
+        with:
+          path: artifacts/releases/images
+          key: docker-cache-${{ matrix.platform }}-${{ hashFiles('QuestDB/Dockerfile', 'docker-compose.dev.yml', 'docker-compose.prod.yml') }}
+          restore-keys: |
+            docker-cache-${{ matrix.platform }}-
+
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
@@ -106,3 +132,38 @@ jobs:
         with:
           name: kanat-installer-${{ matrix.platform }}
           path: artifacts/packages/kanat-installer-${{ matrix.platform }}.tar
+
+  release:
+    name: 📦 Publish Release
+    needs: build
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 📥 Download packaged installers
+        uses: actions/download-artifact@v4
+        with:
+          path: release_artifacts
+
+      - name: 📝 Compose release notes
+        run: |
+          cat <<'EOF' > notes.md
+          ## Installer Artifacts
+
+          Automated build produced platform installers packaged as `.tar` files containing `installer-<platform>.run`.
+
+          - linux-x64
+          - linux-musl-x64
+          - osx-arm64 (composer only; Docker payload skipped)
+          - win-x64 (composer only; Docker payload skipped)
+          EOF
+
+      - name: 🚀 Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: build-${{ github.run_id }}
+          name: Kanat Installer build ${{ github.run_id }}
+          prerelease: true
+          body_path: notes.md
+          files: release_artifacts/**/*.tar

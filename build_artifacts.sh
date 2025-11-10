@@ -131,16 +131,12 @@ fi
 
 OS_PLATFORM="$1"
 
-declare -A SHORTCUT_PLATFORMS=(
-    ["1"]="win-x64"
-    ["2"]="linux-x64"
-    ["3"]="linux-musl-x64"
-    ["4"]="osx-arm64"
-)
-
-if [[ -n "${SHORTCUT_PLATFORMS[$OS_PLATFORM]}" ]]; then
-    OS_PLATFORM="${SHORTCUT_PLATFORMS[$OS_PLATFORM]}"
-fi
+case "$OS_PLATFORM" in
+    1) OS_PLATFORM="win-x64" ;;
+    2) OS_PLATFORM="linux-x64" ;;
+    3) OS_PLATFORM="linux-musl-x64" ;;
+    4) OS_PLATFORM="osx-arm64" ;;
+esac
 VALID_PLATFORMS=("win-x64" "linux-x64" "linux-musl-x64" "osx-arm64")
 
 VALID=false

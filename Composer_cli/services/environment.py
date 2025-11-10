@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import tarfile
 from pathlib import Path
+import os
 from typing import Callable, List, Sequence
 
 from ..abstractions import DockerService, DotnetService
@@ -16,9 +17,11 @@ class EnvironmentManager:
         self.paths = paths
         self.docker = docker
         self.dotnet = dotnet
+        self._docker_skipped_notified = False
 
     def build_all(self, required_images_provider: Callable[[str], List[str]]) -> bool:
         """Build both environments and ensure required Docker images are cached."""
+        skip_docker = self._skip_docker()
         for env in ("dev", "prod"):
             release_dir = self.paths.release_dir / env
             if release_dir.exists():
@@ -35,6 +38,9 @@ class EnvironmentManager:
                 self.dotnet.sync_runtime_assets(env, release_dir)
 
             required_images = required_images_provider(env)
+            if skip_docker:
+                self._maybe_notify_docker_skipped()
+                continue
             if not self.docker.prepare_images(
                 env,
                 required_images,
@@ -92,6 +98,10 @@ class EnvironmentManager:
         else:
             self.dotnet.sync_runtime_assets(env, dll_dir)
 
+        if self._skip_docker():
+            self._maybe_notify_docker_skipped()
+            return True
+
         return self.docker.prepare_images(
             env,
             required_images,
@@ -99,6 +109,16 @@ class EnvironmentManager:
             self.paths.deploy_dir,
             self.paths.questdb_dir,
         )
+
+    def _skip_docker(self) -> bool:
+        value = os.getenv("KANAT_SKIP_DOCKER", "")
+        return value.lower() in {"1", "true", "yes", "on"}
+
+    def _maybe_notify_docker_skipped(self) -> None:
+        if self._docker_skipped_notified:
+            return
+        print("⚠ Docker image preparation skipped (KANAT_SKIP_DOCKER set).")
+        self._docker_skipped_notified = True
 
     def _rehydrate_release_from_packages(self, env: str, target_dir: Path) -> bool:
         """Restore release binaries for an environment from packaged artifacts."""

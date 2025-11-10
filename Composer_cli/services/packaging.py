@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import tarfile
 from pathlib import Path
@@ -44,11 +45,16 @@ class DefaultPackagingService(PackagingService):
         if not self._validate_release_builds():
             return False
 
-        if not self._ensure_custom_image():
-            return False
+        skip_docker = self._skip_docker()
 
-        if not self._ensure_shared_images():
-            return False
+        if not skip_docker:
+            if not self._ensure_custom_image():
+                return False
+
+            if not self._ensure_shared_images():
+                return False
+        else:
+            self._notify_docker_skipped()
 
         success = True
 
@@ -63,7 +69,7 @@ class DefaultPackagingService(PackagingService):
                 continue
 
         self._refresh_root_assets()
-        if not self._export_shared_images():
+        if not skip_docker and not self._export_shared_images():
             success = False
 
         if success:
@@ -182,3 +188,12 @@ class DefaultPackagingService(PackagingService):
     @staticmethod
     def _sanitized_image_name(image: str) -> str:
         return image.replace("/", "_").replace(":", "_")
+
+    @staticmethod
+    def _skip_docker() -> bool:
+        value = os.getenv("KANAT_SKIP_DOCKER", "")
+        return value.lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _notify_docker_skipped() -> None:
+        print("⚠ Docker image packaging skipped (KANAT_SKIP_DOCKER set).")

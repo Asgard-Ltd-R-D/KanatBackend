@@ -60,6 +60,11 @@ copy_with_progress() {
     cp "$src" "$dest"
 }
 
+PYTHON_BIN="python3"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+fi
+
 # ----------------- CLEAN MODE -----------------
 if [ "$1" = "clean" ]; then
     echo -e "${BLUE}=== Cleaning build artifacts ===${NC}"
@@ -159,13 +164,17 @@ if [ "$VALID" = false ]; then
     exit 1
 fi
 
+RID_OVERRIDE="$OS_PLATFORM"
+export KANAT_TARGET_RID="$RID_OVERRIDE"
+export KANAT_BUILD_PLATFORM="$OS_PLATFORM"
+
 echo -e "${BLUE}=== Building Artifacts for $OS_PLATFORM ===${NC}"
 echo ""
 
 # ----------------- STEP 1: composer.py release -----------------
 echo -e "${BLUE}Step 1/3: Building release with composer.py${NC}"
-echo -e "${YELLOW}Running: python3 composer.py release \"$OS_PLATFORM\"${NC}"
-python3 composer.py release "$OS_PLATFORM"
+echo -e "${YELLOW}Running: ${PYTHON_BIN} composer.py release \"$OS_PLATFORM\"${NC}"
+"$PYTHON_BIN" composer.py release "$OS_PLATFORM"
 if [ $? -ne 0 ]; then
     echo -e "${RED}Failed to build release${NC}"
     exit 1
@@ -178,7 +187,7 @@ echo -e "${BLUE}Step 2/3: Creating composer executable${NC}"
 
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
-    python3 -m venv .venv
+    "$PYTHON_BIN" -m venv .venv
     echo -e "${GREEN}✓ Virtual environment created${NC}"
 else
     echo "Using existing virtual environment .venv"
@@ -186,15 +195,24 @@ fi
 
 # Activate virtual environment
 # shellcheck disable=SC1091
-source .venv/bin/activate
+VENV_ACTIVATE=".venv/bin/activate"
+if [ ! -f "$VENV_ACTIVATE" ]; then
+    VENV_ACTIVATE=".venv/Scripts/activate"
+fi
+if [ ! -f "$VENV_ACTIVATE" ]; then
+    echo -e "${RED}Failed to locate virtual environment activate script${NC}"
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$VENV_ACTIVATE"
 
 echo "Installing PyInstaller (and upgrading pip)..."
-python -m pip install --upgrade pip pyinstaller --quiet
+"$PYTHON_BIN" -m pip install --upgrade pip pyinstaller --quiet
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 
 echo "Cleaning previous builds and PyInstaller cache..."
 rm -rf build dist .pyi_build .pyi_spec composer
-python -m PyInstaller --clean > /dev/null 2>&1 || true
+"$PYTHON_BIN" -m PyInstaller --clean > /dev/null 2>&1 || true
 
 echo "Building composer executable from scratch (no cache)..."
 pyinstaller --onefile \
@@ -416,4 +434,12 @@ echo "  ./installer.run [base_directory]"
 echo ""
 echo "Files will be extracted to: <base_directory>/BackendApplication/"
 echo "If no base directory is specified, files will be extracted to: ./BackendApplication/"
+echo ""
+
+FINAL_INSTALLER_DIR="artifacts/installers/${OS_PLATFORM}"
+FINAL_INSTALLER_NAME="installer-${OS_PLATFORM}.run"
+mkdir -p "$FINAL_INSTALLER_DIR"
+cp "$INSTALLER_FILE" "$FINAL_INSTALLER_DIR/$FINAL_INSTALLER_NAME"
+
+echo -e "${BLUE}Installer copied to artifacts: ${GREEN}${FINAL_INSTALLER_DIR}/${FINAL_INSTALLER_NAME}${NC}"
 echo ""

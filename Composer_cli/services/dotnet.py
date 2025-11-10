@@ -3,6 +3,7 @@ from __future__ import annotations
 import platform
 import shutil
 from pathlib import Path
+import os
 
 from ..abstractions import DotnetService, BuildResult
 from ..shell import SubprocessShell
@@ -105,6 +106,9 @@ class DefaultDotnetService(DotnetService):
 
     def _infer_rid(self) -> str | None:
         """Infer a runtime identifier that matches the current host OS and architecture."""
+        rid_override = os.getenv("KANAT_TARGET_RID")
+        if rid_override:
+            return rid_override
         os_name = platform.system()
         arch = platform.machine()
         if os_name == "Linux":

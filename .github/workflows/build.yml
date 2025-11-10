@@ -1,23 +1,40 @@
 name: Build Cross-Platform Artifacts
 
 on:
+  # Run automatically after tests finish successfully
   workflow_run:
     workflows: ["Test PacketProcessingService"]
-    types:
-      - completed
+    types: [completed]
+
+  # Allow manual run or local act testing
+  workflow_dispatch:
+
+  # Rebuild when relevant paths change
   push:
+    paths:
+      - "Composer_cli/**"
+      - "PacketProcessingService/**"
+      - ".github/workflows/build.yml"
     branches:
       - "main"
-  workflow_dispatch:
+      - "master"
+
+  pull_request:
+    paths:
+      - "Composer_cli/**"
+      - "PacketProcessingService/**"
+      - ".github/workflows/build.yml"
 
 jobs:
   build:
+    # Only run build if tests passed OR triggered manually
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
     name: 🏗️ Build installer (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
       packages: write
+
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +57,7 @@ jobs:
           - os: macos-13
             platform: osx-x64
             skip_docker: "true"
+
     env:
       KANAT_TARGET_RID: ${{ matrix.platform }}
       KANAT_BUILD_PLATFORM: ${{ matrix.platform }}
@@ -47,6 +65,7 @@ jobs:
       DOCKER_BUILDKIT: 1
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
+
     steps:
       - name: ⬇️ Checkout
         uses: actions/checkout@v4
@@ -54,19 +73,16 @@ jobs:
       - name: ♻️ Cache NuGet packages
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.nuget/packages
+          path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.sln', '**/*.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
+          restore-keys: ${{ runner.os }}-nuget-
 
       - name: ♻️ Cache pip downloads
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          restore-keys: ${{ runner.os }}-pip-
 
       - name: ♻️ Cache Docker image exports
         if: matrix.skip_docker != 'true'
@@ -74,8 +90,7 @@ jobs:
         with:
           path: artifacts/releases/images
           key: docker-cache-${{ matrix.platform }}-${{ hashFiles('QuestDB/Dockerfile', 'docker-compose.dev.yml', 'docker-compose.prod.yml') }}
-          restore-keys: |
-            docker-cache-${{ matrix.platform }}-
+          restore-keys: docker-cache-${{ matrix.platform }}-
 
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
@@ -142,11 +157,29 @@ jobs:
   release:
     name: 📦 Publish Release
     needs: build
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.ref_name == 'main' || github.ref_name == 'master' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
+
     steps:
+      - name: ⬇️ Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Auto-increment version (patch)
+      - name: 🧮 Bump version tag
+        id: version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+          tag_prefix: "v"
+          release_branches: main
+          dry_run: false
+
       - name: 📥 Download packaged installers
         uses: actions/download-artifact@v4
         with:
@@ -170,8 +203,8 @@ jobs:
       - name: 🚀 Publish GitHub release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: Installers
-          name: Kanat Installer build ${{ github.run_id }}
-          prerelease: true
+          tag_name: ${{ steps.version.outputs.new_tag }}
+          name: Kanat Installer ${{ steps.version.outputs.new_tag }}
+          prerelease: false
           body_path: notes.md
           files: release_artifacts/**/*.tar

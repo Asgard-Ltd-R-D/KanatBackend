@@ -47,15 +47,16 @@ The `build_artifacts.sh` script builds a release for a specific platform and cre
 
 #### Available Platforms
 
-- `win-x64` - Windows 64-bit
-- `linux-x64` - Linux 64-bit
-- `linux-musl-x64` - Linux 64-bit (musl)
-- `osx-arm64` - macOS ARM64 (Apple Silicon)
+- `1` / `win-x64` - Windows 64-bit
+- `2` / `linux-x64` - Linux 64-bit
+- `3` / `linux-musl-x64` - Linux 64-bit (musl)
+- `4` / `osx-arm64` - macOS ARM64 (Apple Silicon)
 
 #### Examples
 
 ```bash
 # Build for macOS (Apple Silicon)
+./build_artifacts.sh 4
 ./build_artifacts.sh osx-arm64
 
 # Build for Linux

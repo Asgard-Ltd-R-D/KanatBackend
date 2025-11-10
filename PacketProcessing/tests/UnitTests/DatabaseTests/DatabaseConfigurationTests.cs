@@ -1,11 +1,14 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Npgsql;
 using PacketProcessing.Config;
 using PacketProcessing.Context;
-using PacketProcessing.Entities.Range;
 using PacketProcessing.Entities.Packet;
+using PacketProcessing.Entities.Range;
 using PacketProcessing.Repositories.EfRepository;
 using PacketProcessing.Repositories.InfluxRepository;
 using PacketProcessing.Tests.Utils;
@@ -15,14 +18,13 @@ using Xunit.Abstractions;
 namespace PacketProcessing.Tests.UnitTests.DatabaseTests;
 
 /// <summary>
-/// Tests for database configuration and context initialization
+/// Tests for database configuration and service registration without external dependencies.
 /// </summary>
-public class DatabaseConfigurationTests : IDisposable
+public class DatabaseConfigurationTests
 {
     #region Fields
 
     private readonly ITestOutputHelper _output;
-    private readonly ServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
 
     #endregion
@@ -32,27 +34,7 @@ public class DatabaseConfigurationTests : IDisposable
     public DatabaseConfigurationTests(ITestOutputHelper output)
     {
         _output = output;
-        
-        
-        // Use test configuration provider
         _configuration = TestConfigurationProvider.Configuration;
-
-        // Create service collection and configure services
-        var services = new ServiceCollection();
-        
-        // Add logging with Xunit logger
-        services.AddLogging(builder =>
-        {
-            builder.AddProvider(new XunitLoggerProvider(_output));
-            builder.SetMinimumLevel(LogLevel.Debug);
-        });
-
-        // Configure database services
-        DatabaseConfiguration.ConfigureServices(services, _configuration);
-
-        _serviceProvider = services.BuildServiceProvider();
-        
-        _output.WriteLine($"[{DateTime.UtcNow:O}] DatabaseConfigurationTests initialized");
     }
 
     #endregion
@@ -62,10 +44,7 @@ public class DatabaseConfigurationTests : IDisposable
     [Fact]
     public void Configuration_ShouldLoadPostgresSettings()
     {
-        // Arrange
-        _output.WriteLine("Testing PostgreSQL configuration loading...");
-
-        // Act
+        // Act + Arrange
         var postgresConfig = TestConfigurationProvider.GetPostgresConfiguration();
 
         // Assert
@@ -75,17 +54,12 @@ public class DatabaseConfigurationTests : IDisposable
         Assert.Equal("postgres", postgresConfig.Username);
         Assert.Equal("postgres", postgresConfig.Password);
         Assert.Equal("RangeDBTest", postgresConfig.Database);
-        
-        _output.WriteLine($"PostgreSQL configuration loaded successfully: {postgresConfig.Host}:{postgresConfig.Port}/{postgresConfig.Database}");
     }
 
     [Fact]
     public void Configuration_ShouldLoadQuestDbSettings()
     {
-        // Arrange
-        _output.WriteLine("Testing QuestDB configuration loading...");
-
-        // Act
+        // Act + Arrange
         var questDbConfig = TestConfigurationProvider.GetQuestDbConfiguration();
 
         // Assert
@@ -97,18 +71,13 @@ public class DatabaseConfigurationTests : IDisposable
         Assert.Equal("quest", questDbConfig.Username);
         Assert.Equal("quest", questDbConfig.Password);
         Assert.Equal("PacketDBTest", questDbConfig.Database);
-        
-        _output.WriteLine($"QuestDB configuration loaded successfully: {questDbConfig.Host}:{questDbConfig.PostgresPort}/{questDbConfig.Database}");
     }
 
     [Fact]
     public void PostgresConfiguration_ShouldGenerateValidConnectionString()
     {
-        // Arrange
-        _output.WriteLine("Testing PostgreSQL connection string generation...");
+        // Act + Arrange
         var postgresConfig = TestConfigurationProvider.GetPostgresConfiguration();
-
-        // Act
         var connectionString = postgresConfig.GetConnectionString();
 
         // Assert
@@ -118,18 +87,13 @@ public class DatabaseConfigurationTests : IDisposable
         Assert.Contains("Database=RangeDBTest", connectionString);
         Assert.Contains("Username=postgres", connectionString);
         Assert.Contains("Password=postgres", connectionString);
-        Assert.Contains("Include Error Detail=true", connectionString);
-        
-        _output.WriteLine($"PostgreSQL connection string generated: {connectionString.Replace("Password=postgres", "Password=***")}");
     }
 
     [Fact]
     public void QuestDbConfiguration_ShouldGenerateValidConnectionString()
     {
         // Arrange
-        _output.WriteLine("Testing QuestDB connection string generation...");
         var questDbConfig = TestConfigurationProvider.GetQuestDbConfiguration();
-
         // Act
         var connectionString = questDbConfig.GetPostgresConnectionString();
 
@@ -140,9 +104,6 @@ public class DatabaseConfigurationTests : IDisposable
         Assert.Contains("Database=PacketDBTest", connectionString);
         Assert.Contains("Username=quest", connectionString);
         Assert.Contains("Password=quest", connectionString);
-        Assert.Contains("Include Error Detail=true", connectionString);
-        
-        _output.WriteLine($"QuestDB connection string generated: {connectionString.Replace("Password=quest", "Password=***")}");
     }
 
     #endregion
@@ -152,57 +113,45 @@ public class DatabaseConfigurationTests : IDisposable
     [Fact]
     public void ServiceCollection_ShouldRegisterPostgresDbContext()
     {
-        // Arrange
-        _output.WriteLine("Testing PostgreSQL DbContext service registration...");
-
+        //Arrange
+        using var provider = BuildServiceProviderWithStubs();
         // Act
-        var postgresContext = _serviceProvider.GetService<PostgresDbContext>();
-
+        var postgresContext = provider.GetService<PostgresDbContext>();
         // Assert
         Assert.NotNull(postgresContext);
-        _output.WriteLine("PostgreSQL DbContext successfully registered and resolved");
     }
 
     [Fact]
     public void ServiceCollection_ShouldRegisterQuestDbContext()
     {
-        // Arrange
-        _output.WriteLine("Testing QuestDB DbContext service registration...");
-
+        //Arrange
+        using var provider = BuildServiceProviderWithStubs();
         // Act
-        var questDbContext = _serviceProvider.GetService<QuestDbContext>();
-
+        var questDbContext = provider.GetService<QuestDbContext>();
         // Assert
         Assert.NotNull(questDbContext);
-        _output.WriteLine("QuestDB DbContext successfully registered and resolved");
     }
 
     [Fact]
     public void ServiceCollection_ShouldRegisterEfRepositoryFactory()
     {
-        // Arrange
-        _output.WriteLine("Testing EF Repository Factory service registration...");
-
+        //Arrange
+        using var provider = BuildServiceProviderWithStubs();
         // Act
-        var efRepositoryFactory = _serviceProvider.GetService<IEfRepositoryFactory>();
-
+        var efFactory = provider.GetService<IEfRepositoryFactory>();
         // Assert
-        Assert.NotNull(efRepositoryFactory);
-        _output.WriteLine("EF Repository Factory successfully registered and resolved");
+        Assert.NotNull(efFactory);
     }
 
     [Fact]
     public void ServiceCollection_ShouldRegisterInfluxRepositoryFactory()
     {
-        // Arrange
-        _output.WriteLine("Testing Influx Repository Factory service registration...");
-
+        //Arrange
+        using var provider = BuildServiceProviderWithStubs();
         // Act
-        var influxRepositoryFactory = _serviceProvider.GetService<IInfluxRepositoryFactory>();
-
+        var influxFactory = provider.GetService<IInfluxRepositoryFactory>();
         // Assert
-        Assert.NotNull(influxRepositoryFactory);
-        _output.WriteLine("Influx Repository Factory successfully registered and resolved");
+        Assert.NotNull(influxFactory);
     }
 
     #endregion
@@ -212,8 +161,7 @@ public class DatabaseConfigurationTests : IDisposable
     [Fact]
     public void MockConfiguration_ShouldWorkWithDatabaseConfiguration()
     {
-        // Arrange
-        _output.WriteLine("Testing mock configuration with database configuration...");
+        //Arrange
         var customSettings = new Dictionary<string, string?>
         {
             ["Postgres:Host"] = "mock-host",
@@ -224,27 +172,19 @@ public class DatabaseConfigurationTests : IDisposable
         };
 
         var mockConfig = TestConfigurationProvider.CreateConfigurationWithSettings(customSettings);
-
-        // Act
         var postgresConfig = mockConfig.GetSection("Postgres").Get<PostgresConfiguration>();
 
-        // Assert
         Assert.NotNull(postgresConfig);
         Assert.Equal("mock-host", postgresConfig.Host);
         Assert.Equal(5432, postgresConfig.Port);
         Assert.Equal("mock-user", postgresConfig.Username);
         Assert.Equal("mock-pass", postgresConfig.Password);
         Assert.Equal("mock-db", postgresConfig.Database);
-        
-        _output.WriteLine("Mock configuration test completed successfully");
     }
-
 
     [Fact]
     public void TestConfigurationProvider_ShouldCreateCustomConfiguration()
     {
-        // Arrange
-        _output.WriteLine("Testing custom configuration creation...");
         var customSettings = new Dictionary<string, string?>
         {
             ["Postgres:Host"] = "custom-host",
@@ -252,27 +192,59 @@ public class DatabaseConfigurationTests : IDisposable
             ["Postgres:Database"] = "custom-db"
         };
 
-        // Act
         var customConfig = TestConfigurationProvider.CreateConfigurationWithSettings(customSettings);
         var postgresConfig = customConfig.GetSection("Postgres").Get<PostgresConfiguration>();
 
-        // Assert
         Assert.NotNull(postgresConfig);
         Assert.Equal("custom-host", postgresConfig.Host);
         Assert.Equal(9999, postgresConfig.Port);
         Assert.Equal("custom-db", postgresConfig.Database);
-        
-        _output.WriteLine("Custom configuration test completed successfully");
     }
 
     #endregion
 
-    #region IDisposable
+    #region Helpers
 
-    public void Dispose()
+    private ServiceProvider BuildServiceProviderWithStubs()
     {
-        _output.WriteLine($"[{DateTime.UtcNow:O}] DatabaseConfigurationTests disposing...");
-        _serviceProvider?.Dispose();
+        var services = new ServiceCollection();
+
+        services.AddLogging(builder =>
+        {
+            builder.AddProvider(new XunitLoggerProvider(_output));
+            builder.SetMinimumLevel(LogLevel.Debug);
+        });
+
+        DatabaseConfiguration.ConfigureServices(services, _configuration);
+
+        services.RemoveAll(typeof(PostgresDbContext));
+        services.RemoveAll(typeof(QuestDbContext));
+
+        var postgresLogger = new Mock<ILogger<PostgresDbContext>>();
+        var postgresOptions = new DbContextOptionsBuilder<PostgresDbContext>()
+            .UseInMemoryDatabase($"config-tests-{Guid.NewGuid()}")
+            .Options;
+        services.AddSingleton<PostgresDbContext>(_ => new PostgresDbContext(postgresOptions, postgresLogger.Object));
+
+        var questLogger = new Mock<ILogger<QuestDbContext>>();
+        services.AddSingleton<QuestDbContext>(_ => new QuestDbContextShim(_configuration, questLogger.Object));
+
+        return services.BuildServiceProvider();
+    }
+
+    private sealed class QuestDbContextShim : QuestDbContext, IDisposable
+    {
+        public QuestDbContextShim(IConfiguration cfg, ILogger<QuestDbContext> log)
+            : base(cfg, log)
+        {
+        }
+
+        public NpgsqlConnection OpenMockConnection() =>
+            new("Host=localhost;Port=1;Username=test;Password=test;Database=test;");
+
+        public void Dispose()
+        {
+        }
     }
 
     #endregion

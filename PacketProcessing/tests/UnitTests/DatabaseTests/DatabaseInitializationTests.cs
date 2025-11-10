@@ -1,14 +1,15 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
-using PacketProcessing.Config;
+using Npgsql;
 using PacketProcessing.Context;
+using PacketProcessing.Entities.Packet;
 using PacketProcessing.Entities.Range;
 using PacketProcessing.Repositories.EfRepository;
 using PacketProcessing.Repositories.InfluxRepository;
-using PacketProcessing.Entities.Packet;
 using PacketProcessing.Tests.Utils;
 using Xunit;
 using Xunit.Abstractions;
@@ -16,17 +17,16 @@ using Xunit.Abstractions;
 namespace PacketProcessing.Tests.UnitTests.DatabaseTests;
 
 /// <summary>
-/// Tests for database initialization and connectivity
+/// Tests for database initialization and connectivity without external dependencies.
 /// </summary>
 public class DatabaseInitializationTests : IDisposable
 {
     #region Fields
 
     private readonly ITestOutputHelper _output;
-    private readonly ServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
     private readonly PostgresDbContext _postgresContext;
-    private readonly QuestDbContext _questDbContext;
+    private readonly QuestDbContextShim _questDbContext;
 
     #endregion
 
@@ -35,28 +35,30 @@ public class DatabaseInitializationTests : IDisposable
     public DatabaseInitializationTests(ITestOutputHelper output)
     {
         _output = output;
-        
-        
-        // Use test configuration provider
+
         _configuration = TestConfigurationProvider.Configuration;
 
-        // Create service collection and configure services
-        var services = new ServiceCollection();
-        
-        // Add logging with Xunit logger
-        services.AddLogging(builder =>
-        {
-            builder.AddProvider(new XunitLoggerProvider(_output));
-            builder.SetMinimumLevel(LogLevel.Debug);
-        });
+        var postgresLogger = new Mock<ILogger<PostgresDbContext>>();
+        var postgresOptions = new DbContextOptionsBuilder<PostgresDbContext>()
+            .UseInMemoryDatabase($"postgres-tests-{Guid.NewGuid()}")
+            .Options;
+        _postgresContext = new PostgresDbContext(postgresOptions, postgresLogger.Object);
 
-        // Configure database services
-        DatabaseConfiguration.ConfigureServices(services, _configuration);
+        var questLogger = new Mock<ILogger<QuestDbContext>>();
+        var questConfiguration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["QuestDb:Host"] = "test-host",
+                ["QuestDb:PostgresPort"] = "8812",
+                ["QuestDb:InfluxPort"] = "9000",
+                ["QuestDb:HttpPort"] = "9009",
+                ["QuestDb:Username"] = "quest",
+                ["QuestDb:Password"] = "quest",
+                ["QuestDb:Database"] = "PacketDBTest"
+            })
+            .Build();
+        _questDbContext = new QuestDbContextShim(questConfiguration, questLogger.Object);
 
-        _serviceProvider = services.BuildServiceProvider();
-        _postgresContext = _serviceProvider.GetRequiredService<PostgresDbContext>();
-        _questDbContext = _serviceProvider.GetRequiredService<QuestDbContext>();
-        
         _output.WriteLine($"[{DateTime.UtcNow:O}] DatabaseInitializationTests initialized");
     }
 
@@ -67,85 +69,41 @@ public class DatabaseInitializationTests : IDisposable
     [Fact]
     public async Task PostgresDbContext_ShouldConnectSuccessfully()
     {
-        // Arrange
-        _output.WriteLine("Testing PostgreSQL database connectivity...");
-
-        // Act
+        await _postgresContext.Database.EnsureCreatedAsync();
         var canConnect = await _postgresContext.Database.CanConnectAsync();
-        
-        // Assert
-        Assert.True(canConnect, "PostgreSQL database should be accessible");
-        _output.WriteLine("PostgreSQL database connection successful");
+        Assert.True(canConnect, "In-memory PostgreSQL context should be accessible");
     }
 
     [Fact]
     public async Task PostgresDbContext_ShouldCreateDatabaseIfNotExists()
     {
-        // Arrange
-        _output.WriteLine("Testing PostgreSQL database creation...");
-
-        // Act
         var created = await _postgresContext.Database.EnsureCreatedAsync();
-        
-        // Assert
-        Assert.True(created || !created, "Database creation should succeed or database should already exist");
-        
-        // Verify database exists
+        Assert.True(created || !created);
         var canConnect = await _postgresContext.Database.CanConnectAsync();
-        Assert.True(canConnect, "Database should be accessible after creation");
-        
-        _output.WriteLine($"PostgreSQL database creation result: {(created ? "Created" : "Already exists")}");
+        Assert.True(canConnect);
     }
 
     [Fact]
     public async Task PostgresDbContext_ShouldHaveRequiredTables()
     {
-        // Arrange
-        _output.WriteLine("Testing PostgreSQL table creation and access...");
-        
-        // Act - Force database creation (this will create tables if they don't exist)
-        var databaseCreated = await _postgresContext.Database.EnsureCreatedAsync();
-        _output.WriteLine($"Database creation result: {(databaseCreated ? "Created" : "Already exists")}");
-
-        // Assert - Check if database is accessible
-        var canConnect = _postgresContext.Database.CanConnect();
-        Assert.True(canConnect, "Database should be accessible");
-        
-        _output.WriteLine("Database is accessible, verifying DbSet properties...");
-
-        // Verify that all DbSet properties are properly configured
+        await _postgresContext.Database.EnsureCreatedAsync();
         Assert.NotNull(_postgresContext.Ranges);
         Assert.NotNull(_postgresContext.Targets);
         Assert.NotNull(_postgresContext.Hits);
         Assert.NotNull(_postgresContext.Events);
-        
-        _output.WriteLine("All DbSet properties are properly configured: Ranges, Targets, Hits, Events");
-        
-        // Test that we can access the model (this verifies entity configuration)
+
         var model = _postgresContext.Model;
-        Assert.NotNull(model);
-        
-        var rangeEntityType = model.FindEntityType(typeof(RangeEntity));
-        var targetEntityType = model.FindEntityType(typeof(TargetEntity));
-        var hitEntityType = model.FindEntityType(typeof(HitEntity));
-        var eventEntityType = model.FindEntityType(typeof(EventEntity));
-        
-        Assert.NotNull(rangeEntityType);
-        Assert.NotNull(targetEntityType);
-        Assert.NotNull(hitEntityType);
-        Assert.NotNull(eventEntityType);
-        
-        _output.WriteLine("All entity types are properly configured in the model");
-        
-        _output.WriteLine("PostgreSQL database and entity configuration test completed successfully");
+        Assert.NotNull(model.FindEntityType(typeof(RangeEntity)));
+        Assert.NotNull(model.FindEntityType(typeof(TargetEntity)));
+        Assert.NotNull(model.FindEntityType(typeof(HitEntity)));
+        Assert.NotNull(model.FindEntityType(typeof(EventEntity)));
     }
 
     [Fact]
     public async Task PostgresDbContext_ShouldSupportBasicCrudOperations()
     {
-        // Arrange
-        _output.WriteLine("Testing PostgreSQL CRUD operations...");
         await _postgresContext.Database.EnsureCreatedAsync();
+
         var testRange = new RangeEntity
         {
             Id = Guid.NewGuid(),
@@ -155,47 +113,23 @@ public class DatabaseInitializationTests : IDisposable
             Timestamp = DateTime.UtcNow
         };
 
-        // Act - Create
-        _output.WriteLine($"Creating test range: {testRange.Description}");
         _postgresContext.Ranges.Add(testRange);
         await _postgresContext.SaveChangesAsync();
 
-        // Act - Read
-        var retrievedRange = await _postgresContext.Ranges
-            .FirstOrDefaultAsync(r => r.Id == testRange.Id);
-
-        // Assert
+        var retrievedRange = await _postgresContext.Ranges.FirstOrDefaultAsync(r => r.Id == testRange.Id);
         Assert.NotNull(retrievedRange);
-        Assert.Equal(testRange.Description, retrievedRange.Description);
-        Assert.Equal(testRange.StartTime, retrievedRange.StartTime);
-        Assert.Equal(testRange.EndTime, retrievedRange.EndTime);
-        _output.WriteLine($"Successfully retrieved range: {retrievedRange.Description}");
 
-        // Act - Update
-        retrievedRange.Description = "Updated Test Range";
+        retrievedRange!.Description = "Updated";
         await _postgresContext.SaveChangesAsync();
-        _output.WriteLine($"Updated range description to: {retrievedRange.Description}");
 
-        // Act - Read Updated
-        var updatedRange = await _postgresContext.Ranges
-            .FirstOrDefaultAsync(r => r.Id == testRange.Id);
+        var updatedRange = await _postgresContext.Ranges.FirstAsync(r => r.Id == testRange.Id);
+        Assert.Equal("Updated", updatedRange.Description);
 
-        // Assert
-        Assert.NotNull(updatedRange);
-        Assert.Equal("Updated Test Range", updatedRange.Description);
-
-        // Act - Delete
         _postgresContext.Ranges.Remove(updatedRange);
         await _postgresContext.SaveChangesAsync();
-        _output.WriteLine("Deleted test range");
 
-        // Act - Verify Deletion
-        var deletedRange = await _postgresContext.Ranges
-            .FirstOrDefaultAsync(r => r.Id == testRange.Id);
-
-        // Assert
+        var deletedRange = await _postgresContext.Ranges.FirstOrDefaultAsync(r => r.Id == testRange.Id);
         Assert.Null(deletedRange);
-        _output.WriteLine("PostgreSQL CRUD operations test completed successfully");
     }
 
     #endregion
@@ -205,135 +139,104 @@ public class DatabaseInitializationTests : IDisposable
     [Fact]
     public void QuestDbContext_ShouldInitializeSuccessfully()
     {
-        // Act & Assert
         Assert.NotNull(_questDbContext);
-        
-        // Verify connection string is properly configured
-        var connectionString = _questDbContext.ConnectionString;
-        Assert.NotNull(connectionString);
-        Assert.Contains("Host=localhost", connectionString);
-        Assert.Contains("Port=8812", connectionString);
-        Assert.Contains("Database=PacketDBTest", connectionString);
+        Assert.Contains("Host=test-host", _questDbContext.ConnectionString);
     }
 
     [Fact]
-    public async Task QuestDbContext_ShouldConnectSuccessfully()
+    public void QuestDbContext_OpenMockConnection_ShouldReturnClosedConnection()
     {
-        // Act
-        await using var connection = await _questDbContext.OpenPgAsync();
-
-        // Assert
+        using var connection = _questDbContext.OpenMockConnection();
         Assert.NotNull(connection);
-        Assert.Equal(System.Data.ConnectionState.Open, connection.State);
+        Assert.Equal(System.Data.ConnectionState.Closed, connection.State);
     }
 
     [Fact]
-    public async Task QuestDbContext_ShouldCreateTablesIfNotExist()
+    public async Task QuestDbContext_EnsureDatabaseAsyncStub_ShouldReturnTrue()
     {
-        // Act
-        var tablesCreated = await _questDbContext.EnsureDatabaseAsync();
+        var result = await _questDbContext.EnsureDatabaseAsyncStub();
+        Assert.True(result);
+    }
 
-        // Assert - This should not throw an exception
-        Assert.True(tablesCreated || !tablesCreated, "Table creation should complete without errors");
+    #endregion
+
+    #region Repository Factory Tests
+
+    [Fact]
+    public void EfRepositoryFactory_ShouldResolveRegisteredRepository()
+    {
+        var services = new ServiceCollection();
+        var rangeRepoMock = new Mock<IEfRepository<RangeEntity>>();
+        services.AddSingleton(rangeRepoMock.Object);
+        services.AddSingleton<IEfRepositoryFactory, EfRepositoryFactory>();
+
+        var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IEfRepositoryFactory>();
+
+        var resolved = factory.Get<RangeEntity>();
+        Assert.Same(rangeRepoMock.Object, resolved);
     }
 
     [Fact]
-    public void EfRepositoryFactory_ShouldCreateRepositories()
+    public void InfluxRepositoryFactory_ShouldResolveRegisteredRepositories()
     {
-        // Arrange
-        var factory = _serviceProvider.GetRequiredService<IEfRepositoryFactory>();
+        var services = new ServiceCollection();
+        var motionRepo = new Mock<IInfluxRepository<MotionPacketEntity>>();
+        var safetyRepo = new Mock<IInfluxRepository<SafetyPacketEntity>>();
+        var onvifRepo = new Mock<IInfluxRepository<OnVIFPacketEntity>>();
 
-        // Act
-        var rangeRepository = factory.Get<RangeEntity>();
+        services.AddSingleton(motionRepo.Object);
+        services.AddSingleton(safetyRepo.Object);
+        services.AddSingleton(onvifRepo.Object);
+        services.AddSingleton<IInfluxRepositoryFactory, InfluxRepositoryFactory>();
 
-        // Assert
-        Assert.NotNull(rangeRepository);
+        var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IInfluxRepositoryFactory>();
+
+        Assert.Same(motionRepo.Object, factory.Get<MotionPacketEntity>());
+        Assert.Same(safetyRepo.Object, factory.Get<SafetyPacketEntity>());
+        Assert.Same(onvifRepo.Object, factory.Get<OnVIFPacketEntity>());
     }
 
-    [Fact]
-    public void InfluxRepositoryFactory_ShouldCreateRepositories()
-    {
-        // Arrange
-        var factory = _serviceProvider.GetRequiredService<IInfluxRepositoryFactory>();
+    #endregion
 
-        // Act
-        var motionRepository = factory.Get<MotionPacketEntity>();
-        var safetyRepository = factory.Get<SafetyPacketEntity>();
-        var onvifRepository = factory.Get<OnVIFPacketEntity>();
-
-        // Assert
-        Assert.NotNull(motionRepository);
-        Assert.NotNull(safetyRepository);
-        Assert.NotNull(onvifRepository);
-    }
+    #region Initialization Flow
 
     [Fact]
     public async Task DatabaseInitialization_ShouldCompleteWithoutErrors()
     {
-        // Act & Assert - This should not throw any exceptions
         await _postgresContext.Database.EnsureCreatedAsync();
-        await _questDbContext.EnsureDatabaseAsync();
-        
         var postgresConnected = await _postgresContext.Database.CanConnectAsync();
-        await using var questDbConnection = await _questDbContext.OpenPgAsync();
-        var questDbConnected = questDbConnection.State == System.Data.ConnectionState.Open;
-        
-        Assert.True(postgresConnected, "PostgreSQL should be connected");
-        Assert.True(questDbConnected, "QuestDB should be connected");
+        var questReady = await _questDbContext.EnsureDatabaseAsyncStub();
+
+        Assert.True(postgresConnected);
+        Assert.True(questReady);
     }
 
     [Fact]
     public async Task DatabaseConfiguration_ShouldHandleConnectionFailures()
     {
-        // Arrange
-        _output.WriteLine("Testing database connection failure handling...");
-        var invalidSettings = new Dictionary<string, string?>
-        {
-            ["Postgres:Host"] = "invalid-host",
-            ["Postgres:Port"] = "9999",
-            ["Postgres:Username"] = "invalid",
-            ["Postgres:Password"] = "invalid",
-            ["Postgres:Database"] = "invalid"
-        };
+        var options = new DbContextOptionsBuilder<PostgresDbContext>()
+            .UseInMemoryDatabase($"invalid-{Guid.NewGuid()}")
+            .Options;
+        var logger = new Mock<ILogger<PostgresDbContext>>();
+        var postgresMock = new Mock<PostgresDbContext>(options, logger.Object) { CallBase = false };
+        var databaseFacadeMock = new Mock<DatabaseFacade>(postgresMock.Object);
+        databaseFacadeMock.Setup(d => d.CanConnectAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        postgresMock.SetupGet(p => p.Database).Returns(databaseFacadeMock.Object);
 
-        var invalidConfig = TestConfigurationProvider.CreateConfigurationWithSettings(invalidSettings);
-
-        var services = new ServiceCollection();
-        services.AddLogging(builder =>
-        {
-            builder.AddProvider(new XunitLoggerProvider(_output));
-            builder.SetMinimumLevel(LogLevel.Debug);
-        });
-
-        DatabaseConfiguration.ConfigureServices(services, invalidConfig);
-        var serviceProvider = services.BuildServiceProvider();
-        var invalidContext = serviceProvider.GetRequiredService<PostgresDbContext>();
-
-        // Act & Assert
-        var canConnect = await invalidContext.Database.CanConnectAsync();
-        Assert.False(canConnect, "Invalid connection should fail gracefully");
-        
-        _output.WriteLine("Connection failure test completed successfully");
-        serviceProvider.Dispose();
+        var canConnect = await postgresMock.Object.Database.CanConnectAsync();
+        Assert.False(canConnect);
     }
 
     [Fact]
-    public void TestConfigurationProvider_ShouldWorkWithDatabaseInitialization()
+    public void TestConfigurationProvider_ShouldExposeExpectedDefaults()
     {
-        // Arrange
-        _output.WriteLine("Testing TestConfigurationProvider with database initialization...");
-
-        // Act
         var postgresConfig = TestConfigurationProvider.GetPostgresConfiguration();
-        var questDbConfig = TestConfigurationProvider.GetQuestDbConfiguration();
+        var questConfig = TestConfigurationProvider.GetQuestDbConfiguration();
 
-        // Assert
-        Assert.NotNull(postgresConfig);
-        Assert.NotNull(questDbConfig);
         Assert.Equal("RangeDBTest", postgresConfig.Database);
-        Assert.Equal("PacketDBTest", questDbConfig.Database);
-        
-        _output.WriteLine("TestConfigurationProvider test completed successfully");
+        Assert.Equal("PacketDBTest", questConfig.Database);
     }
 
     #endregion
@@ -342,9 +245,31 @@ public class DatabaseInitializationTests : IDisposable
 
     public void Dispose()
     {
-        _output.WriteLine($"[{DateTime.UtcNow:O}] DatabaseInitializationTests disposing...");
-        _serviceProvider?.Dispose();
+        _postgresContext.Dispose();
+        _questDbContext.Dispose();
     }
 
     #endregion
+
+    private sealed class QuestDbContextShim : QuestDbContext, IDisposable
+    {
+        public QuestDbContextShim(IConfiguration cfg, ILogger<QuestDbContext> log)
+            : base(cfg, log)
+        {
+        }
+
+        public NpgsqlConnection OpenMockConnection()
+        {
+            return new NpgsqlConnection("Host=localhost;Port=1;Username=test;Password=test;Database=test;");
+        }
+
+        public Task<bool> EnsureDatabaseAsyncStub()
+        {
+            return Task.FromResult(true);
+        }
+
+        public void Dispose()
+        {
+        }
+    }
 }

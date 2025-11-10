@@ -489,7 +489,8 @@ public class InfluxRepositoryTests : IDisposable
             Timestamp = DateTime.UtcNow
         };
         
-        using var sender = Sender.New(_ilpHttpConnection);
+        var senderMock = new Mock<ISender>();
+        var sender = senderMock.Object;
         
         // Setup mock to return completed task
         _mockMotionRepository.Setup(x => x.WriteQuestDbAsync(It.IsAny<ISender>(), It.IsAny<MotionPacketEntity>(), It.IsAny<CancellationToken>()))
@@ -594,7 +595,8 @@ public class InfluxRepositoryTests : IDisposable
             new() { IsCmd = false, OpCode = "BATCH_MOCK_2", Description = "Batch Mock 2", Axis = 2, Value = 2.0, Timestamp = DateTime.UtcNow }
         };
         
-        using var sender = Sender.New(_ilpHttpConnection);
+        var senderMock = new Mock<ISender>();
+        var sender = senderMock.Object;
         
         // Setup mock to return completed task
         _mockMotionRepository.Setup(x => x.WriteBatchQuestDbAsync(It.IsAny<ISender>(), It.IsAny<IReadOnlyList<MotionPacketEntity>>(), It.IsAny<CancellationToken>()))
@@ -614,7 +616,8 @@ public class InfluxRepositoryTests : IDisposable
         // Arrange
         _output.WriteLine("Testing mock motion repository batch write with empty batch (True Negative)...");
         var emptyEntities = new List<MotionPacketEntity>();
-        using var sender = Sender.New(_ilpHttpConnection);
+        var senderMock = new Mock<ISender>();
+        var sender = senderMock.Object;
         
         // Setup mock to throw ArgumentException
         _mockMotionRepository.Setup(x => x.WriteBatchQuestDbAsync(It.IsAny<ISender>(), It.IsAny<IReadOnlyList<MotionPacketEntity>>(), It.IsAny<CancellationToken>()))
@@ -694,7 +697,8 @@ public class InfluxRepositoryTests : IDisposable
             Timestamp = DateTime.UtcNow
         };
         
-        using var sender = Sender.New(_ilpHttpConnection);
+        var senderMock = new Mock<ISender>();
+        var sender = senderMock.Object;
         
         // Setup mock to return completed task
         _mockOnvifRepository.Setup(x => x.WriteQuestDbAsync(It.IsAny<ISender>(), It.IsAny<OnVIFPacketEntity>(), It.IsAny<CancellationToken>()))
@@ -723,7 +727,8 @@ public class InfluxRepositoryTests : IDisposable
             Timestamp = DateTime.UtcNow
         };
         
-        using var sender = Sender.New(_ilpHttpConnection);
+        var senderMock = new Mock<ISender>();
+        var sender = senderMock.Object;
         
         // Setup mock to return completed task
         _mockSafetyRepository.Setup(x => x.WriteQuestDbAsync(It.IsAny<ISender>(), It.IsAny<SafetyPacketEntity>(), It.IsAny<CancellationToken>()))
@@ -805,7 +810,8 @@ public class InfluxRepositoryTests : IDisposable
             Timestamp = DateTime.UtcNow
         };
         
-        using var sender = Sender.New(_ilpHttpConnection);
+        var senderMock = new Mock<ISender>();
+        var sender = senderMock.Object;
         
         // Setup mock to return completed task
         _mockMotionRepository.Setup(x => x.WriteQuestDbAsync(It.IsAny<ISender>(), It.IsAny<MotionPacketEntity>(), It.IsAny<CancellationToken>()))

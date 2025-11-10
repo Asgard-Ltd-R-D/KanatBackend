@@ -18,6 +18,8 @@ A high-performance, real-time telemetry ingestion and analysis system built with
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 
+> **Deployment Guide:** Packaging & installer instructions now live in [`Composer_cli/DEPLOY_README.md`](Composer_cli/DEPLOY_README.md).
+
 ---
 
 ## Features

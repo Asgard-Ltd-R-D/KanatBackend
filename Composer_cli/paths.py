@@ -3,9 +3,9 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 
-# If running as a PyInstaller bundle, prefer CWD; otherwise script dir
+# If running as a PyInstaller bundle, use the executable's directory; otherwise script dir
 if getattr(sys, "frozen", False):
-    PROJECT_ROOT = Path.cwd()
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
 else:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

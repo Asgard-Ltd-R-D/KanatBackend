@@ -11,6 +11,9 @@ This guide explains how to build and deploy the KanatBackend application using t
 - [Using the Installer](#using-the-installer)
 - [Composer Tool](#composer-tool)
 - [Deployment Workflow](#deployment-workflow)
+- [Composer GUI](#composer-gui)
+
+> This deployment guide lives alongside the CLI under `Composer_cli/DEPLOY_README.md` so it ships with the packaged installer.
 
 ## Overview
 
@@ -44,15 +47,16 @@ The `build_artifacts.sh` script builds a release for a specific platform and cre
 
 #### Available Platforms
 
-- `win-x64` - Windows 64-bit
-- `linux-x64` - Linux 64-bit
-- `linux-musl-x64` - Linux 64-bit (musl)
-- `osx-arm64` - macOS ARM64 (Apple Silicon)
+- `1` / `win-x64` - Windows 64-bit
+- `2` / `linux-x64` - Linux 64-bit
+- `3` / `linux-musl-x64` - Linux 64-bit (musl)
+- `4` / `osx-arm64` - macOS ARM64 (Apple Silicon)
 
 #### Examples
 
 ```bash
 # Build for macOS (Apple Silicon)
+./build_artifacts.sh 4
 ./build_artifacts.sh osx-arm64
 
 # Build for Linux
@@ -285,6 +289,12 @@ Display help information:
 ./composer --help
 ./composer -h
 ```
+
+## Composer GUI
+
+- The packaged `composer` executable launches the dashboard GUI automatically when started without arguments (for example, by double-clicking it in Finder/Explorer). This is equivalent to running `./composer --gui`.
+- On macOS, the launcher minimizes the originating Terminal window before showing the GUI for a cleaner experience. Command-line usage remains unchanged—supplying arguments bypasses the auto-GUI behavior.
+- The GUI offers environment management (Up/Stop/Restart/Kill), Quick Build, log streaming, and live component status for PacketProcessing, Postgres, QuestDB, and Seq.
 
 ## Deployment Workflow
 

@@ -114,12 +114,13 @@ if [ $# -eq 0 ]; then
     echo "  $0 clean"
     echo ""
     echo "Available OS platforms:"
-    echo "  win-x64        - Windows 64-bit"
-    echo "  linux-x64      - Linux 64-bit"
-    echo "  linux-musl-x64 - Linux 64-bit (musl)"
-    echo "  osx-arm64      - macOS ARM64 (Apple Silicon)"
+    echo "  1  win-x64        - Windows 64-bit"
+    echo "  2  linux-x64      - Linux 64-bit"
+    echo "  3  linux-musl-x64 - Linux 64-bit (musl)"
+    echo "  4  osx-arm64      - macOS ARM64 (Apple Silicon)"
     echo ""
     echo "Examples:"
+    echo "  $0 4"
     echo "  $0 osx-arm64"
     echo "  $0 linux-x64"
     echo "  $0 win-x64"
@@ -129,6 +130,17 @@ if [ $# -eq 0 ]; then
 fi
 
 OS_PLATFORM="$1"
+
+declare -A SHORTCUT_PLATFORMS=(
+    ["1"]="win-x64"
+    ["2"]="linux-x64"
+    ["3"]="linux-musl-x64"
+    ["4"]="osx-arm64"
+)
+
+if [[ -n "${SHORTCUT_PLATFORMS[$OS_PLATFORM]}" ]]; then
+    OS_PLATFORM="${SHORTCUT_PLATFORMS[$OS_PLATFORM]}"
+fi
 VALID_PLATFORMS=("win-x64" "linux-x64" "linux-musl-x64" "osx-arm64")
 
 VALID=false
@@ -143,10 +155,10 @@ if [ "$VALID" = false ]; then
     echo -e "${RED}Error: Invalid OS platform: $OS_PLATFORM${NC}"
     echo ""
     echo "Available OS platforms:"
-    echo "  win-x64        - Windows 64-bit"
-    echo "  linux-x64      - Linux 64-bit"
-    echo "  linux-musl-x64 - Linux 64-bit (musl)"
-    echo "  osx-arm64      - macOS ARM64 (Apple Silicon)"
+    echo "  1  win-x64        - Windows 64-bit"
+    echo "  2  linux-x64      - Linux 64-bit"
+    echo "  3  linux-musl-x64 - Linux 64-bit (musl)"
+    echo "  4  osx-arm64      - macOS ARM64 (Apple Silicon)"
     echo ""
     exit 1
 fi
@@ -223,8 +235,7 @@ INSTALL_DIR="$TEMP_DIR/installer"
 mkdir -p "$INSTALL_DIR"
 
 echo "Copying files into installer image..."
-copy_with_progress README.md "$INSTALL_DIR/README.md" "Copying README.md"
-copy_with_progress DEPLOY_README.md "$INSTALL_DIR/DEPLOY_README.md" "Copying DEPLOY_README.md"
+copy_with_progress Composer_cli/INSTALL_README.md "$INSTALL_DIR/README.md" "Copying Composer README"
 copy_with_progress composer "$INSTALL_DIR/composer" "Copying composer binary"
 copy_with_progress artifacts "$INSTALL_DIR/artifacts" "Copying artifacts directory"
 
@@ -354,8 +365,7 @@ echo
 echo "Installed to: $EXTRACT_DIR"
 echo
 echo "Contents:"
-echo "  - README.md"
-echo "  - DEPLOY_README.md"
+echo "  - README.md (Composer usage guide)"
 echo "  - composer (executable)"
 echo "  - artifacts/ (directory with releases, packages, docker-compose files, QuestDB)"
 echo

@@ -474,7 +474,7 @@ PUT /api/range/playback/pace/{pace}
 
 ## SignalR Hub
 
-### Connection
+### Connection 
 
 ```javascript
 const connection = new signalR.HubConnectionBuilder()

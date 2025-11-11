@@ -224,7 +224,7 @@ rm -rf build dist .pyi_build .pyi_spec composer
 "$PYTHON_BIN" -m PyInstaller --clean > /dev/null 2>&1 || true
 
 echo "Building composer executable from scratch (no cache)..."
-pyinstaller --onefile \
+"$PYTHON_BIN" -m PyInstaller --onefile \
   --clean \
   --noconfirm \
   --name composer \

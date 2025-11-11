@@ -57,7 +57,7 @@ class DefaultPackagingService(PackagingService):
         else:
             self._notify_docker_skipped()
 
-        success = True
+        overall_ok = True
 
         for env in ("dev", "prod"):
             package_dir = self.paths.deploy_dir / env
@@ -66,21 +66,21 @@ class DefaultPackagingService(PackagingService):
             package_dir.mkdir(parents=True, exist_ok=True)
 
             if not self._write_packetprocessing_tar(env, platform, package_dir):
-                success = False
+                overall_ok = False
                 continue
 
         self._refresh_root_assets()
         if skip_docker:
             if not self._import_cached_images():
-                success = False
+                overall_ok = False
         elif not self._export_shared_images():
-            success = False
+            overall_ok = False
 
-        if success:
+        if overall_ok:
             success(f"Release packages created under {self.paths.deploy_dir}")
         else:
             error("Some release artifacts failed to build")
-        return success
+        return overall_ok
 
     # -------- helpers --------
     def _fallback_docker_service(self) -> DockerService:

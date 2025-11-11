@@ -5,6 +5,7 @@ from typing import Iterable, Optional, Sequence
 
 from ..abstractions import DockerService
 from ..shell import SubprocessShell
+from ..utils.messages import info, warn, error
 
 
 class DefaultDockerService(DockerService):
@@ -62,17 +63,17 @@ class DefaultDockerService(DockerService):
                 continue
 
             if image.startswith("kanatbackend-questdb"):
-                print(f"⚠ Building custom image '{image}' via buildx…")
+                warn(f"Building custom image '{image}' via buildx...")
                 dockerfile = questdb_dir / "Dockerfile"
                 if not self.build_image(image, questdb_dir, dockerfile):
-                    print(f"✗ docker buildx build failed for {image}")
+                    error(f"docker buildx build failed for {image}")
                     return False
                 self._cache_image(image, image_cache_dir)
                 continue
 
-            print(f"⚠ Pulling docker image '{image}' for {env}…")
+            warn(f"Pulling docker image '{image}' for {env}...")
             if not self._pull_image(image):
-                print(f"✗ Failed to pull docker image '{image}'")
+                error(f"Failed to pull docker image '{image}'")
                 return False
             self._cache_image(image, image_cache_dir)
 
@@ -94,12 +95,12 @@ class DefaultDockerService(DockerService):
             return
         tar_path.parent.mkdir(parents=True, exist_ok=True)
         if self.save_image_tar(image, tar_path):
-            print(f"ℹ Cached docker image '{image}' at {tar_path}")
+            info(f"Cached docker image '{image}' at {tar_path}")
 
     def _load_from_cache(self, image: str, image_cache_dir: Path, deploy_dir: Path) -> bool:
         """Attempt to load an image tarball from the cache or packaged artifacts."""
         for tar_path in self._image_tar_candidates(image, image_cache_dir, deploy_dir):
-            print(f"ℹ Loading docker image '{image}' from cache ({tar_path})…")
+            info(f"Loading docker image '{image}' from cache ({tar_path})")
             if self.load_image_tar(tar_path):
                 return True
         return False

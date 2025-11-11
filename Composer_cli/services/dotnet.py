@@ -7,6 +7,7 @@ import os
 
 from ..abstractions import DotnetService, BuildResult
 from ..shell import SubprocessShell
+from ..utils.messages import info, error
 
 
 class DefaultDotnetService(DotnetService):
@@ -30,7 +31,7 @@ class DefaultDotnetService(DotnetService):
         release_dir.mkdir(parents=True, exist_ok=True)
         res = self.publish(self._infer_rid(), release_dir)
         if not res.ok:
-            print(f"✗ Build {env} failed: {res.message}")
+            error(f"Build {env} failed: {res.message}")
             return False
         self.sync_runtime_assets(env, release_dir)
         return True
@@ -53,12 +54,12 @@ class DefaultDotnetService(DotnetService):
     def run_packetprocessing(self, dll_path: Path, environment: str, detach: bool = False) -> int:
         """Launch PacketProcessingService.dll via sudo and stream its output until completion."""
         if not dll_path.exists():
-            print(f"✗ PacketProcessingService.dll not found at {dll_path}")
+            error(f"PacketProcessingService.dll not found at {dll_path}")
             return 1
         if detach:
             self.terminate_packetprocessing(dll_path, environment)
         dotnet_env = "Development" if environment == "dev" else "Production"
-        print(f"▶ Starting PacketProcessingService ({dotnet_env})…\n")
+        info(f"Starting PacketProcessingService ({dotnet_env})...")
         cmd = ["dotnet", str(dll_path), "--environment", dotnet_env]
         if detach:
             self.sh.open_new_terminal(
@@ -72,7 +73,7 @@ class DefaultDotnetService(DotnetService):
             return 0
         rc = self.sh.popen_stream(cmd, cwd=dll_path.parent)
         if rc != 0:
-            print(f"✗ PacketProcessingService exited with code {rc}")
+            error(f"PacketProcessingService exited with code {rc}")
         return rc
 
     def terminate_packetprocessing(self, dll_path: Path, environment: str) -> None:

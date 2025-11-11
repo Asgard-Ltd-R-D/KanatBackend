@@ -16,8 +16,7 @@ on:
       - "PacketProcessingService/**"
       - ".github/workflows/build.yml"
     branches:
-      - "main"
-      - "master"
+      - "artifacts_deploy"
 
   pull_request:
     paths:
@@ -26,7 +25,7 @@ on:
       - ".github/workflows/build.yml"
 
 jobs:
-  build:
+  build-linux:
     # Only run build if tests passed OR triggered manually
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
     name: 🏗️ Build installer (${{ matrix.platform }})
@@ -45,19 +44,6 @@ jobs:
           - os: ubuntu-latest
             platform: linux-arm64
             skip_docker: "false"
-          - os: windows-latest
-            platform: win-x64
-            skip_docker: "true"
-          - os: windows-latest
-            platform: win-arm64
-            skip_docker: "true"
-          - os: macos-latest
-            platform: osx-arm64
-            skip_docker: "true"
-          - os: macos-13
-            platform: osx-x64
-            skip_docker: "true"
-
     env:
       KANAT_TARGET_RID: ${{ matrix.platform }}
       KANAT_BUILD_PLATFORM: ${{ matrix.platform }}
@@ -154,9 +140,127 @@ jobs:
           name: kanat-installer-${{ matrix.platform }}
           path: artifacts/packages/kanat-installer-${{ matrix.platform }}.tar
 
+      - name: 📤 Upload docker image cache
+        if: matrix.platform == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kanat-docker-image-cache
+          path: artifacts/releases/images
+
+  build-nonlinux:
+    needs: build-linux
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
+    name: 🏗️ Build installer (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win-x64
+            skip_docker: "true"
+          - os: windows-latest
+            platform: win-arm64
+            skip_docker: "true"
+          - os: macos-latest
+            platform: osx-arm64
+            skip_docker: "true"
+          - os: macos-13
+            platform: osx-x64
+            skip_docker: "true"
+
+    env:
+      KANAT_TARGET_RID: ${{ matrix.platform }}
+      KANAT_BUILD_PLATFORM: ${{ matrix.platform }}
+      KANAT_SKIP_DOCKER: ${{ matrix.skip_docker }}
+      DOCKER_BUILDKIT: 1
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+
+    steps:
+      - name: ⬇️ Checkout
+        uses: actions/checkout@v4
+
+      - name: ♻️ Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.sln', '**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: ♻️ Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: 📥 Download docker image cache
+        uses: actions/download-artifact@v4
+        with:
+          name: kanat-docker-image-cache
+          path: artifacts/releases/images
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 🔁 Add python3 shim (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\shim" | Out-Null
+          Set-Content -Path "$env:RUNNER_TEMP\shim\python3.cmd" -Value "@echo off`r`npython %*"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\shim"
+
+      - name: ⚙️ Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: 🧱 Build installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./build_artifacts.sh
+          ./build_artifacts.sh "${KANAT_BUILD_PLATFORM}"
+
+      - name: 📂 List installer payload
+        shell: bash
+        run: |
+          ls -R artifacts/installers || true
+
+      - name: 📦 Package installer tar
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/packages
+          src_dir="artifacts/installers/${KANAT_BUILD_PLATFORM}"
+          src_file="installer-${KANAT_BUILD_PLATFORM}.run"
+          if [ ! -f "${src_dir}/${src_file}" ]; then
+            echo "Missing installer payload: ${src_dir}/${src_file}" >&2
+            exit 1
+          fi
+          tar_path="artifacts/packages/kanat-installer-${KANAT_BUILD_PLATFORM}.tar"
+          tar -cf "${tar_path}" -C "${src_dir}" "${src_file}"
+          echo "Created ${tar_path}"
+
+      - name: ⬆️ Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kanat-installer-${{ matrix.platform }}
+          path: artifacts/packages/kanat-installer-${{ matrix.platform }}.tar
+
   release:
     name: 📦 Publish Release
-    needs: build
+    needs:
+      - build-linux
+      - build-nonlinux
     if: ${{ github.ref_name == 'main' || github.ref_name == 'master' }}
     runs-on: ubuntu-latest
     permissions:
@@ -194,10 +298,10 @@ jobs:
 
           - linux-x64
           - linux-arm64
-          - win-x64 (composer only; Docker payload skipped)
-          - win-arm64 (composer only; Docker payload skipped)
-          - osx-arm64 (composer only; Docker payload skipped)
-          - osx-x64 (composer only; Docker payload skipped)
+          - win-x64
+          - win-arm64
+          - osx-arm64
+          - osx-x64
           EOF
 
       - name: 🚀 Publish GitHub release

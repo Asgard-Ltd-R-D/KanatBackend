@@ -69,7 +69,10 @@ class DefaultPackagingService(PackagingService):
                 continue
 
         self._refresh_root_assets()
-        if not skip_docker and not self._export_shared_images():
+        if skip_docker:
+            if not self._import_cached_images():
+                success = False
+        elif not self._export_shared_images():
             success = False
 
         if success:
@@ -184,6 +187,22 @@ class DefaultPackagingService(PackagingService):
             if questdb_target.exists():
                 shutil.rmtree(questdb_target)
             shutil.copytree(self.paths.questdb_dir, questdb_target)
+
+    def _import_cached_images(self) -> bool:
+        """Copy pre-exported docker image tarballs into the deploy directory when docker is skipped."""
+        expected = [CUSTOM_IMAGE, *SHARED_IMAGES]
+        ok = True
+        for _, tar_name in expected:
+            source = self.paths.image_cache_dir / tar_name
+            if not source.exists():
+                print(f"⚠ Cached docker image tar missing: {tar_name}")
+                ok = False
+                continue
+            target = self.paths.deploy_dir / tar_name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            print(f"ℹ Copied cached docker image tar '{tar_name}' to packages directory")
+        return ok
 
     @staticmethod
     def _sanitized_image_name(image: str) -> str:

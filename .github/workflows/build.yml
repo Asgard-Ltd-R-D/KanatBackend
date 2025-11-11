@@ -243,15 +243,6 @@ jobs:
           name: kanat-docker-image-cache
           path: artifacts/releases/images
 
-  build-nonlinux:
-    needs: build-linux
-    if: ${{ (github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'pull_request') && ((github.ref_name == 'main' || github.ref_name == 'master') || (github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'master')) || (github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master'))) }}
-    name: 🏗️ Build installer (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-      packages: write
-
     strategy:
       fail-fast: false
       matrix:

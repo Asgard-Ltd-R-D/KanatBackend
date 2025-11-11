@@ -31,13 +31,13 @@ on:
       - ".github/workflows/build.yml"
 
 # ===================================================================
-# 🏗️ BUILD INSTALLERS (includes Docker images built internally)
+# 🏗️ BUILD INSTALLERS (single Linux runner for all logical OSes)
 # ===================================================================
 jobs:
   build:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
     name: 🏗️ Build installer (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -46,34 +46,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- Linux targets (Docker-enabled) ---
-          - os: ubuntu-latest
-            platform: linux-x64
-            skip_docker: "false"
-          - os: ubuntu-latest
-            platform: linux-arm64
-            skip_docker: "false"
+          # --- Core Linux architectures (real docker builds) ---
+          - platform: linux-x64
+            arch: amd64
+          - platform: linux-arm64
+            arch: arm64
 
-          # --- Windows targets (no Docker) ---
-          - os: windows-latest
-            platform: win-x64
-            skip_docker: "true"
-          - os: windows-latest
-            platform: win-arm64
-            skip_docker: "true"
-
-          # --- macOS targets (no Docker) ---
-          - os: macos-latest
-            platform: osx-arm64
-            skip_docker: "true"
-          - os: macos-13
-            platform: osx-x64
-            skip_docker: "true"
+          # --- Logical targets for Windows and macOS (same Docker builds) ---
+          - platform: win-x64
+            arch: amd64
+          - platform: win-arm64
+            arch: arm64
+          - platform: osx-x64
+            arch: amd64
+          - platform: osx-arm64
+            arch: arm64
 
     env:
       KANAT_TARGET_RID: ${{ matrix.platform }}
       KANAT_BUILD_PLATFORM: ${{ matrix.platform }}
-      KANAT_SKIP_DOCKER: ${{ matrix.skip_docker }}
+      KANAT_ARCH: ${{ matrix.arch }}
       DOCKER_BUILDKIT: 1
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
@@ -87,44 +79,52 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.sln', '**/*.csproj') }}
-          restore-keys: ${{ runner.os }}-nuget-
+          key: linux-nuget-${{ hashFiles('**/*.sln', '**/*.csproj') }}
+          restore-keys: linux-nuget-
 
       - name: ♻️ Cache pip downloads
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
-          restore-keys: ${{ runner.os }}-pip-
+          key: linux-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
+          restore-keys: linux-pip-
 
+      # --------------------------------------------------------------
+      # Docker setup (for both amd64 and arm64)
+      # --------------------------------------------------------------
+      - name: 🐳 Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: image=moby/buildkit:latest
+
+      - name: 🐳 Verify Docker platform
+        run: docker buildx ls
+
+      # --------------------------------------------------------------
+      # Environment setup
+      # --------------------------------------------------------------
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: 🔁 Add python3 shim (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\shim" | Out-Null
-          Set-Content -Path "$env:RUNNER_TEMP\shim\python3.cmd" -Value "@echo off`r`npython %*"
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\shim"
-
+      # --------------------------------------------------------------
+      # Setup .NET 8 SDK
+      # --------------------------------------------------------------
       - name: ⚙️ Setup .NET 8 SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
-      - name: 🐳 Setup Docker Buildx
-        if: matrix.skip_docker != 'true'
-        uses: docker/setup-buildx-action@v3
-
+      # --------------------------------------------------------------
+      # Build artifacts for target platform (but always on Linux)
+      # --------------------------------------------------------------
       - name: 🧱 Build installer
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./build_artifacts.sh
-          echo "🚀 Running build_artifacts.sh for ${KANAT_BUILD_PLATFORM}"
+          echo "🚀 Building artifacts for ${KANAT_BUILD_PLATFORM} (arch=${KANAT_ARCH})"
           ./build_artifacts.sh "${KANAT_BUILD_PLATFORM}"
 
       - name: 📂 List installer payload
@@ -194,19 +194,16 @@ jobs:
           cat <<'EOF' > notes.md
           ## Kanat Installer Artifacts
 
-          Each platform installer includes:
+          Each installer contains:
           - Compiled binaries
-          - Prebuilt Docker images (via build_artifacts.sh)
-          - docker-compose and QuestDB definitions
-          - Platform-specific composer utility
+          - Prebuilt Docker images (built internally by build_artifacts.sh)
+          - docker-compose definitions and QuestDB setup
+          - Platform-specific Composer CLI
 
-          ### Included Platforms
-          - linux-x64
-          - linux-arm64
-          - win-x64
-          - win-arm64
-          - osx-arm64
-          - osx-x64
+          ### Included Targets
+          - linux-x64 / linux-arm64
+          - win-x64 / win-arm64
+          - osx-x64 / osx-arm64
           EOF
 
       # --------------------------------------------------------------

@@ -60,9 +60,7 @@ jobs:
     env:
       KANAT_TARGET_RID: ${{ matrix.rid }}
       KANAT_BUILD_PLATFORM: ${{ matrix.rid }}
-      KANAT_DOCKER_PLATFORM: ${{ matrix.docker_platform }}
       KANAT_DOCKER_PLATFORMS: linux/amd64,linux/arm64
-      DOCKER_DEFAULT_PLATFORM: ${{ matrix.docker_platform }}
       KANAT_SKIP_DOCKER: ${{ matrix.skip_docker }}
       DOCKER_BUILDKIT: 1
       PYTHONIOENCODING: utf-8

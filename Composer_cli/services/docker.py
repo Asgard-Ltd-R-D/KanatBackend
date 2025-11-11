@@ -56,13 +56,13 @@ class DefaultDockerService(DockerService):
 
         with tempfile.TemporaryDirectory(prefix="kanat-buildx-") as tmpdir:
             image_tar = Path(tmpdir) / "image.tar"
-            output = f"type=image,name={tag},push=false,dest={image_tar}"
+            output = f"type=tar,dest={image_tar}"
             if not _run([*base, "--output", output]):
                 return False
             if not image_tar.exists():
                 error(f"buildx failed to produce archive for {tag}")
                 return False
-            return _run(["docker", "load", "-i", str(image_tar)])
+            return self.load_image_tar(image_tar)
 
     def pull_image(self, image: str, platform: Optional[str] = None) -> bool:
         cmd = ["docker", "pull"]

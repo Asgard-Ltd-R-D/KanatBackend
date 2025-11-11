@@ -45,6 +45,13 @@ class DefaultDockerService(DockerService):
         cmd.append(str(context))
         return self.sh.run(cmd, check=False) == 0
 
+    def pull_image(self, image: str, platform: Optional[str] = None) -> bool:
+        cmd = ["docker", "pull"]
+        if platform:
+            cmd.extend(["--platform", platform])
+        cmd.append(image)
+        return self.sh.run(cmd, check=False) == 0
+
     def prepare_images(
         self,
         env: str,
@@ -52,6 +59,7 @@ class DefaultDockerService(DockerService):
         image_cache_dir: Path,
         deploy_dir: Path,
         questdb_dir: Path,
+        platform: Optional[str] = None,
     ) -> bool:
         """Ensure all required images are available locally, preferring cache and falling back to build/pull."""
         for image in required_images:
@@ -65,14 +73,15 @@ class DefaultDockerService(DockerService):
             if image.startswith("kanatbackend-questdb"):
                 warn(f"Building custom image '{image}' via buildx...")
                 dockerfile = questdb_dir / "Dockerfile"
-                if not self.build_image(image, questdb_dir, dockerfile):
+                platforms: Optional[Sequence[str]] = [platform] if platform else None
+                if not self.build_image(image, questdb_dir, dockerfile, platforms=platforms):
                     error(f"docker buildx build failed for {image}")
                     return False
                 self._cache_image(image, image_cache_dir)
                 continue
 
             warn(f"Pulling docker image '{image}' for {env}...")
-            if not self._pull_image(image):
+            if not self.pull_image(image, platform=platform):
                 error(f"Failed to pull docker image '{image}'")
                 return False
             self._cache_image(image, image_cache_dir)
@@ -122,10 +131,6 @@ class DefaultDockerService(DockerService):
                     candidates.append(tar)
                     visited.add(tar)
         return candidates
-
-    def _pull_image(self, image: str) -> bool:
-        """Pull a docker image from the registry."""
-        return self.sh.run(["docker", "pull", image], check=False) == 0
 
     @staticmethod
     def _sanitized_image_name(image: str) -> str:

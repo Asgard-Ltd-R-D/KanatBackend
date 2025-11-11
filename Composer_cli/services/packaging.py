@@ -11,6 +11,7 @@ from ..progress import Progress
 from ..shell import SubprocessShell
 from ..paths import Paths, RELEASE_DIR
 from ..utils.messages import info, warn, error, success
+from ..utils.platforms import docker_platform_for_current_build
 
 ALLOWED_PLATFORMS = {"win-x64", "win-arm64", "linux-x64", "linux-musl-x64", "linux-arm64", "osx-arm64", "osx-x64"}
 CUSTOM_IMAGE = ("kanatbackend-questdb", "kanatbackend-questdb.tar")
@@ -102,11 +103,12 @@ class DefaultPackagingService(PackagingService):
 
     def _ensure_shared_images(self) -> bool:
         ok = True
+        platform = self._docker_platform()
         for image, _ in SHARED_IMAGES:
             if self.docker.image_exists(image):
                 continue
             warn(f"Docker image '{image}' missing; pulling...")
-            if self.sh.run(["docker", "pull", image], check=False) != 0:
+            if not self.docker.pull_image(image, platform=platform):
                 error(f"Failed to pull docker image '{image}'")
                 ok = False
         return ok
@@ -151,6 +153,7 @@ class DefaultPackagingService(PackagingService):
 
     def _ensure_custom_image(self) -> bool:
         image, _ = CUSTOM_IMAGE
+        platform = self._docker_platform()
         if self.docker.image_exists(image):
             return True
         if not self.paths.questdb_dir.exists():
@@ -158,7 +161,8 @@ class DefaultPackagingService(PackagingService):
             return False
         warn(f"Docker image '{image}' missing; building with buildx...")
         dockerfile = self.paths.questdb_dir / "Dockerfile"
-        if not self.docker.build_image(image, self.paths.questdb_dir, dockerfile):
+        platforms = [platform] if platform else None
+        if not self.docker.build_image(image, self.paths.questdb_dir, dockerfile, platforms=platforms):
             error(f"Failed to build docker image '{image}' from QuestDB Dockerfile")
             return False
         cache_name = self._sanitized_image_name(image)
@@ -217,3 +221,7 @@ class DefaultPackagingService(PackagingService):
     @staticmethod
     def _notify_docker_skipped() -> None:
         warn("Docker image packaging skipped (KANAT_SKIP_DOCKER set).")
+
+    @staticmethod
+    def _docker_platform() -> str | None:
+        return docker_platform_for_current_build()

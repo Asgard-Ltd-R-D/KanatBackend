@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 from pathlib import Path
-import os
 
 from ..abstractions import DotnetService, BuildResult
 from ..shell import SubprocessShell
-from ..utils.messages import info, error
+from ..utils.messages import info, error, warn
 
 
 class DefaultDotnetService(DotnetService):
@@ -80,7 +80,13 @@ class DefaultDotnetService(DotnetService):
         """Stop PacketProcessingService by terminating the process and closing its terminal window."""
         # Attempt to kill the running process
         if dll_path.exists():
-            self.sh.run(["pkill", "-f", str(dll_path)], check=False)
+            if os.name == "nt":
+                self._terminate_packetprocessing_windows(dll_path)
+            else:
+                try:
+                    self.sh.run(["pkill", "-f", str(dll_path)], check=False)
+                except FileNotFoundError:
+                    pass
 
         # Remove PID markers if present
         pid_file = dll_path.parent / "PacketProcessingService.pid"
@@ -97,8 +103,13 @@ class DefaultDotnetService(DotnetService):
         return self.project_dir.exists()
 
     def is_process_running(self, dll_path: Path) -> tuple[bool, str, str]:
-        cmd = ["pgrep", "-f", str(dll_path)]
-        rc, _, _ = self.sh.run_capture(cmd)
+        if os.name == "nt":
+            return self._is_process_running_windows(dll_path)
+        try:
+            cmd = ["pgrep", "-f", str(dll_path)]
+            rc, _, _ = self.sh.run_capture(cmd)
+        except FileNotFoundError:
+            return False, "", ""
         if rc != 0:
             return False, "", ""
         env = "Development" if "dev" in dll_path.parts else "Production"
@@ -124,3 +135,49 @@ class DefaultDotnetService(DotnetService):
     def _terminal_title(environment: str) -> str:
         env_name = "DEV" if environment == "dev" else "PROD"
         return f"PacketProcessingService {env_name}"
+
+    def _terminate_packetprocessing_windows(self, dll_path: Path) -> None:
+        ps = self._powershell_command()
+        if not ps:
+            warn("PowerShell not found; unable to terminate PacketProcessingService on Windows automatically.")
+            return
+        pattern = dll_path.name.replace("'", "''")
+        script = (
+            "Get-CimInstance Win32_Process | "
+            f"Where-Object {{ $_.CommandLine -like '*{pattern}*' }} | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+        )
+        try:
+            self.sh.run(ps + ["-NoProfile", "-Command", script], check=False)
+        except FileNotFoundError:
+            pass
+
+    def _is_process_running_windows(self, dll_path: Path) -> tuple[bool, str, str]:
+        ps = self._powershell_command()
+        if not ps:
+            return False, "", ""
+        pattern = dll_path.name.replace("'", "''")
+        script = (
+            "$p = Get-CimInstance Win32_Process | "
+            f"Where-Object {{ $_.CommandLine -like '*{pattern}*' }} | "
+            "Select-Object -First 1;"
+            "if ($p) { $p.ProcessId }"
+        )
+        try:
+            rc, out, _ = self.sh.run_capture(ps + ["-NoProfile", "-Command", script])
+        except FileNotFoundError:
+            return False, "", ""
+        if rc != 0 or not out.strip():
+            return False, "", ""
+        env = "Development" if "dev" in dll_path.parts else "Production"
+        port = "10901" if env == "Development" else "10900"
+        return True, env, port
+
+    def _powershell_command(self) -> list[str] | None:
+        if os.name != "nt":
+            return None
+        for name in ("powershell.exe", "powershell", "pwsh.exe", "pwsh"):
+            resolved = shutil.which(name)
+            if resolved:
+                return [resolved]
+        return None

@@ -9,6 +9,7 @@ from typing import Callable, List, Sequence
 from ..abstractions import DockerService, DotnetService
 from ..paths import Paths
 from ..utils.messages import info, warn, error, success
+from ..utils.platforms import docker_platform_for_current_build
 
 
 class EnvironmentManager:
@@ -23,6 +24,7 @@ class EnvironmentManager:
     def build_all(self, required_images_provider: Callable[[str], List[str]]) -> bool:
         """Build both environments and ensure required Docker images are cached."""
         skip_docker = self._skip_docker()
+        docker_platform = self._docker_platform()
         for env in ("dev", "prod"):
             release_dir = self.paths.release_dir / env
             if release_dir.exists():
@@ -48,6 +50,7 @@ class EnvironmentManager:
                 self.paths.image_cache_dir,
                 self.paths.deploy_dir,
                 self.paths.questdb_dir,
+                platform=docker_platform,
             ):
                 return False
         success("Build complete for dev and prod environments")
@@ -109,6 +112,7 @@ class EnvironmentManager:
             self.paths.image_cache_dir,
             self.paths.deploy_dir,
             self.paths.questdb_dir,
+            platform=self._docker_platform(),
         )
 
     def _skip_docker(self) -> bool:
@@ -159,4 +163,7 @@ class EnvironmentManager:
             info(f"Extracting {tar_file.name} into {target_dir}")
             with tarfile.open(tar_file, "r") as archive:
                 archive.extractall(target_dir)
+
+    def _docker_platform(self) -> str | None:
+        return docker_platform_for_current_build()
 

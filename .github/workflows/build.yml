@@ -36,7 +36,7 @@ on:
       - "fix/**"
 
 # ===================================================================
-# 🏗️ BUILD LINUX INSTALLERS (Docker builds happen here)
+# 🏗️ BUILD LINUX INSTALLERS (multi-arch)
 # ===================================================================
 jobs:
   build-linux:
@@ -52,16 +52,13 @@ jobs:
         include:
           - rid: linux-x64
             docker_platform: linux/amd64
-            skip_docker: "false"
           - rid: linux-arm64
             docker_platform: linux/arm64
-            skip_docker: "false"
 
     env:
       KANAT_TARGET_RID: ${{ matrix.rid }}
       KANAT_BUILD_PLATFORM: ${{ matrix.rid }}
-      KANAT_DOCKER_PLATFORMS: linux/amd64,linux/arm64
-      KANAT_SKIP_DOCKER: ${{ matrix.skip_docker }}
+      KANAT_DOCKER_PLATFORM: ${{ matrix.docker_platform }}
       DOCKER_BUILDKIT: 1
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
@@ -70,53 +67,33 @@ jobs:
       - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      - name: ♻️ Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: linux-nuget-${{ hashFiles('**/*.sln', '**/*.csproj') }}
-          restore-keys: linux-nuget-
-
-      - name: ♻️ Cache pip downloads
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: linux-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
-          restore-keys: linux-pip-
-
-      - name: ♻️ Cache Docker image exports
-        if: matrix.skip_docker != 'true'
-        uses: actions/cache@v4
-        with:
-          path: artifacts/releases/images
-          key: docker-cache-${{ matrix.rid }}-${{ hashFiles('QuestDB/Dockerfile', 'docker-compose.dev.yml', 'docker-compose.prod.yml') }}
-          restore-keys: docker-cache-${{ matrix.rid }}-
-
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: ⚙️ Setup .NET 8 SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-
-      - name: 🐧 Setup QEMU
-        if: matrix.skip_docker != 'true'
+      - name: 🐧 Setup QEMU (for cross-architecture builds)
         uses: docker/setup-qemu-action@v3
         with:
           platforms: all
 
       - name: 🐳 Setup Docker Buildx
-        if: matrix.skip_docker != 'true'
         uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+          driver-opts: image=moby/buildkit:latest
+          buildkitd-flags: --debug
+
+      - name: ♻️ Cache Docker image exports
+        uses: actions/cache@v4
+        with:
+          path: artifacts/releases/images/${{ matrix.rid }}
+          key: docker-cache-${{ matrix.rid }}-${{ hashFiles('docker-compose.prod.yml', 'QuestDB/Dockerfile') }}
+          restore-keys: docker-cache-${{ matrix.rid }}-
 
       - name: 🧱 Build installer
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x ./build_artifacts.sh
+          export DOCKER_DEFAULT_PLATFORM="${KANAT_DOCKER_PLATFORM}"
+          echo "🛠️ Building for platform ${KANAT_DOCKER_PLATFORM}"
+          docker buildx inspect --bootstrap
+          docker version
           ./build_artifacts.sh "${KANAT_TARGET_RID}"
 
       - name: 📦 Package installer tar
@@ -140,14 +117,13 @@ jobs:
           path: artifacts/packages/kanat-installer-${{ matrix.rid }}.tar
 
       - name: 📤 Upload docker image cache
-        if: matrix.rid == 'linux-x64'
         uses: actions/upload-artifact@v4
         with:
-          name: kanat-docker-image-cache
-          path: artifacts/releases/images
+          name: kanat-docker-image-${{ matrix.rid }}
+          path: artifacts/releases/images/${{ matrix.rid }}
 
   # ===================================================================
-  # 🏗️ BUILD NON-LINUX INSTALLERS (Windows & macOS reuse cached Docker)
+  # 🏗️ BUILD NON-LINUX INSTALLERS (Windows & macOS)
   # ===================================================================
   build-nonlinux:
     needs: build-linux
@@ -163,21 +139,16 @@ jobs:
         include:
           - os: windows-latest
             platform: win-x64
-            skip_docker: "true"
           - os: windows-latest
             platform: win-arm64
-            skip_docker: "true"
           - os: macos-latest
             platform: osx-arm64
-            skip_docker: "true"
           - os: macos-13
             platform: osx-x64
-            skip_docker: "true"
 
     env:
       KANAT_TARGET_RID: ${{ matrix.platform }}
       KANAT_BUILD_PLATFORM: ${{ matrix.platform }}
-      KANAT_SKIP_DOCKER: ${{ matrix.skip_docker }}
       DOCKER_BUILDKIT: 1
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
@@ -186,25 +157,11 @@ jobs:
       - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      - name: ♻️ Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.sln', '**/*.csproj') }}
-          restore-keys: ${{ runner.os }}-nuget-
-
-      - name: ♻️ Cache pip downloads
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      - name: 📥 Download docker image cache
+      - name: 📥 Download matching docker image cache
         uses: actions/download-artifact@v4
         with:
-          name: kanat-docker-image-cache
-          path: artifacts/releases/images
+          name: kanat-docker-image-linux-x64
+          path: artifacts/releases/images/linux-x64
 
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
@@ -220,7 +177,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x ./build_artifacts.sh
           ./build_artifacts.sh "${KANAT_BUILD_PLATFORM}"
 
       - name: 📦 Package installer tar
@@ -230,10 +186,7 @@ jobs:
           src_dir="artifacts/installers/${KANAT_BUILD_PLATFORM}"
           src_file="installer-${KANAT_BUILD_PLATFORM}.run"
           tar_path="artifacts/packages/kanat-installer-${KANAT_BUILD_PLATFORM}.tar"
-          if [ ! -f "${src_dir}/${src_file}" ]; then
-            echo "❌ Missing ${src_dir}/${src_file}" >&2
-            exit 1
-          fi
+          [ -f "${src_dir}/${src_file}" ] || { echo "❌ Missing ${src_dir}/${src_file}" >&2; exit 1; }
           tar -cf "${tar_path}" -C "${src_dir}" "${src_file}"
           echo "✅ Created ${tar_path}"
 
@@ -244,7 +197,7 @@ jobs:
           path: artifacts/packages/kanat-installer-${{ matrix.platform }}.tar
 
   # ===================================================================
-  # 🚀 RELEASE JOB — Creates tagged release or pre-release
+  # 🚀 RELEASE JOB
   # ===================================================================
   release:
     name: 📦 Publish Release
@@ -279,22 +232,6 @@ jobs:
           pattern: kanat-installer-*
           merge-multiple: true
 
-      - name: 📝 Compose release notes
-        run: |
-          cat <<'EOF' > notes.md
-          ## Installer Artifacts
-          Automated build produced platform installers packaged as `.tar` files containing `installer-<platform>.run`.
-
-          Platforms:
-          - linux-x64
-          - linux-arm64
-          - win-x64
-          - win-arm64
-          - osx-arm64
-          - osx-x64
-          EOF
-
-      # Dynamically set pre-release based on branch
       - name: ⚖️ Determine release type
         id: prerelease_check
         run: |
@@ -310,5 +247,13 @@ jobs:
           tag_name: ${{ steps.version.outputs.new_tag }}
           name: Kanat Installer ${{ steps.version.outputs.new_tag }}
           prerelease: ${{ steps.prerelease_check.outputs.prerelease }}
-          body_path: notes.md
+          body: |
+            ## Installer Artifacts
+            Built automatically for:
+            - linux-x64
+            - linux-arm64
+            - win-x64
+            - win-arm64
+            - osx-arm64
+            - osx-x64
           files: release_artifacts/**/*.tar

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import sys
+import io
 import subprocess
 import argparse
 import textwrap
@@ -13,6 +14,27 @@ from Composer_cli.commands.kill import KillCommand
 from Composer_cli.commands.status import StatusCommand
 from Composer_cli.commands.build import BuildCommand
 from Composer_cli.commands.release import ReleaseCommand
+from Composer_cli.utils.messages import error
+
+
+def _configure_stdio() -> None:
+    """Ensure stdout/stderr can emit unicode without crashing on narrow encodings."""
+    preferred_encoding = "utf-8"
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding=preferred_encoding, errors="replace")
+        except (AttributeError, ValueError):
+            buffer = getattr(stream, "buffer", None)
+            if buffer is None:
+                continue
+            wrapper = io.TextIOWrapper(buffer, encoding=preferred_encoding, errors="replace")
+            setattr(sys, name, wrapper)
+
+
+_configure_stdio()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -116,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from Composer_cli.gui import launch_gui
         except Exception as exc:  # pragma: no cover - GUI import fallback
-            print(f"✗ Unable to launch GUI: {exc}")
+            error(f"Unable to launch GUI: {exc}")
             return 1
         launch_gui()
         return 0

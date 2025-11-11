@@ -108,7 +108,7 @@ class CommandRunner:
                 bufsize=1,
             )
         except FileNotFoundError as exc:
-            log(f"✗ Failed to spawn process: {exc}")
+            log(f"[ERROR] Failed to spawn process: {exc}")
             return 1
 
         assert process.stdout is not None
@@ -300,7 +300,7 @@ class ComposerDashboard:
 
     def _start_operation(self, label: str, command_groups: Iterable[list[str]]) -> None:
         if self._operation_thread and self._operation_thread.is_alive():
-            self._queue_log("⚠ An operation is already in progress.")
+            self._queue_log("[WARN] An operation is already in progress.")
             return
 
         self._queue_log(f"== {label} ==")
@@ -310,7 +310,7 @@ class ComposerDashboard:
             try:
                 rc = self._runner.run_sequence(command_groups, self._queue_log)
             except Exception as exc:  # pragma: no cover - safety net for unexpected failures
-                self._queue_log(f"✗ {label} failed: {exc}")
+                self._queue_log(f"[ERROR] {label} failed: {exc}")
                 rc = 1
             self._queue_log(f"{label} {'completed' if rc == 0 else 'failed'}")
             self.root.after(0, self._on_operation_complete, rc)
@@ -324,7 +324,7 @@ class ComposerDashboard:
         self._render_action_buttons()
         self._refresh_component_statuses()
         if exit_code != 0:
-            self._queue_log("⚠ Check logs above for details.")
+            self._queue_log("[WARN] Check logs above for details.")
 
     # ----- Status updates -----
     def _schedule_status_refresh(self) -> None:

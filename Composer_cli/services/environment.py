@@ -8,6 +8,7 @@ from typing import Callable, List, Sequence
 
 from ..abstractions import DockerService, DotnetService
 from ..paths import Paths
+from ..utils.messages import info, warn, error, success
 
 
 class EnvironmentManager:
@@ -29,7 +30,7 @@ class EnvironmentManager:
 
             if not self.dotnet.project_exists():
                 if not self._rehydrate_release_from_packages(env, release_dir):
-                    print(f"✗ Missing package artifacts for '{env}'. Run build on a source machine first.")
+                    error(f"Missing package artifacts for '{env}'. Run build on a source machine first.")
                     return False
             else:
                 if not self.dotnet.build_environment(env, release_dir):
@@ -49,7 +50,7 @@ class EnvironmentManager:
                 self.paths.questdb_dir,
             ):
                 return False
-        print("✓ Build complete for dev and prod environments")
+        success("Build complete for dev and prod environments")
         return True
 
     def ensure_releases_present(self, required_images_provider: Callable[[str], List[str]]) -> bool:
@@ -64,10 +65,10 @@ class EnvironmentManager:
                 if release_dir.exists():
                     shutil.rmtree(release_dir)
                 if not self._rehydrate_release_from_packages(env, release_dir):
-                    print(f"✗ Missing package artifacts for '{env}'. Run build on a source machine first.")
+                    error(f"Missing package artifacts for '{env}'. Run build on a source machine first.")
                     return False
             return True
-        print("⚠ Release binaries missing; running full build…")
+        warn("Release binaries missing; running full build...")
         return self.build_all(required_images_provider)
 
     def ensure_environment_ready(self, env: str, required_images: List[str]) -> bool:
@@ -86,14 +87,14 @@ class EnvironmentManager:
 
         if self.dotnet.project_exists():
             if not have_dll:
-                print(f"⚠ Building PacketProcessingService for '{env}'…")
+                warn(f"Building PacketProcessingService for '{env}'...")
                 if not self.dotnet.build_environment(env, dll_dir):
                     return False
             elif assets_missing:
-                print(f"⚠ Syncing runtime assets for '{env}'…")
+                warn(f"Syncing runtime assets for '{env}'...")
                 self.dotnet.sync_runtime_assets(env, dll_dir)
         elif not have_dll:
-            print(f"✗ Missing package artifacts for '{env}'. Run build on a source machine first.")
+            error(f"Missing package artifacts for '{env}'. Run build on a source machine first.")
             return False
         else:
             self.dotnet.sync_runtime_assets(env, dll_dir)
@@ -117,7 +118,7 @@ class EnvironmentManager:
     def _maybe_notify_docker_skipped(self) -> None:
         if self._docker_skipped_notified:
             return
-        print("⚠ Docker image preparation skipped (KANAT_SKIP_DOCKER set).")
+            warn("Docker image preparation skipped (KANAT_SKIP_DOCKER set).")
         self._docker_skipped_notified = True
 
     def _rehydrate_release_from_packages(self, env: str, target_dir: Path) -> bool:
@@ -155,7 +156,7 @@ class EnvironmentManager:
     def _extract_package_contents(self, tarballs: Sequence[Path], target_dir: Path) -> None:
         """Extract package tarballs into the given release directory."""
         for tar_file in sorted(tarballs):
-            print(f"ℹ Extracting {tar_file.name} into {target_dir}")
+            info(f"Extracting {tar_file.name} into {target_dir}")
             with tarfile.open(tar_file, "r") as archive:
                 archive.extractall(target_dir)
 

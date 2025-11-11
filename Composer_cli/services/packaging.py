@@ -10,6 +10,7 @@ from ..abstractions import DockerService, PackagingService
 from ..progress import Progress
 from ..shell import SubprocessShell
 from ..paths import Paths, RELEASE_DIR
+from ..utils.messages import info, warn, error, success
 
 ALLOWED_PLATFORMS = {"win-x64", "win-arm64", "linux-x64", "linux-musl-x64", "linux-arm64", "osx-arm64", "osx-x64"}
 CUSTOM_IMAGE = ("kanatbackend-questdb", "kanatbackend-questdb.tar")
@@ -39,7 +40,7 @@ class DefaultPackagingService(PackagingService):
 
     def create_release(self, platform: str) -> bool:
         if platform not in ALLOWED_PLATFORMS:
-            print(f"✗ Unsupported platform '{platform}'. Expected one of {sorted(ALLOWED_PLATFORMS)}")
+            error(f"Unsupported platform '{platform}'. Expected one of {sorted(ALLOWED_PLATFORMS)}")
             return False
 
         if not self._validate_release_builds():
@@ -56,7 +57,7 @@ class DefaultPackagingService(PackagingService):
         else:
             self._notify_docker_skipped()
 
-        success = True
+        overall_ok = True
 
         for env in ("dev", "prod"):
             package_dir = self.paths.deploy_dir / env
@@ -65,18 +66,21 @@ class DefaultPackagingService(PackagingService):
             package_dir.mkdir(parents=True, exist_ok=True)
 
             if not self._write_packetprocessing_tar(env, platform, package_dir):
-                success = False
+                overall_ok = False
                 continue
 
         self._refresh_root_assets()
-        if not skip_docker and not self._export_shared_images():
-            success = False
+        if skip_docker:
+            if not self._import_cached_images():
+                overall_ok = False
+        elif not self._export_shared_images():
+            overall_ok = False
 
-        if success:
-            print(f"✓ Release packages created under {self.paths.deploy_dir}")
+        if overall_ok:
+            success(f"Release packages created under {self.paths.deploy_dir}")
         else:
-            print("✗ Some release artifacts failed to build")
-        return success
+            error("Some release artifacts failed to build")
+        return overall_ok
 
     # -------- helpers --------
     def _fallback_docker_service(self) -> DockerService:
@@ -92,7 +96,7 @@ class DefaultPackagingService(PackagingService):
         missing = [env for env, path in required.items() if not path.exists()]
         if missing:
             missing_str = ", ".join(missing)
-            print(f"✗ Missing PacketProcessingService builds for: {missing_str}. Run 'composer build' first.")
+            error(f"Missing PacketProcessingService builds for: {missing_str}. Run 'composer build' first.")
             return False
         return True
 
@@ -101,16 +105,16 @@ class DefaultPackagingService(PackagingService):
         for image, _ in SHARED_IMAGES:
             if self.docker.image_exists(image):
                 continue
-            print(f"⚠ Docker image '{image}' missing; pulling…")
+            warn(f"Docker image '{image}' missing; pulling...")
             if self.sh.run(["docker", "pull", image], check=False) != 0:
-                print(f"✗ Failed to pull docker image '{image}'")
+                error(f"Failed to pull docker image '{image}'")
                 ok = False
         return ok
 
     def _write_packetprocessing_tar(self, env: str, platform: str, package_dir: Path) -> bool:
         source_dir = self.paths.release_dir / env
         if not source_dir.exists():
-            print(f"✗ Release output missing for environment '{env}'")
+            error(f"Release output missing for environment '{env}'")
             return False
 
         tar_path = package_dir / f"packetprocessing_{env}_{platform}.tar"
@@ -120,7 +124,7 @@ class DefaultPackagingService(PackagingService):
                     arcname = path.relative_to(source_dir)
                     tar.add(path, arcname=str(arcname))
         except Exception as exc:
-            print(f"✗ Failed to create PacketProcessingService archive for {env}: {exc}")
+            error(f"Failed to create PacketProcessingService archive for {env}: {exc}")
             return False
         return True
 
@@ -141,7 +145,7 @@ class DefaultPackagingService(PackagingService):
                 continue
             if self.docker.save_image_tar(image, target):
                 continue
-            print(f"✗ Failed to export docker image '{image}' to {target.name}")
+            error(f"Failed to export docker image '{image}' to {target.name}")
             ok = False
         return ok
 
@@ -150,12 +154,12 @@ class DefaultPackagingService(PackagingService):
         if self.docker.image_exists(image):
             return True
         if not self.paths.questdb_dir.exists():
-            print(f"✗ QuestDB directory not found at {self.paths.questdb_dir}")
+            error(f"QuestDB directory not found at {self.paths.questdb_dir}")
             return False
-        print(f"⚠ Docker image '{image}' missing; building with buildx…")
+        warn(f"Docker image '{image}' missing; building with buildx...")
         dockerfile = self.paths.questdb_dir / "Dockerfile"
         if not self.docker.build_image(image, self.paths.questdb_dir, dockerfile):
-            print(f"✗ Failed to build docker image '{image}' from QuestDB Dockerfile")
+            error(f"Failed to build docker image '{image}' from QuestDB Dockerfile")
             return False
         cache_name = self._sanitized_image_name(image)
         cache_tar = self.paths.image_cache_dir / f"{cache_name}.tar"
@@ -185,6 +189,22 @@ class DefaultPackagingService(PackagingService):
                 shutil.rmtree(questdb_target)
             shutil.copytree(self.paths.questdb_dir, questdb_target)
 
+    def _import_cached_images(self) -> bool:
+        """Copy pre-exported docker image tarballs into the deploy directory when docker is skipped."""
+        expected = [CUSTOM_IMAGE, *SHARED_IMAGES]
+        ok = True
+        for _, tar_name in expected:
+            source = self.paths.image_cache_dir / tar_name
+            if not source.exists():
+                warn(f"Cached docker image tar missing: {tar_name}")
+                ok = False
+                continue
+            target = self.paths.deploy_dir / tar_name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            info(f"Copied cached docker image tar '{tar_name}' to packages directory")
+        return ok
+
     @staticmethod
     def _sanitized_image_name(image: str) -> str:
         return image.replace("/", "_").replace(":", "_")
@@ -196,4 +216,4 @@ class DefaultPackagingService(PackagingService):
 
     @staticmethod
     def _notify_docker_skipped() -> None:
-        print("⚠ Docker image packaging skipped (KANAT_SKIP_DOCKER set).")
+        warn("Docker image packaging skipped (KANAT_SKIP_DOCKER set).")

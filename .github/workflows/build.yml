@@ -261,6 +261,7 @@ jobs:
     needs:
       - build-linux
       - build-nonlinux
+    if: ${{ github.ref_name == 'main' || github.ref_name == 'master' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

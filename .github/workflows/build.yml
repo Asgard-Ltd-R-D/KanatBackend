@@ -18,12 +18,19 @@ on:
     branches:
       - "main"
       - "master"
+      - "feature/**"
+      - "fix/**"
 
   pull_request:
     paths:
       - "Composer_cli/**"
       - "PacketProcessingService/**"
       - ".github/workflows/build.yml"
+    branches:
+      - "main"
+      - "master"
+      - "feature/**"
+      - "fix/**"
 
 jobs:
   build-linux:
@@ -262,7 +269,6 @@ jobs:
     needs:
       - build-linux
       - build-nonlinux
-    if: ${{ (github.ref_name == 'main' || github.ref_name == 'master') || (github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'master')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -282,7 +288,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: patch
           tag_prefix: "v"
-          release_branches: main
+          release_branches: main,master,feature/*,fix/*
           dry_run: false
 
       - name: 📥 Download packaged installers
@@ -307,11 +313,21 @@ jobs:
           - osx-x64
           EOF
 
+      # Dynamically set pre-release based on branch
+      - name: ⚖️ Determine release type
+        id: prerelease_check
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "master" ]]; then
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: 🚀 Publish GitHub release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.new_tag }}
           name: Kanat Installer ${{ steps.version.outputs.new_tag }}
-          prerelease: false
+          prerelease: ${{ steps.prerelease_check.outputs.prerelease }}
           body_path: notes.md
           files: release_artifacts/**/*.tar

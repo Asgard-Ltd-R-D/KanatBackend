@@ -30,12 +30,10 @@ on:
       - "PacketProcessingService/**"
       - ".github/workflows/build.yml"
 
-# ===================================================================
-# 🏗️ BUILD INSTALLERS (single Linux runner for all logical OSes)
-# ===================================================================
 jobs:
-  build:
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
+  build-linux:
+    # Only run build if tests passed OR triggered manually
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'pull_request' }}
     name: 🏗️ Build installer (${{ matrix.platform }})
     runs-on: ubuntu-latest
     permissions:
@@ -46,33 +44,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- Core Linux architectures (real docker builds) ---
           - platform: linux-x64
-            arch: amd64
+            skip_docker: "false"
           - platform: linux-arm64
-            arch: arm64
-
-          # --- Logical targets for Windows and macOS (same Docker builds) ---
-          - platform: win-x64
-            arch: amd64
-          - platform: win-arm64
-            arch: arm64
-          - platform: osx-x64
-            arch: amd64
-          - platform: osx-arm64
-            arch: arm64
+            skip_docker: "false"
 
     env:
       KANAT_TARGET_RID: ${{ matrix.platform }}
       KANAT_BUILD_PLATFORM: ${{ matrix.platform }}
-      KANAT_ARCH: ${{ matrix.arch }}
+      KANAT_SKIP_DOCKER: ${{ matrix.skip_docker }}
       DOCKER_BUILDKIT: 1
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
 
     steps:
-      # --------------------------------------------------------------
-      - name: ⬇️ Checkout repository
+      - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
       - name: ♻️ Cache NuGet packages
@@ -89,61 +75,147 @@ jobs:
           key: linux-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
           restore-keys: linux-pip-
 
-      # --------------------------------------------------------------
-      # Docker setup (for both amd64 and arm64)
-      # --------------------------------------------------------------
-      - name: 🐳 Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: ♻️ Cache Docker image exports
+        if: matrix.skip_docker != 'true'
+        uses: actions/cache@v4
         with:
-          driver-opts: image=moby/buildkit:latest
+          path: artifacts/releases/images
+          key: docker-cache-${{ matrix.platform }}-${{ hashFiles('QuestDB/Dockerfile', 'docker-compose.dev.yml', 'docker-compose.prod.yml') }}
+          restore-keys: docker-cache-${{ matrix.platform }}-
 
-      - name: 🐳 Verify Docker platform
-        run: docker buildx ls
-
-      # --------------------------------------------------------------
-      # Environment setup
-      # --------------------------------------------------------------
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # --------------------------------------------------------------
-      # Setup .NET 8 SDK
-      # --------------------------------------------------------------
       - name: ⚙️ Setup .NET 8 SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
-      # --------------------------------------------------------------
-      # Build artifacts for target platform (but always on Linux)
-      # --------------------------------------------------------------
+      - name: 🐳 Setup Docker Buildx
+        if: matrix.skip_docker != 'true'
+        uses: docker/setup-buildx-action@v3
+
       - name: 🧱 Build installer
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./build_artifacts.sh
-          echo "🚀 Building artifacts for ${KANAT_BUILD_PLATFORM} (arch=${KANAT_ARCH})"
           ./build_artifacts.sh "${KANAT_BUILD_PLATFORM}"
 
       - name: 📂 List installer payload
         shell: bash
-        run: |
-          ls -R artifacts/installers || true
+        run: ls -R artifacts/installers || true
 
       - name: 📦 Package installer tar
         shell: bash
         run: |
-          set -euo pipefail
           mkdir -p artifacts/packages
           src_dir="artifacts/installers/${KANAT_BUILD_PLATFORM}"
           src_file="installer-${KANAT_BUILD_PLATFORM}.run"
+          tar_path="artifacts/packages/kanat-installer-${KANAT_BUILD_PLATFORM}.tar"
           if [ ! -f "${src_dir}/${src_file}" ]; then
-            echo "❌ Missing installer payload: ${src_dir}/${src_file}" >&2
+            echo "❌ Missing ${src_dir}/${src_file}" >&2
             exit 1
           fi
+          tar -cf "${tar_path}" -C "${src_dir}" "${src_file}"
+          echo "✅ Created ${tar_path}"
+
+      - name: ⬆️ Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kanat-installer-${{ matrix.platform }}
+          path: artifacts/packages/kanat-installer-${{ matrix.platform }}.tar
+
+      - name: 📤 Upload docker image cache
+        if: matrix.platform == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kanat-docker-image-cache
+          path: artifacts/releases/images
+
+  build-nonlinux:
+    needs: build-linux
+    if: ${{ always() }}
+    name: 🏗️ Build installer (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win-x64
+          - os: windows-latest
+            platform: win-arm64
+          - os: macos-latest
+            platform: osx-arm64
+          - os: macos-13
+            platform: osx-x64
+
+    env:
+      KANAT_TARGET_RID: ${{ matrix.platform }}
+      KANAT_BUILD_PLATFORM: ${{ matrix.platform }}
+      DOCKER_BUILDKIT: 1
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+
+    steps:
+      - name: ⬇️ Checkout
+        uses: actions/checkout@v4
+
+      - name: ♻️ Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.sln', '**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: ♻️ Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: 📥 Download docker image cache
+        uses: actions/download-artifact@v4
+        with:
+          name: kanat-docker-image-cache
+          path: artifacts/releases/images
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: ⚙️ Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: 🧱 Build installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./build_artifacts.sh
+          ./build_artifacts.sh "${KANAT_BUILD_PLATFORM}"
+
+      - name: 📦 Package installer tar
+        shell: bash
+        run: |
+          mkdir -p artifacts/packages
+          src_dir="artifacts/installers/${KANAT_BUILD_PLATFORM}"
+          src_file="installer-${KANAT_BUILD_PLATFORM}.run"
           tar_path="artifacts/packages/kanat-installer-${KANAT_BUILD_PLATFORM}.tar"
+          if [ ! -f "${src_dir}/${src_file}" ]; then
+            echo "❌ Missing ${src_dir}/${src_file}" >&2
+            exit 1
+          fi
           tar -cf "${tar_path}" -C "${src_dir}" "${src_file}"
           echo "✅ Created ${tar_path}"
 
@@ -158,20 +230,20 @@ jobs:
   # ===================================================================
   release:
     name: 📦 Publish Release
-    needs: build
+    needs:
+      - build-linux
+      - build-nonlinux
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
 
     steps:
-      # --------------------------------------------------------------
-      - name: ⬇️ Checkout repository
+      - name: ⬇️ Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # --------------------------------------------------------------
       - name: 🧮 Bump version tag
         id: version
         uses: mathieudutour/github-tag-action@v6.2
@@ -179,63 +251,50 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: patch
           tag_prefix: "v"
-          release_branches: main,master
+          release_branches: main,master,develop,feature/*
           dry_run: false
 
-      # --------------------------------------------------------------
       - name: 📥 Download packaged installers
         uses: actions/download-artifact@v4
         with:
           path: release_artifacts
+          pattern: kanat-installer-*
+          merge-multiple: true
 
-      # --------------------------------------------------------------
-      - name: 📝 Compose release notes
-        run: |
-          cat <<'EOF' > notes.md
-          ## Kanat Installer Artifacts
-
-          Each installer contains:
-          - Compiled binaries
-          - Prebuilt Docker images (built internally by build_artifacts.sh)
-          - docker-compose definitions and QuestDB setup
-          - Platform-specific Composer CLI
-
-          ### Included Targets
-          - linux-x64 / linux-arm64
-          - win-x64 / win-arm64
-          - osx-x64 / osx-arm64
-          EOF
-
-      # --------------------------------------------------------------
-      # 🚀 Determine if this should be a pre-release
-      # --------------------------------------------------------------
       - name: ⚖️ Determine release type
         id: prerelease_check
         run: |
-          if [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "master" ]]; then
+          branch="${GITHUB_REF_NAME}"
+          echo "Detected branch: $branch"
+          if [[ "$branch" == "main" || "$branch" == "master" ]]; then
             echo "prerelease=false" >> $GITHUB_OUTPUT
-            echo "🌟 Main or Master branch detected — full release."
+            echo "🌟 Main branch detected — publishing full release."
           else
             echo "prerelease=true" >> $GITHUB_OUTPUT
-            echo "🚧 Non-main branch detected — pre-release will be created."
+            echo "🚧 Non-main branch ($branch) detected — pre-release will be created."
+            echo "branch_suffix=-${branch}" >> $GITHUB_OUTPUT
           fi
 
-      # --------------------------------------------------------------
-      # 🚀 Publish GitHub release
-      # --------------------------------------------------------------
+      - name: 📝 Compose release notes
+        run: |
+          cat <<'EOF' > notes.md
+          ## Installer Artifacts
+          Automated build produced platform installers packaged as `.tar` files containing `installer-<platform>.run`.
+
+          Platforms:
+          - linux-x64
+          - linux-arm64
+          - win-x64
+          - win-arm64
+          - osx-arm64
+          - osx-x64
+          EOF
+
       - name: 🚀 Publish GitHub release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.version.outputs.new_tag }}
-          name: Kanat Installer ${{ steps.version.outputs.new_tag }}
+          tag_name: ${{ steps.version.outputs.new_tag }}${{ steps.prerelease_check.outputs.branch_suffix }}
+          name: Kanat Installer ${{ steps.version.outputs.new_tag }}${{ steps.prerelease_check.outputs.branch_suffix }}
           prerelease: ${{ steps.prerelease_check.outputs.prerelease }}
           body_path: notes.md
           files: release_artifacts/**/*.tar
-# ===================================================================
-# 📘 NOTES
-# ===================================================================
-# - Docker images (QuestDB, Postgres, etc.) are NOT built here directly.
-#   They are built internally by build_artifacts.sh via docker-compose.
-# - The matrix ensures architecture compatibility (x64 ↔ ARM64).
-# - Each platform produces a self-contained installer (.run inside .tar).
-# - Release automation bumps version tags and attaches all artifacts.

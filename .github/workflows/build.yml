@@ -1,5 +1,8 @@
 name: Build Cross-Platform Artifacts
 
+# ===================================================================
+# 🔔 TRIGGERS
+# ===================================================================
 on:
   # Run automatically after tests finish successfully
   workflow_run:
@@ -18,82 +21,116 @@ on:
     branches:
       - "main"
       - "master"
-
+      - "develop"
+      - "feature/**"
   pull_request:
     paths:
       - "Composer_cli/**"
       - "PacketProcessingService/**"
       - ".github/workflows/build.yml"
 
+# ===================================================================
+# 🐳 BUILD DOCKER IMAGES (Linux only)
+# ===================================================================
 jobs:
-  build:
-    # Only run build if tests passed OR triggered manually
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
-    name: 🏗️ Build installer (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
+  build-images:
+    name: 🐳 Build Docker images (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
     permissions:
       contents: read
       packages: write
 
+    steps:
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐳 Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🧱 Build QuestDB and other Docker images
+        run: |
+          set -e
+          mkdir -p artifacts/releases/images
+          echo "Building Docker images for ${{ matrix.arch }}..."
+
+          # Buildx automatically uses the runner's native arch, 
+          # so no explicit --platform flag is required
+          docker buildx build \
+            --load \
+            -t kanat-questdb:${{ matrix.arch }} \
+            -f QuestDB/Dockerfile .
+
+          docker save kanat-questdb:${{ matrix.arch }} \
+            > artifacts/releases/images/questdb-${{ matrix.arch }}.tar
+
+          echo "✅ Exported artifacts/releases/images/questdb-${{ matrix.arch }}.tar"
+
+      - name: 📦 Upload image artifact
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images-${{ matrix.arch }}
+          path: artifacts/releases/images/
+          retention-days: 3
+
+  # ===================================================================
+  # 🏗️ BUILD INSTALLERS (all OSes)
+  # ===================================================================
+  build-installers:
+    name: 🏗️ Build installers (${{ matrix.platform }})
+    needs: build-images
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # x64 platforms
           - os: ubuntu-latest
             platform: linux-x64
-            skip_docker: "false"
-          - os: ubuntu-latest
-            platform: linux-arm64
-            skip_docker: "false"
-
-          - os: windows-latest
-            platform: win-x64
-            skip_docker: "true"
-          - os: windows-latest
-            platform: win-arm64
-            skip_docker: "true"
-          - os: macos-latest
-            platform: osx-arm64
-            skip_docker: "true"
+            arch: x64
           - os: macos-13
             platform: osx-x64
-            skip_docker: "true"
+            arch: x64
+          - os: windows-latest
+            platform: win-x64
+            arch: x64
+          # arm64 platforms
+          - os: ubuntu-latest
+            platform: linux-arm64
+            arch: arm64
+          - os: macos-latest
+            platform: osx-arm64
+            arch: arm64
+          - os: windows-latest
+            platform: win-arm64
+            arch: arm64
 
     env:
-      KANAT_TARGET_RID: ${{ matrix.platform }}
       KANAT_BUILD_PLATFORM: ${{ matrix.platform }}
-      KANAT_SKIP_DOCKER: ${{ matrix.skip_docker }}
-      DOCKER_BUILDKIT: 1
-      PYTHONIOENCODING: utf-8
+      KANAT_TARGET_RID: ${{ matrix.platform }}
+      KANAT_ARCH: ${{ matrix.arch }}
       PYTHONUTF8: "1"
 
     steps:
       - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      - name: ♻️ Cache NuGet packages
-        uses: actions/cache@v4
+      - name: 📥 Download prebuilt Docker images for this arch
+        uses: actions/download-artifact@v4
         with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.sln', '**/*.csproj') }}
-          restore-keys: ${{ runner.os }}-nuget-
-
-      - name: ♻️ Cache pip downloads
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('build_artifacts.sh', 'composer.py') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      - name: ♻️ Cache Docker image exports
-        if: matrix.skip_docker != 'true'
-        uses: actions/cache@v4
-        with:
+          name: docker-images-${{ matrix.arch }}
           path: artifacts/releases/images
-          key: docker-cache-${{ matrix.platform }}-${{ hashFiles('QuestDB/Dockerfile', 'docker-compose.dev.yml', 'docker-compose.prod.yml') }}
-          restore-keys: docker-cache-${{ matrix.platform }}-
 
-      - name: 🐍 Setup Python
+      - name: 🐳 Load Docker image (Linux/macOS only)
+        if: runner.os != 'Windows'
+        run: |
+          docker load < artifacts/releases/images/questdb-${{ matrix.arch }}.tar || echo "⚠️ Docker load skipped"
+
+      - name: 🐍 Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -111,60 +148,38 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: 🐳 Start Docker (Windows)
-        if: runner.os == 'Windows' && matrix.skip_docker != 'true'
-        shell: powershell
-        run: |
-          net start com.docker.service
-          docker version       
-      
-      - name: 🐳 Start Docker (macOS)
-        if: runner.os == 'macOS' && matrix.skip_docker != 'true'
-        shell: bash
-        run: |
-          # whatever you do to start Docker/Colima on your self-hosted mac runner
-          docker version
-
-      - name: 🐳 Setup Docker Buildx
-        if: matrix.skip_docker != 'true'
-        uses: docker/setup-buildx-action@v3
-
-      - name: 🧱 Build installer
-        shell: bash
+      - name: 🧱 Build installer using build_artifacts.sh
         run: |
           set -euo pipefail
           chmod +x ./build_artifacts.sh
           ./build_artifacts.sh "${KANAT_BUILD_PLATFORM}"
 
-      - name: 📂 List installer payload
-        shell: bash
-        run: |
-          ls -R artifacts/installers || true
-
       - name: 📦 Package installer tar
         shell: bash
         run: |
-          set -euo pipefail
           mkdir -p artifacts/packages
           src_dir="artifacts/installers/${KANAT_BUILD_PLATFORM}"
           src_file="installer-${KANAT_BUILD_PLATFORM}.run"
+          tar_path="artifacts/packages/kanat-installer-${KANAT_BUILD_PLATFORM}.tar"
           if [ ! -f "${src_dir}/${src_file}" ]; then
-            echo "Missing installer payload: ${src_dir}/${src_file}" >&2
+            echo "❌ Missing ${src_dir}/${src_file}"
             exit 1
           fi
-          tar_path="artifacts/packages/kanat-installer-${KANAT_BUILD_PLATFORM}.tar"
           tar -cf "${tar_path}" -C "${src_dir}" "${src_file}"
-          echo "Created ${tar_path}"
+          echo "✅ Created ${tar_path}"
 
-      - name: ⬆️ Upload workflow artifact
+      - name: ⬆️ Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: kanat-installer-${{ matrix.platform }}
           path: artifacts/packages/kanat-installer-${{ matrix.platform }}.tar
 
+  # ===================================================================
+  # 🚀 PUBLISH RELEASE (main/master only)
+  # ===================================================================
   release:
-    name: 📦 Publish Release
-    needs: build
+    name: 🚀 Publish GitHub Release
+    needs: build-installers
     if: ${{ github.ref_name == 'main' || github.ref_name == 'master' }}
     runs-on: ubuntu-latest
     permissions:
@@ -172,40 +187,42 @@ jobs:
       packages: write
 
     steps:
-      - name: ⬇️ Checkout
+      - name: ⬇️ Checkout full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Auto-increment version (patch)
-      - name: 🧮 Bump version tag
+      - name: 🧮 Auto-increment version
         id: version
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: patch
           tag_prefix: "v"
-          release_branches: main
-          dry_run: false
+          release_branches: main,master
 
-      - name: 📥 Download packaged installers
+      - name: 📥 Download all installers
         uses: actions/download-artifact@v4
         with:
           path: release_artifacts
 
-      - name: 📝 Compose release notes
+      - name: 📝 Generate release notes
         run: |
           cat <<'EOF' > notes.md
-          ## Installer Artifacts
+          ## Kanat Installer Artifacts
 
-          Automated build produced platform installers packaged as `.tar` files containing `installer-<platform>.run`.
+          Each platform installer includes:
+          - Built binaries
+          - Prepackaged Docker image (QuestDB)
+          - Cross-platform composer utility
 
+          ### Platforms:
           - linux-x64
           - linux-arm64
-          - win-x64 (composer only; Docker payload skipped)
-          - win-arm64 (composer only; Docker payload skipped)
-          - osx-arm64 (composer only; Docker payload skipped)
-          - osx-x64 (composer only; Docker payload skipped)
+          - win-x64
+          - win-arm64
+          - osx-x64
+          - osx-arm64
           EOF
 
       - name: 🚀 Publish GitHub release

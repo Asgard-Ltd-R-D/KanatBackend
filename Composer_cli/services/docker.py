@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -37,13 +38,31 @@ class DefaultDockerService(DockerService):
         dockerfile: Optional[Path] = None,
         platforms: Optional[Sequence[str]] = None,
     ) -> bool:
-        cmd = ["docker", "buildx", "build", "--load", "-t", tag]
+        platforms = tuple(p for p in (platforms or ()) if p)
+        multi_platform = len(platforms) > 1
+
+        def _run(cmd: list[str]) -> bool:
+            return self.sh.run(cmd, check=False) == 0
+
+        base = ["docker", "buildx", "build", "-t", tag]
         if dockerfile:
-            cmd.extend(["-f", str(dockerfile)])
+            base.extend(["-f", str(dockerfile)])
         if platforms:
-            cmd.extend(["--platform", ",".join(platforms)])
-        cmd.append(str(context))
-        return self.sh.run(cmd, check=False) == 0
+            base.extend(["--platform", ",".join(platforms)])
+        base.append(str(context))
+
+        if not multi_platform:
+            return _run([*base, "--load"])
+
+        with tempfile.TemporaryDirectory(prefix="kanat-buildx-") as tmpdir:
+            image_tar = Path(tmpdir) / "image.tar"
+            output = f"type=image,name={tag},push=false,dest={image_tar}"
+            if not _run([*base, "--output", output]):
+                return False
+            if not image_tar.exists():
+                error(f"buildx failed to produce archive for {tag}")
+                return False
+            return _run(["docker", "load", "-i", str(image_tar)])
 
     def pull_image(self, image: str, platform: Optional[str] = None) -> bool:
         cmd = ["docker", "pull"]
@@ -59,9 +78,12 @@ class DefaultDockerService(DockerService):
         image_cache_dir: Path,
         deploy_dir: Path,
         questdb_dir: Path,
-        platform: Optional[str] = None,
+        platforms: Optional[Sequence[str]] = None,
     ) -> bool:
         """Ensure all required images are available locally, preferring cache and falling back to build/pull."""
+        platforms = tuple(p for p in (platforms or ()) if p)
+        primary_platform = platforms[0] if platforms else None
+
         for image in required_images:
             if self.image_exists(image):
                 self._cache_image(image, image_cache_dir)
@@ -73,15 +95,19 @@ class DefaultDockerService(DockerService):
             if image.startswith("kanatbackend-questdb"):
                 warn(f"Building custom image '{image}' via buildx...")
                 dockerfile = questdb_dir / "Dockerfile"
-                platforms: Optional[Sequence[str]] = [platform] if platform else None
-                if not self.build_image(image, questdb_dir, dockerfile, platforms=platforms):
+                if not self.build_image(image, questdb_dir, dockerfile, platforms=platforms or None):
                     error(f"docker buildx build failed for {image}")
                     return False
                 self._cache_image(image, image_cache_dir)
                 continue
 
             warn(f"Pulling docker image '{image}' for {env}...")
-            if not self.pull_image(image, platform=platform):
+            if platforms:
+                for platform in platforms:
+                    if not self.pull_image(image, platform=platform):
+                        error(f"Failed to pull docker image '{image}' for platform {platform}")
+                        return False
+            elif not self.pull_image(image, platform=primary_platform):
                 error(f"Failed to pull docker image '{image}'")
                 return False
             self._cache_image(image, image_cache_dir)

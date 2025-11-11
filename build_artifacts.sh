@@ -176,6 +176,9 @@ fi
 RID_OVERRIDE="$OS_PLATFORM"
 export KANAT_TARGET_RID="$RID_OVERRIDE"
 export KANAT_BUILD_PLATFORM="$OS_PLATFORM"
+if [[ "$OS_PLATFORM" == "linux-x64" || "$OS_PLATFORM" == "linux-arm64" ]]; then
+    export KANAT_DOCKER_PLATFORMS="${KANAT_DOCKER_PLATFORMS:-linux/amd64,linux/arm64}"
+fi
 
 echo -e "${BLUE}=== Building Artifacts for $OS_PLATFORM ===${NC}"
 echo ""

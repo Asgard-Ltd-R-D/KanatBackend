@@ -40,7 +40,7 @@ on:
 # ===================================================================
 jobs:
   build-linux:
-    name: 🏗️ Build installer (${{ matrix.platform }})
+    name: 🏗️ Build installer (${{ matrix.rid }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -50,14 +50,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux-x64
+          - rid: linux-x64
+            docker_platform: linux/amd64
             skip_docker: "false"
-          - platform: linux-arm64
+          - rid: linux-arm64
+            docker_platform: linux/arm64
             skip_docker: "false"
 
     env:
-      KANAT_TARGET_RID: ${{ matrix.platform }}
-      KANAT_BUILD_PLATFORM: ${{ matrix.platform }}
+      KANAT_TARGET_RID: ${{ matrix.rid }}
+      KANAT_BUILD_PLATFORM: ${{ matrix.rid }}
+      KANAT_DOCKER_PLATFORM: ${{ matrix.docker_platform }}
+      KANAT_DOCKER_PLATFORMS: linux/amd64,linux/arm64
+      DOCKER_DEFAULT_PLATFORM: ${{ matrix.docker_platform }}
       KANAT_SKIP_DOCKER: ${{ matrix.skip_docker }}
       DOCKER_BUILDKIT: 1
       PYTHONIOENCODING: utf-8
@@ -86,8 +91,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: artifacts/releases/images
-          key: docker-cache-${{ matrix.platform }}-${{ hashFiles('QuestDB/Dockerfile', 'docker-compose.dev.yml', 'docker-compose.prod.yml') }}
-          restore-keys: docker-cache-${{ matrix.platform }}-
+          key: docker-cache-${{ matrix.rid }}-${{ hashFiles('QuestDB/Dockerfile', 'docker-compose.dev.yml', 'docker-compose.prod.yml') }}
+          restore-keys: docker-cache-${{ matrix.rid }}-
 
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
@@ -99,6 +104,12 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: 🐧 Setup QEMU
+        if: matrix.skip_docker != 'true'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
       - name: 🐳 Setup Docker Buildx
         if: matrix.skip_docker != 'true'
         uses: docker/setup-buildx-action@v3
@@ -108,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x ./build_artifacts.sh
-          ./build_artifacts.sh "${KANAT_BUILD_PLATFORM}"
+          ./build_artifacts.sh "${KANAT_TARGET_RID}"
 
       - name: 📦 Package installer tar
         shell: bash
@@ -127,11 +138,11 @@ jobs:
       - name: ⬆️ Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanat-installer-${{ matrix.platform }}
-          path: artifacts/packages/kanat-installer-${{ matrix.platform }}.tar
+          name: kanat-installer-${{ matrix.rid }}
+          path: artifacts/packages/kanat-installer-${{ matrix.rid }}.tar
 
       - name: 📤 Upload docker image cache
-        if: matrix.platform == 'linux-x64'
+        if: matrix.rid == 'linux-x64'
         uses: actions/upload-artifact@v4
         with:
           name: kanat-docker-image-cache

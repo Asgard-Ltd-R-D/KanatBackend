@@ -11,7 +11,7 @@ from ..progress import Progress
 from ..shell import SubprocessShell
 from ..paths import Paths, RELEASE_DIR
 from ..utils.messages import info, warn, error, success
-from ..utils.platforms import docker_platform_for_current_build
+from ..utils.platforms import docker_platform_for_current_build, docker_platforms_for_current_build
 
 ALLOWED_PLATFORMS = {"win-x64", "win-arm64", "linux-x64", "linux-musl-x64", "linux-arm64", "osx-arm64", "osx-x64"}
 CUSTOM_IMAGE = ("kanatbackend-questdb", "kanatbackend-questdb.tar")
@@ -103,14 +103,22 @@ class DefaultPackagingService(PackagingService):
 
     def _ensure_shared_images(self) -> bool:
         ok = True
-        platform = self._docker_platform()
+        platforms = self._docker_platforms()
+        platform = platforms[0] if platforms else None
         for image, _ in SHARED_IMAGES:
             if self.docker.image_exists(image):
                 continue
             warn(f"Docker image '{image}' missing; pulling...")
-            if not self.docker.pull_image(image, platform=platform):
-                error(f"Failed to pull docker image '{image}'")
-                ok = False
+            if platforms:
+                # Pull each platform explicitly to guarantee availability in offline cache
+                for plat in platforms:
+                    if not self.docker.pull_image(image, platform=plat):
+                        error(f"Failed to pull docker image '{image}' for platform {plat}")
+                        ok = False
+            else:
+                if not self.docker.pull_image(image, platform=platform):
+                    error(f"Failed to pull docker image '{image}'")
+                    ok = False
         return ok
 
     def _write_packetprocessing_tar(self, env: str, platform: str, package_dir: Path) -> bool:
@@ -153,7 +161,7 @@ class DefaultPackagingService(PackagingService):
 
     def _ensure_custom_image(self) -> bool:
         image, _ = CUSTOM_IMAGE
-        platform = self._docker_platform()
+        platforms = self._docker_platforms()
         if self.docker.image_exists(image):
             return True
         if not self.paths.questdb_dir.exists():
@@ -161,7 +169,6 @@ class DefaultPackagingService(PackagingService):
             return False
         warn(f"Docker image '{image}' missing; building with buildx...")
         dockerfile = self.paths.questdb_dir / "Dockerfile"
-        platforms = [platform] if platform else None
         if not self.docker.build_image(image, self.paths.questdb_dir, dockerfile, platforms=platforms):
             error(f"Failed to build docker image '{image}' from QuestDB Dockerfile")
             return False
@@ -223,5 +230,9 @@ class DefaultPackagingService(PackagingService):
         warn("Docker image packaging skipped (KANAT_SKIP_DOCKER set).")
 
     @staticmethod
-    def _docker_platform() -> str | None:
-        return docker_platform_for_current_build()
+    def _docker_platforms() -> list[str] | None:
+        platforms = docker_platforms_for_current_build()
+        if platforms:
+            return list(platforms)
+        single = docker_platform_for_current_build()
+        return [single] if single else None

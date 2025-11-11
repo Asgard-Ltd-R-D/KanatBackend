@@ -9,7 +9,7 @@ from typing import Callable, List, Sequence
 from ..abstractions import DockerService, DotnetService
 from ..paths import Paths
 from ..utils.messages import info, warn, error, success
-from ..utils.platforms import docker_platform_for_current_build
+from ..utils.platforms import docker_platform_for_current_build, docker_platforms_for_current_build
 
 
 class EnvironmentManager:
@@ -24,7 +24,7 @@ class EnvironmentManager:
     def build_all(self, required_images_provider: Callable[[str], List[str]]) -> bool:
         """Build both environments and ensure required Docker images are cached."""
         skip_docker = self._skip_docker()
-        docker_platform = self._docker_platform()
+        docker_platforms = self._docker_platforms()
         for env in ("dev", "prod"):
             release_dir = self.paths.release_dir / env
             if release_dir.exists():
@@ -50,7 +50,7 @@ class EnvironmentManager:
                 self.paths.image_cache_dir,
                 self.paths.deploy_dir,
                 self.paths.questdb_dir,
-                platform=docker_platform,
+                platforms=docker_platforms,
             ):
                 return False
         success("Build complete for dev and prod environments")
@@ -112,7 +112,7 @@ class EnvironmentManager:
             self.paths.image_cache_dir,
             self.paths.deploy_dir,
             self.paths.questdb_dir,
-            platform=self._docker_platform(),
+            platforms=self._docker_platforms(),
         )
 
     def _skip_docker(self) -> bool:
@@ -122,7 +122,7 @@ class EnvironmentManager:
     def _maybe_notify_docker_skipped(self) -> None:
         if self._docker_skipped_notified:
             return
-            warn("Docker image preparation skipped (KANAT_SKIP_DOCKER set).")
+        warn("Docker image preparation skipped (KANAT_SKIP_DOCKER set).")
         self._docker_skipped_notified = True
 
     def _rehydrate_release_from_packages(self, env: str, target_dir: Path) -> bool:
@@ -164,6 +164,10 @@ class EnvironmentManager:
             with tarfile.open(tar_file, "r") as archive:
                 archive.extractall(target_dir)
 
-    def _docker_platform(self) -> str | None:
-        return docker_platform_for_current_build()
+    def _docker_platforms(self) -> list[str] | None:
+        platforms = docker_platforms_for_current_build()
+        if platforms:
+            return list(platforms)
+        single = docker_platform_for_current_build()
+        return [single] if single else None
 

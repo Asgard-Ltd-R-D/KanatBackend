@@ -92,6 +92,12 @@ jobs:
           set -euo pipefail
           export DOCKER_DEFAULT_PLATFORM="${KANAT_DOCKER_PLATFORM}"
           echo "🛠️ Building for platform ${KANAT_DOCKER_PLATFORM}"
+
+          # 🧩 Ensure tkinter is available for Python scripts that need it
+          echo "Installing tkinter for headless build..."
+          sudo apt-get update -y
+          sudo apt-get install -y python3-tk
+
           docker buildx inspect --bootstrap
           docker version
           ./build_artifacts.sh "${KANAT_TARGET_RID}"

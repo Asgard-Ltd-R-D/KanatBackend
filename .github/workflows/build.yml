@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
+        arch: [x64, arm64]
 
     if: >
       ${{ github.event.workflow_run.conclusion == 'success' ||

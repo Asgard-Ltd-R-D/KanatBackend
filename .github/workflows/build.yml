@@ -201,6 +201,6 @@ jobs:
           draft: false
           prerelease: ${{ steps.rel.outputs.prerelease }}
           files: |
-            collected_installers/**/*.tar
+            collected_installers/**/*.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

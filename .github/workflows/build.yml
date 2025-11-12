@@ -110,7 +110,7 @@ jobs:
       # --------------------------------------------------------------
       # 4️⃣ Run build_artifacts.sh (Composer will reuse local images)
       # --------------------------------------------------------------
-      - name: Build all targets for ${{ matrix.arch }}
+      - name: Build and upload all targets for ${{ matrix.arch }}
         env:
           DOCKER_BUILDKIT: 1
           BUILDX_NO_DOCKER: 1
@@ -121,18 +121,24 @@ jobs:
           mkdir -p installers
 
           for os_target in linux win osx; do
-            platform="${os_target}-${{ matrix.arch }}"
-            file_name="kanat-installer-${platform}.tar"
+            platform="${os_target}-${{ matrix.arch == 'x64' && 'amd64' || 'arm64' }}"
+            file_name="kanatbackend-installer-${platform}.tar"
             echo "🔧 Building $platform..."
 
-            # 🔹 Ensure clean artifacts directory before each build
+            # Clean build directory
             rm -rf artifacts
             mkdir -p artifacts
 
+            # Run your composer build
             bash ./build_artifacts.sh "$platform"
-            tar -cvf "installers/${file_name}" -C artifacts .
-          done
 
+            # Create single tarball for this OS/arch
+            tar -cvf "installers/${file_name}" -C artifacts .
+
+            # Upload immediately so each file is an independent artifact
+            echo "⬆️ Uploading ${file_name} ..."
+            gh run upload-artifact "${file_name}" "installers/${file_name}"
+          done
       # --------------------------------------------------------------
       # 5️⃣ Upload artifacts
       # --------------------------------------------------------------

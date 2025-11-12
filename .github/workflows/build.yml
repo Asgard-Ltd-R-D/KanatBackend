@@ -120,8 +120,14 @@ jobs:
           echo "🏗️ Building for architecture: ${{ matrix.arch }}"
           mkdir -p installers
 
-          for os_target in linux win osx; do
-            platform="${os_target}-${{ matrix.arch == 'x64' && 'amd64' || 'arm64' }}"
+          # Correct platform mapping to match build_artifacts.sh options
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            platforms=("linux-x64" "win-x64" "osx-x64")
+          else
+            platforms=("linux-arm64" "win-arm64" "osx-arm64")
+          fi
+
+          for platform in "${platforms[@]}"; do
             file_name="kanatbackend-installer-${platform}.tar"
             echo "🔧 Building $platform..."
 

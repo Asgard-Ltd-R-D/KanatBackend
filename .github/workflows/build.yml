@@ -110,7 +110,7 @@ jobs:
           echo "🏗️ Building for architecture: ${{ matrix.arch }}"
           mkdir -p installers
 
-          for os_target in linux windows osx; do
+          for os_target in linux win osx; do
             platform="${os_target}-${{ matrix.arch }}"
             file_name="kanat-installer-${platform}.tar"
             echo "🔧 Building $platform..."

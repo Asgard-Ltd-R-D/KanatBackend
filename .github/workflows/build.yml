@@ -1,6 +1,16 @@
 name: Build and Deploy Cross-Platform Artifacts
 
 # ===================================================================
+# 🔐 PERMISSIONS
+# ===================================================================
+permissions:
+  contents: write # Allows creating and uploading releases
+  actions: read # Allows reading workflow info
+  checks: read # Optional – for workflow_run context
+  packages: read # Optional – if you pull from GitHub Packages
+  deployments: write # Optional – for GitHub Releases deployment metadata
+
+# ===================================================================
 # 🔔 TRIGGERS
 # ===================================================================
 on:

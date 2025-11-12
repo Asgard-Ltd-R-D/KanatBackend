@@ -103,6 +103,9 @@ jobs:
           echo "🏗️ Building for architecture: ${{ matrix.arch }}"
           mkdir -p installers
 
+          # Restrict Buildx to a single platform to avoid import errors
+          export DOCKER_DEFAULT_PLATFORM=${{ matrix.arch == 'x64' && 'linux/amd64' || 'linux/arm64' }}
+
           # Map to build_artifacts.sh arguments
           for os_target in linux windows osx; do
             platform="${os_target}-${{ matrix.arch }}"

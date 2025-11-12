@@ -18,23 +18,13 @@ on:
       - "Composer_cli/**"
       - "PacketProcessingService/**"
       - ".github/workflows/build.yml"
-    branches:
-      - "main"
-      - "master"
-      - "feature/**"
-      - "fix/**"
-
+    branches: ["main", "master", "feature/**", "fix/**"]
   pull_request:
     paths:
       - "Composer_cli/**"
       - "PacketProcessingService/**"
       - ".github/workflows/build.yml"
-    branches:
-      - "main"
-      - "master"
-      - "feature/**"
-      - "fix/**"
-
+    branches: ["main", "master", "feature/**", "fix/**"]
 # ===================================================================
 # ⚙️ JOBS
 # ===================================================================
@@ -92,21 +82,34 @@ jobs:
           sudo apt-get install -y tk-dev python3-tk
 
       # --------------------------------------------------------------
-      # 3️⃣ Run build_artifacts.sh (let Composer build everything)
+      # 3️⃣ Build and load all Docker images via docker-compose
+      # --------------------------------------------------------------
+      - name: Preload Dev and Prod Docker Images
+        run: |
+          set -e
+          echo "🐳 Building and loading local images (dev + prod) before artifact build..."
+          export DOCKER_DEFAULT_PLATFORM=${{ matrix.arch == 'x64' && 'linux/amd64' || 'linux/arm64' }}
+
+          # Compose both environments with local build contexts
+          docker compose -f docker-compose.dev.yml build
+          docker compose -f docker-compose.prod.yml build
+
+          echo "✅ Local QuestDB, Postgres, and Seq images built successfully."
+          docker images | grep -E 'kanatbackend-questdb|postgres|seq' || true
+
+      # --------------------------------------------------------------
+      # 4️⃣ Run build_artifacts.sh (Composer will reuse local images)
       # --------------------------------------------------------------
       - name: Build all targets for ${{ matrix.arch }}
         env:
           DOCKER_BUILDKIT: 1
           BUILDX_NO_DOCKER: 1
+          DOCKER_DEFAULT_PLATFORM: ${{ matrix.arch == 'x64' && 'linux/amd64' || 'linux/arm64' }}
         run: |
           set -e
           echo "🏗️ Building for architecture: ${{ matrix.arch }}"
           mkdir -p installers
 
-          # Restrict Buildx to a single platform to avoid import errors
-          export DOCKER_DEFAULT_PLATFORM=${{ matrix.arch == 'x64' && 'linux/amd64' || 'linux/arm64' }}
-
-          # Map to build_artifacts.sh arguments
           for os_target in linux windows osx; do
             platform="${os_target}-${{ matrix.arch }}"
             file_name="kanat-installer-${platform}.tar"
@@ -116,7 +119,7 @@ jobs:
           done
 
       # --------------------------------------------------------------
-      # 4️⃣ Upload all generated tarballs for this arch
+      # 5️⃣ Upload artifacts
       # --------------------------------------------------------------
       - name: Upload installer tarballs
         uses: actions/upload-artifact@v4

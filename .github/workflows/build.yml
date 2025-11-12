@@ -110,7 +110,7 @@ jobs:
       # --------------------------------------------------------------
       # 4️⃣ Run build_artifacts.sh (Composer will reuse local images)
       # --------------------------------------------------------------
-      - name: Build and upload all targets for ${{ matrix.arch }}
+      - name: Build and compress all targets for ${{ matrix.arch }}
         env:
           DOCKER_BUILDKIT: 1
           BUILDX_NO_DOCKER: 1
@@ -127,8 +127,10 @@ jobs:
             platforms=("linux-arm64" "win-arm64" "osx-arm64")
           fi
 
+          sudo apt-get install -y zstd  # ensure zstd available
+
           for platform in "${platforms[@]}"; do
-            file_name="kanatbackend-installer-${platform}.tar"
+            file_name="kanatbackend-installer-${platform}"
             echo "🔧 Building $platform..."
 
             # Clean build directory
@@ -138,19 +140,22 @@ jobs:
             # Run Composer build
             bash ./build_artifacts.sh "$platform"
 
-            # Create single tarball for this OS/arch
-            tar -cvf "installers/${file_name}" -C artifacts .
+            # Create and compress archive
+            echo "📦 Compressing installer..."
+            tar -I 'zstd -19 --long=30 --ultra' -cvf "installers/${file_name}.tar.zst" -C artifacts .
+
+            ls -lh "installers/${file_name}.tar.zst"
           done
 
       # --------------------------------------------------------------
       # 5️⃣ Upload artifacts (one per OS/arch)
       # --------------------------------------------------------------
-      - name: Upload installers individually
+      - name: Upload compressed installers
         uses: actions/upload-artifact@v4
         with:
           name: kanatbackend-installers-${{ matrix.arch }}
-          path: installers/*.tar
-          compression-level: 9
+          path: installers/*.tar.zst
+          compression-level: 0
 
   # ===================================================================
   # 🏁 CREATE RELEASE

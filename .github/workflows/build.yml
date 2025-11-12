@@ -70,6 +70,12 @@ jobs:
       - name: Enable QEMU for cross-architecture builds
         uses: docker/setup-qemu-action@v3
 
+      # Persistent Buildx builder bootstrap
+      - name: Initialize Buildx builder
+        run: |
+          docker buildx create --use --name kanatbuilder || true
+          docker buildx inspect --bootstrap
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -89,6 +95,9 @@ jobs:
       # 3️⃣ Run builds for all OS targets under current arch
       # --------------------------------------------------------------
       - name: Build all targets for ${{ matrix.arch }}
+        env:
+          DOCKER_BUILDKIT: 1
+          BUILDX_NO_DOCKER: 1
         run: |
           set -e
           echo "🏗️ Building for architecture: ${{ matrix.arch }}"

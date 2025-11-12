@@ -120,7 +120,7 @@ jobs:
           echo "🏗️ Building for architecture: ${{ matrix.arch }}"
           mkdir -p installers
 
-          # Correct platform mapping to match build_artifacts.sh options
+          # Map to valid Composer build targets
           if [ "${{ matrix.arch }}" = "x64" ]; then
             platforms=("linux-x64" "win-x64" "osx-x64")
           else
@@ -135,24 +135,22 @@ jobs:
             rm -rf artifacts
             mkdir -p artifacts
 
-            # Run your composer build
+            # Run Composer build
             bash ./build_artifacts.sh "$platform"
 
             # Create single tarball for this OS/arch
             tar -cvf "installers/${file_name}" -C artifacts .
-
-            # Upload immediately so each file is an independent artifact
-            echo "⬆️ Uploading ${file_name} ..."
-            gh run upload-artifact "${file_name}" "installers/${file_name}"
           done
+
       # --------------------------------------------------------------
-      # 5️⃣ Upload artifacts
+      # 5️⃣ Upload artifacts (one per OS/arch)
       # --------------------------------------------------------------
-      - name: Upload installer tarballs
+      - name: Upload installers individually
         uses: actions/upload-artifact@v4
         with:
-          name: installers-${{ matrix.arch }}
+          name: kanatbackend-installers
           path: installers/*.tar
+          compression-level: 9
 
   # ===================================================================
   # 🏁 CREATE RELEASE

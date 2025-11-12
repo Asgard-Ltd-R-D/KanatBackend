@@ -92,6 +92,33 @@ jobs:
           sudo apt-get install -y tk-dev python3-tk
 
       # --------------------------------------------------------------
+      # 🧱 Pre-build QuestDB image for this architecture
+      # --------------------------------------------------------------
+      - name: Pre-build QuestDB image for ${{ matrix.arch }}
+        env:
+          DOCKER_BUILDKIT: 1
+          BUILDX_NO_DOCKER: 1
+        run: |
+          set -e
+          echo "🔨 Pre-building QuestDB image for ${{ matrix.arch }}..."
+          mkdir -p artifacts/images
+
+          if [[ "${{ matrix.arch }}" == "x64" ]]; then
+            platform="linux/amd64"
+          else
+            platform="linux/arm64"
+          fi
+
+          docker buildx build \
+            --platform "$platform" \
+            --builder kanatbuilder \
+            -t kanatbackend-questdb \
+            -f ./QuestDB/Dockerfile ./QuestDB \
+            --output type=tar,dest=artifacts/images/kanatbackend-questdb-${{ matrix.arch }}.tar
+
+          echo "✅ QuestDB image bundled at artifacts/images/kanatbackend-questdb-${{ matrix.arch }}.tar"
+
+      # --------------------------------------------------------------
       # 3️⃣ Run builds for all OS targets under current arch
       # --------------------------------------------------------------
       - name: Build all targets for ${{ matrix.arch }}

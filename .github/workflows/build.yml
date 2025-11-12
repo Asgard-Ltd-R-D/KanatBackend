@@ -148,7 +148,7 @@ jobs:
       - name: Upload installers individually
         uses: actions/upload-artifact@v4
         with:
-          name: kanatbackend-installers
+          name: kanatbackend-installers-${{ matrix.arch }}
           path: installers/*.tar
           compression-level: 9
 

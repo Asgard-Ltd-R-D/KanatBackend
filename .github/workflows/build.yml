@@ -114,6 +114,11 @@ jobs:
             platform="${os_target}-${{ matrix.arch }}"
             file_name="kanat-installer-${platform}.tar"
             echo "🔧 Building $platform..."
+
+            # 🔹 Ensure clean artifacts directory before each build
+            rm -rf artifacts
+            mkdir -p artifacts
+
             bash ./build_artifacts.sh "$platform"
             tar -cvf "installers/${file_name}" -C artifacts .
           done

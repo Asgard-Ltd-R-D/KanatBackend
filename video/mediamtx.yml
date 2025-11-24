@@ -55,22 +55,8 @@ paths:
   loopdemo:
     source: publisher
 
-    runOnInit: ./run_loopdemo.sh
-
-  # recorddemo:
-  #   source: publisher
-
-  #   record: false
-  #   recordFormat: fmp4
-  #   recordPartDuration: 2s
-  #   recordSegmentDuration: 10m
-  #   recordPath: ./recordings/%path/%Y-%m-%d_%H-%M-%S-%f
-
-  #   # Always on
-  #   runOnInit: |-
-  #     bash -lc '
-  #       export MCAST_IP=226.226.226.112
-  #       export MCAST_PORT=112
-  #       exec ./run_record.sh
-  #     '
-  #   runOnInitRestart: yes
+    # runOnInit: ./run_loopdemo.sh
+    runOnDemand: ./run_loopdemo.sh
+    runOnDemandRestart: yes
+    runOnDemandStartTimeout: 10s
+    runOnDemandCloseAfter: 1s

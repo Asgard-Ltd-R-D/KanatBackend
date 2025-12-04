@@ -1,0 +1,4 @@
+[submodule "VideoService"]
+	path = VideoService
+	url = https://github.com/Asgard-Ltd-R-D/KanatVideo.git
+	branch = main

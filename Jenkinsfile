@@ -39,6 +39,26 @@ pipeline {
             }
         }
 
+        stage('Install .NET 8 SDK') {
+            steps {
+                sh """#!/bin/bash
+                set -e
+
+                echo 'Installing .NET 8 SDK...'
+
+                curl -sSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
+                chmod +x dotnet-install.sh
+
+                ./dotnet-install.sh --channel 8.0 --install-dir $HOME/dotnet
+
+                echo "export PATH=\$HOME/dotnet:\$PATH" >> ~/.bashrc
+                export PATH=\$HOME/dotnet:\$PATH
+
+                dotnet --version
+                """
+            }
+        }
+
         stage('Matrix Build') {
             parallel {
                 stage('Build x64') {
@@ -132,6 +152,10 @@ def runBuild(String arch) {
     sh """#!/bin/bash
     set -e
 
+    # Make sure dotnet is visible
+    export PATH=\$HOME/dotnet:\$PATH
+    dotnet --version || (echo "❌ dotnet missing!" && exit 1)
+
     sudo apt-get update
     sudo apt-get install -y python3-tk tk-dev
 
@@ -146,7 +170,6 @@ def runBuild(String arch) {
 
     mkdir -p installers/${arch}
 
-    # Use space-separated list instead of bash arrays
     if [ "${arch}" = "x64" ]; then
         platforms="linux-x64 win-x64 osx-x64"
     else
@@ -167,3 +190,4 @@ def runBuild(String arch) {
     done
     """
 }
+

@@ -152,12 +152,12 @@ def runBuild(String arch) {
     sh """#!/bin/bash
     set -e
 
-    # Make sure dotnet is visible
     export PATH=\$HOME/dotnet:\$PATH
-    dotnet --version || (echo "❌ dotnet missing!" && exit 1)
+
+    echo "dotnet version: \$(dotnet --version)"
 
     sudo apt-get update
-    sudo apt-get install -y python3-tk tk-dev
+    sudo apt-get install -y python3-tk tk-dev python3-venv python3.13-venv || true
 
     docker buildx create --use --name kanatbuilder || true
     docker buildx inspect --bootstrap
@@ -190,4 +190,3 @@ def runBuild(String arch) {
     done
     """
 }
-

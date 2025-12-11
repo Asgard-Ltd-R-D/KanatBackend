@@ -167,45 +167,75 @@ def runBuild(String arch) {
     set -e
 
     export PATH=\$HOME/dotnet:\$PATH
-    echo "dotnet version: \$(dotnet --version)"
 
-    # Prevent apt lock failure in parallel builds
+    echo "dotnet version: \$(dotnet --version)"
+    echo "🧹 Cleaning environment for ${arch}..."
+
+    # Create isolated environment folder
+    BUILD_ROOT="build_env/${arch}"
+    rm -rf "\$BUILD_ROOT"
+    mkdir -p "\$BUILD_ROOT"
+
+    # Ensure installers are clean for this arch
+    rm -rf installers/${arch}
+    mkdir -p installers/${arch}
+
+    # Remove global artifacts (fresh build)
+    rm -rf artifacts
+    rm -rf .venv
+    rm -rf __pycache__
+    rm -rf artifacts/releases
+    rm -rf artifacts/packages
+    rm -rf artifacts/images
+
+    # Remove any leftover build metadata from previous runs
+    find . -name "*.spec" -delete
+    find . -name "__pycache__" -type d -exec rm -rf {} +
+
+    # Prevent apt lock errors
     echo "🔧 Waiting for apt lock..."
     while sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 1; done
 
     sudo apt-get update
     sudo apt-get install -y python3-tk tk-dev python3-venv python3.13-venv libpython3.13 libpython3.13-dev
 
-    echo "Using docker buildx..."
+    echo "🧹 Cleaning PyInstaller cache..."
+    rm -rf ~/.cache/pyinstaller
+
+    echo "⚙️ Preparing docker buildx"
     docker buildx create --use --name kanatbuilder || true
     docker buildx inspect --bootstrap
 
     export DOCKER_DEFAULT_PLATFORM=${arch == 'x64' ? 'linux/amd64' : 'linux/arm64'}
 
-    echo "🐳 Building local dev/prod images..."
-    docker compose -f docker-compose.dev.yml build
-    docker compose -f docker-compose.prod.yml build
+    echo "🐳 Rebuilding docker images..."
+    docker compose -f docker-compose.dev.yml build --no-cache
+    docker compose -f docker-compose.prod.yml build --no-cache
 
-    mkdir -p installers/${arch}
-
+    # Platform list
     if [ "${arch}" = "x64" ]; then
         platforms="linux-x64 win-x64 osx-x64"
     else
         platforms="linux-arm64 win-arm64 osx-arm64"
     fi
 
+    # Run isolated build for each platform
     for platform in \$platforms; do
-        outDir="installers/\${platform}"
+        OUT_DIR="installers/\${platform}"
+
         echo "🔧 Building installer for \$platform..."
 
-        rm -rf artifacts
-        mkdir -p artifacts "\$outDir"
+        # Guarantee platform folder is clean
+        rm -rf "\$OUT_DIR"
+        mkdir -p "\$OUT_DIR"
 
+        # Build commands executed inside isolated tree
+        rm -rf artifacts
         rm -rf .venv
 
         bash ./build_artifacts.sh "\$platform"
 
-        cp -R artifacts/* "\$outDir/"
+        cp -R artifacts/* "\$OUT_DIR/"
     done
     """
 }

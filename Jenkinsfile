@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         DOCKER_BUILDKIT = "1"
-        GH_TOKEN = credentials('GITHUB_TOKEN')   // GitHub CLI uses GH_TOKEN
+        GH_TOKEN = credentials('GITHUB_TOKEN')   // MUST be a secret text credential
     }
 
     options {
@@ -34,7 +34,6 @@ pipeline {
 
                 sudo apt-get update
                 sudo apt-get install -y gh
-
                 gh --version
                 """
             }
@@ -53,9 +52,11 @@ pipeline {
 
         stage('Collect Installers') {
             steps {
-                sh "mkdir -p collected_installers"
-                sh "find . -name '*.tar.zst' -exec cp {} collected_installers/ \\;"
-                sh "ls -R collected_installers"
+                sh """
+                mkdir -p collected_installers
+                cp -R installers/* collected_installers/ || true
+                ls -R collected_installers
+                """
             }
         }
 
@@ -83,30 +84,32 @@ pipeline {
         }
 
         stage('Publish GitHub Release') {
-            when {
-                expression { env.REL_TYPE != "unknown" }
-            }
+            when { expression { env.REL_TYPE != "unknown" } }
+
             steps {
                 script {
                     def tag = "v${env.BUILD_NUMBER}"
                     def title = "Kanat Build ${env.BUILD_NUMBER} - ${env.BRANCH_NAME}"
 
-                    // Convert git URL → "owner/repo"
+                    // Convert Jenkins SCM URL → owner/repo
                     def repo = env.GIT_URL
                         .replace("https://github.com/", "")
                         .replace(".git", "")
 
-                    sh """
-                    export GH_TOKEN=${GH_TOKEN}
+                    echo "Publishing GitHub release to: ${repo}"
+                    echo "Using tag: ${tag}"
 
-                    echo "Releasing to repo: ${repo}"
-                    
+                    sh """
+                    export GH_TOKEN="${GH_TOKEN}"
+
+                    gh auth token
+
                     gh release create ${tag} \
                         --repo "${repo}" \
                         --title "${title}" \
                         --notes "Automated Jenkins release" \
                         ${env.PRERELEASE == 'true' ? '--prerelease' : ''} \
-                        collected_installers/*.tar.zst
+                        collected_installers/*
                     """
                 }
             }
@@ -115,7 +118,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: "collected_installers/*.tar.zst", fingerprint: true
+            archiveArtifacts artifacts: "collected_installers/**", fingerprint: true
         }
     }
 }
@@ -128,7 +131,7 @@ def runBuild(String arch) {
 
     sh """
     sudo apt-get update
-    sudo apt-get install -y zstd python3-tk tk-dev
+    sudo apt-get install -y python3-tk tk-dev
 
     docker buildx create --use --name kanatbuilder || true
     docker buildx inspect --bootstrap
@@ -139,9 +142,7 @@ def runBuild(String arch) {
     docker compose -f docker-compose.dev.yml build
     docker compose -f docker-compose.prod.yml build
 
-    echo "🏗️ Running build_artifacts.sh for ${arch}"
-
-    mkdir -p installers
+    mkdir -p installers/${arch}
 
     if [ "${arch}" = "x64" ]; then
         platforms=("linux-x64" "win-x64" "osx-x64")
@@ -150,15 +151,16 @@ def runBuild(String arch) {
     fi
 
     for platform in "\${platforms[@]}"; do
-        file_name="kanatbackend-installer-\${platform}"
-        echo "🔧 Building \$platform..."
+        outDir="installers/\${platform}"
+        echo "🔧 Building installer for \$platform..."
 
         rm -rf artifacts
         mkdir -p artifacts
+        mkdir -p "\$outDir"
 
         bash ./build_artifacts.sh "\$platform"
 
-        tar -I 'zstd -19 --long=30 --ultra' -cvf "installers/\${file_name}.tar.zst" -C artifacts .
+        cp -R artifacts/* "\$outDir/"
     done
     """
 }

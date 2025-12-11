@@ -1,9 +1,9 @@
 pipeline {
-    agent { label 'ubuntu' }
+    agent any
 
     environment {
         DOCKER_BUILDKIT = "1"
-        GITHUB_TOKEN = credentials('GITHUB_TOKEN')
+        GH_TOKEN = credentials('GITHUB_TOKEN')   // GitHub CLI uses GH_TOKEN
     }
 
     options {
@@ -14,6 +14,30 @@ pipeline {
 
         stage('Checkout') {
             steps { checkout scm }
+        }
+
+        stage('Install GitHub CLI') {
+            steps {
+                sh """
+                sudo apt-get update
+                sudo apt-get install -y curl git apt-transport-https gnupg
+
+                curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | \
+                    sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+
+                sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+
+                echo "deb [arch=\$(dpkg --print-architecture) \
+                    signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+                    https://cli.github.com/packages stable main" | \
+                    sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+
+                sudo apt-get update
+                sudo apt-get install -y gh
+
+                gh --version
+                """
+            }
         }
 
         stage('Matrix Build') {
@@ -67,14 +91,22 @@ pipeline {
                     def tag = "v${env.BUILD_NUMBER}"
                     def title = "Kanat Build ${env.BUILD_NUMBER} - ${env.BRANCH_NAME}"
 
+                    // Convert git URL → "owner/repo"
+                    def repo = env.GIT_URL
+                        .replace("https://github.com/", "")
+                        .replace(".git", "")
+
                     sh """
+                    export GH_TOKEN=${GH_TOKEN}
+
+                    echo "Releasing to repo: ${repo}"
+                    
                     gh release create ${tag} \
+                        --repo "${repo}" \
                         --title "${title}" \
                         --notes "Automated Jenkins release" \
                         ${env.PRERELEASE == 'true' ? '--prerelease' : ''} \
-                        collected_installers/*.tar.zst \
-                        --repo ${env.GIT_URL.replace('https://github.com/', '').replace('.git','')} \
-                        --token ${GITHUB_TOKEN}
+                        collected_installers/*.tar.zst
                     """
                 }
             }
@@ -101,9 +133,9 @@ def runBuild(String arch) {
     docker buildx create --use --name kanatbuilder || true
     docker buildx inspect --bootstrap
 
-    echo "🐳 Building local dev/prod images..."
     export DOCKER_DEFAULT_PLATFORM=${arch == 'x64' ? 'linux/amd64' : 'linux/arm64'}
 
+    echo "🐳 Building local dev/prod images..."
     docker compose -f docker-compose.dev.yml build
     docker compose -f docker-compose.prod.yml build
 

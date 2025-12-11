@@ -1,0 +1,64 @@
+pipeline {
+    agent { label 'ubuntu' }   // or 'any' if using a single agent
+
+    environment {
+        WORKDIR = "PacketProcessingService/tests"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Setup .NET 8') {
+            steps {
+                sh """
+                sudo apt-get update
+                sudo apt-get install -y dotnet-sdk-8.0
+                """
+            }
+        }
+
+        stage('Restore Dependencies') {
+            steps {
+                dir(WORKDIR) {
+                    sh 'dotnet restore PacketProcessingService.Tests.csproj'
+                }
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                dir(WORKDIR) {
+                    sh """
+                    echo "Running tests for branch ${env.BRANCH_NAME}..."
+                    dotnet test PacketProcessingService.Tests.csproj \
+                        --configuration Release \
+                        --verbosity normal | tee test-log.txt
+                    """
+                }
+            }
+        }
+
+        stage('Rename Log File (sanitize branch name)') {
+            steps {
+                script {
+                    def safe = env.BRANCH_NAME.replaceAll(/[\\/*:]/, '-')
+                    env.SAFE_BRANCH = safe
+                    sh """
+                    mv ${WORKDIR}/test-log.txt ${WORKDIR}/test-log-${safe}.txt
+                    echo "Sanitized branch name: ${safe}"
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: "${WORKDIR}/test-log-*.txt", fingerprint: true
+        }
+    }
+}

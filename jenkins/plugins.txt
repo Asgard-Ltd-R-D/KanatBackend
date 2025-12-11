@@ -1,0 +1,13 @@
+git
+git-client
+github
+github-api
+workflow-aggregator
+configuration-as-code
+docker-workflow
+docker-plugin
+credentials-binding
+pipeline-github
+pipeline-stage-view
+blueocean
+matrix-auth

@@ -17,17 +17,29 @@ pipeline {
         stage('Setup .NET 8') {
             steps {
                 sh """
+                echo 'Installing required system dependencies...'
+                sudo apt-get update
+
+                # Try common ICU versions
+                sudo apt-get install -y libicu72 || \
+                sudo apt-get install -y libicu71 || \
+                sudo apt-get install -y libicu70 || \
+                sudo apt-get install -y libicu-dev
+
                 echo 'Installing .NET 8 using dotnet-install script...'
                 curl -sSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
                 chmod +x dotnet-install.sh
 
                 ./dotnet-install.sh --channel 8.0 --install-dir \$HOME/dotnet
 
-                # Show installed version
-                \$HOME/dotnet/dotnet --version
+                echo ""
+                echo "Testing dotnet installation..."
+                export PATH=\$HOME/dotnet:\$PATH
+                dotnet --info
                 """
             }
         }
+
 
         stage('Restore Dependencies') {
             steps {

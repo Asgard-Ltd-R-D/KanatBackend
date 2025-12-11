@@ -129,7 +129,9 @@ pipeline {
 def runBuild(String arch) {
     echo "🏗️ Building installers for architecture: ${arch}"
 
-    sh """
+    sh """#!/bin/bash
+    set -e
+
     sudo apt-get update
     sudo apt-get install -y python3-tk tk-dev
 
@@ -144,13 +146,14 @@ def runBuild(String arch) {
 
     mkdir -p installers/${arch}
 
+    # Use space-separated list instead of bash arrays
     if [ "${arch}" = "x64" ]; then
-        platforms=("linux-x64" "win-x64" "osx-x64")
+        platforms="linux-x64 win-x64 osx-x64"
     else
-        platforms=("linux-arm64" "win-arm64" "osx-arm64")
+        platforms="linux-arm64 win-arm64 osx-arm64"
     fi
 
-    for platform in "\${platforms[@]}"; do
+    for platform in \$platforms; do
         outDir="installers/\${platform}"
         echo "🔧 Building installer for \$platform..."
 

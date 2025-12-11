@@ -184,6 +184,8 @@ def runBuild(String arch) {
         mkdir -p artifacts
         mkdir -p "\$outDir"
 
+        rm -rf .venv
+
         bash ./build_artifacts.sh "\$platform"
 
         cp -R artifacts/* "\$outDir/"

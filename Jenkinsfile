@@ -157,7 +157,7 @@ def runBuild(String arch) {
     echo "dotnet version: \$(dotnet --version)"
 
     sudo apt-get update
-    sudo apt-get install -y python3-tk tk-dev python3-venv python3.13-venv || true
+    sudo apt-get install -y python3-tk tk-dev python3-venv python3.13-venv libpython3.13 || true
 
     docker buildx create --use --name kanatbuilder || true
     docker buildx inspect --bootstrap

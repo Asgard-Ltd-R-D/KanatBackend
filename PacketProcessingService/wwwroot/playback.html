@@ -79,7 +79,7 @@
                 console.log(`Switching to ${mode} mode...`);
                 
                 // Call backend API to change mode
-                const response = await fetch(`http://localhost:10901/api/range/mode/${mode}`, {
+                const response = await fetch(`${window.location.origin}/api/range/mode/${mode}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
@@ -110,7 +110,7 @@
         // Console Access Functions
         function openConsole(consoleType) {
             if (consoleType === 'swagger') {
-                window.open('http://localhost:10901/swagger/index.html', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+                window.open(window.location.origin + '/swagger/index.html', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
             } else if (consoleType === 'questdb') {
                 window.open('http://localhost:9000/index.html', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
             }

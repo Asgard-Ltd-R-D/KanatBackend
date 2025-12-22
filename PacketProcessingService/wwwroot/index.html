@@ -526,7 +526,7 @@
         // Console Access Functions
         function openConsole(consoleType) {
             if (consoleType === 'swagger') {
-                window.open('http://localhost:10901/swagger/index.html', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+                window.open(window.location.origin + '/swagger/index.html', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
             } else if (consoleType === 'questdb') {
                 window.open('http://localhost:9000/index.html', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
             } else if (consoleType === 'seq') {

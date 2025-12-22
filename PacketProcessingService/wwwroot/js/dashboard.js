@@ -1,3 +1,14 @@
+// === CONFIGURATION ===
+// Get the base URL dynamically from the current page location
+function getBaseUrl() {
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    const port = window.location.port || (protocol === 'https:' ? '443' : '80');
+    return `${protocol}//${hostname}:${port}`;
+}
+
+const API_BASE_URL = getBaseUrl();
+
 // === STATE ===
 let connection = null;
 let hubConnected = false;
@@ -106,7 +117,7 @@ window.addEventListener('load', () => {
 // === STATE MANAGEMENT ===
 async function loadCurrentState() {
     try {
-        const response = await fetch('http://localhost:10901/api/range/mode');
+        const response = await fetch(`${API_BASE_URL}/api/range/mode`);
         
         if (response.ok) {
             const result = await response.json();
@@ -205,7 +216,7 @@ async function connectHub() {
         return;
     }
     
-    const hubUrl = 'http://localhost:10901/hubs/telemetry';
+    const hubUrl = `${API_BASE_URL}/hubs/telemetry`;
     logMessage(`Connecting to Telemetry hub: ${hubUrl}`, 'info');
     
     // Show connecting state
@@ -413,7 +424,7 @@ function updateDashboardTitle() {
 // === DEVICE MANAGEMENT ===
 async function loadAvailableDevices() {
     try {
-        const response = await fetch('http://localhost:10901/api/range/realtime/devices');
+        const response = await fetch(`${API_BASE_URL}/api/range/realtime/devices`);
         
         if (!response.ok) {
             logMessage('Failed to load available devices', 'error');
@@ -478,7 +489,7 @@ async function switchMode(mode) {
         logMessage(`Switching to ${mode} mode...`, 'info');
         
         // Call backend API to change mode
-        const response = await fetch(`http://localhost:10901/api/range/mode/${mode}`, {
+        const response = await fetch(`${API_BASE_URL}/api/range/mode/${mode}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
@@ -547,7 +558,7 @@ async function startRange() {
     };
     try {
         logMessage('Starting range...', 'info');
-        const response = await fetch('http://localhost:10901/api/range/realtime/start', {
+        const response = await fetch(`${API_BASE_URL}/api/range/realtime/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
@@ -570,7 +581,7 @@ async function startRange() {
 async function stopRange() {
     try {
         logMessage('Stopping range...', 'info');
-        const response = await fetch('http://localhost:10901/api/range/realtime/stop', { method: 'DELETE' });
+        const response = await fetch(`${API_BASE_URL}/api/range/realtime/stop`, { method: 'DELETE' });
         const result = await response.json();
         if (response.ok) {
             const range = result.data || result;
@@ -637,7 +648,7 @@ async function startCaptureDev() {
     try {
         logMessage(`Starting capture on device: ${deviceName}...`, 'info');
         
-        const response = await fetch(`http://localhost:10901/api/range/dev/realtime/start/${encodeURIComponent(deviceName)}`, {
+        const response = await fetch(`${API_BASE_URL}/api/range/dev/realtime/start/${encodeURIComponent(deviceName)}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -665,7 +676,7 @@ async function stopCaptureDev() {
     try {
         logMessage('Stopping capture...', 'info');
         
-        const response = await fetch('http://localhost:10901/api/range/dev/realtime/stop', {
+        const response = await fetch(`${API_BASE_URL}/api/range/dev/realtime/stop`, {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json'
@@ -695,7 +706,7 @@ let postgresConnected = false;
 
 async function checkApiHealth() {
     try {
-        const response = await fetch('http://localhost:10901/health', {
+        const response = await fetch(`${API_BASE_URL}/health`, {
             method: 'GET',
             cache: 'no-cache'
         });
@@ -748,7 +759,7 @@ async function checkQuestDbHealth() {
 async function checkPostgresHealth() {
     try {
         // Use the health endpoint to check if API can connect to databases
-        const response = await fetch('http://localhost:10901/health', {
+        const response = await fetch(`${API_BASE_URL}/health`, {
             method: 'GET',
             cache: 'no-cache'
         });
@@ -780,7 +791,7 @@ async function resetStats() {
         logMessage('Resetting statistics...', 'info');
         
         // Call backend to reset server-side statistics
-        const response = await fetch('http://localhost:10901/api/range/reset', {
+        const response = await fetch(`${API_BASE_URL}/api/range/reset`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -870,7 +881,7 @@ function updateConnectionStatus() {
 // Fallback server status checker used by Packet Hub connect logic
 async function checkServerStatus() {
     try {
-        const res = await fetch('http://localhost:10901/health', { method: 'GET', cache: 'no-cache' });
+        const res = await fetch(`${API_BASE_URL}/health`, { method: 'GET', cache: 'no-cache' });
         return !!res;
     } catch (_) {
         // If health check is blocked by CORS or unreachable, don't block UI
@@ -1582,7 +1593,7 @@ async function connectPacketHub() {
         return;
     }
     
-    const hubUrl = 'http://localhost:10901/hubs/packets';
+    const hubUrl = `${API_BASE_URL}/hubs/packets`;
     console.log('Attempting to connect to:', hubUrl);
     logPacketHubMessage(`Connecting to Packet Hub: ${hubUrl}`, 'info');
     

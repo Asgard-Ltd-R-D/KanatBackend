@@ -46,13 +46,14 @@ echo "Publishing to ${RTSP_URL} from udp://${MCAST_IP}:${MCAST_PORT}"
 
 trap 'echo "Stopping..."; exit 0' INT TERM
 
-# Loop forever
+
 while :; do
   "$GST_BIN" -e \
-    udpsrc multicast-group="${MCAST_IP}" auto-multicast=true port="${MCAST_PORT}" \
-         caps="application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,pt=96" ! \
-    rtpjitterbuffer ! rtph264depay ! h264parse config-interval=-1 ! \
-    rtspclientsink location="${RTSP_URL}" protocols=tcp do-rtsp-keep-alive=false
+    udpsrc multicast-group="${MCAST_IP}" port="${MCAST_PORT}" auto-multicast=true ! \
+    application/x-rtp,media=video,encoding-name=H264 ! \
+    rtpjitterbuffer latency=0 drop-on-latency=true ! \
+    rtph264depay ! h264parse ! \
+    rtspclientsink location="${RTSP_URL}" protocols=tcp
 
   sleep 0.2
 done

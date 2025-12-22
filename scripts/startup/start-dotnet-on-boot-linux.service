@@ -7,9 +7,9 @@ Requires=docker.service
 [Service]
 Type=simple
 User=asgard
-WorkingDirectory=%h/Desktop/KanatBackend
+WorkingDirectory=/home/asgard/Desktop/KanatBackend
 
-ExecStart=%h/Desktop/KanatBackend/scripts/startup/start-dotnet-on-boot-linux.sh
+ExecStart=/home/asgard/Desktop/KanatBackend/scripts/startup/start-dotnet-on-boot-linux.sh
 
 Restart=on-failure
 RestartSec=5

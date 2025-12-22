@@ -52,7 +52,7 @@ log_config_snapshot() {
     fi
 
     # Log PacketProcessingService appsettings.Production.json if available
-    local appsettings_path="$PROJECT_ROOT/artifacts/releases/$ENVIRONMENT/appsettings.Production.json"
+    local appsettings_path="$PROJECT_ROOT/PacketProcessingService/appsettings.Production.json"
     if [ -f "$appsettings_path" ]; then
         log "PacketProcessingService appsettings.Production.json found at: $appsettings_path"
         log "appsettings.Production.json contents:"

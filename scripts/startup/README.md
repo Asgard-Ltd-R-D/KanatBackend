@@ -54,7 +54,7 @@ The Linux startup script will:
 
 5. View logs:
    ```bash
-   journalctl -u start-dotnet-on-boot-linux.service -f
+   journalctl -u start-dotnet-on-boot-linux.service -n 200 -f
    ```
 
 ### Option 2: Crontab

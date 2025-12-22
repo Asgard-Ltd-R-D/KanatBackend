@@ -13,6 +13,20 @@ The Linux startup script will:
 
 ## Linux Installation
 
+### Docker Desktop startup
+
+1. ```bash
+   mkdir -p ~/.config/autostart
+   nano ~/.config/autostart/docker-desktop.desktop
+   ```
+2. ```ini
+   [Desktop Entry]
+   Type=Application
+   Name=Docker Desktop
+   Exec=/usr/bin/docker-desktop
+   X-GNOME-Autostart-enabled=true
+   ```
+
 ### Option 1: Systemd Service (Recommended)
 
 1. Edit `start-dotnet-on-boot-linux.service` and update the path in `ExecStart`:
@@ -30,7 +44,7 @@ The Linux startup script will:
    sudo cp start-dotnet-on-boot-linux.service /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable start-dotnet-on-boot-linux.service
-   sudo systemctl start start-dotnet-on-boot-linux.service
+   sudo systemctl restart start-dotnet-on-boot-linux.service
    ```
 
 4. Check status:
@@ -107,4 +121,3 @@ Each run creates a new log file with a timestamp.
 
 You can also view systemd service logs:
 - `journalctl -u start-dotnet-on-boot-linux.service -f`
-

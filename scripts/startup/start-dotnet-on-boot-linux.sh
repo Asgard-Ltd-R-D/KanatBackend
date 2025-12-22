@@ -32,6 +32,40 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+# Log relevant configuration/environment information for debugging
+log_config_snapshot() {
+    log "----- Configuration snapshot start -----"
+    log "KANAT_ENV (input): ${KANAT_ENV:-<not set>}"
+    log "Resolved ENVIRONMENT: $ENVIRONMENT"
+    log "PROJECT_ROOT: $PROJECT_ROOT"
+
+    # Log docker-compose file used for this environment (if present)
+    local compose_file="$PROJECT_ROOT/docker-compose.${ENVIRONMENT}.yml"
+    if [ -f "$compose_file" ]; then
+        log "docker-compose file for environment '$ENVIRONMENT': $compose_file"
+        log "docker-compose.${ENVIRONMENT}.yml contents:"
+        while IFS= read -r line; do
+            log "  $line"
+        done < "$compose_file"
+    else
+        log "docker-compose file not found for environment '$ENVIRONMENT': $compose_file"
+    fi
+
+    # Log PacketProcessingService appsettings.Production.json if available
+    local appsettings_path="$PROJECT_ROOT/artifacts/releases/$ENVIRONMENT/appsettings.Production.json"
+    if [ -f "$appsettings_path" ]; then
+        log "PacketProcessingService appsettings.Production.json found at: $appsettings_path"
+        log "appsettings.Production.json contents:"
+        while IFS= read -r line; do
+            log "  $line"
+        done < "$appsettings_path"
+    else
+        log "PacketProcessingService appsettings.Production.json not found at: $appsettings_path"
+    fi
+
+    log "----- Configuration snapshot end -----"
+}
+
 # Check if docker is available
 check_docker() {
     if ! command -v docker &> /dev/null; then
@@ -135,9 +169,9 @@ start_dotnet() {
     
     # Start the service in detached mode
     cd "$PROJECT_ROOT" || return 1
-    log "Running: python3 $COMPOSER_PATH up $env -d"
+    log "Running: python3 $COMPOSER_PATH up $env"
     
-    if python3 "$COMPOSER_PATH" up "$env" -d >> "$LOG_FILE" 2>&1; then
+    if python3 "$COMPOSER_PATH" up "$env" >> "$LOG_FILE" 2>&1; then
         log "Successfully started PacketProcessingService"
         return 0
     else
@@ -185,6 +219,9 @@ main() {
     
     log "Detected running environment: $running_env"
     
+    # Log configuration snapshot so it appears in systemd/journalctl logs
+    log_config_snapshot
+
     # Start the dotnet program
     if start_dotnet "$running_env"; then
         log "Startup completed successfully"
@@ -197,4 +234,3 @@ main() {
 
 # Run main function
 main "$@"
-

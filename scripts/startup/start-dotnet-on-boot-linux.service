@@ -1,16 +1,22 @@
 [Unit]
-Description=Start PacketProcessingService after docker compose stack is running
+Description=Start PacketProcessingService after Docker is ready
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
 
 [Service]
 Type=simple
-User=tamirspilberg
-WorkingDirectory=/absolute/path/to/KanatBackend
-ExecStart=/bin/bash/absolute/path/to/KanatBackend/scripts/startup/start-dotnet-on-boot-linux.sh
+User=asgard
+WorkingDirectory=%h/Desktop/KanatBackend
+
+ExecStart=%h/Desktop/KanatBackend/scripts/startup/start-dotnet-on-boot-linux.sh
+
 Restart=on-failure
-RestartSec=30
+RestartSec=5
+
+StartLimitIntervalSec=300
+StartLimitBurst=60
+
 StandardOutput=journal
 StandardError=journal
 

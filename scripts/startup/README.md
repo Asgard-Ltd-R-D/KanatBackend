@@ -16,6 +16,9 @@ The Linux startup script will:
 ### Docker Desktop startup
 
 1. ```bash
+   sudo systemctl enable docker
+   sudo systemctl start docker
+   systemctl is-enabled docker
    mkdir -p ~/.config/autostart
    nano ~/.config/autostart/docker-desktop.desktop
    ```

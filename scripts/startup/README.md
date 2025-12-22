@@ -19,11 +19,26 @@ The Linux startup script will:
    mkdir -p ~/.config/autostart
    nano ~/.config/autostart/docker-desktop.desktop
    ```
+   
 2. ```ini
    [Desktop Entry]
    Type=Application
    Name=Docker Desktop
    Exec=/usr/bin/docker-desktop
+   X-GNOME-Autostart-enabled=true
+   ```
+
+### PacketProcessing Teminal Openm
+
+1. ```bash
+   nano ~/.config/autostart/packetprocessing.desktop
+   ```
+
+2. ```ini
+   [Desktop Entry]
+   Type=Application
+   Name=PacketProcessingService Console
+   Exec=gnome-terminal -- bash -lc '%h/Desktop/KanatBackend/scripts/startup/start-dotnet-on-boot-linux.sh; exec bash'
    X-GNOME-Autostart-enabled=true
    ```
 

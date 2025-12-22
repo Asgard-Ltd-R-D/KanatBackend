@@ -13,36 +13,33 @@ The Linux startup script will:
 
 ## Linux Installation
 
-### Docker Desktop startup
+### One-time automatic setup (systemd + GNOME indicator)
 
-1. ```bash
+To automatically configure Docker on boot, the systemd service, and the GNOME top-bar status icon:
+
+1. From the project root, run:
+   ```bash
+   sudo bash scripts/startup/setup-linux-startup.sh
+   ```
+
+2. Then, as your normal user (not root):
+   - Restart GNOME Shell  
+     - On X11: press `Alt+F2`, type `r`, press Enter  
+     - On Wayland: log out and log back in
+   - Enable the extension:
+     ```bash
+     gnome-extensions enable dotnet-port-status@kanatbackend
+     ```
+
+The top bar will then show a green/red icon based on `localhost:10900` (dotnet prod) status.
+
+### Ensure Docker engine starts on boot
+
+1. Enable and start the Docker daemon:
+   ```bash
    sudo systemctl enable docker
    sudo systemctl start docker
    systemctl is-enabled docker
-   mkdir -p ~/.config/autostart
-   nano ~/.config/autostart/docker-desktop.desktop
-   ```
-   
-2. ```ini
-   [Desktop Entry]
-   Type=Application
-   Name=Docker Desktop
-   Exec=/usr/bin/docker-desktop
-   X-GNOME-Autostart-enabled=true
-   ```
-
-### PacketProcessing Teminal Openm
-
-1. ```bash
-   nano ~/.config/autostart/packetprocessing.desktop
-   ```
-
-2. ```ini
-   [Desktop Entry]
-   Type=Application
-   Name=PacketProcessingService Console
-   Exec=gnome-terminal -- bash -lc '%h/Desktop/KanatBackend/scripts/startup/start-dotnet-on-boot-linux.sh; exec bash'
-   X-GNOME-Autostart-enabled=true
    ```
 
 ### Option 1: Systemd Service (Recommended)
@@ -57,7 +54,7 @@ The Linux startup script will:
    chmod +x start-dotnet-on-boot-linux.sh
    ```
 
-3. Copy and enable the service:
+3. Copy and enable the service (runs at boot, headless):
    ```bash
    sudo cp start-dotnet-on-boot-linux.service /etc/systemd/system/
    sudo systemctl daemon-reload
@@ -75,7 +72,7 @@ The Linux startup script will:
    journalctl -u start-dotnet-on-boot-linux.service -n 200 -f
    ```
 
-### Option 2: Crontab
+### Option 2: Crontab (simple fallback)
 
 1. Make the script executable:
    ```bash
@@ -91,6 +88,91 @@ The Linux startup script will:
    ```
    @reboot /absolute/path/to/KanatBackend/scripts/startup/start-dotnet-on-boot-linux.sh
    ```
+
+### GNOME top-bar status icon (native Shell extension)
+
+A GNOME Shell extension is included to show a native status icon in the top bar (right side) that reflects the health of the dotnet prod port (`localhost:10900`):
+
+- Green icon: port 10900 reachable (online)
+- Red icon: port 10900 unreachable (offline)
+
+The extension source is in:
+
+- `scripts/gnome-extension/dotnet-port-status@kanatbackend`
+
+If you do not use the automatic setup script, you can install it manually on your Ubuntu GNOME system:
+
+1. Copy the extension to your user extensions directory:
+   ```bash
+   mkdir -p ~/.local/share/gnome-shell/extensions
+   cp -r scripts/gnome-extension/dotnet-port-status@kanatbackend \
+         ~/.local/share/gnome-shell/extensions/
+   ```
+
+2. Restart GNOME Shell:
+   - On X11: press `Alt+F2`, type `r`, press Enter  
+   - On Wayland: log out and log back in
+
+3. Enable the extension:
+   ```bash
+   gnome-extensions enable dotnet-port-status@kanatbackend
+   ```
+
+Once enabled, the icon will poll `127.0.0.1:10900` every few seconds and show the status natively in the GNOME top bar.
+
+### Optional: Open a terminal with live dotnet logs on login
+
+Systemd runs at boot without a GUI, so it can't reliably pop up a terminal window.  
+If you want to **see logs live in a terminal after you log in**, use a desktop autostart entry:
+
+1. Create the autostart directory (if it doesn't exist):
+   ```bash
+   mkdir -p ~/.config/autostart
+   ```
+
+2. Create an autostart file:
+   ```bash
+   nano ~/.config/autostart/packetprocessing-console.desktop
+   ```
+
+3. Put this content inside (adjust the path if your project is not on `Desktop`):
+   ```ini
+   [Desktop Entry]
+   Type=Application
+   Name=PacketProcessingService Console
+   Exec=gnome-terminal -- bash -lc 'tail -n 200 -F ~/.kanat-backend/logs/dotnet-*.log; exec bash'
+   X-GNOME-Autostart-enabled=true
+   ```
+
+This will:
+- Start normally via systemd on boot (headless, reliable)
+- Open a terminal on login that tails the dotnet logs so you can see live output
+
+## Cleanup / Uninstall
+
+To completely remove all startup components (systemd service, Docker containers, GNOME extension, etc.):
+
+```bash
+sudo bash scripts/startup/cleanup-linux-startup.sh
+```
+
+This script will:
+- Stop and remove the systemd service
+- Kill all PacketProcessingService dotnet processes
+- Stop and remove all kanatbackend Docker containers (prod and dev)
+- Remove the GNOME Shell extension
+- Remove autostart entries
+
+**To also remove Docker volumes** (⚠️ **this deletes all database data**):
+
+```bash
+sudo bash scripts/startup/cleanup-linux-startup.sh --remove-volumes
+```
+
+**Note**: Log files in `~/.kanat-backend/logs/` are preserved. Remove them manually if needed:
+```bash
+rm -rf ~/.kanat-backend/logs
+```
 
 ## Configuration
 

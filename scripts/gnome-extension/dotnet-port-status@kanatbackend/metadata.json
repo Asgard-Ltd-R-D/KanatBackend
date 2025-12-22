@@ -1,0 +1,17 @@
+{
+  "uuid": "dotnet-port-status@kanatbackend",
+  "name": "Dotnet Port Status",
+  "description": "Shows green/red panel icon based on reachability of localhost:10900 (dotnet prod).",
+  "shell-version": [
+    "3.36",
+    "3.38",
+    "40",
+    "41",
+    "42",
+    "43",
+    "44",
+    "45",
+    "46"
+  ],
+  "version": 1
+}

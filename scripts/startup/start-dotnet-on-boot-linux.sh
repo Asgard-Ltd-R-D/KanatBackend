@@ -144,8 +144,8 @@ is_dotnet_running() {
     return 1
 }
 
-# Start the dotnet program using composer
-start_dotnet() {
+# Start the dotnet program using composer (headless, for systemd/cron)
+start_dotnet_headless() {
     local env=$1
     
     if is_dotnet_running; then
@@ -167,9 +167,8 @@ start_dotnet() {
         return 1
     fi
     
-    # Start the service in detached mode
     cd "$PROJECT_ROOT" || return 1
-    log "Running: python3 $COMPOSER_PATH up $env"
+    log "Running (headless): python3 $COMPOSER_PATH up $env"
     
     if python3 "$COMPOSER_PATH" up "$env" >> "$LOG_FILE" 2>&1; then
         log "Successfully started PacketProcessingService"
@@ -178,6 +177,45 @@ start_dotnet() {
         log "ERROR: Failed to start PacketProcessingService"
         return 1
     fi
+}
+
+# Start the dotnet program in a new terminal window (interactive use)
+start_dotnet_in_terminal() {
+    local env=$1
+
+    # Only try if we appear to have a GUI session and gnome-terminal
+    if [ -z "${DISPLAY:-}" ]; then
+        return 1
+    fi
+    if ! command -v gnome-terminal &> /dev/null; then
+        return 1
+    fi
+
+    if is_dotnet_running; then
+        log "PacketProcessingService is already running, skipping startup"
+        return 0
+    fi
+
+    if [ ! -f "$COMPOSER_PATH" ]; then
+        log "ERROR: composer.py not found at $COMPOSER_PATH"
+        return 1
+    fi
+    if ! command -v python3 &> /dev/null; then
+        log "ERROR: Python 3 is not installed or not in PATH"
+        return 1
+    fi
+
+    log "Launching PacketProcessingService in a new terminal (environment: $env)"
+    gnome-terminal -- bash -lc "
+cd '$PROJECT_ROOT' || exit 1
+echo \"Running: python3 '$COMPOSER_PATH' up '$env'\"
+python3 '$COMPOSER_PATH' up '$env'
+echo
+echo 'PacketProcessingService finished. Press Enter to close this window...'
+read
+" >/dev/null 2>&1 &
+
+    return 0
 }
 
 # Main execution
@@ -221,9 +259,16 @@ main() {
     
     # Log configuration snapshot so it appears in systemd/journalctl logs
     log_config_snapshot
+    
+    # If we're in a user GUI session (not under systemd), open a new terminal for live output
+    if [ -z "${SYSTEMD_INVOCATION_ID:-}" ] && start_dotnet_in_terminal "$running_env"; then
+        log "Started PacketProcessingService in a new terminal window"
+        log "Startup completed successfully"
+        exit 0
+    fi
 
-    # Start the dotnet program
-    if start_dotnet "$running_env"; then
+    # Fallback/headless mode (for systemd/cron)
+    if start_dotnet_headless "$running_env"; then
         log "Startup completed successfully"
         exit 0
     else

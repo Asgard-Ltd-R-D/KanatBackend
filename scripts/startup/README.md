@@ -140,7 +140,7 @@ If you want to **see logs live in a terminal after you log in**, use a desktop a
    [Desktop Entry]
    Type=Application
    Name=PacketProcessingService Console
-   Exec=gnome-terminal -- bash -lc 'tail -n 200 -F ~/.kanat-backend/logs/dotnet-*.log; exec bash'
+   Exec=gnome-terminal -- bash -lc 'gnome-terminal -- bash -lc 'journalctl -u start-dotnet-on-boot-linux.service -n 200 -f; exec bash''
    X-GNOME-Autostart-enabled=true
    ```
 

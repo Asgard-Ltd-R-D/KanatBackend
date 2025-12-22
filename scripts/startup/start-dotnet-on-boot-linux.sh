@@ -144,7 +144,7 @@ is_dotnet_running() {
     return 1
 }
 
-# Start the dotnet program using composer (headless, for systemd/cron)
+# Build and start the dotnet program using composer (headless, for systemd/cron)
 start_dotnet_headless() {
     local env=$1
     
@@ -168,8 +168,17 @@ start_dotnet_headless() {
     fi
     
     cd "$PROJECT_ROOT" || return 1
-    log "Running (headless): python3 $COMPOSER_PATH up $env"
     
+    # Step 1: Build first
+    log "Running build: python3 $COMPOSER_PATH build"
+    if ! python3 "$COMPOSER_PATH" build >> "$LOG_FILE" 2>&1; then
+        log "ERROR: Build failed"
+        return 1
+    fi
+    log "Build completed successfully"
+    
+    # Step 2: Start containers and dotnet
+    log "Running (headless): python3 $COMPOSER_PATH up $env"
     if python3 "$COMPOSER_PATH" up "$env" >> "$LOG_FILE" 2>&1; then
         log "Successfully started PacketProcessingService"
         return 0
@@ -179,7 +188,7 @@ start_dotnet_headless() {
     fi
 }
 
-# Start the dotnet program in a new terminal window (interactive use)
+# Build and start the dotnet program in a new terminal window (interactive use)
 start_dotnet_in_terminal() {
     local env=$1
 
@@ -208,7 +217,10 @@ start_dotnet_in_terminal() {
     log "Launching PacketProcessingService in a new terminal (environment: $env)"
     gnome-terminal -- bash -lc "
 cd '$PROJECT_ROOT' || exit 1
-echo \"Running: python3 '$COMPOSER_PATH' up '$env'\"
+echo \"Step 1: Building...\"
+python3 '$COMPOSER_PATH' build
+echo
+echo \"Step 2: Starting environment ($env)...\"
 python3 '$COMPOSER_PATH' up '$env'
 echo
 echo 'PacketProcessingService finished. Press Enter to close this window...'
@@ -232,30 +244,23 @@ main() {
         exit 1
     fi
     
-    # Determine which environment is running (check prod first, then dev)
-    local running_env=""
-    if check_compose_running "prod"; then
-        running_env="prod"
-        ENVIRONMENT="prod"
-    elif check_compose_running "dev"; then
-        running_env="dev"
-        ENVIRONMENT="dev"
-    else
-        log "No docker compose stack found running. Waiting for stack to start..."
-        # Try waiting for prod first, then dev
-        if wait_for_compose "prod"; then
+    # Determine which environment to use (default to prod, can be overridden by KANAT_ENV)
+    local running_env="${ENVIRONMENT:-prod}"
+    
+    # If KANAT_ENV is not set, prefer prod if available, otherwise dev
+    if [ -z "${KANAT_ENV:-}" ]; then
+        if check_compose_running "prod"; then
             running_env="prod"
-            ENVIRONMENT="prod"
-        elif wait_for_compose "dev"; then
+        elif check_compose_running "dev"; then
             running_env="dev"
-            ENVIRONMENT="dev"
         else
-            log "ERROR: No docker compose stack is running after waiting"
-            exit 1
+            # Default to prod if nothing is running (composer.py up will start it)
+            running_env="prod"
         fi
     fi
     
-    log "Detected running environment: $running_env"
+    ENVIRONMENT="$running_env"
+    log "Using environment: $running_env"
     
     # Log configuration snapshot so it appears in systemd/journalctl logs
     log_config_snapshot

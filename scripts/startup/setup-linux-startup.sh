@@ -47,7 +47,7 @@ echo
 echo "=== Step 2: Install and enable systemd service for PacketProcessingService ==="
 
 SERVICE_DEST="/etc/systemd/system/start-dotnet-on-boot-linux.service"
-SCRIPT_DEST="$PROJECT_ROOT/scripts/startup/start-dotnet-on-boot-linux.sh"
+SCRIPT_DEST="/home/asgard/$PROJECT_ROOT/scripts/startup/start-dotnet-on-boot-linux.sh"
 
 if [[ ! -f "$SCRIPT_DEST" ]]; then
   echo "ERROR: Startup script not found at $SCRIPT_DEST"

@@ -8,4 +8,4 @@ class UpCommand(Command):
     def run(self, usecases, args) -> int:
         env = getattr(args, "environment", None) or "prod"
         det = getattr(args, "detached", False)
-        return usecases.up(env, det)
+        return usecases.up(env, det, args)

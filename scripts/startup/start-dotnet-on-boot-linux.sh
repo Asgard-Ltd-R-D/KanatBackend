@@ -178,8 +178,8 @@ start_dotnet_headless() {
     log "Build completed successfully"
     
     # Step 2: Start containers and dotnet
-    log "Running (headless): python3 $COMPOSER_PATH up $env"
-    if python3 "$COMPOSER_PATH" up "$env" >> "$LOG_FILE" 2>&1; then
+    log "Running (headless): python3 $COMPOSER_PATH up $env --mediamtx"
+    if python3 "$COMPOSER_PATH" up "$env" --mediamtx >> "$LOG_FILE" 2>&1; then
         log "Successfully started PacketProcessingService"
         return 0
     else
@@ -220,8 +220,8 @@ cd '$PROJECT_ROOT' || exit 1
 echo \"Step 1: Building...\"
 python3 '$COMPOSER_PATH' build
 echo
-echo \"Step 2: Starting environment ($env)...\"
-python3 '$COMPOSER_PATH' up '$env'
+echo \"Step 2: Starting environment ($env) with MediaMtx...\"
+python3 '$COMPOSER_PATH' up '$env' --mediamtx
 echo
 echo 'PacketProcessingService finished. Press Enter to close this window...'
 read

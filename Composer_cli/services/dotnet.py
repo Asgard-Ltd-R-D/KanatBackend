@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..abstractions import DotnetService, BuildResult
 from ..shell import SubprocessShell
-from ..utils.messages import info, error, warn
+from ..utils.messages import info, error, warn, print_started, print_stopped
 
 
 class DefaultDotnetService(DotnetService):
@@ -59,7 +59,7 @@ class DefaultDotnetService(DotnetService):
         if detach:
             self.terminate_packetprocessing(dll_path, environment)
         dotnet_env = "Development" if environment == "dev" else "Production"
-        info(f"Starting PacketProcessingService ({dotnet_env})...")
+        print_started(f"PacketProcessingService ({dotnet_env})")
         cmd = ["dotnet", str(dll_path), "--environment", dotnet_env]
         if detach:
             self.sh.open_new_terminal(
@@ -98,6 +98,7 @@ class DefaultDotnetService(DotnetService):
 
         # Close any terminal windows associated with this environment
         self.sh.close_terminal_windows(self._terminal_title(environment))
+        print_stopped(f"PacketProcessingService ({environment})")
 
     def project_exists(self) -> bool:
         return self.project_dir.exists()

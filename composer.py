@@ -68,6 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Environment to start (default: prod)",
     )
     p_up.add_argument("-d", "--detached", action="store_true")
+    p_up.add_argument("--mediamtx", action="store_true", help="Start MediaMtx service")
 
     # stop
     p_stop = sub.add_parser("stop", help="Stop environment")

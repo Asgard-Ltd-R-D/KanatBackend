@@ -33,13 +33,23 @@ public class MotionPacketParser
         {
             // --- Try to locate an IPv4 header dynamically (0x45 = IPv4 + IHL=5) ---
             int ipStart = -1;
-            for (int i = 0; i < Math.Min(32, rawPacket.Length - 20); i++)
+            
+            // Check if it's already a raw motion packet (Starts with 0x50 0x54)
+            // This priority check prevents packets >= 20 bytes from being misidentified as TCP frames without IP headers
+            if (rawPacket.Length >= 2 && rawPacket[0] == 0x50 && rawPacket[1] == 0x54)
             {
-                // IPv4 header signature: 0x45 (version=4, IHL=5)
-                if (rawPacket[i] == 0x45 && rawPacket.Length > i + 20)
+                ipStart = -1; // Force direct payload usage
+            }
+            else
+            {
+                for (int i = 0; i < Math.Min(32, rawPacket.Length - 20); i++)
                 {
-                    ipStart = i;
-                    break;
+                    // IPv4 header signature: 0x45 (version=4, IHL=5)
+                    if (rawPacket[i] == 0x45 && rawPacket.Length > i + 20)
+                    {
+                        ipStart = i;
+                        break;
+                    }
                 }
             }
 
@@ -54,30 +64,46 @@ public class MotionPacketParser
                 payload = ExtractTcpPayload(rawPacket, ipStart, out srcPort, out dstPort);
                 if (payload.IsEmpty)
                 {
-                    _logger.LogDebug("Failed to extract TCP payload (ipStart={Start})", ipStart);
+                    // This is expected for TCP Control packets (ACK, FIN, SYN) which have no payload.
+                    // Downgrading to Trace to avoid "error" noise.
+                    _logger.LogTrace("TCP payload empty (likely control packet) (ipStart={Start})", ipStart);
                     return null;
                 }
             }
             else
             {
                 // Case 2: No IPv4 → still attempt to parse TCP header directly
-                _logger.LogTrace("No IPv4 header found; assuming TCP header starts at offset 0.");
+                // UNLESS we already identified it as a raw Motion Packet (ipStart == -1 check logic above handled strict filtering, but here we enforce it)
+                
+                bool isRawMotion = (rawPacket.Length >= 2 && rawPacket[0] == 0x50 && rawPacket[1] == 0x54);
 
-                if (rawPacket.Length >= 20)
+                if (!isRawMotion)
                 {
-                    srcPort = BinaryPrimitives.ReadUInt16BigEndian(rawPacket.Slice(0, 2));
-                    dstPort = BinaryPrimitives.ReadUInt16BigEndian(rawPacket.Slice(2, 2));
-                    int tcpHeaderLen = ((rawPacket[12] >> 4) & 0x0F) * 4;
-                    int tcpPayloadStart = tcpHeaderLen;
-
-                    if (tcpPayloadStart < rawPacket.Length)
-                        payload = rawPacket[tcpPayloadStart..];
+                    _logger.LogTrace("No IPv4 header found; assuming TCP header starts at offset 0.");
+    
+                    if (rawPacket.Length >= 20)
+                    {
+                        try 
+                        {
+                            srcPort = BinaryPrimitives.ReadUInt16BigEndian(rawPacket.Slice(0, 2));
+                            dstPort = BinaryPrimitives.ReadUInt16BigEndian(rawPacket.Slice(2, 2));
+                            int tcpHeaderLen = ((rawPacket[12] >> 4) & 0x0F) * 4;
+                            int tcpPayloadStart = tcpHeaderLen;
+        
+                            if (tcpPayloadStart < rawPacket.Length)
+                                payload = rawPacket[tcpPayloadStart..];
+                        }
+                        catch 
+                        {
+                            // If parsing fails, ignore
+                        }
+                    }
                 }
-
-                // If even that fails (e.g., truncated), fallback to raw payload
+                
+                // If even that fails (or if we skipped it because it IS a raw motion packet), fallback to raw payload
                 if (payload.IsEmpty)
                 {
-                    _logger.LogTrace("TCP header parse failed; using entire packet as payload.");
+                    _logger.LogTrace("TCP header parse failed (or skipped); using entire packet as payload.");
                     payload = rawPacket;
                 }
             }
@@ -100,19 +126,25 @@ public class MotionPacketParser
 
             if (!MotionCommands.MotionRecords.TryGetValue(opCode, out var record))
             {
-                _logger.LogDebug("Unknown opcode: 0x{OpCode:X4}, dropping packet.", opCode);
-                return null;
-            }
-            // --- Data Section, can be varying length depending on the opcode ---
-            ReadOnlySpan<byte> captureData = payload.Length > 8 ? payload[7..^1] : [];
-            double value = DecodeValue(captureData, opCode, !isReport);
-            if (double.IsNaN(value))
-            {
-                _logger.LogDebug("Opcode 0x{OpCode:X4} has no decodable value, dropping packet.", opCode);
+                // Verbose log for unknown opcode
+                _logger.LogWarning("Unknown Opcode encountered! Opcode=0x{OpCode:X4} Data={Hex}", opCode, Convert.ToHexString(payload));
                 return null;
             }
 
-            _logger.LogDebug(
+            // --- Data Section, can be varying length depending on the opcode ---
+            ReadOnlySpan<byte> captureData = payload.Length > 8 ? payload[7..^1] : [];
+            double value = DecodeValue(captureData, opCode, !isReport);
+            
+            if (double.IsNaN(value))
+            {
+                // Verbose log for decoding failure
+                var expectedType = !isReport ? record.Send : record.Return;
+                _logger.LogWarning("Failed to decode value! Opcode=0x{OpCode:X4} ({Name}) ExpectedType={Type} DataLen={Len} Data={Hex}", 
+                    opCode, record.OpCodeDescription, expectedType, captureData.Length, Convert.ToHexString(captureData));
+                return null;
+            }
+
+            _logger.LogInformation(
                 "Parsed Motion Packet → Axis={Axis}, Opcode=0x{Op:X4} ({Desc}), Value={Val}, SrcPort={Src}, DstPort={Dst}, IsCmd={IsCmd}",
                 axisId, opCode, record.OpCodeDescription, value, srcPort, dstPort, !isReport);
 
@@ -129,7 +161,7 @@ public class MotionPacketParser
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error parsing motion packet ({Length} bytes)", rawPacket.Length);
+            _logger.LogError(ex, "CRITICAL ERROR parsing motion packet. RawData={Hex}", Convert.ToHexString(rawPacket));
             return null;
         }
     }

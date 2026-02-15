@@ -44,11 +44,6 @@ def replay_pcap(pcap_path, target_ip, target_port, speed_multiplier=1.0):
         for pkt in packets:
             if not pkt.haslayer(TCP):
                 continue
-            
-            # We only care about packets GOING to the target port (simulating client -> server)
-            # In the pcap, the server is port 4949.
-            if pkt[TCP].dport != 4949:
-                continue
                 
             payload = bytes(pkt[TCP].payload)
             if not payload:

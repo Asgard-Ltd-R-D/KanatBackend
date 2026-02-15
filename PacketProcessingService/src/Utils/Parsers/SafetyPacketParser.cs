@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using Microsoft.Extensions.Logging;
 using PacketProcessing.Entities.Packet;
+using PacketProcessing.Utils.Enums;
+using static PacketProcessing.Utils.Parsers.SafetyUtilities.SafetyCommands;
 
 namespace PacketProcessing.Utils.Parsers
 {
@@ -12,32 +14,6 @@ namespace PacketProcessing.Utils.Parsers
         {
             _logger = logger;
         }
-
-        // DO maps (by destination IP)
-        private readonly IReadOnlyDictionary<ushort, string> DO_PBE = new Dictionary<ushort, string>
-        {
-            { 0x0010, "1" },
-            { 0x0027, "DO3_FIRE1" },
-            { 0x0012, "DO2_MOTION" },
-            { 0x0014, "DO4_LED_FIRE_EN" }
-        };
-
-        private readonly IReadOnlyDictionary<ushort, string> DO_SBE = new Dictionary<ushort, string>
-        {
-            { 0x0010, "DO0_RLD" },
-            { 0x0011, "DO1_RLD_SFTY" },
-            { 0x0012, "DO2_PWR" },
-            { 0x0028, "DO4_FIRE2" },
-            { 0x0015, "X5" }
-        };
-
-        private readonly IReadOnlyDictionary<ushort, string> STATE = new Dictionary<ushort, string>
-        {
-            { 0x0000, "OFF" },
-            { 0xFF00, "ON" },
-            { 0x0001, "PULSE" },
-            { 0x0003, "BURST" }
-        };
 
         public SafetyPacketEntity? Parse(ReadOnlySpan<byte> raw)
         {
@@ -97,44 +73,45 @@ namespace PacketProcessing.Utils.Parsers
                 ushort doVal = ReadBE16(payload.Slice(doOffset, 2));
                 ushort stVal = ReadBE16(payload.Slice(stateOffset, 2));
 
-                // --- Map DO/STATE by destination IP when available ---
-                IReadOnlyDictionary<ushort, string>? doMap = dstIp switch
+                // --- Determine Safety Type (PBE/SBE) ---
+                SafetyTypes? safetyType = dstIp switch
                 {
-                    Constants.Constants.PBE_IP=> DO_PBE,
-                    Constants.Constants.SBE_IP => DO_SBE,
-                    _             => null
+                    Constants.Constants.PBE_IP => SafetyTypes.PBE,
+                    Constants.Constants.SBE_IP => SafetyTypes.SBE,
+                    _ => null
                 };
-                if (doMap == null)
+
+                if (safetyType == null)
                 {
-                    _logger.LogDebug("No DO map found for destination IP {DstIp}", dstIp);
+                    _logger.LogDebug("Unknown Safety Type or Destination IP: {DstIp}", dstIp);
                     return null;
                 }
 
-                string doDescr = (doMap != null && doMap.TryGetValue(doVal, out var name)) ? name : $"0x{doVal:X4}";
-                string stDescr = STATE.TryGetValue(stVal, out var sname) ? sname : $"0x{stVal:X4}";
+                // --- Lookups using the new SafetyRecords Dictionary ---
+                // 1. Look up Command (DO) -> Key is (Value, Type)
+                var doKey = ((int)doVal, safetyType.Value);
+                string doDescr = SafetyRecords.TryGetValue(doKey, out var doRec) 
+                    ? doRec.OpCodeDescription 
+                    : $"0x{doVal:X4}";
 
-                var dataPipeName = dstIp switch
-                {
-                    Constants.Constants.PBE_IP => "PBE",
-                    Constants.Constants.SBE_IP => "SBE",
-                    _             => null
-                };
-                if (dataPipeName == null)
-                {
-                    _logger.LogDebug("No data pipe name found for destination IP {DstIp}", dstIp);
-                    return null;
-                }
+                // 2. Look up State -> Key is (Value, SafetyTypes.STATE)
+                var stateKey = ((int)stVal, SafetyTypes.STATE);
+                string stDescr = SafetyRecords.TryGetValue(stateKey, out var stRec) 
+                    ? stRec.OpCodeDescription 
+                    : $"0x{stVal:X4}";
+
+                string dataPipeName = safetyType.Value.ToString(); // "PBE" or "SBE"
 
                 _logger.LogDebug("Parsed Safety Packet → Name: {Name}, DO: {DO}, STATE: {STATE}", dataPipeName, doDescr, stDescr);
 
                 return new SafetyPacketEntity
                 {
                     Id = Guid.NewGuid(),
-                    Timestamp = DateTime.UtcNow, // your pipeline overrides with capture ts
+                    Timestamp = DateTime.UtcNow,
                     IsCmd = true,
                     Name = dataPipeName,
-                    OpCode = $"0x{doVal:X4}",   // HEX value of DO
-                    Description = doDescr,      // DO description
+                    OpCode = $"0x{doVal:X4}",
+                    Description = doDescr,
                     State = stDescr
                 };
             }

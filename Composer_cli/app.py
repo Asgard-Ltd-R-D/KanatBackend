@@ -12,6 +12,7 @@ from .shell import SubprocessShell
 from .services.compose import DefaultComposeService
 from .services.docker import DefaultDockerService
 from .services.dotnet import DefaultDotnetService
+from .services.video import DefaultVideoService
 from .services.environment import EnvironmentManager
 from .services.envmanage import DefaultEnvManager
 from .services.packaging import DefaultPackagingService
@@ -32,6 +33,7 @@ class ComposerApp(ComposerUseCases):
 
         self.docker = docker_service
         self.dotnet = dotnet_service
+        self.video = DefaultVideoService(self.paths.video_service_dir, self.shell)
         self.compose = DefaultComposeService(self.shell)
         self.env = DefaultEnvManager(self.shell)
         self.packager = DefaultPackagingService(self.shell, self.progress, self.paths, docker_service)
@@ -55,7 +57,7 @@ class ComposerApp(ComposerUseCases):
         project_name = f"kanatbackend-{env}"
         return ComposeContext(environment=env, compose_file=compose_file, work_dir=work_dir, project_name=project_name)
 
-    def up(self, environment: str, detached: bool) -> int:
+    def up(self, environment: str, detached: bool, args: any = None) -> int:
         """Ensure prerequisites exist, start Docker services, and optionally launch PacketProcessingService."""
         if not self.docker.is_available():
             error("Docker is not available")
@@ -86,14 +88,21 @@ class ComposerApp(ComposerUseCases):
             return 1
         success("Environment started")
 
+        dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
+        
+        # Start MediaMtx if requested
+        if getattr(args, "mediamtx", False):
+            if self.video.is_available():
+                self.video.run_mediamtx(detach=True)
+            else:
+                warn("MediaMtx requested but not available (binary/config missing in VideoService)")
+
         if detached:
             info("Launching PacketProcessingService in a new terminal window (detached mode)")
-            dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
             time.sleep(1) # Await for docker containers to run
             self.dotnet.run_packetprocessing(dll_path, environment, detach=True)
             return 0
 
-        dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
         time.sleep(1) # Await for docker containers to run
         return self.dotnet.run_packetprocessing(dll_path, environment)
 
@@ -101,6 +110,7 @@ class ComposerApp(ComposerUseCases):
         """Issue docker compose stop for the selected environment."""
         dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
         self.dotnet.terminate_packetprocessing(dll_path, environment)
+        self.video.stop_mediamtx()
         ctx = self._compose_ctx(environment)
         self.compose.stop(ctx)
         success(f"{environment.upper()} stopped")
@@ -110,6 +120,7 @@ class ComposerApp(ComposerUseCases):
         """Stop services, remove containers, and delete release artifacts for the environment."""
         dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
         self.dotnet.terminate_packetprocessing(dll_path, environment)
+        self.video.stop_mediamtx()
         ctx = self._compose_ctx(environment)
         self.env.kill_env(ctx)
         dll_dir = self.paths.release_dir / environment
@@ -131,6 +142,14 @@ class ComposerApp(ComposerUseCases):
             status = "[OK] Built" if built else "[MISSING] PacketProcessingService.dll"
             runtime = f", Running ({platform}) on port {port}" if running else ", Not Running"
             print(f"{env}: {status}{runtime}")
+        
+        # MediaMtx Status
+        mtx_avail = self.video.is_available()
+        mtx_running = self.video.is_running()
+        mtx_status = "[OK] Available" if mtx_avail else "[MISSING] Binary/Config"
+        mtx_runtime = ", Running" if mtx_running else ", Not Running"
+        print(f"MediaMtx: {mtx_status}{mtx_runtime}")
+
         return 0
 
     def build_all(self) -> int:

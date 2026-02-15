@@ -249,147 +249,154 @@ def handle_client(conn, addr):
                 opcode = (packet[5] << 8) | packet[6]
                 data_field = packet[7:-1]
                 
-                # --- Handle System-Level Opcodes (Axis 0 or DG/COM/LRF Groups) ---
-                if axis_id == 0:
-                    
-                    # Connection/System
-                    if opcode == protocol.NAME_TO_OPCODE["COM_Connect"]:
-                        print(f"[Server] Received COM_Connect. Acknowledging.")
-                        conn.sendall(protocol.ACK_REPLY)
-                    
-                    # LRF COMMANDS
-                    elif opcode == protocol.NAME_TO_OPCODE["LRF_GetRange"]:
-                        with lrf_lock:
-                            current_range = simulated_lrf_range
-                        reply_data = struct.pack(">f", current_range)
-                        reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
-                        conn.sendall(reply_pkt)
-                    elif opcode == protocol.NAME_TO_OPCODE["LRF_SetRange"]:
-                        new_range = struct.unpack(">f", data_field)[0]
-                        with lrf_lock:
-                            simulated_lrf_range = new_range
-                        print(f"[Server] LRF range set to: {new_range:.2f}")
-                        conn.sendall(protocol.ACK_REPLY)
+                try:
+                    # --- Handle System-Level Opcodes (Axis 0 or DG/COM/LRF Groups) ---
+                    if axis_id == 0:
                         
-                    # MODE CONTROL COMMANDS (DG Group)
-                    elif opcode == protocol.NAME_TO_OPCODE["DG_SetSyncMode"]:
-                        val = struct.unpack(">H", data_field)[0]
-                        is_sync_mode = (val != 0)
-                        is_inner_mode = False # Setting Sync mode overrides Inner/Outer
-                        print(f"[Server] Mode set to: {'SYNC' if is_sync_mode else 'UNSYNC'}")
-                        conn.sendall(protocol.ACK_REPLY)
-                    elif opcode == protocol.NAME_TO_OPCODE["DG_SetInnerMode"]:
-                        val = struct.unpack(">H", data_field)[0]
-                        is_inner_mode = (val != 0)
-                        if not is_sync_mode:
-                            print(f"[Server] Unsync Mode set to: {'INNER' if is_inner_mode else 'OUTER'}")
-                        conn.sendall(protocol.ACK_REPLY)
+                        # Connection/System
+                        if opcode == protocol.NAME_TO_OPCODE["COM_Connect"]:
+                            print(f"[Server] Received COM_Connect. Acknowledging.")
+                            conn.sendall(protocol.ACK_REPLY)
                         
+                        # LRF COMMANDS
+                        elif opcode == protocol.NAME_TO_OPCODE["LRF_GetRange"]:
+                            with lrf_lock:
+                                current_range = simulated_lrf_range
+                            reply_data = struct.pack(">f", current_range)
+                            reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
+                            conn.sendall(reply_pkt)
+                        elif opcode == protocol.NAME_TO_OPCODE["LRF_SetRange"]:
+                            new_range = struct.unpack(">f", data_field)[0]
+                            with lrf_lock:
+                                simulated_lrf_range = new_range
+                            print(f"[Server] LRF range set to: {new_range:.2f}")
+                            conn.sendall(protocol.ACK_REPLY)
+                            
+                        # MODE CONTROL COMMANDS (DG Group)
+                        elif opcode == protocol.NAME_TO_OPCODE["DG_SetSyncMode"]:
+                            val = struct.unpack(">H", data_field)[0]
+                            is_sync_mode = (val != 0)
+                            is_inner_mode = False # Setting Sync mode overrides Inner/Outer
+                            print(f"[Server] Mode set to: {'SYNC' if is_sync_mode else 'UNSYNC'}")
+                            conn.sendall(protocol.ACK_REPLY)
+                        elif opcode == protocol.NAME_TO_OPCODE["DG_SetInnerMode"]:
+                            val = struct.unpack(">H", data_field)[0]
+                            is_inner_mode = (val != 0)
+                            if not is_sync_mode:
+                                print(f"[Server] Unsync Mode set to: {'INNER' if is_inner_mode else 'OUTER'}")
+                            conn.sendall(protocol.ACK_REPLY)
+                            
+                        else:
+                            # print(f"[Server] Ignoring unsupported command for Axis 0: {opcode:04X}")
+                            conn.sendall(protocol.ACK_REPLY)
+                    
+                    # --- Handle Axis Specific Opcodes (Motion/Error) ---
+                    elif axis_id in simulated_axes:
+                        axis = simulated_axes[axis_id]
+                        
+                        # --- Data Request Opcodes ---
+                        if opcode == protocol.NAME_TO_OPCODE["MOT_GetLoadPosition"]:
+                            pos = axis.get_position()
+                            reply_data = struct.pack(">f", pos)
+                            reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
+                            conn.sendall(reply_pkt)
+                        
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_GetMotorSpeed"]:
+                            spd = axis.get_speed()
+                            reply_data = struct.pack(">f", spd)
+                            reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
+                            conn.sendall(reply_pkt)
+                            
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_GetMotorVoltage"]:
+                            vol = axis.get_voltage()
+                            reply_data = struct.pack(">f", vol)
+                            reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
+                            conn.sendall(reply_pkt)
+                            
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_GetMotorCurrent"]:
+                            cur = axis.get_current()
+                            reply_data = struct.pack(">f", cur)
+                            reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
+                            conn.sendall(reply_pkt)
+
+                        elif opcode == protocol.NAME_TO_OPCODE["ERR_CaptureMotorErrorRegister"]:
+                            cmer = axis.get_error_register()
+                            reply_data = struct.pack(">H", cmer)
+                            reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
+                            
+                            # --- ASCII LOGGING ---
+                            # log_axis_status_ascii(axis_id, cmer) # Disable spam logging
+                            # --- END ASCII LOGGING ---
+                            
+                            conn.sendall(reply_pkt)
+                            
+                        elif opcode == protocol.NAME_TO_OPCODE["DG_GetBallisticOffset"]:
+                            offset = axis.get_ballistic_offset()
+                            reply_data = struct.pack(">f", offset)
+                            reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
+                            conn.sendall(reply_pkt)
+                        
+                        # --- Command Set Opcodes ---
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_SetPositionAbsolute"]:
+                            pos = struct.unpack(">f", data_field)[0]
+                            axis.set_target_abs(pos)
+                            conn.sendall(protocol.ACK_REPLY)
+
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_SetPositionRelative"]:
+                            rel_pos = struct.unpack(">f", data_field)[0]
+                            axis.set_target_rel(rel_pos)
+                            conn.sendall(protocol.ACK_REPLY)
+                            
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_SetSpeed"]:
+                            speed = struct.unpack(">f", data_field)[0]
+                            axis.set_speed(speed)
+                            conn.sendall(protocol.ACK_REPLY)
+
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_SetAcceleration"]:
+                            accel = struct.unpack(">f", data_field)[0]
+                            axis.set_accel(accel)
+                            conn.sendall(protocol.ACK_REPLY)
+                            
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_AxisOn"]:
+                            axis.set_axis_on()
+                            conn.sendall(protocol.ACK_REPLY)
+
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_AxisOff"]:
+                            axis.set_axis_off()
+                            conn.sendall(protocol.ACK_REPLY)
+
+                        elif opcode == protocol.NAME_TO_OPCODE["MOT_AxisReset"]:
+                            axis.set_axis_reset()
+                            conn.sendall(protocol.ACK_REPLY)
+                            
+                        elif opcode == protocol.NAME_TO_OPCODE["DG_SetBallisticOffset"]:
+                            # Only applicable to Axis 1 and 2
+                            if axis_id in [1, 2]:
+                                offset = struct.unpack(">f", data_field)[0]
+                                axis.set_ballistic_offset(offset)
+                            else:
+                                print(f"[Server] DG_SetBallisticOffset ignored for Axis {axis_id}")
+                            conn.sendall(protocol.ACK_REPLY)
+                            
+                        elif opcode in [
+                            protocol.NAME_TO_OPCODE["MOT_SetPositionMode"],
+                            protocol.NAME_TO_OPCODE["MOT_Update"]
+                        ]:
+                            conn.sendall(protocol.ACK_REPLY)
+                            
+                        else:
+                            # print(f"[Server] Unhandled Opcode for Axis {axis_id}: {opcode:04X}")
+                            conn.sendall(protocol.ACK_REPLY)
+
                     else:
-                        print(f"[Server] Ignoring unsupported command for Axis 0: {opcode:04X}")
+                        # print(f"[Server] Ignoring command for un-simulated Axis {axis_id}")
                         conn.sendall(protocol.ACK_REPLY)
                 
-                # --- Handle Axis Specific Opcodes (Motion/Error) ---
-                elif axis_id in simulated_axes:
-                    axis = simulated_axes[axis_id]
-                    
-                    # --- Data Request Opcodes ---
-                    if opcode == protocol.NAME_TO_OPCODE["MOT_GetLoadPosition"]:
-                        pos = axis.get_position()
-                        reply_data = struct.pack(">f", pos)
-                        reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
-                        conn.sendall(reply_pkt)
-                    
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_GetMotorSpeed"]:
-                        spd = axis.get_speed()
-                        reply_data = struct.pack(">f", spd)
-                        reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
-                        conn.sendall(reply_pkt)
-                        
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_GetMotorVoltage"]:
-                        vol = axis.get_voltage()
-                        reply_data = struct.pack(">f", vol)
-                        reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
-                        conn.sendall(reply_pkt)
-                        
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_GetMotorCurrent"]:
-                        cur = axis.get_current()
-                        reply_data = struct.pack(">f", cur)
-                        reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
-                        conn.sendall(reply_pkt)
-
-                    elif opcode == protocol.NAME_TO_OPCODE["ERR_CaptureMotorErrorRegister"]:
-                        cmer = axis.get_error_register()
-                        reply_data = struct.pack(">H", cmer)
-                        reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
-                        
-                        # --- ASCII LOGGING ---
-                        log_axis_status_ascii(axis_id, cmer)
-                        # --- END ASCII LOGGING ---
-                        
-                        conn.sendall(reply_pkt)
-                        
-                    elif opcode == protocol.NAME_TO_OPCODE["DG_GetBallisticOffset"]:
-                        offset = axis.get_ballistic_offset()
-                        reply_data = struct.pack(">f", offset)
-                        reply_pkt = protocol.build_reply_packet(0x00, axis_id, opcode, list(reply_data))
-                        conn.sendall(reply_pkt)
-                    
-                    # --- Command Set Opcodes ---
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_SetPositionAbsolute"]:
-                        pos = struct.unpack(">f", data_field)[0]
-                        axis.set_target_abs(pos)
-                        conn.sendall(protocol.ACK_REPLY)
-
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_SetPositionRelative"]:
-                        rel_pos = struct.unpack(">f", data_field)[0]
-                        axis.set_target_rel(rel_pos)
-                        conn.sendall(protocol.ACK_REPLY)
-                        
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_SetSpeed"]:
-                        speed = struct.unpack(">f", data_field)[0]
-                        axis.set_speed(speed)
-                        conn.sendall(protocol.ACK_REPLY)
-
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_SetAcceleration"]:
-                        accel = struct.unpack(">f", data_field)[0]
-                        axis.set_accel(accel)
-                        conn.sendall(protocol.ACK_REPLY)
-                        
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_AxisOn"]:
-                        axis.set_axis_on()
-                        conn.sendall(protocol.ACK_REPLY)
-
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_AxisOff"]:
-                        axis.set_axis_off()
-                        conn.sendall(protocol.ACK_REPLY)
-
-                    elif opcode == protocol.NAME_TO_OPCODE["MOT_AxisReset"]:
-                        axis.set_axis_reset()
-                        conn.sendall(protocol.ACK_REPLY)
-                        
-                    elif opcode == protocol.NAME_TO_OPCODE["DG_SetBallisticOffset"]:
-                        # Only applicable to Axis 1 and 2
-                        if axis_id in [1, 2]:
-                            offset = struct.unpack(">f", data_field)[0]
-                            axis.set_ballistic_offset(offset)
-                        else:
-                            print(f"[Server] DG_SetBallisticOffset ignored for Axis {axis_id}")
-                        conn.sendall(protocol.ACK_REPLY)
-                        
-                    elif opcode in [
-                        protocol.NAME_TO_OPCODE["MOT_SetPositionMode"],
-                        protocol.NAME_TO_OPCODE["MOT_Update"]
-                    ]:
-                        conn.sendall(protocol.ACK_REPLY)
-                        
-                    else:
-                        print(f"[Server] Unhandled Opcode for Axis {axis_id}: {opcode:04X}")
-                        conn.sendall(protocol.ACK_REPLY)
-
-                else:
-                    print(f"[Server] Ignoring command for un-simulated Axis {axis_id}")
-                    conn.sendall(protocol.ACK_REPLY)
+                except Exception as e:
+                    print(f"[Server] Error handling Opcode 0x{opcode:04X} for Axis {axis_id}: {e}")
+                    # Try to send ACK so client doesn't time out, but it might fail if socket is bad
+                    try: conn.sendall(protocol.ACK_REPLY) 
+                    except: pass
 
     except (ConnectionResetError, BrokenPipeError):
         print(f"[Server] Client {addr} disconnected abruptly.")

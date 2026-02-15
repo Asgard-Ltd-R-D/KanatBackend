@@ -1,18 +1,19 @@
 import socket
 import threading
 import time
-import re
+import random
 
 # ===============================
 # Server Configuration
 # ===============================
-HOST = '0.0.0.0'  # Listen on all interfaces (covers 132.8.7.121 if local)
-PORT = 8080       # Port extracted from PCAP Host header
+HOST = '127.0.0.1'  # Listens on all interfaces (binds 132.8.7.121 if IP alias exists)
+PORT = 8080       # Port from PCAP Host header
 BUFFER_SIZE = 4096
 
 class OnvifSimulator:
     def __init__(self):
         self.is_running = True
+        self.lrf_distance = 2950.0  # Default simulated distance in dm
 
     def start(self):
         """Starts the TCP Server."""
@@ -22,6 +23,7 @@ class OnvifSimulator:
                 s.bind((HOST, PORT))
                 s.listen(5)
                 print(f"[ONVIF Sim] Listening on {HOST}:{PORT} (TCP)...")
+                print(f"[ONVIF Sim] Supports: PTZ (GetStatus, Move, Stop) and LRF (MakeMeasurement)")
                 
                 while self.is_running:
                     try:
@@ -34,28 +36,28 @@ class OnvifSimulator:
                 print(f"[ONVIF Sim] Critical Server Error: {e}")
 
     def handle_client(self, conn, addr):
-        print(f"[ONVIF Sim] Connection from {addr}")
+        # print(f"[ONVIF Sim] Connection from {addr}")
         try:
             while True:
                 data = conn.recv(BUFFER_SIZE)
                 if not data:
                     break
                 
-                # Decode to string for analysis (ignore non-ascii garbage if present)
                 request_text = data.decode('utf-8', errors='ignore')
                 
                 # --- 1. Handle "Expect: 100-continue" ---
-                # The PCAP shows the client expects a specific handshake before sending the body.
                 if "Expect: 100-continue" in request_text:
-                    # print(f"[ONVIF Sim] Sending 100 Continue to {addr}")
                     conn.sendall(b"HTTP/1.1 100 Continue\r\n\r\n")
-                    # We don't break/return here; we wait for the subsequent body packet
                     continue
 
                 # --- 2. Identify Command Action ---
-                # We look for specific SOAP Actions in the header or body
                 
-                if "GetStatus" in request_text:
+                # >>>> LRF COMMANDS <<<<
+                if "LRFMakeMeasurement" in request_text:
+                    self.send_lrf_response(conn)
+
+                # >>>> PTZ COMMANDS <<<<
+                elif "GetStatus" in request_text:
                     self.send_get_status_response(conn)
                 
                 elif "AbsoluteMove" in request_text:
@@ -64,12 +66,12 @@ class OnvifSimulator:
                 elif "Stop" in request_text:
                     self.send_stop_response(conn)
                 
-                # Detect standard HTTP GET (often used for WSDL discovery, ignored here)
                 elif request_text.startswith("GET "):
-                    pass 
+                    # Simple handling for browser/discovery
+                    conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
 
         except ConnectionResetError:
-            print(f"[ONVIF Sim] Client {addr} disconnected abruptly.")
+            pass # Client disconnected
         except Exception as e:
             print(f"[ONVIF Sim] Error handling client {addr}: {e}")
         finally:
@@ -79,10 +81,29 @@ class OnvifSimulator:
     # Response Generators
     # ===============================
 
-    def send_get_status_response(self, conn):
-        print("[ONVIF Sim] Action: GetStatus -> sending PTZStatus")
+    def send_lrf_response(self, conn):
+        # Simulate small fluctuation in distance
+        val = self.lrf_distance + random.choice([0, 1.0, -1.0])
+        print(f"[ONVIF Sim] Action: LRFMakeMeasurement -> {val} dm")
+
+        # Constructed based on "example for onvif lrf pcap"
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:SOAP-ENC="http://www.w3.org/2003/05/soap-encoding" xmlns:sdcs="http://www.seraphim-opt.com/SdcsCustom">
+    <SOAP-ENV:Header/>
+    <SOAP-ENV:Body>
+        <sdcs:LRFMakeMeasurementResponse>
+            <RangeMode>standard single measurement</RangeMode>
+            <Measurement>{val:.6f}</Measurement>
+            <Units>dm</Units>
+        </sdcs:LRFMakeMeasurementResponse>
+    </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>"""
         
-        # Extracted from your PCAP "GetStatusResponse"
+        self.send_http_soap(conn, body, action="http://www.seraphim-opt.com/SdcsCustom/LRFMakeMeasurement")
+
+    def send_get_status_response(self, conn):
+        # Standard ONVIF PTZ Status
+        # print("[ONVIF Sim] Action: GetStatus")
         body = """<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
     <SOAP-ENV:Header/>
@@ -102,13 +123,10 @@ class OnvifSimulator:
         </tptz:GetStatusResponse>
     </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>"""
-        
         self.send_http_soap(conn, body, action="http://www.onvif.org/ver20/ptz/wsdl/GetStatus")
 
     def send_absolute_move_response(self, conn):
-        print("[ONVIF Sim] Action: AbsoluteMove -> sending OK")
-        
-        # AbsoluteMove usually returns an empty body or simple Response tag
+        print("[ONVIF Sim] Action: AbsoluteMove")
         body = """<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">
     <SOAP-ENV:Header/>
@@ -116,12 +134,10 @@ class OnvifSimulator:
         <tptz:AbsoluteMoveResponse></tptz:AbsoluteMoveResponse>
     </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>"""
-        
         self.send_http_soap(conn, body, action="http://www.onvif.org/ver20/ptz/wsdl/AbsoluteMove")
 
     def send_stop_response(self, conn):
-        print("[ONVIF Sim] Action: Stop -> sending OK")
-        
+        print("[ONVIF Sim] Action: Stop")
         body = """<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">
     <SOAP-ENV:Header/>
@@ -129,21 +145,18 @@ class OnvifSimulator:
         <tptz:StopResponse></tptz:StopResponse>
     </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>"""
-        
         self.send_http_soap(conn, body, action="http://www.onvif.org/ver20/ptz/wsdl/Stop")
 
     def send_http_soap(self, conn, xml_body, action):
-        """Wraps XML in HTTP headers."""
         xml_bytes = xml_body.encode('utf-8')
         length = len(xml_bytes)
         
-        # Headers based on your PCAP
         response = (
             f"HTTP/1.1 200 OK\r\n"
             f"Server: gSOAP/2.8\r\n"
             f"Content-Type: application/soap+xml; charset=utf-8; action=\"{action}\"\r\n"
             f"Content-Length: {length}\r\n"
-            f"Connection: keep-alive\r\n" # Keep connection open for replay
+            f"Connection: keep-alive\r\n"
             f"\r\n"
         ).encode('utf-8') + xml_bytes
         

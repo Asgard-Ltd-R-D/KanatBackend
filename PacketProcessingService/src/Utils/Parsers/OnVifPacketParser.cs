@@ -34,11 +34,21 @@ namespace PacketProcessing.Utils.Parsers
         {
             try{
 
+                // Try parsing as IPv4 directly if Ethernet fails
                 var packet = Packet.ParsePacket(LinkLayers.Ethernet, rawPacket.ToArray());
+                
+                // Fallback: The packet might not have an Ethernet header (e.g. Raw IP)
+                packet ??= Packet.ParsePacket(LinkLayers.IPv4, rawPacket.ToArray());
+
                 var ipSection = packet.Extract<IPv4Packet>();
+                if (ipSection == null) return null;
+
                 var ipSrc = ipSection.SourceAddress.ToString();
                 var ipDst = ipSection.DestinationAddress.ToString();
+
                 var tcpSection = ipSection.Extract<TcpPacket>();
+                if (tcpSection == null) return null;
+
                 var tcpSrc = tcpSection.SourcePort;
                 var tcpDst = tcpSection.DestinationPort;
                 var tcpSeq = (int)tcpSection.SequenceNumber;
@@ -132,7 +142,7 @@ namespace PacketProcessing.Utils.Parsers
             catch (Exception ex)
             {
                 if (_logger.IsEnabled(LogLevel.Debug))
-                    _logger.LogDebug(ex, "Error parsing motion packet. Length: {Length} bytes", rawPacket.Length);
+                    _logger.LogDebug(ex, "Error parsing onvif packet. Length: {Length} bytes", rawPacket.Length);
                 return null;
             }
         }

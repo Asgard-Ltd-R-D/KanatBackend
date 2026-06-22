@@ -35,10 +35,16 @@ namespace PacketProcessing.Utils.Parsers
             try{
 
                 var packet = Packet.ParsePacket(LinkLayers.Ethernet, rawPacket.ToArray());
-                var ipSection = packet.Extract<IPv4Packet>();
+                var ipSection = packet?.Extract<IPv4Packet>();
+                if (ipSection == null)
+                    return null;
+
                 var ipSrc = ipSection.SourceAddress.ToString();
                 var ipDst = ipSection.DestinationAddress.ToString();
                 var tcpSection = ipSection.Extract<TcpPacket>();
+                if (tcpSection == null)
+                    return null;
+
                 var tcpSrc = tcpSection.SourcePort;
                 var tcpDst = tcpSection.DestinationPort;
                 var tcpSeq = (int)tcpSection.SequenceNumber;

@@ -99,11 +99,11 @@ class ComposerApp(ComposerUseCases):
 
         if detached:
             info("Launching PacketProcessingService in a new terminal window (detached mode)")
-            time.sleep(1) # Await for docker containers to run
+            time.sleep(8) # Await for docker containers to run
             self.dotnet.run_packetprocessing(dll_path, environment, detach=True)
             return 0
 
-        time.sleep(1) # Await for docker containers to run
+        time.sleep(8) # Await for docker containers to run
         return self.dotnet.run_packetprocessing(dll_path, environment)
 
     def stop(self, environment: str) -> int:

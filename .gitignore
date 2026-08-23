@@ -35,7 +35,8 @@ target/
 
 # Ignore training output
 runs/
-runs*/  # In case there are nested run folders
+runs*/
+video_output/
 
 # Ignore cache files
 *.cache

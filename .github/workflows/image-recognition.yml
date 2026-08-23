@@ -1,0 +1,35 @@
+name: Test ImageRecognitionService
+
+on:
+  push:
+    paths:
+      - ImageRecognitionService/**
+      - .github/workflows/image-recognition.yml
+  pull_request:
+    paths:
+      - ImageRecognitionService/**
+
+jobs:
+  test:
+    name: 🎯 Test on ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ImageRecognitionService
+
+    steps:
+      - name: ⬆️ Check out repository
+        uses: actions/checkout@v4
+
+      - name: 🧰 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Deliberately NOT requirements.txt: that pulls ultralytics and torch (~2GB).
+      # The tests inject a fake detector, so the model is never loaded here.
+      - name: 🔄 Install test dependencies
+        run: pip install numpy pandas openpyxl opencv-python-headless
+
+      - name: 🎯 Run de-duplication tests
+        run: python test_dedup.py

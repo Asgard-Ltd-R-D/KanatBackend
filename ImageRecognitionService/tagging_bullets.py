@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 import pandas as pd
-from ultralytics import YOLO
 from datetime import timedelta
 from collections import defaultdict
 import os
@@ -158,14 +157,28 @@ def annotate(img, ctr, mean_range_cm, unused, tgt_box, tid, dist_cm, scale, tgt_
 
 # === MAIN PROCESS ===
 
-def process_video(start, end):
-    cap    = cv2.VideoCapture(VIDEO_PATH)
+def process_video(start, end, detect=None, video_path=None):
+    """Detect bullet holes between two timestamps.
+
+    `detect` maps a frame to an iterable of detection boxes; defaults to the
+    real YOLO model. Injecting it lets tests exercise the de-duplication logic
+    without the (gitignored) weights or a torch install.
+    """
+    # module-level accumulators would otherwise leak between calls
+    clusters.clear()
+    detected_bullets.clear()
+    target_color_map.clear()
+
+    cap    = cv2.VideoCapture(video_path or VIDEO_PATH)
     fps    = cap.get(cv2.CAP_PROP_FPS)
     startF = int(time_str_to_seconds(start) * fps)
     endF   = int(time_str_to_seconds(end)   * fps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, startF)
 
-    model = YOLO(MODEL_PATH)
+    if detect is None:
+        from ultralytics import YOLO  # imported lazily: pulls in torch
+        model  = YOLO(MODEL_PATH)
+        detect = lambda frame: model(frame, imgsz=IMGSZ)[0].boxes
     # For each target ID, track all hit centers to compute relative means over time
     target_hits = defaultdict(list)
     bullet_id   = 0
@@ -178,8 +191,7 @@ def process_video(start, end):
             if not ret:
                 break
 
-            results = model(frame, imgsz=IMGSZ)[0]
-            boxes   = results.boxes
+            boxes   = detect(frame)
             tgts    = [b for b in boxes if int(b.cls[0]) == 2]
             blts    = [b for b in boxes if int(b.cls[0]) == 1]
 
@@ -304,8 +316,10 @@ def process_video(start, end):
 
     # gather rows, exactly one per cluster
     rows = [cl['row'] for cl in clusters]
-    pd.DataFrame(rows).to_excel(EXCEL_OUTPUT, index=False)
+    df   = pd.DataFrame(rows)
+    df.to_excel(EXCEL_OUTPUT, index=False)
     print(f"[INFO] → {len(rows)} bullets saved (unique clusters) to {EXCEL_OUTPUT}")
+    return df
 
 
 # === ENTRY POINT ===

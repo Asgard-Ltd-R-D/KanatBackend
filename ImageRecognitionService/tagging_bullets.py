@@ -144,7 +144,7 @@ def annotate(img, ctr, mean_range_cm, unused, tgt_box, tid, dist_cm, scale, tgt_
     cv2.rectangle(img, (x1, y1), (x2, y2), col, RECT_THICK)
     cv2.putText(
         img,
-        f"T{tid}",
+        f"T{tid}",יר
         (x1 + 5, y1 - 5),
         cv2.FONT_HERSHEY_SIMPLEX,
         FONT_SCALE,

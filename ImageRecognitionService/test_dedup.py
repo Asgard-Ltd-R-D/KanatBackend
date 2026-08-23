@@ -63,14 +63,22 @@ def test_frames_without_a_target_produce_nothing():
                              video_path=VIDEO)) == 0
 
 
-def test_tight_group_collapses_KNOWN_DEFECT():
-    """Two holes 20px apart are reported as one.
+def test_tight_group_counted_as_separate_bullet_holes():
+    """Two holes 20px apart — 2x their box diagonal — are two Bullet Holes."""
+    assert run(Box(300, 200, 7, 7, cls=1), Box(316, 212, 7, 7, cls=1)) == 2
 
-    Pins the defect tracked in issue #8 rather than the desired behaviour:
-    the separation gate is ~4.5x a hole's diameter, wider than real shot
-    groups. Change this to 2 when the gate is re-tuned against ground truth.
+
+def test_close_centres_are_one_bullet_hole():
+    """Two boxes on one hole, centres inside 0.5x the mean diagonal."""
+    assert run(Box(300, 200, 7, 7, cls=1), Box(303, 202, 7, 7, cls=1)) == 1
+
+
+def test_overlapping_boxes_are_one_bullet_hole():
+    """A small box nested in a large one: overlap merges what distance would not.
+
+    Centres are 19px apart against a 17px gate, so only the overlap arm fires.
     """
-    assert run(Box(300, 200, 7, 7, cls=1), Box(316, 212, 7, 7, cls=1)) == 1
+    assert run(Box(300, 200, 40, 40, cls=1), Box(317, 209, 8, 8, cls=1)) == 1
 
 
 if __name__ == '__main__':

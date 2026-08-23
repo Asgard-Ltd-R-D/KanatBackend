@@ -20,6 +20,9 @@ IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
 # starting points, still to be swept against footage from their own setup.
 PROFILES_PATH       = os.path.join(os.path.dirname(__file__), 'capture_profiles.json')
 TARGET_SIZE_CM      = 18
+# Class ids the model emits
+CLS_BULLET_HOLE     = 1
+CLS_TARGET          = 2
 # Detection defaults. Both belong to a Capture Profile — apparent Bullet Hole
 # size depends on the physical setup — so they are arguments to process_video,
 # not live module state. These values are only the fallback when the caller
@@ -49,8 +52,6 @@ RECT_THICK   = 2
 FONT_SCALE   = 0.7
 TEXT_THICK   = 2
 
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # === GLOBALS ===
 target_color_map = {}  # target_id → BGR color
@@ -177,6 +178,8 @@ def process_video(start, end, detect=None, video_path=None,
     real YOLO model. Injecting it lets tests exercise the de-duplication logic
     without the (gitignored) weights or a torch install.
     """
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
     # module-level accumulators would otherwise leak between calls
     bullet_holes.clear()
     target_color_map.clear()
@@ -209,8 +212,8 @@ def process_video(start, end, detect=None, video_path=None,
                 break
 
             boxes   = detect(frame)
-            tgts    = [b for b in boxes if int(b.cls[0]) == 2]
-            blts    = [b for b in boxes if int(b.cls[0]) == 1]
+            tgts    = [b for b in boxes if int(b.cls[0]) == CLS_TARGET]
+            blts    = [b for b in boxes if int(b.cls[0]) == CLS_BULLET_HOLE]
 
             if not tgts:
                 frame_idx += 1

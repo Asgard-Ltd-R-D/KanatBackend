@@ -37,6 +37,7 @@ target/
 runs/
 runs*/
 video_output/
+sweep_output/
 
 # Ignore cache files
 *.cache

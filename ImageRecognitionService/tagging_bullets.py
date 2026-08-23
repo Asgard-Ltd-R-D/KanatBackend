@@ -16,15 +16,17 @@ IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
 TARGET_SIZE_CM      = 18
 IMGSZ               = 1280   # model was trained at 1280; ultralytics' 640 default misses most holes
 
-# Clustering / suppression params
-CLUSTER_FACTOR      = 0.75   # fraction of bullet-box diagonal
-MIN_CLUSTER_DIST    = 10     # px minimum cluster radius
-CLOSE_CENTER_FACTOR = 3.0    # x bullet-box diagonal (was 20px, tuned at 960x544)
-MIN_SEPARATION      = 4.5    # x bullet-box diagonal (was 30px, tuned at 960x544)
-IOU_SUPPRESS_THRESH = 0.2    # suppress if IoU > 0.2
-global OVERLAP_THRESHOLD
-OVERLAP_THRESHOLD =0.5   # 50% overlap threshold for duplicate detection
-global MIN_CONFIDENCE
+# De-duplication gate. Two detections are the same Bullet Hole if their centres
+# lie within DUP_CENTER_FACTOR x the mean box diagonal, or their boxes overlap
+# by more than OVERLAP_THRESHOLD of the smaller box's area.
+#
+# 0.5 is measured, not chosen: across the sample images the closest genuinely
+# distinct Bullet Holes sit 0.93x diagonal apart, while duplicate boxes of one
+# Bullet Hole sit below 0.3x. The threshold sits in the empty gap between them.
+# Box diagonals make it scale-invariant, so it needs no per-setup tuning — which
+# is why it is not a Capture Profile field.
+DUP_CENTER_FACTOR   = 0.5
+OVERLAP_THRESHOLD   = 0.5
 MIN_CONFIDENCE      = 0.6    # minimum confidence for bullet detection
 
 # Annotation styling
@@ -42,8 +44,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # === GLOBALS ===
 target_color_map = {}  # target_id → BGR color
-clusters         = []  # each: dict(center, radius, box, row)
-detected_bullets = []  # list of all detected bullet bounding boxes
+bullet_holes     = []  # each: dict(box, row) — one entry per unique Bullet Hole
 
 # === HELPERS ===
 
@@ -55,16 +56,8 @@ def get_center(box):
     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
     return np.array([(x1 + x2) / 2, (y1 + y2) / 2])
 
-def compute_iou(a, b):
-    x1, y1, x2, y2 = a.xyxy[0].cpu().numpy()
-    X1, Y1, X2, Y2 = b.xyxy[0].cpu().numpy()
-    xi1, yi1 = max(x1, X1), max(y1, Y1)
-    xi2, yi2 = min(x2, X2), min(y2, Y2)
-    iw, ih   = max(0, xi2 - xi1), max(0, yi2 - yi1)
-    inter    = iw * ih
-    areaA    = (x2 - x1) * (y2 - y1)
-    areaB    = (X2 - X1) * (Y2 - Y1)
-    return inter / (areaA + areaB - inter + 1e-6)
+def get_diag(box):
+    return np.hypot(*box.xywh[0][2:].cpu().numpy())
 
 def compute_overlap_percentage(box_a, box_b):
     """
@@ -89,28 +82,28 @@ def compute_overlap_percentage(box_a, box_b):
     smaller_area = min(area_a, area_b)
     return intersection_area / smaller_area if smaller_area > 0 else 0.0
 
-def is_duplicate_bullet(new_box, existing_bullets, threshold=OVERLAP_THRESHOLD):
-    """
-    Check if a new bullet detection overlaps significantly with existing bullets.
-    Returns True if the new bullet overlaps more than threshold% with any existing bullet.
+def is_duplicate_bullet(new_box, existing_bullets):
+    """Is this detection the same Bullet Hole as one already recorded?
+
+    Same Bullet Hole if the centres lie within DUP_CENTER_FACTOR x the mean box
+    diagonal, or the boxes overlap by more than OVERLAP_THRESHOLD of the
+    smaller box's area.
     """
     new_center = get_center(new_box)
-    new_diag   = np.hypot(*new_box.xywh[0][2:].cpu().numpy())
-    
+    new_diag   = get_diag(new_box)
+
     for i, existing_box in enumerate(existing_bullets):
-        # Check overlap percentage
         overlap_pct = compute_overlap_percentage(new_box, existing_box)
-        if overlap_pct > threshold:
-            print(f"[DEBUG] Overlap detected: {overlap_pct*100:.1f}% with existing bullet {i+1}")
+        if overlap_pct > OVERLAP_THRESHOLD:
+            print(f"[DEBUG] Overlap detected: {overlap_pct*100:.1f}% with Bullet Hole {i+1}")
             return True
-        
-        # Also check center distance as additional safety
-        existing_center = get_center(existing_box)
-        distance = np.linalg.norm(new_center - existing_center)
-        if distance < new_diag * CLOSE_CENTER_FACTOR:  # If centers are very close, likely same bullet
-            print(f"[DEBUG] Close center detected: {distance:.1f}px distance with existing bullet {i+1}")
+
+        existing_diag = get_diag(existing_box)
+        distance      = np.linalg.norm(new_center - get_center(existing_box))
+        if distance < DUP_CENTER_FACTOR * (new_diag + existing_diag) / 2:
+            print(f"[DEBUG] Close center detected: {distance:.1f}px from Bullet Hole {i+1}")
             return True
-    
+
     return False
 
 def annotate(img, ctr, mean_range_cm, unused, tgt_box, tid, dist_cm, scale, tgt_ctr):
@@ -165,8 +158,7 @@ def process_video(start, end, detect=None, video_path=None):
     without the (gitignored) weights or a torch install.
     """
     # module-level accumulators would otherwise leak between calls
-    clusters.clear()
-    detected_bullets.clear()
+    bullet_holes.clear()
     target_color_map.clear()
 
     cap    = cv2.VideoCapture(video_path or VIDEO_PATH)
@@ -219,39 +211,8 @@ def process_video(start, end, detect=None, video_path=None):
                     continue
                 
                 ctr = get_center(b)
-                
-                # Check for overlap with existing bullets (strict threshold)
-                if is_duplicate_bullet(b, detected_bullets, OVERLAP_THRESHOLD):
-                    print(f"[INFO] Skipping duplicate bullet detection (overlap > {OVERLAP_THRESHOLD*100}%)")
-                    continue
-                
-                # Additional check: ensure minimum distance from all existing bullet centers
-                diag = np.hypot(*b.xywh[0][2:].cpu().numpy())
-                min_distance = float('inf')
-                for existing_bullet in detected_bullets:
-                    existing_center = get_center(existing_bullet)
-                    dist = np.linalg.norm(ctr - existing_center)
-                    min_distance = min(min_distance, dist)
-                
-                if min_distance < diag * MIN_SEPARATION:  # If too close to any existing bullet
-                    print(f"[INFO] Skipping bullet - too close to existing bullet ({min_distance:.1f}px)")
-                    continue
-                
-                # determine cluster radius for this box
-                radius = max(diag * CLUSTER_FACTOR, MIN_CLUSTER_DIST)
 
-                # check existing clusters (additional safety check)
-                duplicate = False
-                for cl in clusters:
-                    if np.linalg.norm(ctr - cl['center']) < cl['radius'] or \
-                       compute_iou(cl['box'], b) > IOU_SUPPRESS_THRESH:
-                        # update cluster center
-                        cl['center'] = (cl['center'] * cl['count'] + ctr) / (cl['count'] + 1)
-                        cl['count'] += 1
-                        cl['box']    = b
-                        duplicate    = True
-                        break
-                if duplicate:
+                if is_duplicate_bullet(b, [h['box'] for h in bullet_holes]):
                     continue
 
                 # new unique bullet → build metadata row
@@ -282,7 +243,7 @@ def process_video(start, end, detect=None, video_path=None):
                 snap_path  = IMAGE_SAVE_TEMPLATE.format(id=bullet_id)
                 cv2.imwrite(snap_path, out_img)
 
-                # record cluster → only one row per bullet
+                # record it → exactly one row per Bullet Hole
                 row = {
                     "Bullet ID": bullet_id,
                     "Center X": int(ctr[0]),
@@ -293,17 +254,8 @@ def process_video(start, end, detect=None, video_path=None):
                     "Timestamp": ts_str,
                     "Snapshot": snap_path
                 }
-                clusters.append({
-                    'center': ctr,
-                    'radius': radius,
-                    'box': b,
-                    'count': 1,
-                    'row': row
-                })
-                
-                # Add to detected bullets list for future overlap checking
-                detected_bullets.append(b)
-                print(f"[INFO] New bullet detected: ID {bullet_id}, Target {tid}, Distance {dist_cm:.1f}cm")
+                bullet_holes.append({'box': b, 'row': row})
+                print(f"[INFO] New Bullet Hole: ID {bullet_id}, Target {tid}, Distance {dist_cm:.1f}cm")
 
             frame_idx += 1
 
@@ -313,11 +265,11 @@ def process_video(start, end, detect=None, video_path=None):
     finally:
         cap.release()
 
-    # gather rows, exactly one per cluster
-    rows = [cl['row'] for cl in clusters]
+    # gather rows, exactly one per Bullet Hole
+    rows = [h['row'] for h in bullet_holes]
     df   = pd.DataFrame(rows)
     df.to_excel(EXCEL_OUTPUT, index=False)
-    print(f"[INFO] → {len(rows)} bullets saved (unique clusters) to {EXCEL_OUTPUT}")
+    print(f"[INFO] → {len(rows)} unique Bullet Holes saved to {EXCEL_OUTPUT}")
     return df
 
 

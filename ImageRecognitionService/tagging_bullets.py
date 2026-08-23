@@ -14,7 +14,12 @@ OUTPUT_DIR          = './video_output'
 EXCEL_OUTPUT        = os.path.join(OUTPUT_DIR, 'bullet_results.xlsx')
 IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
 TARGET_SIZE_CM      = 18
-IMGSZ               = 1280   # model was trained at 1280; ultralytics' 640 default misses most holes
+# Detection defaults. Both belong to a Capture Profile — apparent Bullet Hole
+# size depends on the physical setup — so they are arguments to process_video,
+# not live module state. These values are only the fallback when the caller
+# names nothing.
+DEFAULT_INFERENCE_SIZE = 1280  # model was trained at 1280; ultralytics' 640 default misses most holes
+DEFAULT_CONFIDENCE     = 0.6
 
 # De-duplication gate. Two detections are the same Bullet Hole if their centres
 # lie within DUP_CENTER_FACTOR x the mean box diagonal, or their boxes overlap
@@ -27,7 +32,6 @@ IMGSZ               = 1280   # model was trained at 1280; ultralytics' 640 defau
 # is why it is not a Capture Profile field.
 DUP_CENTER_FACTOR   = 0.5
 OVERLAP_THRESHOLD   = 0.5
-MIN_CONFIDENCE      = 0.6    # minimum confidence for bullet detection
 
 # Annotation styling
 OUTER_RADIUS = 12
@@ -150,8 +154,14 @@ def annotate(img, ctr, mean_range_cm, unused, tgt_box, tid, dist_cm, scale, tgt_
 
 # === MAIN PROCESS ===
 
-def process_video(start, end, detect=None, video_path=None):
+def process_video(start, end, detect=None, video_path=None,
+                  confidence=DEFAULT_CONFIDENCE,
+                  inference_size=DEFAULT_INFERENCE_SIZE):
     """Detect bullet holes between two timestamps.
+
+    `confidence` is the floor a detection must clear to count as a Bullet Hole,
+    and `inference_size` the size the model runs at; both default to the values
+    that served every capture before they were selectable.
 
     `detect` maps a frame to an iterable of detection boxes; defaults to the
     real YOLO model. Injecting it lets tests exercise the de-duplication logic
@@ -170,7 +180,12 @@ def process_video(start, end, detect=None, video_path=None):
     if detect is None:
         from ultralytics import YOLO  # imported lazily: pulls in torch
         model  = YOLO(MODEL_PATH)
-        detect = lambda frame: model(frame, imgsz=IMGSZ)[0].boxes
+        # Ultralytics filters at 0.25 by default, which would swallow a lower
+        # floor before the gate below sees it. Never raise it past 0.25 though:
+        # the floor is Bullet Hole-specific, and a model-wide one also drops
+        # Targets — and a frame without a Target is discarded whole.
+        detect = lambda frame: model(frame, imgsz=inference_size,
+                                     conf=min(confidence, 0.25))[0].boxes
     # For each target ID, track all hit centers to compute relative means over time
     target_hits = defaultdict(list)
     bullet_id   = 0
@@ -206,8 +221,8 @@ def process_video(start, end, detect=None, video_path=None):
             # process each bullet detection
             for b in blts:
                 # Check confidence threshold
-                if b.conf[0] < MIN_CONFIDENCE:
-                    print(f"[INFO] Skipping low confidence detection: {b.conf[0]:.2f} < {MIN_CONFIDENCE}")
+                if b.conf[0] < confidence:
+                    print(f"[INFO] Skipping low confidence detection: {b.conf[0]:.2f} < {confidence}")
                     continue
                 
                 ctr = get_center(b)
@@ -281,17 +296,19 @@ if __name__ == "__main__":
     p.add_argument("--end",   required=True, help="End   HH:MM:SS")
     p.add_argument("--iou", type=float, default=0.5, 
                    help="Overlap threshold for duplicate detection (default: 0.5)")
-    p.add_argument("--confidence", type=float, default=0.6,
-                   help="Minimum confidence for bullet detection (default: 0.6)")
+    p.add_argument("--confidence", type=float, default=DEFAULT_CONFIDENCE,
+                   help=f"Minimum confidence for bullet detection (default: {DEFAULT_CONFIDENCE})")
+    p.add_argument("--inference-size", type=int, default=DEFAULT_INFERENCE_SIZE,
+                   help=f"Inference size fed to the model, a multiple of 32 "
+                        f"(default: {DEFAULT_INFERENCE_SIZE})")
     args = p.parse_args()
-    
-    # Update global thresholds if provided
+
     if args.iou != 0.5:  # Compare with default value
         OVERLAP_THRESHOLD = args.iou
     print(f"[INFO] Using overlap threshold: {OVERLAP_THRESHOLD*100}%")
-    
-    if args.confidence != 0.6:
-        MIN_CONFIDENCE = args.confidence
-        print(f"[INFO] Using confidence threshold: {MIN_CONFIDENCE}")
-    
-    process_video(args.start, args.end)
+    print(f"[INFO] Using confidence threshold: {args.confidence}")
+    print(f"[INFO] Using inference size: {args.inference_size}")
+
+    process_video(args.start, args.end,
+                  confidence=args.confidence,
+                  inference_size=args.inference_size)

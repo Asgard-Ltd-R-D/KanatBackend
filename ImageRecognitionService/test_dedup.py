@@ -38,11 +38,11 @@ class Box:
 TARGET = Box(500, 300, 120, 120, cls=2)
 
 
-def run(*holes):
+def run(*holes, **kwargs):
     """Feed the same detections on every frame, as a static camera would."""
     boxes = [TARGET, *holes]
     return len(process_video('00:00:00', '00:00:01',
-                             detect=lambda frame: boxes, video_path=VIDEO))
+                             detect=lambda frame: boxes, video_path=VIDEO, **kwargs))
 
 
 def test_same_hole_across_frames_counted_once():
@@ -55,6 +55,13 @@ def test_distinct_holes_counted_separately():
 
 def test_low_confidence_detections_ignored():
     assert run(Box(300, 200, 7, 7, cls=1, conf=0.4)) == 0
+
+
+def test_confidence_threshold_is_honoured():
+    """The chosen threshold decides, in both directions — so it is not hardcoded."""
+    hole = Box(300, 200, 7, 7, cls=1, conf=0.4)
+    assert run(hole, confidence=0.3) == 1
+    assert run(hole, confidence=0.5) == 0
 
 
 def test_frames_without_a_target_produce_nothing():

@@ -312,7 +312,6 @@ def process_video(start, end, detect=None, video_path=None):
 
     finally:
         cap.release()
-        cv2.destroyAllWindows()
 
     # gather rows, exactly one per cluster
     rows = [cl['row'] for cl in clusters]

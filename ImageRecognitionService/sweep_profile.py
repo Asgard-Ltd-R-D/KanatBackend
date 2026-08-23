@@ -74,10 +74,14 @@ def sweep(image_path, confidences, sizes, output_dir):
 
     cells, rows = {}, []
     for size in sizes:
-        boxes   = model(frame, imgsz=size, conf=model_floor)[0].boxes
-        targets = [b for b in boxes if int(b.cls[0]) == CLS_TARGET]
+        boxes = model(frame, imgsz=size, conf=model_floor)[0].boxes
 
         for conf in confidences:
+            # A run of this cell would put the model floor at min(conf, 0.25),
+            # so a Target scoring under that is one the pipeline never sees —
+            # even though the row's shared inference admitted it.
+            targets      = [b for b in boxes if int(b.cls[0]) == CLS_TARGET
+                            and b.conf[0] >= min(conf, 0.25)]
             above_floor  = [b for b in boxes
                             if int(b.cls[0]) == CLS_BULLET_HOLE and b.conf[0] >= conf]
             bullet_holes = []

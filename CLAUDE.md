@@ -28,8 +28,12 @@ dotnet test ... --filter "FullyQualifiedName~DbWriterServiceTests"
 dotnet test ... --filter "FullyQualifiedName~UnitTests"        # unit only
 dotnet test ... --filter "FullyQualifiedName~IntegrationTests"  # integration only
 
-# Composer CLI (dev/prod lifecycle + installers)
-python composer.py up dev -d | stop | kill | status | build
+# Composer CLI (dev/prod lifecycle + installers) — each is a separate subcommand
+python composer.py up dev -d      # environment defaults to prod if omitted
+python composer.py stop dev
+python composer.py kill dev
+python composer.py status
+python composer.py build
 python composer.py release osx-arm64
 ./build_artifacts.sh linux-x64      # or: clean
 ```

@@ -72,3 +72,17 @@ LibPcap device ──> DeviceService (one LibPcapLiveDevice per observer, BPF fi
 - Dev-only endpoints get `[DevelopmentOnly]`, which also groups them under a "Development" Swagger tag.
 - `swagger.json` at the service root is served verbatim in non-Production, overriding the generated doc — regenerate/update it when API shapes change.
 - CI (`.github/workflows`): `test.yml` runs the test project on any `PacketProcessingService/**` change; `build.yml` runs after it and publishes installers, tagging `main`/`master` as releases and `feature/**`/`fix/**` as pre-releases — branch names matter.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `Asgard-Ltd-R-D/KanatBackend`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

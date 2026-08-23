@@ -15,10 +15,13 @@ OUTPUT_DIR          = './video_output'
 EXCEL_OUTPUT        = os.path.join(OUTPUT_DIR, 'bullet_results.xlsx')
 IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
 TARGET_SIZE_CM      = 18
+IMGSZ               = 1280   # model was trained at 1280; ultralytics' 640 default misses most holes
 
 # Clustering / suppression params
 CLUSTER_FACTOR      = 0.75   # fraction of bullet-box diagonal
 MIN_CLUSTER_DIST    = 10     # px minimum cluster radius
+CLOSE_CENTER_FACTOR = 3.0    # x bullet-box diagonal (was 20px, tuned at 960x544)
+MIN_SEPARATION      = 4.5    # x bullet-box diagonal (was 30px, tuned at 960x544)
 IOU_SUPPRESS_THRESH = 0.2    # suppress if IoU > 0.2
 global OVERLAP_THRESHOLD
 OVERLAP_THRESHOLD =0.5   # 50% overlap threshold for duplicate detection
@@ -93,6 +96,7 @@ def is_duplicate_bullet(new_box, existing_bullets, threshold=OVERLAP_THRESHOLD):
     Returns True if the new bullet overlaps more than threshold% with any existing bullet.
     """
     new_center = get_center(new_box)
+    new_diag   = np.hypot(*new_box.xywh[0][2:].cpu().numpy())
     
     for i, existing_box in enumerate(existing_bullets):
         # Check overlap percentage
@@ -104,7 +108,7 @@ def is_duplicate_bullet(new_box, existing_bullets, threshold=OVERLAP_THRESHOLD):
         # Also check center distance as additional safety
         existing_center = get_center(existing_box)
         distance = np.linalg.norm(new_center - existing_center)
-        if distance < 20:  # If centers are very close, likely same bullet
+        if distance < new_diag * CLOSE_CENTER_FACTOR:  # If centers are very close, likely same bullet
             print(f"[DEBUG] Close center detected: {distance:.1f}px distance with existing bullet {i+1}")
             return True
     
@@ -144,7 +148,7 @@ def annotate(img, ctr, mean_range_cm, unused, tgt_box, tid, dist_cm, scale, tgt_
     cv2.rectangle(img, (x1, y1), (x2, y2), col, RECT_THICK)
     cv2.putText(
         img,
-        f"T{tid}",יר
+        f"T{tid}",
         (x1 + 5, y1 - 5),
         cv2.FONT_HERSHEY_SIMPLEX,
         FONT_SCALE,
@@ -174,7 +178,7 @@ def process_video(start, end):
             if not ret:
                 break
 
-            results = model(frame)[0]
+            results = model(frame, imgsz=IMGSZ)[0]
             boxes   = results.boxes
             tgts    = [b for b in boxes if int(b.cls[0]) == 2]
             blts    = [b for b in boxes if int(b.cls[0]) == 1]
@@ -210,18 +214,18 @@ def process_video(start, end):
                     continue
                 
                 # Additional check: ensure minimum distance from all existing bullet centers
+                diag = np.hypot(*b.xywh[0][2:].cpu().numpy())
                 min_distance = float('inf')
                 for existing_bullet in detected_bullets:
                     existing_center = get_center(existing_bullet)
                     dist = np.linalg.norm(ctr - existing_center)
                     min_distance = min(min_distance, dist)
                 
-                if min_distance < 30:  # If too close to any existing bullet
+                if min_distance < diag * MIN_SEPARATION:  # If too close to any existing bullet
                     print(f"[INFO] Skipping bullet - too close to existing bullet ({min_distance:.1f}px)")
                     continue
                 
                 # determine cluster radius for this box
-                diag   = np.hypot(*b.xywh[0][2:].cpu().numpy())
                 radius = max(diag * CLUSTER_FACTOR, MIN_CLUSTER_DIST)
 
                 # check existing clusters (additional safety check)

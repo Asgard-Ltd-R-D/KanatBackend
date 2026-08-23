@@ -1,0 +1,14 @@
+{
+  "lane-25m-9mm": {
+    "confidence": 0.6,
+    "inference_size": 1280
+  },
+  "lane-50m-9mm": {
+    "confidence": 0.45,
+    "inference_size": 1920
+  },
+  "lane-25m-22lr": {
+    "confidence": 0.5,
+    "inference_size": 1600
+  }
+}

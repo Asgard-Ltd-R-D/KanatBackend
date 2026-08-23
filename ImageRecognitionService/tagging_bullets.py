@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import timedelta
 from collections import defaultdict
 import os
+import json
 import argparse
 import random
 
@@ -13,6 +14,7 @@ VIDEO_PATH          = './videos/test_video.mp4'
 OUTPUT_DIR          = './video_output'
 EXCEL_OUTPUT        = os.path.join(OUTPUT_DIR, 'bullet_results.xlsx')
 IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
+PROFILES_PATH       = './capture_profiles.json'
 TARGET_SIZE_CM      = 18
 # Detection defaults. Both belong to a Capture Profile — apparent Bullet Hole
 # size depends on the physical setup — so they are arguments to process_video,
@@ -296,19 +298,34 @@ if __name__ == "__main__":
     p.add_argument("--end",   required=True, help="End   HH:MM:SS")
     p.add_argument("--iou", type=float, default=0.5, 
                    help="Overlap threshold for duplicate detection (default: 0.5)")
-    p.add_argument("--confidence", type=float, default=DEFAULT_CONFIDENCE,
+    p.add_argument("--profile",
+                   help=f"Capture Profile name from {PROFILES_PATH}; supplies "
+                        f"confidence and inference size unless the flags below "
+                        f"override them")
+    p.add_argument("--confidence", type=float, default=None,
                    help=f"Minimum confidence for bullet detection (default: {DEFAULT_CONFIDENCE})")
-    p.add_argument("--inference-size", type=int, default=DEFAULT_INFERENCE_SIZE,
+    p.add_argument("--inference-size", type=int, default=None,
                    help=f"Inference size fed to the model, a multiple of 32 "
                         f"(default: {DEFAULT_INFERENCE_SIZE})")
     args = p.parse_args()
 
+    # Profile resolution stays here, in the command-line layer: process_video
+    # takes plain numbers and knows nothing about profiles. An unknown name
+    # surfaces as a raw KeyError — the file is version-controlled and short.
+    profile = json.load(open(PROFILES_PATH))[args.profile] if args.profile else {}
+    confidence     = (args.confidence if args.confidence is not None
+                      else profile.get('confidence', DEFAULT_CONFIDENCE))
+    inference_size = (args.inference_size if args.inference_size is not None
+                      else profile.get('inference_size', DEFAULT_INFERENCE_SIZE))
+
     if args.iou != 0.5:  # Compare with default value
         OVERLAP_THRESHOLD = args.iou
     print(f"[INFO] Using overlap threshold: {OVERLAP_THRESHOLD*100}%")
-    print(f"[INFO] Using confidence threshold: {args.confidence}")
-    print(f"[INFO] Using inference size: {args.inference_size}")
+    if args.profile:
+        print(f"[INFO] Using Capture Profile: {args.profile}")
+    print(f"[INFO] Using confidence threshold: {confidence}")
+    print(f"[INFO] Using inference size: {inference_size}")
 
     process_video(args.start, args.end,
-                  confidence=args.confidence,
-                  inference_size=args.inference_size)
+                  confidence=confidence,
+                  inference_size=inference_size)

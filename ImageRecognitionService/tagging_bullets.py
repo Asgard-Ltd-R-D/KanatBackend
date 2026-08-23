@@ -180,10 +180,12 @@ def process_video(start, end, detect=None, video_path=None,
     if detect is None:
         from ultralytics import YOLO  # imported lazily: pulls in torch
         model  = YOLO(MODEL_PATH)
-        # conf= is not optional: ultralytics filters at 0.25 by default, so a
-        # lower floor would be swallowed here before the gate below sees it.
+        # Ultralytics filters at 0.25 by default, which would swallow a lower
+        # floor before the gate below sees it. Never raise it past 0.25 though:
+        # the floor is Bullet Hole-specific, and a model-wide one also drops
+        # Targets — and a frame without a Target is discarded whole.
         detect = lambda frame: model(frame, imgsz=inference_size,
-                                     conf=confidence)[0].boxes
+                                     conf=min(confidence, 0.25))[0].boxes
     # For each target ID, track all hit centers to compute relative means over time
     target_hits = defaultdict(list)
     bullet_id   = 0

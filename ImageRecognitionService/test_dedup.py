@@ -1,4 +1,4 @@
-"""De-duplication checks for the bullet-hole pipeline.
+"""Checks for the bullet-hole pipeline.
 
 Runs without the model weights or a torch install: `process_video` takes an
 injected detector, so these drive the real pipeline (video decode, target
@@ -8,7 +8,7 @@ Run: python test_dedup.py
 """
 import numpy as np
 
-from tagging_bullets import process_video
+from tagging_bullets import process_video, resolve_setting
 
 VIDEO = './videos/test_video.mp4'
 
@@ -86,6 +86,14 @@ def test_overlapping_boxes_are_one_bullet_hole():
     Centres are 19px apart against a 17px gate, so only the overlap arm fires.
     """
     assert run(Box(300, 200, 40, 40, cls=1), Box(317, 209, 8, 8, cls=1)) == 1
+
+
+def test_setting_precedence():
+    """Flag beats profile beats default — the three ways a setting is chosen."""
+    profile = {'confidence': 0.45}
+    assert resolve_setting(0.8, profile, 'confidence', 0.6) == 0.8
+    assert resolve_setting(None, profile, 'confidence', 0.6) == 0.45
+    assert resolve_setting(None, {}, 'confidence', 0.6) == 0.6
 
 
 if __name__ == '__main__':

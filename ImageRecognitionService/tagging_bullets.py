@@ -14,7 +14,11 @@ VIDEO_PATH          = './videos/test_video.mp4'
 OUTPUT_DIR          = './video_output'
 EXCEL_OUTPUT        = os.path.join(OUTPUT_DIR, 'bullet_results.xlsx')
 IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
-PROFILES_PATH       = './capture_profiles.json'
+# Named Capture Profiles, selected with --profile. Anchored to this file, not
+# the cwd: unlike the video and output paths, this one is committed at a fixed
+# location. 25m-9mm carries the measured defaults below; the others are
+# starting points, still to be swept against footage from their own setup.
+PROFILES_PATH       = os.path.join(os.path.dirname(__file__), 'capture_profiles.json')
 TARGET_SIZE_CM      = 18
 # Detection defaults. Both belong to a Capture Profile — apparent Bullet Hole
 # size depends on the physical setup — so they are arguments to process_video,
@@ -153,6 +157,10 @@ def annotate(img, ctr, mean_range_cm, unused, tgt_box, tid, dist_cm, scale, tgt_
         col,
         TEXT_THICK
     )
+
+def resolve_setting(flag, profile, key, default):
+    """An explicit flag beats the Capture Profile, which beats the default."""
+    return flag if flag is not None else profile.get(key, default)
 
 # === MAIN PROCESS ===
 
@@ -299,24 +307,25 @@ if __name__ == "__main__":
     p.add_argument("--iou", type=float, default=0.5, 
                    help="Overlap threshold for duplicate detection (default: 0.5)")
     p.add_argument("--profile",
-                   help=f"Capture Profile name from {PROFILES_PATH}; supplies "
+                   help=f"Capture Profile name from "
+                        f"{os.path.basename(PROFILES_PATH)}; supplies "
                         f"confidence and inference size unless the flags below "
                         f"override them")
     p.add_argument("--confidence", type=float, default=None,
-                   help=f"Minimum confidence for bullet detection (default: {DEFAULT_CONFIDENCE})")
+                   help=f"Minimum confidence for a Bullet Hole "
+                        f"(default: the profile's, else {DEFAULT_CONFIDENCE})")
     p.add_argument("--inference-size", type=int, default=None,
                    help=f"Inference size fed to the model, a multiple of 32 "
-                        f"(default: {DEFAULT_INFERENCE_SIZE})")
+                        f"(default: the profile's, else {DEFAULT_INFERENCE_SIZE})")
     args = p.parse_args()
 
     # Profile resolution stays here, in the command-line layer: process_video
     # takes plain numbers and knows nothing about profiles. An unknown name
     # surfaces as a raw KeyError — the file is version-controlled and short.
-    profile = json.load(open(PROFILES_PATH))[args.profile] if args.profile else {}
-    confidence     = (args.confidence if args.confidence is not None
-                      else profile.get('confidence', DEFAULT_CONFIDENCE))
-    inference_size = (args.inference_size if args.inference_size is not None
-                      else profile.get('inference_size', DEFAULT_INFERENCE_SIZE))
+    with open(PROFILES_PATH) as f:
+        profile = json.load(f)[args.profile] if args.profile else {}
+    confidence     = resolve_setting(args.confidence, profile, 'confidence', DEFAULT_CONFIDENCE)
+    inference_size = resolve_setting(args.inference_size, profile, 'inference_size', DEFAULT_INFERENCE_SIZE)
 
     if args.iou != 0.5:  # Compare with default value
         OVERLAP_THRESHOLD = args.iou

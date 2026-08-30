@@ -1,0 +1,3 @@
+board
+bullet_hole
+target

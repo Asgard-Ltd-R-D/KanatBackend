@@ -200,6 +200,16 @@ nothing looks normalized-by-mistake.
 - **Augmentation diversity is real:** mean pHash distance between the 10 crop-augmented copies of
   the same source frame is 25.2 / 64 bits, so the crops do vary substantially. The leakage is not
   caused by weak augmentation — it is caused by the frame-level split.
+- **The 15 clips are not 15 distinct set-ups.** Comparing clips pairwise by pHash, several are the
+  same physical scene: the five `vsdc-sr-2025-02-19-*` clips are mutually within Hamming 4–6, and
+  `sync-out-of-target` sits at Hamming **2** from `vsdc-…-17-55-17`; `KANA-5-OUTER` and
+  `KANA-5-SYNC` are at Hamming 6. Collapsing those, the dataset covers **roughly 9 visually
+  distinct set-ups, not 15** — and at a looser threshold (≤10) `CAPTURE` and `outer` also fold into
+  the `vsdc` family, so 9 is an upper bound. (Caveat: pHash on letterboxed images runs slightly
+  optimistic, since the shared black bars pull all frames together.)
+- **40% of the entire dataset comes from one 41-minute session.** The five `vsdc-sr-2025-02-19-*`
+  clips are timestamped 17:46:30 through 18:27:35 on a single afternoon and contribute **185 of the
+  465 unique source frames**. One location, one camera position, one lighting condition.
 
 ---
 
@@ -220,16 +230,37 @@ Effective (de-augmented) training instances:
 - **`board` is the sparsest class at ~448 effective instances**, followed by `target` at ~631.
   Both are above the 200 floor but well below comfortable. They are also the easy classes
   (large, high-contrast, one or two per frame), so this is likely tolerable in practice.
-- **The real ceiling is scene diversity, not instance count: 381 unique frames from 14 clips.**
-  For bullet_hole, ~4768 effective instances sounds healthy, but they are drawn from 14 boards
-  under 14 lighting conditions. Expect the model to generalize poorly to a new range, a new board
-  print, or new lighting.
+- **The real ceiling is scene diversity, not instance count: 381 unique training frames, and only
+  about 9 genuinely distinct set-ups across the whole dataset (§5).** For bullet_hole, ~4768
+  effective instances sounds healthy, but they come from roughly nine board/lighting combinations,
+  40% of them from a single 41-minute session. Expect the model to generalize poorly to a new
+  range, a new board print, or new lighting.
 - **No class is well-represented in train but absent in valid/test** — proportions match across all
   three splits (§2). That is the one balance property this dataset gets right.
 - **Object scale is a training-config risk:** median `bullet_hole` box is 0.0098 of the image
   diagonal ≈ **12.5 px at 1280×1280**; the 1st percentile is ≈ 4.5 px. If you train at
   `imgsz=640`, the median hole becomes ~6 px and the small ones ~2 px — below what standard YOLO
   stride-8 heads resolve. Train at 1280, or tile.
+- **There are effectively no true background frames.** Exactly **1 image out of 3914** carries no
+  `target` annotation. Around 50 unique frames have a board/target but zero `bullet_hole` (pre-fire
+  frames), which are useful negatives for the hole class — but the dataset contains essentially no
+  imagery of a scene with no target in it at all. Any requirement of the form "must not report hits
+  when nothing is being fired at" currently has **no data behind it**, neither to train on nor to
+  test against.
+- **Overlapping-hit coverage is thin, and it is the hardest requirement.** Measuring centre-to-centre
+  distance between `bullet_hole` boxes in units of the median hole diameter (~12 px), over the 413
+  de-augmented frames that contain holes:
+
+  | Separation | Pairs | Distinct frames |
+  |---|---:|---:|
+  | < 0.5 diameters (near-total overlap) | 55 | 30 |
+  | 0.5–1.0 diameters (clear overlap) | 76 | 40 |
+  | 1.0–2.0 diameters (touching / adjacent) | 394 | 93 |
+
+  Note the `< 0.5` row overlaps with the 192 identical-bbox annotation pairs found in §4, so some of
+  those 55 are double-labelling rather than genuine stacked hits — the real figure is lower.
+  Thirty-odd frames is not enough to train or to certify a separate-and-count-overlapping-hits
+  requirement, and this is precisely the capability with the hardest acceptance criterion attached.
 
 ---
 
@@ -255,18 +286,26 @@ Effective (de-augmented) training instances:
 
 ### Real risks — address soon
 
-3. **Only 381 unique source frames from 15 clips.** The 3830-image train set is 10× augmentation
-   of a small dataset. Reported "3914 images" overstates the information content by roughly 10×.
-4. **Object scale vs. training resolution.** Median bullet_hole ≈ 12.5 px at 1280. Training at 640
+3. **Only 465 unique source frames, from ~9 genuinely distinct set-ups.** The 3830-image train set
+   is 10× augmentation of 381 frames. Reported "3914 images" overstates the information content by
+   roughly 10×, and the 15 clips overstate scene diversity by nearly 2× (§5). **40% of everything
+   comes from one 41-minute session.**
+4. **No true background imagery.** Exactly 1 image in 3914 has no target in it. A "no false alarms
+   when nobody is firing" requirement currently has no data behind it at all — nothing to train on,
+   nothing to test against.
+5. **Overlapping-hit coverage is thin.** Only ~30 frames show near-total overlap and ~40 show clear
+   overlap (§6), and some of the near-total cases are double-labelling rather than real stacked
+   hits. This is the requirement with the hardest acceptance criterion and the least data.
+6. **Object scale vs. training resolution.** Median bullet_hole ≈ 12.5 px at 1280. Training at 640
    will silently destroy the smallest ~25% of the target class.
-5. **Category `0 objects` is an empty placeholder.** Will produce an off-by-one class map in any
+7. **Category `0 objects` is an empty placeholder.** Will produce an off-by-one class map in any
    naive COCO→YOLO conversion.
 
 ### Nice to have
 
-6. 253 duplicate/overlapping annotation pairs in train (~25 source frames) — spot-check and clean.
-7. 9 source frames with `target` boxes but no `board` box — labelling inconsistency.
-8. No synthetic data present, despite the pipeline supporting it (§5).
+8. 253 duplicate/overlapping annotation pairs in train (~25 source frames) — spot-check and clean.
+9. 9 source frames with `target` boxes but no `board` box — labelling inconsistency.
+10. No synthetic data present, despite the pipeline supporting it (§5).
 
 ---
 

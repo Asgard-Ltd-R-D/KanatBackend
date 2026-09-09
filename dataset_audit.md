@@ -242,6 +242,13 @@ Effective (de-augmented) training instances:
    frame in the same static-camera clip, with full-res MAD as low as 1.66/255. Validation mAP from
    this split measures memorization, not detection. **Every metric reported off this split so far
    should be treated as unreliable and re-measured after a re-split.**
+
+   *Cause and fix:* the split was made over individual **frames**, which are not independent samples
+   — consecutive frames of a fixed-camera clip are near-copies of each other, so shuffling them
+   scatters near-identical images across the split boundary. The fix is to split over whole
+   **clips**, so that every frame of a given recording lands entirely in one split. Note this is
+   *not* an augmentation-ordering problem: the export already augments train only, and no source
+   frame appears in more than one split (see §8, step 1).
 2. **Valid and test are too small to measure anything.** 42 images / ~600 boxes each. Even without
    leakage, the confidence interval is far wider than the differences you would be trying to detect
    between checkpoints.

@@ -92,9 +92,32 @@ def test_millimetres_refuses_to_guess_the_ring_diameter():
         board.to_millimetres([[0, 0]], _view([]))
 
 
-def test_scoring_is_blocked_on_the_same_measurement():
-    with pytest.raises(board.NotCalibrated):
-        board.score([[0, 0]], _view([]), ring_diameter_mm=42.6)
+def test_scoring_needs_no_calibration():
+    """A score is a ratio inside one picture, so the missing ruler cannot block it."""
+    view = _view([_square(0, 0, 100)])
+    centre = view.ring_centre(0)
+    assert board.score([centre], view, 0) == [10]
+
+
+def test_each_ring_scores_its_own_value():
+    view = _view([_square(0, 0, 100)])
+    centre = view.ring_centre(0)
+    just_inside = [centre + [r - 1, 0] for r in board.RING_RADII_TPL]
+    assert board.score(just_inside, view, 0) == list(board.RING_SCORES)
+
+
+def test_beyond_the_outer_ring_scores_outside():
+    view = _view([_square(0, 0, 100)])
+    far = view.ring_centre(0) + [board.RING_RADII_TPL[-1] + 10, 0]
+    assert board.score([far], view, 0) == [board.OUTSIDE_RINGS]
+
+
+def test_score_is_unaffected_by_board_scale():
+    """Rectifying larger must not change which ring a Bullet Hole is in."""
+    for scale in (1.0, 2.5):
+        view = _view([_square(0, 0, 100 * scale)], scale=scale)
+        point = view.ring_centre(0) + np.float32([250 * scale, 0])
+        assert board.score([point], view, 0) == [8]
 
 
 def test_millimetres_work_once_the_ring_is_measured():

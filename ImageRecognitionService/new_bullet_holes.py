@@ -241,18 +241,20 @@ def _report(new, start, fps, view, ring_diameter_mm):
             if hole is new[0]:
                 print(f"[BLOCKED] millimetres unavailable: {why}")
 
-    # Always exercised, so its blocked state is visible even once --ring-mm is
-    # supplied. Silently skipping it made a half-done pipeline look finished.
-    try:
-        board.score([h["pos"] for h in new if h["target"] is not None], view, ring_diameter_mm)
-    except board.NotCalibrated as why:
-        print(f"[BLOCKED] score unavailable: {why}")
+    # Scoring needs no calibration: it is a ratio inside one picture.
+    for hole in new:
+        hole["score"] = None
+        if hole["target"] is not None:
+            hole["score"] = board.score([hole["pos"]], view, hole["target"])[0]
 
     for i, hole in enumerate(new, 1):
         where = "MISS" if hole["target"] is None else f"Target {hole['target'] + 1}"
         evidence = "changed" if hole["corroborated"] else "model only"
+        scored = "" if hole["score"] is None else (
+            "  outside rings" if hole["score"] == board.OUTSIDE_RINGS
+            else f"  scores {hole['score']}")
         line = (f"  #{i}  t={start + hole['first_frame'] / fps:5.2f}s  {where:<9} "
-                f"persistence {hole['persistence']:.0%}  [{evidence}]")
+                f"persistence {hole['persistence']:.0%}  [{evidence}]{scored}")
         if hole["mm"] is not None:
             line += f"  X {hole['mm'][0]:+7.1f} mm  Y {hole['mm'][1]:+7.1f} mm"
         elif hole["target"] is not None and ring_diameter_mm is not None:

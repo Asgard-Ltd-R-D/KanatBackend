@@ -37,6 +37,14 @@ RING_DIAMETER_TPL = 227.0                   # white 10-ring diameter, template p
 # relative to one another — consistent with the single-plane Board.
 RING_OFFSET_TPL = RING_CENTRE_TPL - np.array([696.8, 648.9])
 
+# Outer radius of each scoring ring, template px, measured off the artwork by
+# tracing rays out from the ring centre and recording where the printed white
+# lines fall. Spacing is ~101 px and the values repeat within 3 px across 280
+# rays, which is the width of the printed line itself.
+RING_RADII_TPL = (113.5, 219.0, 318.0, 420.0, 522.0)
+RING_SCORES = (10, 9, 8, 7, 6)
+OUTSIDE_RINGS = 0          # on the Target, beyond the 6-ring
+
 # --- Provisional working values --------------------------------------------
 # NONE of these are validated. They were set by hand against a single clip
 # (CamA_20260914_141546) and exist to be tuned against the held-out customer test
@@ -393,14 +401,23 @@ def to_millimetres(board_points, view, ring_diameter_mm=None, target_index=None)
     return offset
 
 
-def score(board_points, view, ring_diameter_mm=None):
-    """Scoring ring for each Bullet Hole.
+def score(board_points, view, target_index=None):
+    """Scoring ring for each Bullet Hole, from its distance to the ring centre.
 
-    Blocked on the same measurement as `to_millimetres`, and additionally on the
-    artwork's ring spacing, which has not been extracted. Ring geometry is
-    straightforward once both exist; it is not implemented on guesses.
+    **Needs no calibration.** A score is which printed ring contains the Bullet
+    Hole — a ratio between two lengths in the same picture, not a physical
+    measurement. The ring radii and the Bullet Hole are both in template pixels,
+    so the millimetre scale cancels and `to_millimetres`'s missing ruler reading
+    does not block this.
+
+    Returns `OUTSIDE_RINGS` for a Bullet Hole on the Target but beyond the
+    6-ring. A Miss has no Target and so no score — do not call this for one.
     """
-    raise NotCalibrated(
-        "scoring needs the printed 10-ring diameter and the artwork's ring "
-        "spacing. Neither has been measured. See the architecture document, "
-        "Open Questions 1.")
+    centre = view.ring_centre(target_index)
+    points = np.asarray(board_points, np.float32).reshape(-1, 2)
+    if not len(points):
+        return []
+    # Board space is template space scaled, so dividing recovers template px.
+    distances = np.linalg.norm(points - centre, axis=1) / view.board_scale
+    return [next((s for radius, s in zip(RING_RADII_TPL, RING_SCORES) if d <= radius),
+                 OUTSIDE_RINGS) for d in distances]

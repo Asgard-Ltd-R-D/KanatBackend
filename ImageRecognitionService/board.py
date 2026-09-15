@@ -67,7 +67,13 @@ TARGET_NET_SCALE = 0.90    # PROVISIONAL
 # in template px precisely so it survives a change of camera distance, unlike a
 # frame-pixel value. 227 template px is the 10-ring diameter, so this converts to
 # millimetres the moment `to_millimetres` is unblocked.
-MATCH_TPL_PX = 40.0        # PROVISIONAL
+#
+# Swept against operator-labelled ground truth (KanatV6, 6 Bullet Holes): 40
+# scored 4 true / 2 false, 20 scored 5 true / 2 false. The radius also gates
+# which detections count as "already in the baseline", so an over-wide value
+# discards real Bullet Holes near a pre-existing one — which is how 40 lost a
+# Bullet Hole 125 template px clear of its neighbour.
+MATCH_TPL_PX = 20.0        # PROVISIONAL
 
 # Deliberately loose. Change detection only ever ADDS confidence to a detection
 # the model already made, so a false "changed" costs nothing while a missed one

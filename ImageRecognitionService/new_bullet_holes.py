@@ -46,12 +46,29 @@ DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26n_v1", "we
 # Not validated. Hand-set against a single clip, to be tuned against the
 # held-out customer test set. See board.py for the same warning about the
 # geometry constants.
-PERSIST = 0.70        # PROVISIONAL: fraction of the window it must still be seen in
+# Measured against operator ground truth on CamA_20260914_141546 (6 Hits, all in
+# one group): at 0.70 only 1 of the group survived; at 0.50 all 4 the model found
+# survived. The four that 0.70 discarded had persistences of 0.50-0.62 — real
+# Bullet Holes, rejected by a bar set from nothing but intuition.
+PERSIST = 0.50        # PROVISIONAL
 PERSIST_FRAMES = 50   # PROVISIONAL length, but FIXED by design: measured to the end
                       # of the clip instead, the same Bullet Hole confirms over
                       # 13-17s and fails over 13-25s purely because registration
                       # drifts further over the longer run.
 DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
+
+# Require change detection to corroborate a confirmed Bullet Hole.
+#
+# This is a narrower role than the gate rejected in ADR-0003: it filters
+# CONFIRMED Bullet Holes rather than deciding what the model looks at, so a
+# missed candidate is still detected and can still be recovered by lowering the
+# bar. On the ground-truth clip it removed 5 of 7 false positives and cost
+# nothing real — every one of the four true Bullet Holes was corroborated.
+#
+# It is not free. The same footage shows change detection blind to 1 in 5 real
+# Bullet Holes, so this trades recall for precision. Turn it off with
+# --no-change-filter when recall matters more.
+REQUIRE_CHANGE_EVIDENCE = True  # PROVISIONAL
 
 
 def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
@@ -120,7 +137,8 @@ def _corroborated(point, changed_mask, radius):
 
 
 def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
-            out_video=None, ring_diameter_mm=None, template_path=board.DEFAULT_TEMPLATE):
+            out_video=None, ring_diameter_mm=None, template_path=board.DEFAULT_TEMPLATE,
+            require_change_evidence=REQUIRE_CHANGE_EVIDENCE):
     from ultralytics import YOLO  # imported lazily: pulls in torch
     model = YOLO(model_path)
 
@@ -193,6 +211,11 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         hole["target"] = last.assign(hole["pos"])
         hole["corroborated"] = any(
             np.linalg.norm(np.asarray(c) - hole["pos"]) < match_px for c in corroboration)
+
+    if require_change_evidence:
+        before = len(new)
+        new = [h for h in new if h["corroborated"]]
+        print(f"[FILTER] change evidence required: {before} -> {len(new)} Bullet Holes")
 
     _report(new, start, fps, last, ring_diameter_mm)
     if out_video:
@@ -302,6 +325,10 @@ if __name__ == "__main__":
                         "Without it, positions stay in Board pixels: every "
                         "millimetre figure scales linearly with this, so it is "
                         "not guessed.")
+    p.add_argument("--no-change-filter", action="store_true",
+                   help="keep confirmed Bullet Holes that change detection did "
+                        "not corroborate. Raises recall, lowers precision.")
     p.add_argument("--out", help="write an annotated video of the rectified Board here")
     a = p.parse_args()
-    process(a.video, a.start, a.end, a.model, a.confidence, a.out, a.ring_mm, a.template)
+    process(a.video, a.start, a.end, a.model, a.confidence, a.out, a.ring_mm,
+            a.template, not a.no_change_filter)

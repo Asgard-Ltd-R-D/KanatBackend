@@ -1,7 +1,8 @@
 # A Bullet Hole is new when it persists
 
 A Bullet Hole is reported when it is absent from the baseline frame **and** is
-still detected in at least **70% of the 50 frames following its first sighting**.
+still detected in at least **50% of the 50 frames following its first sighting**,
+**and** change detection corroborates it.
 Detection runs across the whole Board and is filtered afterwards; change
 detection does not decide what the model looks at.
 
@@ -75,6 +76,34 @@ and curled, so the difference at that point is dominated by edge ghosting.
 
 Change detection is therefore kept only as corroborating evidence for a
 detection the model already made.
+
+## The thresholds were wrong, and only ground truth showed it
+
+The first values — a 70% persistence bar and a 40 template-px match radius — were
+set by intuition. Scored against an operator-labelled photograph of the same
+Board (`truth/kanatv6`, six Hits), they gave **1 true positive and 5 false**.
+
+| Change | Why it was wrong | Result |
+|---|---|---|
+| persistence 70% -> 50% | the real Bullet Holes sat at 0.50-0.62; the bar rejected almost the whole group | recall 1/6 -> 4/6 |
+| match radius 40 -> 20 template px | the radius also gates what counts as "already in the baseline", so it discarded a real Bullet Hole 125px clear of its neighbour | 4 -> 5 true positives |
+| change evidence: metadata -> filter | every true Bullet Hole was corroborated; 5 of 7 false ones were not | 5 false -> 2 |
+
+Final on that clip: **TP 5, FP 2, FN 0** against the five usable labels —
+precision 71%, recall 100%, F1 0.83. One of the two false positives lies 26
+template px from the sixth label, whose polygon is truncated in the export and so
+cannot be scored; if it is that Bullet Hole, the run found 6 of 6 with one false
+positive.
+
+`evaluate.py` is what produced these numbers and is the reason the thresholds are
+no longer guesses. It registers the ground-truth photograph and the video frame
+to the same printed artwork, so positions taken from different viewpoints are
+comparable, and matches one-to-one so a cluster of false positives cannot all
+claim the same label.
+
+**These values are tuned on six Bullet Holes in one clip and will overfit to it.**
+They are better than intuition, not validated. The held-out test set remains the
+only thing that settles them.
 
 ## Consequences
 

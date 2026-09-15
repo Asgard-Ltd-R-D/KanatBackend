@@ -204,19 +204,36 @@ def _report(new, start, fps, view, ring_diameter_mm):
     misses = sum(1 for h in new if h["target"] is None)
     print(f"[INFO] {len(new)} new Bullet Holes ({len(new) - misses} on a Target, {misses} Miss)")
 
+    # A Miss has no Target and so no Shot Distance — by definition, not by
+    # omission. Measuring it against some Target's centre would be a number with
+    # no meaning. See CONTEXT.md, Miss.
+    for hole in new:
+        hole["mm"] = None
+        if hole["target"] is None:
+            continue
+        try:
+            hole["mm"] = board.to_millimetres([hole["pos"]], view, ring_diameter_mm,
+                                              hole["target"])[0]
+        except board.NotCalibrated as why:
+            if hole is new[0]:
+                print(f"[BLOCKED] millimetres unavailable: {why}")
+
+    # Always exercised, so its blocked state is visible even once --ring-mm is
+    # supplied. Silently skipping it made a half-done pipeline look finished.
     try:
-        mm = board.to_millimetres([h["pos"] for h in new], view, ring_diameter_mm) if new else []
+        board.score([h["pos"] for h in new if h["target"] is not None], view, ring_diameter_mm)
     except board.NotCalibrated as why:
-        mm = None
-        print(f"[BLOCKED] millimetres and score unavailable: {why}")
+        print(f"[BLOCKED] score unavailable: {why}")
 
     for i, hole in enumerate(new, 1):
         where = "MISS" if hole["target"] is None else f"Target {hole['target'] + 1}"
         evidence = "changed" if hole["corroborated"] else "model only"
         line = (f"  #{i}  t={start + hole['first_frame'] / fps:5.2f}s  {where:<9} "
                 f"persistence {hole['persistence']:.0%}  [{evidence}]")
-        if mm is not None:
-            line += f"  X {mm[i - 1][0]:+7.1f} mm  Y {mm[i - 1][1]:+7.1f} mm"
+        if hole["mm"] is not None:
+            line += f"  X {hole['mm'][0]:+7.1f} mm  Y {hole['mm'][1]:+7.1f} mm"
+        elif hole["target"] is not None and ring_diameter_mm is not None:
+            line += "  (mm unavailable)"
         print(line)
 
 

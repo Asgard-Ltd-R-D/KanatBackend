@@ -30,6 +30,13 @@ DEFAULT_TEMPLATE = os.path.join(BASE_DIR, "targets", "kanat_silhouette_a4.png")
 RING_CENTRE_TPL = np.array([695.4, 639.2])  # white 10-ring centre, template px
 RING_DIAMETER_TPL = 227.0                   # white 10-ring diameter, template px
 
+# Ring centre relative to the silhouette's centroid. Every Target on a Board is
+# the same artwork, but only the reference Target is registered against the
+# template; this offset places the ring centre on the others from their own
+# outline, without a second registration. Assumes Targets are not rotated
+# relative to one another — consistent with the single-plane Board.
+RING_OFFSET_TPL = RING_CENTRE_TPL - np.array([696.8, 648.9])
+
 # --- Provisional working values --------------------------------------------
 # NONE of these are validated. They were set by hand against a single clip
 # (CamA_20260914_141546) and exist to be tuned against the held-out customer test
@@ -196,10 +203,22 @@ class BoardView:
     def board_scale(self):
         return float(self.tpl_to_board[0, 0])
 
-    @property
-    def ring_centre(self):
-        """The 10-ring centre in Board space — SOW 2.3.2's measurement origin."""
-        return _apply(self.tpl_to_board, [RING_CENTRE_TPL])[0]
+    def ring_centre(self, target_index=None):
+        """A Target's 10-ring centre in Board space — SOW 2.3.2's origin.
+
+        `target_index` None falls back to the registered reference position,
+        which is only correct for the Target the homography was fitted to.
+        Measuring a Bullet Hole on Target 2 against Target 1's centre is a
+        silent, large error, so callers pass the Target the Bullet Hole is on.
+        """
+        if target_index is None or not self.targets:
+            return _apply(self.tpl_to_board, [RING_CENTRE_TPL])[0]
+        moments = cv2.moments(self.targets[target_index])
+        if moments["m00"] == 0:
+            return _apply(self.tpl_to_board, [RING_CENTRE_TPL])[0]
+        centroid = np.array([moments["m10"] / moments["m00"],
+                             moments["m01"] / moments["m00"]], np.float32)
+        return centroid + RING_OFFSET_TPL.astype(np.float32) * self.board_scale
 
     @property
     def match_radius(self):
@@ -343,8 +362,11 @@ def changed_regions(baseline_canvas, current_canvas, sigma=ABSDIFF_SIGMA):
     return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
 
-def to_millimetres(board_points, view, ring_diameter_mm=None):
-    """Board-space positions as millimetres from the Target centre.
+def to_millimetres(board_points, view, ring_diameter_mm=None, target_index=None):
+    """Board-space positions as millimetres from a Target's centre.
+
+    `target_index` names the Target the Bullet Holes are on. A Miss has no
+    Target and therefore no Shot Distance — do not call this for one.
 
     Deliberately refuses to guess. The printed 10-ring has never been measured
     with a ruler, and every millimetre figure scales linearly with it — an
@@ -360,7 +382,7 @@ def to_millimetres(board_points, view, ring_diameter_mm=None):
             "Everything downstream scales linearly with it, so it is not guessed.")
     mm_per_board_px = ring_diameter_mm / (RING_DIAMETER_TPL * view.board_scale)
     offset = (np.asarray(board_points, np.float32).reshape(-1, 2)
-              - view.ring_centre) * mm_per_board_px
+              - view.ring_centre(target_index)) * mm_per_board_px
     offset[:, 1] *= -1  # image y grows downward, physical y grows up
     return offset
 

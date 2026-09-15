@@ -123,3 +123,23 @@ def test_physical_y_grows_upward():
     view = _view([])
     above = board.RING_CENTRE_TPL - np.array([0, board.RING_DIAMETER_TPL / 2])
     assert board.to_millimetres([above], view, ring_diameter_mm=40.0)[0][1] == pytest.approx(20.0)
+
+
+def test_each_target_has_its_own_ring_centre():
+    """Measuring a Bullet Hole on Target 2 against Target 1's centre is a big,
+    silent error — the Targets are hundreds of Board px apart."""
+    view = _view([_square(0, 0, 100), _square(500, 500, 100)])
+    first, second = view.ring_centre(0), view.ring_centre(1)
+    assert np.linalg.norm(second - first) > 400
+    # each sits near its own Target's centroid, offset by the artwork constant
+    assert first == pytest.approx(np.float32([50, 50]) + board.RING_OFFSET_TPL, abs=1.0)
+    assert second == pytest.approx(np.float32([550, 550]) + board.RING_OFFSET_TPL, abs=1.0)
+
+
+def test_same_bullet_hole_measures_differently_against_different_targets():
+    """The Target index is load-bearing, not cosmetic."""
+    view = _view([_square(0, 0, 100), _square(500, 500, 100)])
+    point = [[60.0, 60.0]]
+    on_first = board.to_millimetres(point, view, ring_diameter_mm=40.0, target_index=0)
+    on_second = board.to_millimetres(point, view, ring_diameter_mm=40.0, target_index=1)
+    assert np.linalg.norm(on_first[0] - on_second[0]) > 50  # mm

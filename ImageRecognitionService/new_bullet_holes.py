@@ -1,19 +1,29 @@
-"""Report only the Bullet Holes that appear after a baseline frame.
+"""Report the Bullet Holes that appear on a Board after a baseline frame.
+
+The runtime pipeline from bullet_hole_detection_pipeline_updated.md:
+
+    frame
+      -> locate Board            board.find_targets, one hue threshold
+      -> homography              board.register, ECC refinement
+      -> rectified Board         board.BoardView.rectify, at TARGET_NET_SCALE
+      -> YOLO on the rectified Board
+      -> Target / Miss           board.BoardView.assign
+      -> baseline + persistence  track_new_bullet_holes, here
+      -> millimetres, score      NOT IMPLEMENTED, see board.to_millimetres
 
 Two things the plain detector cannot do on its own:
 
 - **Baseline (SOW 2.1.6).** A Board usually arrives already shot. Bullet Holes
   present in the baseline frame are recorded once and never reported again.
 - **Persistence.** A real Bullet Hole appears and then stays put. A false
-  positive on gravel or a shadow flickers. Requiring a detection to survive
-  PERSIST of its confirmation window removes the bulk of the false positives
-  without retraining anything — measured on CamA_20260914_141546: 70 candidates
-  collapse to 7.
+  positive on gravel or a shadow flickers. Measured on CamA_20260914_141546,
+  requiring a detection to survive its confirmation window cut 70 candidates to
+  7 — with no retraining, and where no confidence threshold could separate them.
 
-The camera is not static (~16px drift over 12s on that clip), so every frame is
-registered back to the baseline frame before positions are compared.
+Change detection runs alongside as corroborating evidence only, never as the
+gate: it covers at best 4 of 5 known new Bullet Holes at any threshold.
 
-Counts here are Bullet Holes, never Hits — see
+Counts are Bullet Holes, never Hits — see
 docs/adr/0001-report-bullet-holes-not-hits.md. Two bullets through one mark are
 one Bullet Hole, and no amount of temporal evidence separates them.
 """
@@ -23,6 +33,8 @@ import os
 import cv2
 import numpy as np
 
+import board
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Single-class yolo26n, trained on Bullet Holes only. Replaces
@@ -30,28 +42,28 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # own Capture Profile floor on real range footage and so reported nothing.
 DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26n_v1", "weights", "best.pt")
 
-MATCH_PX = 22    # two detections are the same Bullet Hole within this, in baseline-frame px
-PERSIST  = 0.70  # fraction of the confirmation window it must still be seen in
-PERSIST_FRAMES = 50  # length of that window. Fixed, so the verdict does not depend
-                     # on how long a clip happens to run: measured to the end of the
-                     # clip instead, the same Bullet Hole confirms over 13-17s and
-                     # fails over 13-25s purely because registration drifts further.
+# --- Provisional working values --------------------------------------------
+# Not validated. Hand-set against a single clip, to be tuned against the
+# held-out customer test set. See board.py for the same warning about the
+# geometry constants.
+PERSIST = 0.70        # PROVISIONAL: fraction of the window it must still be seen in
+PERSIST_FRAMES = 50   # PROVISIONAL length, but FIXED by design: measured to the end
+                      # of the clip instead, the same Bullet Hole confirms over
+                      # 13-17s and fails over 13-25s purely because registration
+                      # drifts further over the longer run.
+DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 
-# ponytail: registration is one full-frame homography per frame, correcting camera
-# drift only. It does not rectify the Board or separate Targets — that is the
-# rectify-first design in bullet_hole_detection_pipeline_updated.md, still to come.
 
-
-def track_new_bullet_holes(per_frame, n_frames, match_px=MATCH_PX, persist=PERSIST,
+def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
                            window=PERSIST_FRAMES):
     """Fold per-frame detections into confirmed new Bullet Holes.
 
-    `per_frame` is [(frame_idx, Nx2 array of centres in baseline coords), ...],
-    already stripped of anything matching the baseline. **Only frames that
-    registered successfully appear in it**, and a registered frame with no
-    detections must appear with an empty array rather than be omitted: the
-    denominator below counts the frames that actually got a look, so a
-    registration failure neither counts for nor against a Bullet Hole.
+    `per_frame` is [(frame_idx, Nx2 array of Board-space centres), ...], already
+    stripped of anything matching the baseline. **Only frames that registered
+    successfully appear in it**, and a registered frame with no detections must
+    appear with an empty array rather than be omitted: the denominator below
+    counts the frames that actually got a look, so a registration failure neither
+    counts for nor against a Bullet Hole.
 
     A candidate whose window has not yet elapsed is not reported. Shortening the
     denominator instead would confirm a Bullet Hole seen in 7 of the 10 frames
@@ -87,20 +99,35 @@ def track_new_bullet_holes(per_frame, n_frames, match_px=MATCH_PX, persist=PERSI
     return sorted(confirmed, key=lambda c: c["first_frame"])
 
 
-def _detect(model, frame, imgsz, conf):
-    r = model.predict(frame, imgsz=imgsz, conf=conf, verbose=False)[0]
+def _detect(model, image, imgsz, conf):
+    r = model.predict(image, imgsz=imgsz, conf=conf, verbose=False)[0]
     return np.array([[(float(b.xyxy[0][0]) + float(b.xyxy[0][2])) / 2,
                       (float(b.xyxy[0][1]) + float(b.xyxy[0][3])) / 2]
                      for b in r.boxes], np.float32).reshape(-1, 2)
 
 
-def _gray(frame):
-    return cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255, (5, 5), 0)
+def _round32(x):
+    return max(32, int(round(x / 32)) * 32)
 
 
-def process(video, start, end, model_path, imgsz, conf, out_video=None):
+def _corroborated(point, changed_mask, radius):
+    """Did change detection also see something here? Evidence, not a gate."""
+    h, w = changed_mask.shape
+    x, y = int(point[0]), int(point[1])
+    r = int(max(1, radius))
+    x0, y0, x1, y1 = max(0, x - r), max(0, y - r), min(w, x + r + 1), min(h, y + r + 1)
+    return bool(x1 > x0 and y1 > y0 and changed_mask[y0:y1, x0:x1].any())
+
+
+def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
+            out_video=None, ring_diameter_mm=None, template_path=board.DEFAULT_TEMPLATE):
     from ultralytics import YOLO  # imported lazily: pulls in torch
     model = YOLO(model_path)
+
+    template = cv2.imread(template_path)
+    if template is None:
+        raise SystemExit(f"cannot read Target artwork at {template_path}")
+    _, template_mask = board.find_targets(template, min_area=1)
 
     cap = cv2.VideoCapture(video)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -108,91 +135,131 @@ def process(video, start, end, model_path, imgsz, conf, out_video=None):
     ok, base = cap.read()
     if not ok:
         raise SystemExit(f"cannot read {video} at {start}s")
-    baseline = _detect(model, base, imgsz, conf)
-    gb = _gray(base)
-    n_frames = int((end - start) * fps)
+
+    # Board space is fixed here, once, and every later frame reuses it.
+    view, correlation = board.build_view(base, template_mask)
+    if view is None:
+        raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+    canvas_w, canvas_h = view.canvas_size
+    # ultralytics fits the LONGEST side to imgsz, so that is what must match.
+    imgsz = _round32(max(canvas_w, canvas_h))
+    frame_span = board.contour_span(board.find_targets(base)[0][0])
+    tpl_span = board.contour_span(board.template_contour(template_mask))
+    scale = board.net_scale(view.board_scale, tpl_span, frame_span, imgsz,
+                            max(canvas_w, canvas_h))
+
+    print(f"[BOARD] {len(view.targets)} Target(s), registration correlation {correlation:.4f}")
+    print(f"[BOARD] rectified {canvas_w}x{canvas_h}, imgsz {imgsz}, net scale {scale:.2f}")
+    if not 0.5 <= scale <= 1.2:
+        print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
+              f"(0.5-1.2, flat within it); detection is zero by ~1.8")
+
+    baseline_canvas = view.rectify(base)
+    baseline = _detect(model, baseline_canvas, imgsz, conf)
+    match_px = view.match_radius
     print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes at {start}s")
 
-    crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 100, 1e-6)
-    W = np.eye(3, dtype=np.float32)
-    per_frame = []
-    lost = 0
+    n_frames = int((end - start) * fps)
+    per_frame, corroboration, lost = [], [], 0
+    last = view
     for idx in range(1, n_frames):
         ok, frame = cap.read()
         if not ok:
             break
         try:
-            _, W = cv2.findTransformECC(gb, _gray(frame), W, cv2.MOTION_HOMOGRAPHY, crit, None, 5)
+            current, _ = board.track_view(frame, template_mask, last)
         except cv2.error:
+            current = None
+        if current is None:
             lost += 1
-            continue  # registration lost; this frame is no evidence either way
-        pts = _detect(model, frame, imgsz, conf)
+            continue  # no evidence from this frame, either way
+        last = current
+
+        canvas = current.rectify(frame)
+        pts = _detect(model, canvas, imgsz, conf)
+        if len(pts) and len(baseline):
+            pts = pts[np.min(np.linalg.norm(baseline[None] - pts[:, None], axis=2), axis=1) >= match_px]
         if len(pts):
-            pts = cv2.perspectiveTransform(pts.reshape(-1, 1, 2), np.linalg.inv(W)).reshape(-1, 2)
-            if len(baseline):
-                pts = pts[np.min(np.linalg.norm(baseline[None] - pts[:, None], axis=2), axis=1) >= MATCH_PX]
+            changed = board.changed_regions(baseline_canvas, canvas)
+            corroboration += [p for p in pts if _corroborated(p, changed, match_px / 2)]
         per_frame.append((idx, pts))  # empty is meaningful: looked, saw nothing
 
+    cap.release()
     if lost:
-        print(f"[WARN] registration lost on {lost} frame(s); excluded from persistence")
+        print(f"[WARN] Board lost on {lost} frame(s); excluded from persistence")
 
-    new = track_new_bullet_holes(per_frame, n_frames)
-    print(f"[INFO] {len(new)} new Bullet Holes")
-    for i, c in enumerate(new, 1):
-        print(f"  #{i}  t={start + c['first_frame'] / fps:5.2f}s  "
-              f"pos=({c['pos'][0]:6.0f},{c['pos'][1]:6.0f})  persistence {c['persistence']:.0%}")
+    new = track_new_bullet_holes(per_frame, n_frames, match_px)
+    for hole in new:
+        hole["target"] = last.assign(hole["pos"])
+        hole["corroborated"] = any(
+            np.linalg.norm(np.asarray(c) - hole["pos"]) < match_px for c in corroboration)
 
+    _report(new, start, fps, last, ring_diameter_mm)
     if out_video:
-        _render(video, start, n_frames, fps, baseline, new, out_video)
+        _render(video, start, n_frames, fps, template_mask, view, baseline, new, out_video)
     return new
 
 
-def _render(video, start, n_frames, fps, baseline, new, out_video):
-    """Second pass: redraw the clip with the baseline and the confirmed Bullet Holes.
+def _report(new, start, fps, view, ring_diameter_mm):
+    misses = sum(1 for h in new if h["target"] is None)
+    print(f"[INFO] {len(new)} new Bullet Holes ({len(new) - misses} on a Target, {misses} Miss)")
 
-    Positions are in baseline-frame coordinates and the camera drifts, so each
-    frame is registered again here. Detection is not repeated.
-    """
+    try:
+        mm = board.to_millimetres([h["pos"] for h in new], view, ring_diameter_mm) if new else []
+    except board.NotCalibrated as why:
+        mm = None
+        print(f"[BLOCKED] millimetres and score unavailable: {why}")
+
+    for i, hole in enumerate(new, 1):
+        where = "MISS" if hole["target"] is None else f"Target {hole['target'] + 1}"
+        evidence = "changed" if hole["corroborated"] else "model only"
+        line = (f"  #{i}  t={start + hole['first_frame'] / fps:5.2f}s  {where:<9} "
+                f"persistence {hole['persistence']:.0%}  [{evidence}]")
+        if mm is not None:
+            line += f"  X {mm[i - 1][0]:+7.1f} mm  Y {mm[i - 1][1]:+7.1f} mm"
+        print(line)
+
+
+def _render(video, start, n_frames, fps, template_mask, reference, baseline, new, out_video):
+    """Redraw the clip as the rectified Board. Detection is not repeated."""
     cap = cv2.VideoCapture(video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
     ok, base = cap.read()
-    gb = _gray(base)
-    vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps,
-                         (int(cap.get(3)), int(cap.get(4))))
-    crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 100, 1e-6)
-    W = np.eye(3, dtype=np.float32)
-    frame, idx = base, 0
+    w, h = reference.canvas_size
+    vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
+    view, idx, frame = reference, 0, base
     while idx < n_frames:
         if idx:
             ok, frame = cap.read()
             if not ok:
                 break
             try:
-                _, W = cv2.findTransformECC(gb, _gray(frame), W, cv2.MOTION_HOMOGRAPHY, crit, None, 5)
+                tracked, _ = board.track_view(frame, template_mask, view)
+                if tracked is not None:
+                    view = tracked
             except cv2.error:
                 pass
-        vis = frame.copy()
-
-        def to_frame(p):
-            return np.int32(cv2.perspectiveTransform(np.float32([[p]]), W)[0][0])
-
+        vis = view.rectify(frame)
+        for t in view.targets:
+            cv2.polylines(vis, [np.int32(t)], True, (0, 200, 0), 2)
         for p in baseline:
-            cv2.circle(vis, tuple(to_frame(p)), 9, (150, 150, 150), 2)
+            cv2.circle(vis, tuple(np.int32(p)), 9, (150, 150, 150), 2)
         shown = 0
-        for c in new:
-            if idx < c["first_frame"]:
+        for hole in new:
+            if idx < hole["first_frame"]:
                 continue
             shown += 1
-            q = to_frame(c["pos"])
-            cv2.circle(vis, tuple(q), 16, (0, 0, 255), 3)
-            cv2.putText(vis, f"#{shown}", (q[0] + 19, q[1] + 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        cv2.putText(vis, f"t {start + idx / fps:5.2f}s", (20, 42),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-        cv2.putText(vis, f"pre-existing {len(baseline)}", (20, 84),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (150, 150, 150), 2)
-        cv2.putText(vis, f"NEW {shown}", (20, 126),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+            q = np.int32(hole["pos"])
+            colour = (0, 165, 255) if hole["target"] is None else (0, 0, 255)
+            cv2.circle(vis, tuple(q), 16, colour, 3)
+            cv2.putText(vis, f"#{shown}" + ("M" if hole["target"] is None else ""),
+                        (q[0] + 19, q[1] + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(vis, f"t {start + idx / fps:5.2f}s", (16, 34),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(vis, f"pre-existing {len(baseline)}", (16, 66),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (150, 150, 150), 2)
+        cv2.putText(vis, f"NEW {shown}", (16, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         vw.write(vis)
         idx += 1
     cap.release()
@@ -210,8 +277,14 @@ if __name__ == "__main__":
                         "Bullet Hole whose confirmation window runs past the end "
                         "is not reported.")
     p.add_argument("--model", default=DEFAULT_MODEL)
-    p.add_argument("--inference-size", type=int, default=1280)
-    p.add_argument("--confidence", type=float, default=0.4)
-    p.add_argument("--out", help="write an annotated video here")
+    p.add_argument("--template", default=board.DEFAULT_TEMPLATE,
+                   help="printed Target artwork used to register the Board")
+    p.add_argument("--confidence", type=float, default=DEFAULT_CONFIDENCE)
+    p.add_argument("--ring-mm", type=float, default=None,
+                   help="measured diameter of the printed white 10-ring, in mm. "
+                        "Without it, positions stay in Board pixels: every "
+                        "millimetre figure scales linearly with this, so it is "
+                        "not guessed.")
+    p.add_argument("--out", help="write an annotated video of the rectified Board here")
     a = p.parse_args()
-    process(a.video, a.start, a.end, a.model, a.inference_size, a.confidence, a.out)
+    process(a.video, a.start, a.end, a.model, a.confidence, a.out, a.ring_mm, a.template)

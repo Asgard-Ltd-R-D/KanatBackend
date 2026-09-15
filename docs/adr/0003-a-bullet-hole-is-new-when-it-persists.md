@@ -87,13 +87,17 @@ Board (`truth/kanatv6`, six Hits), they gave **1 true positive and 5 false**.
 |---|---|---|
 | persistence 70% -> 50% | the real Bullet Holes sat at 0.50-0.62; the bar rejected almost the whole group | recall 1/6 -> 4/6 |
 | match radius 40 -> 20 template px | the radius also gates what counts as "already in the baseline", so it discarded a real Bullet Hole 125px clear of its neighbour | 4 -> 5 true positives |
-| change evidence: metadata -> filter | every true Bullet Hole was corroborated; 5 of 7 false ones were not | 5 false -> 2 |
+| change evidence: metadata -> filter | every true Bullet Hole was corroborated; the false ones were not | 7 false -> 1 |
 
-Final on that clip: **TP 5, FP 2, FN 0** against the five usable labels —
-precision 71%, recall 100%, F1 0.83. One of the two false positives lies 26
-template px from the sixth label, whose polygon is truncated in the export and so
-cannot be scored; if it is that Bullet Hole, the run found 6 of 6 with one false
-positive.
+Final on that clip, against a complete six-label export: **TP 6, FP 1, FN 0** —
+precision 86%, recall 100%, F1 0.92. Every Bullet Hole is placed within 15-22
+template px, under one hole's width. The sixth was confirmed once the annotator
+re-exported as boxes; an earlier segmentation export had truncated that label
+mid-number, and the detection 26 template px away turned out to be the Bullet
+Hole it described.
+
+Change detection as a filter is doing most of the precision work: the same run
+without it scores TP 6, FP 7, F1 0.63.
 
 `evaluate.py` is what produced these numbers and is the reason the thresholds are
 no longer guesses. It registers the ground-truth photograph and the video frame
@@ -101,7 +105,10 @@ to the same printed artwork, so positions taken from different viewpoints are
 comparable, and matches one-to-one so a cluster of false positives cannot all
 claim the same label.
 
-**These values are tuned on six Bullet Holes in one clip and will overfit to it.**
+A sweep over confidence, persistence, match radius and the change filter
+confirms these four values are jointly optimal on this ground truth. That is
+reassurance about the sweep, not about the values:
+**they are tuned on six Bullet Holes in one clip and will overfit to it.**
 They are better than intuition, not validated. The held-out test set remains the
 only thing that settles them.
 

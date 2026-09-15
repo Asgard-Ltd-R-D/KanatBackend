@@ -33,16 +33,27 @@ import new_bullet_holes as nbh
 MATCH_TOLERANCE_TPL = 40.0
 
 
-def load_polygon_labels(path):
-    """Centroids of YOLO-segmentation polygons, normalised.
+def load_labels(path):
+    """Centroids of YOLO labels, normalised. Handles boxes and polygons.
 
-    Tolerates a truncated final coordinate. Roboflow exports have been seen
-    cut off mid-number, and silently dropping the whole instance would
-    understate ground truth — which is worse than a slightly wrong centroid.
+    Roboflow exports the same annotations either way — `class cx cy w h` for
+    detection, `class x1 y1 x2 y2 ...` for segmentation — and a bare line of
+    five fields is ambiguous between a box and a (meaningless) two-point
+    polygon. The format is therefore decided per FILE, not per line: if every
+    line carries exactly four values it is a box file.
+
+    That distinction matters. In a polygon file a five-field line is a
+    truncated instance, and one export was seen cut off mid-number. Dropping it
+    silently would understate ground truth and flatter recall, so it is counted
+    as damaged and reported.
     """
+    lines = [l for l in open(path).read().strip().splitlines() if l.strip()]
+    rows = [[float(v) for v in l.split()[1:]] for l in lines]
+    if rows and all(len(r) == 4 for r in rows):
+        return np.array([r[:2] for r in rows], np.float32).reshape(-1, 2), 0
+
     centroids, damaged = [], 0
-    for line in open(path).read().strip().splitlines():
-        values = [float(v) for v in line.split()[1:]]
+    for values in rows:
         if len(values) < 6:            # fewer than 3 points is not a polygon
             damaged += 1
             continue
@@ -65,7 +76,7 @@ def truth_in_template(image_path, label_path, template_mask):
         raise SystemExit("no Target found in the ground-truth image; cannot register it")
     H, correlation = board.register(template_mask, mask, contours[0])
 
-    normalised, damaged = load_polygon_labels(label_path)
+    normalised, damaged = load_labels(label_path)
     pixels = normalised * [width, height]
     return board._apply(np.linalg.inv(H), pixels), correlation, damaged
 

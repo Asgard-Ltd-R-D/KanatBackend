@@ -36,6 +36,11 @@ Distinct from a Hit: one Hit makes one Bullet Hole, but overlapping Hits may
 be indistinguishable as Bullet Holes.
 _Avoid_: hole, detection
 
+**Miss**:
+A Bullet Hole on a Board that falls outside every Target on it. A real Hit, and
+counted as one, but carrying no Shot Distance and no score.
+_Avoid_: stray, off-target hit
+
 **Capture Profile**:
 A named, reusable set of detection settings tied to one physical setup —
 camera placement and zoom, distance to the Board, and calibre. Selected when a

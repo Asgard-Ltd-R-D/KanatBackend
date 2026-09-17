@@ -222,6 +222,50 @@ def test_a_truncated_run_does_not_confirm_on_frames_it_never_read():
     assert len(track_new_bullet_holes(looked, n_frames=300, match_px=MATCH, window=20)) == 1
 
 
+def test_two_boxes_on_one_mark_in_one_frame_count_as_one_frame():
+    """Persistence counts frames the Bullet Hole was seen in, not sightings.
+
+    Two detections close enough to be one Bullet Hole both fold into the same
+    candidate, so the frame was counted twice. Seen in 6 of the window's 20
+    frames — 30%, under the 50% bar — but with two boxes in each, the old count
+    made 12 and confirmed it.
+
+    The two centres here are well inside the gate, which is the minimal shape of
+    the bug rather than CamB's geometry: CamB's halves sit 6.2 px apart against a
+    5.25 px gate and fold together only once the running mean drifts them into
+    range, which is why CamB's scored window did not move when this was fixed.
+    See `test_camb_split_is_not_merged_by_the_gate_alone`.
+    """
+    split = np.array([[100.0, 100.0], [100.5, 100.0]], np.float32)
+    per_frame = [(i, split if i < 16 else np.zeros((0, 2), np.float32))
+                 for i in range(10, 40)]
+    assert track_new_bullet_holes(per_frame, n_frames=40, match_px=MATCH, window=20) == []
+
+
+def test_every_frame_is_recorded_once_however_many_boxes_it_held():
+    split = np.array([[100.0, 100.0], [100.5, 100.0]], np.float32)
+    got = track_new_bullet_holes([(i, split) for i in range(10, 40)],
+                                 n_frames=40, match_px=MATCH, window=20)
+    assert len(got) == 1
+    assert got[0]["seen"] == list(range(10, 40))
+    assert got[0]["persistence"] == 1.0
+
+
+def test_persistence_cannot_exceed_one_on_out_of_order_frames():
+    """`first` is the frame the candidate was first ENCOUNTERED in.
+
+    Given frames out of order it is not the earliest, and a numerator without the
+    window's lower bound then counted sightings the denominator did not — 1.5,
+    measured, with `min(ratio, 1.0)` hiding it. `process` feeds frames in order;
+    the docstring promises only that registered frames all appear, so nothing
+    else pins this.
+    """
+    p = np.array([[100.0, 100.0]], np.float32)
+    shuffled = [(i, p) for i in range(20, 40)] + [(i, p) for i in range(10, 20)]
+    got = track_new_bullet_holes(shuffled, n_frames=40, match_px=MATCH, window=20)
+    assert [c["persistence"] for c in got] == [1.0]
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

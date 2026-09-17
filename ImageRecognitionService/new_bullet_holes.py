@@ -282,16 +282,29 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
                 match[1].append(idx)
 
     confirmed = []
-    for pos, seen, first in candidates:
+    for pos, sightings, first in candidates:
         if first + window > n_frames:
             continue  # window has not elapsed; unconfirmable, not rejected
         span = sum(1 for i in looked_at if first <= i < first + window)
         if span <= 0:
             continue
-        ratio = sum(1 for i in seen if i < first + window) / span
+        # Distinct FRAMES, not sightings: two detections on one mark in one frame
+        # both fold into this candidate, and counting each made that frame worth
+        # double. Numerator and denominator now take the same window, so the
+        # ratio cannot exceed 1 and needs no clamp. The lower bound is not
+        # decoration — `first` is the frame the candidate was FIRST ENCOUNTERED
+        # in, so out-of-order input put sightings in the numerator that the
+        # denominator never saw. Measured at 1.5, hidden by `min(ratio, 1.0)`.
+        #
+        # Position still averages over every sighting: that running mean is what
+        # folds CamB's two halves into one Bullet Hole over 275 frames, pinned by
+        # `test_camb_split_is_not_merged_by_the_gate_alone`. Persistence asks how
+        # many frames saw the mark, position asks where it is.
+        seen = sorted(set(sightings))
+        ratio = sum(1 for i in seen if first <= i < first + window) / span
         if ratio >= persist:
             confirmed.append({"pos": pos[:2], "box": pos, "first_frame": first,
-                              "seen": sorted(seen), "persistence": min(ratio, 1.0)})
+                              "seen": seen, "persistence": ratio})
     return sorted(confirmed, key=lambda c: c["first_frame"])
 
 
@@ -454,12 +467,12 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     residuals = (np.concatenate(residuals_per_frame)
                  if any(len(r) for r in residuals_per_frame) else np.zeros(0))
     if len(residuals):
+        # A max sitting at the radius is the ceiling, not the worst error: it
+        # says displaced marks are probably being reported as new Bullet Holes.
         print(f"[REGISTRATION] residual on {len(residuals)} baseline-matched "
-              f"detection(s): median {np.median(residuals):.1f}, max "
-              f"{residuals.max():.1f} Board px (match radius {match_px:.1f})")
-        if residuals.max() >= match_px:
-            print("[WARN] a residual reached the match radius; a pre-existing mark "
-                  "displaced that far is reported as a new Bullet Hole")
+              f"detection(s): median {np.median(residuals):.1f} Board px "
+              f"(max {residuals.max():.1f}, censored at the {match_px:.1f} px "
+              f"match radius — beyond it a displaced mark is reported as new)")
 
     new = track_new_bullet_holes(per_frame, processed, match_px)
     for hole in new:
@@ -533,19 +546,16 @@ def _report(new, start, fps, view, ring_diameter_mm, looked_at):
         # mark stopped being detected at any confidence from ~4s and stayed
         # plainly visible to the operator until 25s. The Bullet Hole stays
         # confirmed; the operator gets to see that it stopped being seen.
-        # Distinct frames, not sightings: `seen` carries one entry per detection
-        # folded into the candidate, so two boxes on one mark in one frame
-        # appear twice.
-        frames = set(hole["seen"])
         # Denominator is frames that REGISTERED since first sighting, not frames
         # read: a Board-lost frame neither counts for nor against a Bullet Hole,
         # the same rule `track_new_bullet_holes` applies to persistence. Counting
         # reads here would understate detection on a clip with dropouts.
+        seen = hole["seen"]
         span = sum(1 for i in looked_at if i >= hole["first_frame"])
-        share = f", {len(frames) / span:.0%} of frames since" if span > 0 else ""
+        share = f", {len(seen) / span:.0%} of frames since" if span > 0 else ""
         print(f"      first detected: {start + hole['first_frame'] / fps:.2f}s   "
-              f"last detected: {start + max(frames) / fps:.2f}s   "
-              f"detected in {len(frames)} frame(s){share}")
+              f"last detected: {start + max(seen) / fps:.2f}s   "
+              f"detected in {len(seen)} frame(s){share}")
 
 
 def _render(video, start, n_frames, fps, template_mask, reference, baseline, new, out_video):

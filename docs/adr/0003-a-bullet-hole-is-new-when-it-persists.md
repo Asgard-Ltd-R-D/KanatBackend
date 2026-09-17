@@ -12,6 +12,9 @@ frame passed its own misses through as new Bullet Holes — measured on CamB, a
 mark it missed was reported as new 40 ms later. The decision recorded here is
 unaffected; only what "the baseline" names has changed. See `HANDOVER.md`.*
 
+Once confirmed, it stays confirmed:
+[ADR-0004](0004-a-confirmed-bullet-hole-is-never-retracted.md) records why.
+
 This is the temporal analysis that [ADR-0001](0001-report-bullet-holes-not-hits.md)
 recorded as an upgrade path and declined to build at the time. Building it does
 not change that ADR's conclusion — see below.

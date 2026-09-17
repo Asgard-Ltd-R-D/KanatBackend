@@ -31,10 +31,17 @@ One bullet's passage through a Board, as a physical event.
 _Avoid_: shot, round
 
 **Bullet Hole**:
-The visible mark a Hit leaves on a Board — what the vision model detects.
-Distinct from a Hit: one Hit makes one Bullet Hole, but overlapping Hits may
-be indistinguishable as Bullet Holes.
-_Avoid_: hole, detection
+The visible mark a Hit leaves on a Board. Distinct from a Hit: one Hit makes one
+Bullet Hole, but overlapping Hits may be indistinguishable as Bullet Holes. A
+Bullet Hole is on the Board whether or not anything saw it.
+_Avoid_: hole
+
+**Detection**:
+The system claiming to see a Bullet Hole in a single frame. Evidence about that
+frame, not about the Board: a Bullet Hole may go unseen for long stretches while
+it is plainly visible, one may be seen as two, and a Detection may answer to no
+Bullet Hole at all.
+_Avoid_: hit, sighting, hole
 
 **Miss**:
 A Bullet Hole on a Board that falls outside every Target on it. A real Hit, and

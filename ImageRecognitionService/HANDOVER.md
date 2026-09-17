@@ -2,6 +2,23 @@
 
 **As of 2026-09-17.** Branch `feature/test-labels-and-eval`.
 
+**Persistence counts frames, not sightings** (fixed 2026-09-17). The detector
+boxes a torn mark as two halves and both fold into one candidate, so a frame was
+counted twice and a Bullet Hole could clear the bar on fewer distinct frames than
+the bar asks for. `min(ratio, 1.0)` was hiding it — the only symptom was a
+persistence wanting to exceed 100%. Both labelled clips score unchanged after the
+fix — CamA 13–25s TP 6 / FP 1 / FN 0, F1 0.92 with every persistence value
+identical, and CamB 25–36s TP 3 / FP 1 / FN 0, F1 0.86. What moved is CamB's torn
+mark, whose frame count fell from 254 to 135; that is the double-counting, and it
+confirms the inflation was concentrated on the one mark the detector splits.
+
+**Persistence de-duplicates frames; position does not.** The candidate's location
+is still a running mean over every sighting, because that mean is what folds
+CamB's two halves into one Bullet Hole over 275 frames and
+`test_camb_split_is_not_merged_by_the_gate_alone` pins it. Persistence asks how
+many frames saw the mark, position asks where it is — different questions, and
+de-duplicating the second would change which candidate absorbs which.
+
 Read this first, then
 [`../../bullet_hole_detection_pipeline_updated.md`](../../bullet_hole_detection_pipeline_updated.md)
 for the architecture and
@@ -232,8 +249,10 @@ the same signal.
 What was built instead is disclosure. `_report` prints `first detected` and
 `last detected` per Bullet Hole with the count of frames it was seen in, and the
 Bullet Hole stays confirmed. **A detection ceasing is not evidence that the
-Bullet Hole ceased.** Re-run the full clip after any change here and confirm no
-lifecycle case has appeared before building one.
+Bullet Hole ceased** — recorded as
+[ADR-0004](../docs/adr/0004-a-confirmed-bullet-hole-is-never-retracted.md). Re-run
+the full clip after any change here and confirm no lifecycle case has appeared
+before building one.
 
 ### What the geometry actually measures
 
@@ -300,13 +319,27 @@ count is still 5.
 
 Three disclosures, all of them cheap, none of them corrective:
 
-- `[REGISTRATION] residual on N baseline-matched detection(s): median X, max Y`.
+- `[REGISTRATION] residual on N baseline-matched detection(s): median X Board px`.
   A residual is the distance from a detection to the baseline mark it matched —
   same physical mark, so the distance is registration error and nothing else.
   It needs no ground truth and no anchors: `strip_pre_existing` already computes
-  it to decide suppression. CamB 25–36s reports median 1.5, max 3.0 against a
-  match radius of 3.0, and warns when a residual reaches the radius, because a
-  pre-existing mark displaced that far is reported as a new Bullet Hole.
+  it to decide suppression.
+
+  **The max is censored and the median is the measurement.** A residual can
+  never exceed the match radius, because a mark displaced further than that is
+  not matched to the baseline at all — it is reported as a new Bullet Hole. Both
+  labelled clips run into that ceiling:
+
+  | clip | median | max | match radius |
+  |---|---:|---:|---:|
+  | CamA 13–25s | 4.5 | 8.1 | 8.1 |
+  | CamB 25–36s | 1.5 | 3.0 | 3.0 |
+
+  Board px. In template px the two medians are 11.1 and 10.1 — the same error in
+  scale-invariant units across two clips, two cameras and two Board distances.
+  That the max sits exactly on the radius in both is the ceiling, not a
+  coincidence, and it means **displaced pre-existing marks are reaching the
+  threshold on both clips, not only the one where a false positive was noticed.**
 - `[WARN] truncated: processed N of M requested frames`, and confirmation is
   measured against frames actually read. **This is a short read, not a crash** —
   see the OpenCV pin below for the crash, which is a different failure and
@@ -446,7 +479,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 
 | Constant | Value | Where | Basis |
 |---|---|---|---|
-| `PERSIST` | 0.50 | `new_bullet_holes.py` | Swept against ground truth; 0.70 lost most of the group |
+| `PERSIST` | 0.50 | `new_bullet_holes.py` | Swept against ground truth; 0.70 lost most of the group. Counts distinct FRAMES since 2026-09-17 — see below |
 | `PERSIST_FRAMES` | 50 | `new_bullet_holes.py` | Length provisional; *fixed* window is by design |
 | `DEFAULT_CONFIDENCE` | 0.40 | `new_bullet_holes.py` | Swept; flat nearby |
 | `BASELINE_FRAMES` | 5 | `new_bullet_holes.py` | Chosen as ~200 ms, not swept. Fixes the 0.04s defect at 5 and at 2; upper bound is the absorption risk, not a measurement |

@@ -1,6 +1,7 @@
 """Checks for the new-Bullet-Hole tracker. No model, no video, no torch."""
 import numpy as np
-from new_bullet_holes import _overlap_fraction, same_bullet_hole, track_new_bullet_holes
+from new_bullet_holes import (_overlap_fraction, merge_displaced_tracks,
+                              same_bullet_hole, track_new_bullet_holes)
 
 MATCH = 22.0  # Board-space px; the tracker takes it from BoardView.match_radius
 
@@ -142,6 +143,68 @@ def test_camb_split_is_not_merged_by_the_gate_alone():
     """
     a, b = CAMB_SPLIT
     assert not same_bullet_hole(a, b, FLOOR)
+
+
+class _Reference:
+    """Just the one attribute merge_displaced_tracks reads off a BoardView."""
+    def __init__(self, centre):
+        self.targets = [np.array([centre], np.float32).reshape(-1, 1, 2)]
+
+
+# CamB's Target 1 centroid, and the two positions one mark was reported at.
+CAMB_REF = _Reference((170.0, 158.0))
+DISPLACED_A = np.array([158.1, 53.9], np.float32)   # seen in 306 of 363 frames
+DISPLACED_B = np.array([152.3, 27.5], np.float32)   # seen in 49, never alongside
+
+
+def _hole(pos, seen):
+    return {"pos": np.asarray(pos, np.float32), "box": np.asarray(pos, np.float32),
+            "first_frame": min(seen), "seen": sorted(seen), "persistence": 1.0}
+
+
+def test_displaced_sighting_is_folded_into_the_earlier_bullet_hole():
+    """CamB #5/#6: 0 co-occurrences in 363 frames, 27 Board px apart.
+
+    The excursion sits inside the real track's lifetime — A, then B while A is
+    absent, then A again — which is what registration displacement looks like.
+    """
+    a = _hole(DISPLACED_A, list(range(780, 950)) + list(range(1000, 1150)))
+    b = _hole(DISPLACED_B, list(range(950, 999)))
+    kept, merged = merge_displaced_tracks([a, b], CAMB_REF)
+    assert len(kept) == 1 and kept[0] is a
+    assert merged == [(a, b)]
+
+
+def test_bullet_holes_that_co_occur_are_never_merged():
+    """Two genuine Bullet Holes are detected together. That alone settles it."""
+    a = _hole(DISPLACED_A, list(range(780, 1150)))
+    b = _hole(DISPLACED_B, list(range(950, 1150)))
+    kept, merged = merge_displaced_tracks([a, b], CAMB_REF)
+    assert len(kept) == 2 and merged == []
+
+
+def test_a_later_mark_after_the_first_is_gone_is_not_merged():
+    """Never co-occurring is not enough: a mark covered up, and a later
+    unrelated one, never co-occur either. The spans must overlap."""
+    a = _hole(DISPLACED_A, list(range(100, 300)))
+    b = _hole(DISPLACED_B, list(range(800, 1000)))
+    kept, merged = merge_displaced_tracks([a, b], CAMB_REF)
+    assert len(kept) == 2 and merged == []
+
+
+def test_displacement_too_large_for_its_distance_is_not_merged():
+    """The bound scales with distance from the Target, because that is how
+    registration error grows. A jump far beyond it is two marks, not one."""
+    a = _hole((158.1, 53.9), list(range(780, 950)) + list(range(1000, 1150)))
+    b = _hole((158.1, 153.9), list(range(950, 999)))   # 100 px, way past 0.35x
+    kept, merged = merge_displaced_tracks([a, b], CAMB_REF)
+    assert len(kept) == 2 and merged == []
+
+
+def test_merge_is_off_unless_asked_for():
+    """It is a candidate mitigation, not production behaviour."""
+    import new_bullet_holes
+    assert new_bullet_holes.NON_COOCCURRENCE_MERGE is False
 
 
 if __name__ == "__main__":

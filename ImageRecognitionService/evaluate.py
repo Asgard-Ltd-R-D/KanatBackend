@@ -140,6 +140,8 @@ if __name__ == "__main__":
     p.add_argument("--template", default=board.DEFAULT_TEMPLATE)
     p.add_argument("--confidence", type=float, default=nbh.DEFAULT_CONFIDENCE)
     p.add_argument("--no-change-filter", action="store_true")
+    p.add_argument("--merge-displaced", action="store_true",
+                   help="PROVISIONAL: fold displaced sightings, see new_bullet_holes")
     p.add_argument("--tolerance", type=float, default=MATCH_TOLERANCE_TPL,
                    help="how close a detection must be to claim a label, template px")
     a = p.parse_args()
@@ -156,7 +158,8 @@ if __name__ == "__main__":
               f"their positions are approximate")
 
     holes = nbh.process(a.video, a.start, a.end, a.model, a.confidence,
-                        None, None, a.template, not a.no_change_filter)
+                        None, None, a.template, not a.no_change_filter,
+                        a.merge_displaced)
 
     # The run's positions are in Board space; ground truth is in template space.
     # Board space is fixed by the BASELINE frame, so rebuild it from exactly that

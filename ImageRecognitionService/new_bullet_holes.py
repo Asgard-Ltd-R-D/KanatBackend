@@ -88,6 +88,74 @@ DUP_CENTER_FACTOR = 0.5   # measured in tagging_bullets.py; not re-tuned here
 OVERLAP_THRESHOLD = 0.5
 
 
+# --- Non-co-occurrence merge: CANDIDATE MITIGATION, OFF BY DEFAULT ----------
+#
+# Measured on CamB_20260915_102250: one physical mark was reported as two Bullet
+# Holes 27 Board px apart. Across 363 frames the two positions NEVER appeared
+# together — 306 frames at one, 49 at the other, 0 at both. Two genuine Bullet
+# Holes co-occur constantly once both exist; one mark displaced by registration
+# cannot.
+#
+# The cause is geometric and is NOT fixed here: CamB has a single Target, so the
+# homography is constrained only near it and the far field is extrapolation. A
+# probe beside the Target holds to 2 px median while one 105 px away throws
+# excursions to 34 px. This rule is protection against the failure mode, not a
+# replacement for registration that holds. See HANDOVER.md.
+#
+# It is off because it is validated on two clips and neither is a held-out
+# recording. Turn it on with --merge-displaced.
+NON_COOCCURRENCE_MERGE = False      # PROVISIONAL: not production behaviour
+MAX_DISPLACEMENT_FRACTION = 0.35    # PROVISIONAL: see merge_displaced_tracks
+
+
+def merge_displaced_tracks(holes, reference, fraction=MAX_DISPLACEMENT_FRACTION):
+    """Fold a Bullet Hole that is a displaced sighting of an earlier one.
+
+    Never co-occurring is necessary but nowhere near sufficient — a mark that is
+    genuinely covered up, and a later unrelated mark, also never co-occur. All
+    three must hold:
+
+    1. **Never seen in the same frame.** The direct evidence of one mark.
+    2. **Overlapping spans.** The later track must sit inside the earlier one's
+       lifetime, which is what an excursion looks like: A, then B while A is
+       absent, then A again. Two marks separated by a long gap in which neither
+       was seen fail this, and should.
+    3. **Displacement plausible for its distance from the Target.** Registration
+       error grows with distance from the one feature constraining the fit, so
+       the bound scales with it rather than being a flat radius. Measured: 9.3 px
+       at 58 px out (0.16x) and 34 px at 105 px out (0.26x); 0.35 admits both
+       with margin and is a guess beyond them.
+
+    Returns `(kept, merged)` where `merged` is [(survivor, absorbed), ...] so the
+    caller can report what it did rather than silently dropping a Bullet Hole.
+    """
+    if not holes or reference is None or not reference.targets:
+        return holes, []
+    centre = np.asarray(reference.targets[0], np.float64).reshape(-1, 2).mean(axis=0)
+
+    # Identity, not equality: these dicts hold numpy arrays, and `in`/`remove`
+    # would compare them elementwise and raise.
+    alive, merged = {id(h) for h in holes}, []
+    for later in sorted(holes, key=lambda h: h["first_frame"], reverse=True):
+        if id(later) not in alive:
+            continue
+        for earlier in sorted((h for h in holes if id(h) in alive),
+                              key=lambda h: h["first_frame"]):
+            if earlier is later or earlier["first_frame"] >= later["first_frame"]:
+                continue
+            if set(earlier["seen"]) & set(later["seen"]):
+                continue                                   # (1) they co-occur
+            if max(later["seen"]) > max(earlier["seen"]):
+                continue                                   # (2) spans do not overlap
+            reach = float(np.linalg.norm(later["pos"] - centre))
+            if float(np.linalg.norm(later["pos"] - earlier["pos"])) > fraction * reach:
+                continue                                   # (3) too far to be a displacement
+            alive.discard(id(later))
+            merged.append((earlier, later))
+            break
+    return [h for h in holes if id(h) in alive], merged
+
+
 def _overlap_fraction(a, b):
     """Box intersection as a fraction of the smaller box's area."""
     dx = min(a[0] + a[2] / 2, b[0] + b[2] / 2) - max(a[0] - a[2] / 2, b[0] - b[2] / 2)
@@ -158,7 +226,7 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
         ratio = sum(1 for i in seen if i < first + window) / span
         if ratio >= persist:
             confirmed.append({"pos": pos[:2], "box": pos, "first_frame": first,
-                              "persistence": min(ratio, 1.0)})
+                              "seen": sorted(seen), "persistence": min(ratio, 1.0)})
     return sorted(confirmed, key=lambda c: c["first_frame"])
 
 
@@ -191,7 +259,8 @@ def _corroborated(point, changed_mask, radius):
 
 def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, ring_diameter_mm=None, template_path=board.DEFAULT_TEMPLATE,
-            require_change_evidence=REQUIRE_CHANGE_EVIDENCE):
+            require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
+            merge_displaced=NON_COOCCURRENCE_MERGE):
     from ultralytics import YOLO  # imported lazily: pulls in torch
     model = YOLO(model_path)
 
@@ -276,6 +345,17 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         before = len(new)
         new = [h for h in new if h["corroborated"]]
         print(f"[FILTER] change evidence required: {before} -> {len(new)} Bullet Holes")
+
+    if merge_displaced:
+        new, merged = merge_displaced_tracks(new, last)
+        for survivor, absorbed in merged:
+            print(f"[MERGE] displaced sighting at t="
+                  f"{start + absorbed['first_frame'] / fps:.2f}s folded into the Bullet Hole "
+                  f"at t={start + survivor['first_frame'] / fps:.2f}s "
+                  f"({float(np.linalg.norm(absorbed['pos'] - survivor['pos'])):.0f} Board px, "
+                  f"never co-occurring)")
+        if not merged:
+            print("[MERGE] no displaced sightings found")
 
     _report(new, start, fps, last, ring_diameter_mm)
     if out_video:
@@ -390,7 +470,13 @@ if __name__ == "__main__":
     p.add_argument("--no-change-filter", action="store_true",
                    help="keep confirmed Bullet Holes that change detection did "
                         "not corroborate. Raises recall, lowers precision.")
+    p.add_argument("--merge-displaced", action="store_true",
+                   help="PROVISIONAL, off by default. Fold a Bullet Hole that "
+                        "never co-occurs with an earlier one, overlaps its span "
+                        "and sits within a plausible displacement — one mark "
+                        "moved by registration rather than two marks. Protection "
+                        "against the failure mode, not a registration fix.")
     p.add_argument("--out", help="write an annotated video of the rectified Board here")
     a = p.parse_args()
     process(a.video, a.start, a.end, a.model, a.confidence, a.out, a.ring_mm,
-            a.template, not a.no_change_filter)
+            a.template, not a.no_change_filter, a.merge_displaced)

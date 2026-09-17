@@ -17,12 +17,33 @@ Two clips now carry operator-labelled ground truth.
 | Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 |
 |---|---|---|---|---|---|---|---|---|
 | `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 |
-| `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 4 | 4 | 0 | 0 | 100% | 100% | 1.00 |
+| `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 |
 
-Bullet Holes placed within 9–22 template px — under one hole's width. 49 tests
+Bullet Holes placed within 9–22 template px — under one hole's width. 54 tests
 pass in under a second.
 
-**That is ten Bullet Holes across two clips.** The thresholds are jointly
+**Every figure in this document was re-verified on 2026-09-17 after the
+memory-safety fix below**, on `opencv-python==4.10.0.84`. All three F1 scores,
+the drift ranges, the ECC medians, the co-occurrence counts and the anchor
+measurements reproduced unchanged. The runs are *not* bit-identical across the
+OpenCV change — CamA's baseline detected 4 pre-existing marks where it had found
+5, and persistences moved a point or two — because 4.10 and 5.0 letterbox with
+different resize implementations and marginal detections land either side of the
+confidence floor. That the aggregates survived that perturbation is a stronger
+check than bit-equality would have been.
+
+**CamB is scored against 3 labels, not the 4 the operator drew.** The fourth sits
+on a mark that was *already on the Board* at the 25s baseline frame — clean at
+t=0, present at t=25.0 and still there at t=45.5. It is not a new Bullet Hole in
+this window, and a single final frame cannot show when a mark arrived, so the
+label was reasonable and the scoring was not. `board.txt` is the operator's four
+labels; `board.new-since-25s.txt` is the three used above and is what
+`--truth-labels` should point at for this window.
+
+An earlier revision of this file reported CamB as F1 1.00. That figure was
+wrong: it credited the pipeline with finding a pre-existing mark.
+
+**That is nine Bullet Holes across two clips.** The thresholds are jointly
 optimal on exactly this sample and that says very little about the next one. SOW
 2.3.6 asks for 99% over a statistically meaningful sample, which this is not.
 
@@ -30,9 +51,14 @@ optimal on exactly this sample and that says very little about the next one. SOW
 four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had
 only unit tests behind them.
 
-Recall is 100% on both clips with the `yolo26n` weights. That is **not** enough
-to close `yolo26n` vs `yolo26m`: two recordings is not the held-out test set,
-and model selection still waits on it (blocked item 2).
+Recall is 100% on both clips with the `yolo26n` weights, *within the labelled
+windows*. That is **not** enough to close `yolo26n` vs `yolo26m`: two recordings
+is not the held-out test set, and model selection still waits on it (blocked
+item 2).
+
+It is also not the whole story about recall. Outside the labelled window, on the
+full 0–46s CamB clip, the detector returns **nothing at conf 0.02** for a mark
+that stays plainly visible for 22 seconds — see "Three failure modes" below.
 
 ---
 
@@ -122,6 +148,88 @@ per *file* and reports damaged labels rather than dropping them, because
 silently discarding a label flatters recall.
 
 ---
+
+## Three failure modes found on CamB, 2026-09-17
+
+All three were found on the full 0–46s clip, all three were confirmed against the
+imagery, and **none of them is the merge gate or a threshold**. They are recorded
+here because the operator spotted every one of them by watching the video, and
+the pipeline reported all three as ordinary Bullet Holes.
+
+**1. The single-frame baseline invents Bullet Holes.** A mark plainly visible in
+the t=0 frame was missed by the baseline detection and so re-detected as *new*
+40 ms later, at 0.04s. No bullet arrives in one frame. The same thing produced
+the 25.60s report in the windowed run, from a mark present at the 25.0s baseline.
+The baseline is one frame, and everything downstream inherits whatever that frame
+failed to see. This is the most reproducible defect found: two false positives,
+two runs.
+
+**2. One mark is reported twice when registration displaces it.** Two Bullet
+Holes 27 Board px apart, at 31.16s and 38.56s. Across 363 frames they NEVER
+appeared together — 306 frames at one position, 49 at the other, 0 at both. Two
+genuine Bullet Holes co-occur constantly once both exist. `merge_displaced_tracks`
+is the mitigation and is OFF by default; the cause is geometric and open.
+
+**3. A confirmed Bullet Hole is never re-examined when it stops existing.** The
+0.04s mark is detected at conf 0.82–0.86 for its first two seconds, then the
+detector returns **nothing at conf 0.02** from ~3s, while the mark stays visible
+to the eye until 25.0s — a genuine recall failure, not a threshold, and the only
+detector problem found today. Between 25.0s and 25.5s the mark then disappears
+from the raw image altogether while the near-Target anchors hold to 3.6 px, so
+whatever moved was local to the bottom of the Board — the non-planar/curl case.
+It confirmed only because its two detectable seconds coincided with the 50-frame
+window, and nothing ever revisits a confirmed Bullet Hole afterwards.
+
+### What the geometry actually measures
+
+An earlier probe reported 38.6 px of registration drift. **That figure was wrong**
+— it tracked the green-mask contour centroid, and `H` is estimated from that same
+mask, so mask noise read as geometry error. Measured against stationary physical
+marks, which depend on `H` alone:
+
+| Probe | distance from Target | median | max |
+|---|---|---|---|
+| anchor 2 | 38 px | 0.5 px | 36.3 px |
+| anchor 1 | 58 px | 2.0 px | 9.3 px |
+| far mark (#5) | 105 px | 1.5 px | 34.2 px |
+
+Registration is good most of the time and throws occasional large excursions. The
+excursions look worse far from the Target, which is what a homography fitted to a
+single Target does — but anchor 2 is close in and still threw 36.3 px, so
+"far field is worse" is **not** established. `MAX_DISPLACEMENT_FRACTION` is
+scaled by distance on the strength of that unproven pattern and should be
+re-derived on footage with more than one Target.
+
+Cumulative drift is ruled out: seeding ECC from the baseline instead of the
+previous frame reproduces the chained numbers to three decimals.
+
+## The opencv pin is load-bearing
+
+`requirements.txt` pinned nothing, so `pip install -r` resolved `opencv-python`
+to **5.0.0.93**. Every release from **4.11** onward — 5.x included — ships
+KleidiCV as a custom HAL, and its NEON `resize` kernel writes out of bounds.
+Reached through ultralytics' letterbox on *every* `_detect` call, it segfaulted
+on `CamA_20260914_141846.mkv` at a **different frame each run** — 61 and 222 on
+5.0.0, 28 and 111 on 4.14.0. A different frame each time is heap corruption, not
+a data-dependent fault.
+
+It failed **silently**: exit 139, no traceback, no partial-result warning. A run
+that dies at frame 61 is indistinguishable from one that found nothing, and
+`grep`-based tooling hides it completely. It took four runs of that clip to
+notice, and only by checking the exit code by hand.
+
+`4.10.0.84` is the last release without KleidiCV — `Custom HAL: carotene` only.
+It survives the same clip for 499 frames across three runs. **A range pin is not
+enough**: `>=4.10,<5` resolves straight back to 4.14.
+
+Two things follow. First, `opencv-python==4.10.0.84` is exact on purpose; do not
+loosen it without re-running that clip. Second, every threshold in this project
+is measured against footage, and an unpinned resolution swaps the detector or its
+image pipeline out from under those measurements without anything failing loudly.
+
+**Still open:** nothing reports a truncated run. `process` should compare frames
+actually processed against frames requested and say so when they differ. Until it
+does, a crashed run and a clean one look the same.
 
 ## Blocked, in priority order
 

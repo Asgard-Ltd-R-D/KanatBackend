@@ -58,7 +58,7 @@ item 2).
 
 It is also not the whole story about recall. Outside the labelled window, on the
 full 0–46s CamB clip, the detector returns **nothing at conf 0.02** for a mark
-that stays plainly visible for 22 seconds — see "Three failure modes" below.
+that stays plainly visible for 21 seconds — see "Three failure modes" below.
 
 ---
 
@@ -69,6 +69,10 @@ Everything runs from `ImageRecognitionService/` with its `.venv`.
 ```bash
 # Detect new Bullet Holes, optionally rendering the rectified Board
 .venv/bin/python new_bullet_holes.py CLIP.mkv --start 13 --end 25 --out out.mp4
+
+# The baseline spans --baseline-frames frames from --start (default 5, ~200 ms).
+# A Hit landing inside that window is absorbed into the baseline and never
+# reported, so --start must sit before the shooting.
 
 # Score a run against labelled ground truth — use this before believing any change
 .venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
@@ -149,36 +153,87 @@ silently discarding a label flatters recall.
 
 ---
 
-## Three failure modes found on CamB, 2026-09-17
+## Three failure modes found on CamB, and what they turned out to be
 
-All three were found on the full 0–46s clip, all three were confirmed against the
-imagery, and **none of them is the merge gate or a threshold**. They are recorded
-here because the operator spotted every one of them by watching the video, and
-the pipeline reported all three as ordinary Bullet Holes.
+All three were found on the full 0–46s clip by the operator watching the video,
+and the pipeline reported all three as ordinary Bullet Holes. **On 2026-09-17
+each was measured rather than inferred, and two of the three changed
+classification.** None of them is the merge gate or a threshold.
 
-**1. The single-frame baseline invents Bullet Holes.** A mark plainly visible in
-the t=0 frame was missed by the baseline detection and so re-detected as *new*
-40 ms later, at 0.04s. No bullet arrives in one frame. The same thing produced
-the 25.60s report in the windowed run, from a mark present at the 25.0s baseline.
-The baseline is one frame, and everything downstream inherits whatever that frame
-failed to see. This is the most reproducible defect found: two false positives,
-two runs.
+**1. The single-frame baseline invents Bullet Holes. FIXED.** A mark plainly
+visible in the t=0 frame was missed by the baseline detection and re-detected as
+*new* 40 ms later, at 0.04s. No bullet arrives in one frame. Measured: the mark
+sits 127 Board px clear of anything else, is detected at >=0.40 continuously from
+0.04s, and the single baseline frame simply missed it.
 
-**2. One mark is reported twice when registration displaces it.** Two Bullet
-Holes 27 Board px apart, at 31.16s and 38.56s. Across 363 frames they NEVER
-appeared together — 306 frames at one position, 49 at the other, 0 at both. Two
-genuine Bullet Holes co-occur constantly once both exist. `merge_displaced_tracks`
-is the mitigation and is OFF by default; the cause is geometric and open.
+The baseline is now the de-duplicated union of `BASELINE_FRAMES` frames
+(`baseline_marks`), which catches it in frame 1. The alternative — lowering the
+baseline's confidence floor — was rejected: 0.20 recovers the same mark on this
+clip, but by 0.10 the baseline starts suppressing on the printed rings, blinding
+the pipeline to Bullet Holes on the one Target CamB finally put bullets on. That
+is a constant fitted to one clip inside a narrow safe band. `BASELINE_FRAMES` is
+a duration, and its cost is bounded and visible: **a Hit landing inside the
+baseline window is absorbed and never reported, so the baseline interval must
+precede the shooting interval.**
 
-**3. A confirmed Bullet Hole is never re-examined when it stops existing.** The
-0.04s mark is detected at conf 0.82–0.86 for its first two seconds, then the
-detector returns **nothing at conf 0.02** from ~3s, while the mark stays visible
-to the eye until 25.0s — a genuine recall failure, not a threshold, and the only
-detector problem found today. Between 25.0s and 25.5s the mark then disappears
-from the raw image altogether while the near-Target anchors hold to 3.6 px, so
-whatever moved was local to the bottom of the Board — the non-planar/curl case.
-It confirmed only because its two detectable seconds coincided with the 50-frame
-window, and nothing ever revisits a confirmed Bullet Hole afterwards.
+**This mode had one instance, not two.** The 25.60s report in the windowed run
+was attributed to it and is not the same defect — see mode 2.
+
+**Verified on the full 0–46s clip after the fix.** The baseline now holds 4
+pre-existing marks over 5 frames where one frame found 2, **no report is made at
+0.04s**, and the run completes 1150 frames at exit 0. Ground truth covers only
+25–36s, so the full-clip output is not scored; what is established is that the
+specific defect is gone. The earliest report is now t=1.64s, a different mark
+that first appears mid-clip and is then detected in 98% of the frames after it —
+consistent with a real Hit, and unlabelled, so not claimed as one.
+
+**2. One mark is reported twice when registration displaces it. OPEN, and larger
+than first recorded.** Two Bullet Holes 27 Board px apart, at 31.16s and 38.56s.
+Across 363 frames they NEVER appeared together — 306 frames at one position, 49
+at the other, 0 at both. Two genuine Bullet Holes co-occur constantly once both
+exist. `merge_displaced_tracks` is the mitigation and is OFF by default.
+
+**The 25.60s report belongs here too.** At `--start 25` the baseline holds three
+marks and every later frame holds three detections, pairing 1:1. No mark was
+missed. What happens is that the pairing distance grows:
+
+| mark | from Target | 25.04s | 25.40s | 25.60s | 26.00s | 26.80s |
+|---|---:|---:|---:|---:|---:|---:|
+| B0 | 57 px | 0.2 | 0.6 | 0.7 | 0.4 | 1.1 |
+| B1 | 77 px | 0.2 | 0.3 | 1.7 | 1.7 | 3.0 |
+| B2 | **118 px** | 0.6 | 1.8 | **3.4** | 3.2 | 4.2 |
+
+Board px, against a `match_radius` of 2.96. B2 crosses at 25.60s — the exact
+timestamp reported — and stays across. So the displacement **ramps and persists**
+rather than spiking, and that matters: ADR-0003 separates flicker from marks, and
+**a displaced mark is a perfectly persistent false positive.** Persistence is
+structurally unable to filter it.
+
+Widening baseline suppression to cover it was considered and rejected. It trades
+away recall for genuine Bullet Holes near pre-existing ones, which is the failure
+already measured on this clip (100% -> 75%) and the trap ADR-0003 records for the
+40 template-px radius. The defence is disclosure, not suppression: see
+`[REGISTRATION]` below.
+
+**3. A confirmed Bullet Hole is never re-examined when it stops existing. NO
+SURVIVING INSTANCE — it is the same mark as mode 1.** The 0.04s mark is detected
+at 0.82-0.86 for its first ~3.8 seconds, then the detector returns **nothing at
+conf 0.02** from 4.0s (nearest detection 116 px away) and never recovers it
+through 25.0s, while the mark stays visible to the eye. It confirmed only because
+its ~95 detected frames contain the 50-frame window.
+
+Once the multi-frame baseline classifies that mark pre-existing, it is not
+reported at all, and **no case remains of a genuinely new Bullet Hole that
+vanished.** So no lifecycle, retraction or re-examination was built. Retraction
+would have deleted this mark — a real one, visible to the operator — and any
+threshold that catches a false positive here catches that too, because they are
+the same signal.
+
+What was built instead is disclosure. `_report` prints `first detected` and
+`last detected` per Bullet Hole with the count of frames it was seen in, and the
+Bullet Hole stays confirmed. **A detection ceasing is not evidence that the
+Bullet Hole ceased.** Re-run the full clip after any change here and confirm no
+lifecycle case has appeared before building one.
 
 ### What the geometry actually measures
 
@@ -193,15 +248,70 @@ marks, which depend on `H` alone:
 | anchor 1 | 58 px | 2.0 px | 9.3 px |
 | far mark (#5) | 105 px | 1.5 px | 34.2 px |
 
-Registration is good most of the time and throws occasional large excursions. The
-excursions look worse far from the Target, which is what a homography fitted to a
-single Target does — but anchor 2 is close in and still threw 36.3 px, so
-"far field is worse" is **not** established. `MAX_DISPLACEMENT_FRACTION` is
-scaled by distance on the strength of that unproven pattern and should be
-re-derived on footage with more than one Target.
+Cumulative drift is ruled out as the *mechanism*: seeding ECC from the baseline
+instead of the previous frame reproduces the chained numbers to three decimals.
+That rules out the tracker accumulating error. It does not rule out a growing
+error, and on CamB there is one.
 
-Cumulative drift is ruled out: seeding ECC from the baseline instead of the
-previous frame reproduces the chained numbers to three decimals.
+**The scene is stationary; the warp is not.** Over CamB 25.0-26.8s, comparing
+each mark's position in the raw frame against its position in Board space:
+
+| t | Target contour centroid, raw drift | B0 raw / board | B1 raw / board | B2 raw / board |
+|---|---:|---:|---:|---:|
+| 25.20 | 9.1 | 0.4 / 0.4 | 0.3 / 0.8 | 0.5 / 1.5 |
+| 25.60 | 9.0 | 0.3 / 0.7 | 0.4 / 1.7 | 0.4 / 3.4 |
+| 26.60 | 17.1 | 0.4 / 1.3 | 1.1 / 3.0 | 0.6 / 4.6 |
+| 26.80 | 13.3 | 0.2 / 1.1 | 0.8 / 3.0 | 0.6 / 4.2 |
+
+The three marks hold to **0.2-1.1 px in the raw frame** across the whole window.
+Nothing physical moved — not the Board, not the camera. **Every
+pixel of the Board-space displacement is introduced between raw-frame
+coordinates and Board space.** The green-mask contour the front end keys on
+wanders 3-17 raw px over the same frames.
+
+**ECC correlation is not a registration-health metric.** It sat at 0.94-0.96
+throughout, including the frames where B2 was 4.6 px out of place. It reports
+that the fit converged, not that the geometry is acceptable. `process` now says
+so on the `[BOARD]` line rather than printing a bare correlation figure.
+
+**Registration is an open defect, not an out-of-scope item.** The measurement
+above is 45 frames of one clip and does not overturn CamA's anchor-2 reading of
+36.3 px at 38 px out, nor does it prove the mechanism is mask instability rather
+than something downstream of it — only that the error enters with the warp while
+the scene is still. Do not implement a new registration algorithm on this window
+alone. Make the failure observable first, characterise it on the other clips and
+the held-out recordings, and **if registration error approaches Bullet Hole scale
+or threatens SOW 2.3.2's 5 mm, reopen the registration design and fix the cause
+rather than add further downstream defences.**
+
+`MAX_DISPLACEMENT_FRACTION` is scaled by distance on the strength of the
+distance ordering, which CamB's three marks support (0.019x / 0.039x / 0.036x of
+reach) and CamA's anchor 2 contradicts. It should be re-derived on footage with
+more than one Target.
+
+**The disclosure earns its keep on mode 2.** On the full clip the displaced pair
+reports as #4 at 31.16s (detected in 85% of frames after it, last seen 45.96s)
+and #5 at 38.56s (**21%**, last seen 41.72s against a clip running to 46s). One
+of those two lines looks like a Bullet Hole and the other does not, and the
+operator can now see which without opening the video. Nothing is retracted — the
+count is still 5.
+
+### Every run now reports what it could not do
+
+Three disclosures, all of them cheap, none of them corrective:
+
+- `[REGISTRATION] residual on N baseline-matched detection(s): median X, max Y`.
+  A residual is the distance from a detection to the baseline mark it matched —
+  same physical mark, so the distance is registration error and nothing else.
+  It needs no ground truth and no anchors: `strip_pre_existing` already computes
+  it to decide suppression. CamB 25–36s reports median 1.5, max 3.0 against a
+  match radius of 3.0, and warns when a residual reaches the radius, because a
+  pre-existing mark displaced that far is reported as a new Bullet Hole.
+- `[WARN] truncated: processed N of M requested frames`, and confirmation is
+  measured against frames actually read. **This is a short read, not a crash** —
+  see the OpenCV pin below for the crash, which is a different failure and
+  cannot be reported from inside `process` at all.
+- `first detected` / `last detected` per Bullet Hole.
 
 ## The opencv pin is load-bearing
 
@@ -227,9 +337,20 @@ loosen it without re-running that clip. Second, every threshold in this project
 is measured against footage, and an unpinned resolution swaps the detector or its
 image pipeline out from under those measurements without anything failing loudly.
 
-**Still open:** nothing reports a truncated run. `process` should compare frames
-actually processed against frames requested and say so when they differ. Until it
-does, a crashed run and a clean one look the same.
+**A crash and a short read are different failures and no longer share a name.**
+A **short read** — the clip ending early, a frame failing to decode — leaves the
+interpreter alive, and `process` now reports `[WARN] truncated: processed N of M
+requested frames` and measures confirmation against what it read rather than what
+it asked for. A **crash** is exit 139 with the interpreter gone; `process` never
+reaches its return and cannot report anything, and neither can `evaluate.py`,
+which calls it in-process.
+
+So the guard against the crash is not a report, it is
+`test_environment.py`, which fails the suite in under a second if `cv2` or the
+installed `opencv-python` is not the pinned build. That catches the cause — the
+environment drifting off the pin — before a clip run is spent discovering it by
+hand. An exit-code wrapper was considered and rejected: it tells you a run died,
+a version assert tells you why, earlier, for less code.
 
 ## Blocked, in priority order
 
@@ -328,6 +449,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `PERSIST` | 0.50 | `new_bullet_holes.py` | Swept against ground truth; 0.70 lost most of the group |
 | `PERSIST_FRAMES` | 50 | `new_bullet_holes.py` | Length provisional; *fixed* window is by design |
 | `DEFAULT_CONFIDENCE` | 0.40 | `new_bullet_holes.py` | Swept; flat nearby |
+| `BASELINE_FRAMES` | 5 | `new_bullet_holes.py` | Chosen as ~200 ms, not swept. Fixes the 0.04s defect at 5 and at 2; upper bound is the absorption risk, not a measurement |
 | `REQUIRE_CHANGE_EVIDENCE` | True | `new_bullet_holes.py` | Swept; FP 7 → 1 at no measured recall cost |
 | `MATCH_TPL_PX` | 20.0 | `board.py` | Swept; 40 discarded a real Bullet Hole |
 | `DUP_CENTER_FACTOR` | 0.5 | `new_bullet_holes.py` | Ported from `tagging_bullets.py`; 0.6+ regresses CamA to F1 0.83 |

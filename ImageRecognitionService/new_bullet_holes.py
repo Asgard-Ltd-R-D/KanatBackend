@@ -57,6 +57,27 @@ PERSIST_FRAMES = 50   # PROVISIONAL length, but FIXED by design: measured to the
                       # drifts further over the longer run.
 DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 
+# How many frames the baseline is built from.
+#
+# The baseline answers "was this mark already on the Board?", and whatever it
+# fails to see is reported as a new Bullet Hole. Built from one frame it
+# inherits every miss of that frame. Measured on CamB_20260915_102250: a mark
+# 127 Board px clear of anything else was missed by the t=0 frame, detected at
+# 0.40 from t=0.04s onward, and reported as new 40 ms after the baseline. No
+# bullet arrives in one frame.
+#
+# 5 frames at 25 fps is ~200 ms. The bound the other way is real and is why this
+# stays small: a Hit landing *inside* the baseline window is absorbed into the
+# baseline and never reported. The baseline interval must therefore precede the
+# shooting interval, which --start already puts under the operator's control.
+#
+# The alternative rejected here was lowering the baseline's confidence floor.
+# 0.20 recovers the same mark on this clip, but by 0.10 the baseline starts
+# suppressing on the printed rings — blinding the pipeline to Bullet Holes on
+# the one Target CamB finally put bullets on. That is a constant fitted to one
+# clip with a narrow safe band; this is a duration.
+BASELINE_FRAMES = 5   # PROVISIONAL: exercise on the held-out recordings
+
 # Require change detection to corroborate a confirmed Bullet Hole.
 #
 # This is a narrower role than the gate rejected in ADR-0003: it filters
@@ -185,6 +206,50 @@ def same_bullet_hole(a, b, floor_px):
     return distance < DUP_CENTER_FACTOR * mean_diagonal
 
 
+def baseline_marks(frames, match_px):
+    """Fold detections from several baseline frames into one set of marks.
+
+    `frames` is a list of per-frame detection arrays, each (cx, cy) or
+    (cx, cy, w, h). The union is de-duplicated on the template-px floor alone,
+    deliberately, for the same reason suppression is: the box arms of
+    `same_bullet_hole` belong to clustering, and using them here would fold two
+    genuinely distinct pre-existing marks into one, understating the baseline
+    and manufacturing a false positive downstream.
+
+    Within the floor the marks are the same, so nothing is lost by keeping the
+    first sighting: suppression asks only how far a later detection is from the
+    nearest baseline mark.
+    """
+    marks = []
+    for pts in frames:
+        for p in np.asarray(pts, np.float32):  # always 2-D, and may be empty
+            if not any(np.hypot(m[0] - p[0], m[1] - p[1]) < match_px for m in marks):
+                marks.append(p.copy())
+    return np.array(marks, np.float32) if marks else np.zeros((0, 4), np.float32)
+
+
+def strip_pre_existing(pts, baseline, match_px):
+    """Drop detections matching a mark already on the Board at the baseline.
+
+    Floor only, deliberately: the box arms of `same_bullet_hole` belong to
+    clustering, not to suppression. Measured on CamB_20260915_102250 25-36s,
+    using them here swallowed a real new Bullet Hole next to a pre-existing one
+    and took recall from 100% to 75%. Same trap as the 40 template-px radius in
+    ADR-0003: whatever gates "already in the baseline" bounds recall directly.
+
+    Returns `(survivors, residuals)`. A residual is how far a suppressed
+    detection sat from the baseline mark it matched. The mark is stationary and
+    the detection is of that same mark, so the distance is registration error
+    and nothing else — the one geometry measurement available per frame without
+    ground truth. See the [REGISTRATION] line in `process`.
+    """
+    if not len(pts) or not len(baseline):
+        return pts, np.zeros(0, np.float32)
+    distance = np.min(np.linalg.norm(
+        baseline[None, :, :2] - np.asarray(pts)[:, None, :2], axis=2), axis=1)
+    return pts[distance >= match_px], distance[distance < match_px]
+
+
 def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
                            window=PERSIST_FRAMES):
     """Fold per-frame detections into confirmed new Bullet Holes.
@@ -257,10 +322,32 @@ def _corroborated(point, changed_mask, radius):
     return bool(x1 > x0 and y1 > y0 and changed_mask[y0:y1, x0:x1].any())
 
 
+def _next_view(cap, template_mask, last):
+    """Read one frame and re-register Board space onto it.
+
+    Returns `(frame, view)`. `view` is None when the Board was not found or ECC
+    failed — no evidence from that frame, either way — and `(None, None)` when
+    the read itself failed, which is the end of what the file holds.
+
+    The baseline loop and the main loop both go through here on purpose: a
+    difference between how they read frames is a silent difference between what
+    the baseline sees and what the run is measured against.
+    """
+    ok, frame = cap.read()
+    if not ok:
+        return None, None
+    try:
+        current, _ = board.track_view(frame, template_mask, last)
+    except cv2.error:
+        current = None
+    return frame, current
+
+
 def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, ring_diameter_mm=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
-            merge_displaced=NON_COOCCURRENCE_MERGE):
+            merge_displaced=NON_COOCCURRENCE_MERGE,
+            baseline_frames=BASELINE_FRAMES):
     from ultralytics import YOLO  # imported lazily: pulls in torch
     model = YOLO(model_path)
 
@@ -288,28 +375,51 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     scale = board.net_scale(view.board_scale, tpl_span, frame_span, imgsz,
                             max(canvas_w, canvas_h))
 
-    print(f"[BOARD] {len(view.targets)} Target(s), registration correlation {correlation:.4f}")
+    # Correlation is deliberately NOT called a registration-health figure. It
+    # sat at 0.94-0.96 on CamB_20260915_102250 through a window in which a
+    # stationary mark's Board-space position walked 4.6 px out of place. It says
+    # the ECC fit converged, nothing more. The [REGISTRATION] line below is the
+    # figure that bears on geometry.
+    print(f"[BOARD] {len(view.targets)} Target(s), ECC converged at {correlation:.4f} "
+          f"(convergence, not geometric accuracy)")
     print(f"[BOARD] rectified {canvas_w}x{canvas_h}, imgsz {imgsz}, net scale {scale:.2f}")
     if not 0.5 <= scale <= 1.2:
         print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
               f"(0.5-1.2, flat within it); detection is zero by ~1.8")
 
     baseline_canvas = view.rectify(base)
-    baseline = _detect(model, baseline_canvas, imgsz, conf)
     match_px = view.match_radius
-    print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes at {start}s")
+
+    # The baseline is built from BASELINE_FRAMES frames, not one. Everything it
+    # fails to see is reported as a new Bullet Hole, and a single frame passes
+    # its own misses straight through. These frames contribute no persistence
+    # evidence: within the baseline window nothing can be new, which is exactly
+    # the risk the constant documents.
+    baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
+    last, processed = view, 1
+    baseline_detections = [_detect(model, baseline_canvas, imgsz, conf)]
+    for _ in range(1, baseline_frames):
+        frame, current = _next_view(cap, template_mask, last)
+        if frame is None:
+            break
+        processed += 1
+        if current is None:
+            continue
+        last = current
+        baseline_detections.append(_detect(model, current.rectify(frame), imgsz, conf))
+    baseline = baseline_marks(baseline_detections, match_px)
+    short = ("" if len(baseline_detections) == baseline_frames else
+             f" (of {baseline_frames} requested; the rest were lost or unread)")
+    print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes over "
+          f"{len(baseline_detections)} frame(s) from {start}s{short}")
 
     n_frames = int((end - start) * fps)
-    per_frame, corroboration, lost = [], [], 0
-    last = view
-    for idx in range(1, n_frames):
-        ok, frame = cap.read()
-        if not ok:
+    per_frame, corroboration, residuals_per_frame, lost = [], [], [], 0
+    for idx in range(processed, n_frames):
+        frame, current = _next_view(cap, template_mask, last)
+        if frame is None:
             break
-        try:
-            current, _ = board.track_view(frame, template_mask, last)
-        except cv2.error:
-            current = None
+        processed += 1
         if current is None:
             lost += 1
             continue  # no evidence from this frame, either way
@@ -317,15 +427,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
 
         canvas = current.rectify(frame)
         pts = _detect(model, canvas, imgsz, conf)
-        if len(pts) and len(baseline):
-            # Floor only, deliberately: the box arms of `same_bullet_hole`
-            # belong to clustering, not to suppression. Measured on
-            # CamB_20260915_102250 25-36s, using them here swallowed a real new
-            # Bullet Hole next to a pre-existing one and took recall from 100%
-            # to 75%. Same trap as the 40 template-px radius in ADR-0003:
-            # whatever gates "already in the baseline" bounds recall directly.
-            pts = pts[np.min(np.linalg.norm(
-                baseline[None, :, :2] - pts[:, None, :2], axis=2), axis=1) >= match_px]
+        pts, matched = strip_pre_existing(pts, baseline, match_px)
+        residuals_per_frame.append(matched)
         if len(pts):
             changed = board.changed_regions(baseline_canvas, canvas)
             corroboration += [p for p in pts if _corroborated(p, changed, match_px / 2)]
@@ -335,7 +438,30 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     if lost:
         print(f"[WARN] Board lost on {lost} frame(s); excluded from persistence")
 
-    new = track_new_bullet_holes(per_frame, n_frames, match_px)
+    # A short read is not a crash. The interpreter is alive, the window is simply
+    # shorter than asked for, and the frames never read must not lengthen the
+    # confirmation horizon: a candidate whose window runs past where reading
+    # stopped is unconfirmable, exactly as one running past --end is.
+    if processed < n_frames:
+        print(f"[WARN] truncated: processed {processed} of {n_frames} requested "
+              f"frames; confirmation is measured against what was read")
+
+    # Registration error on stationary marks. Each residual is the distance from
+    # a detection to the baseline mark it matched — same physical mark, so the
+    # distance is registration and nothing else. Measured on CamB 25-27s it
+    # ramps rather than spiking: a displaced mark is a perfectly persistent
+    # false positive, and persistence cannot filter it. See HANDOVER.md.
+    residuals = (np.concatenate(residuals_per_frame)
+                 if any(len(r) for r in residuals_per_frame) else np.zeros(0))
+    if len(residuals):
+        print(f"[REGISTRATION] residual on {len(residuals)} baseline-matched "
+              f"detection(s): median {np.median(residuals):.1f}, max "
+              f"{residuals.max():.1f} Board px (match radius {match_px:.1f})")
+        if residuals.max() >= match_px:
+            print("[WARN] a residual reached the match radius; a pre-existing mark "
+                  "displaced that far is reported as a new Bullet Hole")
+
+    new = track_new_bullet_holes(per_frame, processed, match_px)
     for hole in new:
         hole["target"] = last.assign(hole["pos"])
         hole["corroborated"] = any(
@@ -357,13 +483,14 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         if not merged:
             print("[MERGE] no displaced sightings found")
 
-    _report(new, start, fps, last, ring_diameter_mm)
+    _report(new, start, fps, last, ring_diameter_mm,
+            [idx for idx, _ in per_frame])
     if out_video:
-        _render(video, start, n_frames, fps, template_mask, view, baseline, new, out_video)
+        _render(video, start, processed, fps, template_mask, view, baseline, new, out_video)
     return new
 
 
-def _report(new, start, fps, view, ring_diameter_mm):
+def _report(new, start, fps, view, ring_diameter_mm, looked_at):
     misses = sum(1 for h in new if h["target"] is None)
     print(f"[INFO] {len(new)} new Bullet Holes ({len(new) - misses} on a Target, {misses} Miss)")
 
@@ -400,6 +527,25 @@ def _report(new, start, fps, view, ring_diameter_mm):
         elif hole["target"] is not None and ring_diameter_mm is not None:
             line += "  (mm unavailable)"
         print(line)
+
+        # Observation facts, not a claim about the mark. A detection ceasing is
+        # not evidence that the Bullet Hole ceased: on CamB_20260915_102250 a
+        # mark stopped being detected at any confidence from ~4s and stayed
+        # plainly visible to the operator until 25s. The Bullet Hole stays
+        # confirmed; the operator gets to see that it stopped being seen.
+        # Distinct frames, not sightings: `seen` carries one entry per detection
+        # folded into the candidate, so two boxes on one mark in one frame
+        # appear twice.
+        frames = set(hole["seen"])
+        # Denominator is frames that REGISTERED since first sighting, not frames
+        # read: a Board-lost frame neither counts for nor against a Bullet Hole,
+        # the same rule `track_new_bullet_holes` applies to persistence. Counting
+        # reads here would understate detection on a clip with dropouts.
+        span = sum(1 for i in looked_at if i >= hole["first_frame"])
+        share = f", {len(frames) / span:.0%} of frames since" if span > 0 else ""
+        print(f"      first detected: {start + hole['first_frame'] / fps:.2f}s   "
+              f"last detected: {start + max(frames) / fps:.2f}s   "
+              f"detected in {len(frames)} frame(s){share}")
 
 
 def _render(video, start, n_frames, fps, template_mask, reference, baseline, new, out_video):
@@ -450,7 +596,7 @@ def _render(video, start, n_frames, fps, template_mask, reference, baseline, new
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser("Report Bullet Holes that are new since a baseline frame")
+    p = argparse.ArgumentParser("Report Bullet Holes that are new since the baseline")
     p.add_argument("video")
     p.add_argument("--start", type=float, required=True, help="baseline timestamp, seconds")
     p.add_argument("--end", type=float, required=True,
@@ -476,7 +622,13 @@ if __name__ == "__main__":
                         "and sits within a plausible displacement — one mark "
                         "moved by registration rather than two marks. Protection "
                         "against the failure mode, not a registration fix.")
+    p.add_argument("--baseline-frames", type=int, default=BASELINE_FRAMES,
+                   help="PROVISIONAL. How many frames from --start the baseline "
+                        "is built from. One frame passes its own misses through "
+                        "as new Bullet Holes; a Hit landing inside this window is "
+                        "absorbed into the baseline and never reported, so the "
+                        "window must precede the shooting.")
     p.add_argument("--out", help="write an annotated video of the rectified Board here")
     a = p.parse_args()
     process(a.video, a.start, a.end, a.model, a.confidence, a.out, a.ring_mm,
-            a.template, not a.no_change_filter, a.merge_displaced)
+            a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames)

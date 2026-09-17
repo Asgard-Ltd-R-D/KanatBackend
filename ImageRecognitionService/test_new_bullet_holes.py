@@ -206,6 +206,21 @@ def test_merge_is_off_unless_asked_for():
     import new_bullet_holes
     assert new_bullet_holes.NON_COOCCURRENCE_MERGE is False
 
+def test_a_truncated_run_does_not_confirm_on_frames_it_never_read():
+    """A short read shortens the timeline, not just the evidence.
+
+    The clip was asked for 300 frames and delivered 40. A candidate first seen
+    at frame 30 has 10 frames of the window inside what was actually read, and
+    confirming it on those would be the clip-length dependence the fixed window
+    exists to remove — except manufactured by a truncated read rather than by
+    where the operator stopped recording. `process` therefore passes the frames
+    it actually read, not the frames it asked for.
+    """
+    looked = _looked(range(30, 40), set(range(30, 40)))
+    assert track_new_bullet_holes(looked, n_frames=40, match_px=MATCH, window=20) == []
+    # ... and the same evidence against the requested count wrongly confirms it.
+    assert len(track_new_bullet_holes(looked, n_frames=300, match_px=MATCH, window=20)) == 1
+
 
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):

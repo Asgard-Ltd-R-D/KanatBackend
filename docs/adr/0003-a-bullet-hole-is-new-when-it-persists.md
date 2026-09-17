@@ -1,10 +1,16 @@
 # A Bullet Hole is new when it persists
 
-A Bullet Hole is reported when it is absent from the baseline frame **and** is
+A Bullet Hole is reported when it is absent from the baseline **and** is
 still detected in at least **50% of the 50 frames following its first sighting**,
 **and** change detection corroborates it.
 Detection runs across the whole Board and is filtered afterwards; change
 detection does not decide what the model looks at.
+
+*Amended 2026-09-17: the baseline is the de-duplicated union of several frames
+from `--start`, not the single frame this ADR was written against. A single
+frame passed its own misses through as new Bullet Holes — measured on CamB, a
+mark it missed was reported as new 40 ms later. The decision recorded here is
+unaffected; only what "the baseline" names has changed. See `HANDOVER.md`.*
 
 This is the temporal analysis that [ADR-0001](0001-report-bullet-holes-not-hits.md)
 recorded as an upgrade path and declined to build at the time. Building it does

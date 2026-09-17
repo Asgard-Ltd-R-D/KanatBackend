@@ -1,7 +1,6 @@
 # Bullet Hole Detection — Handover
 
-**As of 2026-09-17.** Branch `feature/test-labels-and-eval`, seven commits on top
-of `74a1c5e`.
+**As of 2026-09-17.** Branch `feature/test-labels-and-eval`.
 
 Read this first, then
 [`../../bullet_hole_detection_pipeline_updated.md`](../../bullet_hole_detection_pipeline_updated.md)
@@ -13,19 +12,27 @@ for why the detection design is what it is.
 
 ## Where it stands
 
-Scored against operator-labelled ground truth (`truth/kanatv6`, six Hits, on
-`CamA_20260914_141546.mkv` 13–25s):
+Two clips now carry operator-labelled ground truth.
 
-```
-TP 6   FP 1   FN 0        precision 86%   recall 100%   F1 0.92
-```
+| Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 |
+|---|---|---|---|---|---|---|---|---|
+| `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 |
+| `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 4 | 4 | 0 | 0 | 100% | 100% | 1.00 |
 
-Every Bullet Hole placed within 15–22 template px — under one hole's width.
-43 tests pass in under a second.
+Bullet Holes placed within 9–22 template px — under one hole's width. 49 tests
+pass in under a second.
 
-**That is six Bullet Holes in one clip.** The thresholds are jointly optimal on
-exactly this sample and that says very little about the next one. SOW 2.3.6 asks
-for 99% over a statistically meaningful sample, which this is not.
+**That is ten Bullet Holes across two clips.** The thresholds are jointly
+optimal on exactly this sample and that says very little about the next one. SOW
+2.3.6 asks for 99% over a statistically meaningful sample, which this is not.
+
+**CamB is the first footage where a bullet landed on a Target** — two of its
+four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had
+only unit tests behind them.
+
+Recall is 100% on both clips with the `yolo26n` weights. That is **not** enough
+to close `yolo26n` vs `yolo26m`: two recordings is not the held-out test set,
+and model selection still waits on it (blocked item 2).
 
 ---
 
@@ -46,7 +53,21 @@ Everything runs from `ImageRecognitionService/` with its `.venv`.
 
 `--end` must leave at least `PERSIST_FRAMES` (50) after the last expected Hit. A
 Bullet Hole whose confirmation window runs past the end of the clip is withheld,
-not reported.
+not reported. This is the most common way to manufacture a false negative: on
+CamB an `--end` of 32 hid two Bullet Holes the model had detected at 0.86 and
+0.90 confidence with 100% persistence. Check the window before suspecting the
+model.
+
+**Export ground truth from Roboflow as DETECTION, not segmentation.** A
+detection export is `class cx cy w h` on every line and `load_labels` takes the
+box fast path. A segmentation export is polygons, and if a single annotation was
+drawn as a box the file is mixed — that 4-value line is then counted as damaged
+and dropped, silently understating ground truth. The CamB export arrived this
+way and scored `[TRUTH] 3` against 4 drawn labels.
+
+Where an export needs correcting, **keep the raw file** and correct a derived
+copy: `truth/camb-25-36/board.roboflow.txt` is Roboflow's bytes unchanged, and
+`board.txt` is the file the evaluation reads.
 
 | File | Holds |
 |---|---|
@@ -117,8 +138,19 @@ now.
 
 **2. The held-out test set.** Whole recordings held out, never frames — adjacent
 video frames are near-identical and splitting by frame is leakage. Until it
-exists, every threshold below is tuned on six Bullet Holes, and `yolo26n` vs
-`yolo26m` vs P2 cannot be compared meaningfully.
+exists, every threshold below is tuned on ten Bullet Holes across two clips, and
+`yolo26n` vs `yolo26m` vs P2 cannot be compared meaningfully.
+
+This is the next step, and it is what the following six open questions are
+waiting on. **Do not move any constant further on CamA and CamB alone.**
+
+1. Duplicate / split behaviour — the 0.59x vs 0.74x collision above.
+2. Genuinely close Bullet Holes, and how near two real marks actually get.
+3. Persistence: `PERSIST` 0.50 and the fixed 50-frame window.
+4. Baseline suppression, which bounds recall directly.
+5. `yolo26n` vs `yolo26m` vs P2.
+6. The matching tolerances — `MATCH_TPL_PX`, `DUP_CENTER_FACTOR`,
+   `OVERLAP_THRESHOLD` and `evaluate.MATCH_TOLERANCE_TPL`.
 
 **3. SOW 2.3.4 renegotiation in writing.** The pipeline assumes the 5–10 second
 budget. The signed 0.5 s is not met and cannot be with a 50-frame confirmation
@@ -138,9 +170,34 @@ real Board view. A clip where someone hits the silhouette would exercise all
 three at once. **This is the most valuable single piece of footage to capture
 next.**
 
-**One false positive survives** the change filter, and it is genuine — it sits
-inside the ground-truth photo's coverage, so it is not an unlabelled hole outside
-the frame.
+**One false positive survives** the change filter on CamA, and it is genuine —
+it sits inside the ground-truth photo's coverage, so it is not an unlabelled hole
+outside the frame.
+
+**The merge gate does not actually separate the two cases it is asked to.**
+`same_bullet_hole` merges two detections whose centres fall within
+`DUP_CENTER_FACTOR` x the mean box diagonal, or whose boxes overlap by more than
+`OVERLAP_THRESHOLD` of the smaller area. Measured on the labelled clips:
+
+- CamB's torn mark, which the detector boxes as two halves, sits at **0.59x**
+  diagonal. Ground truth labels it once.
+- CamA's closest genuinely distinct pair sits at **0.74x** diagonal.
+
+A per-frame merge of CamB's pair therefore needs 0.59, but anything at or above
+0.6 regresses CamA from F1 0.92 to 0.83 — merging shifts which candidate absorbs
+which, and so changes persistence bookkeeping, not merely counts. **The two
+windows do not overlap on the data that exists.**
+
+CamB does report that mark as one Bullet Hole, and scores 1.00 — but by the
+candidate's running mean drifting into range over 275 frames, not because the
+gate fires. That is luck, and `test_camb_split_is_not_merged_by_the_gate_alone`
+pins it so nobody mistakes it for a property. Settling it needs the held-out test
+set, not a nudged constant.
+
+**The box arms must not gate baseline suppression.** Applied there they swallowed
+a real new Bullet Hole next to a pre-existing one on CamB, taking recall from
+100% to 75%. Suppression stays on the template-px floor — the same trap ADR-0003
+records for the 40 px match radius.
 
 **The Board's extent is inferred from where the Targets are**, because nothing
 detects the plywood. `BOARD_MARGIN` bounds *recall*, not presentation: a Bullet
@@ -165,11 +222,18 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `DEFAULT_CONFIDENCE` | 0.40 | `new_bullet_holes.py` | Swept; flat nearby |
 | `REQUIRE_CHANGE_EVIDENCE` | True | `new_bullet_holes.py` | Swept; FP 7 → 1 at no measured recall cost |
 | `MATCH_TPL_PX` | 20.0 | `board.py` | Swept; 40 discarded a real Bullet Hole |
+| `DUP_CENTER_FACTOR` | 0.5 | `new_bullet_holes.py` | Ported from `tagging_bullets.py`; 0.6+ regresses CamA to F1 0.83 |
+| `OVERLAP_THRESHOLD` | 0.5 | `new_bullet_holes.py` | Ported; merging on *any* overlap regresses CamA |
 | `TARGET_NET_SCALE` | 0.90 | `board.py` | Inside a flat band, not a measured peak |
 | `ABSDIFF_SIGMA` | 2.0 | `board.py` | At 2.5 the evidence channel was dead |
 | `BOARD_MARGIN` | 0.50 | `board.py` | Bounds recall; see above |
 | `GREEN_LO` / `GREEN_HI` | — | `board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `board.py` | May reject distant Targets |
+
+`MATCH_TOLERANCE_TPL` (40 px, `evaluate.py`) is provisional too — it is the
+*scoring* tolerance, not a pipeline threshold. Matches currently land at 9–22
+template px against it, which is encouraging and is not validation across a
+dataset.
 
 Measured artwork landmarks — `RING_CENTRE_TPL`, `RING_DIAMETER_TPL`,
 `RING_OFFSET_TPL`, `RING_RADII_TPL` — are *not* tunables. They are readings off

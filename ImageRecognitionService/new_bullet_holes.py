@@ -70,6 +70,52 @@ DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 # --no-change-filter when recall matters more.
 REQUIRE_CHANGE_EVIDENCE = True  # PROVISIONAL
 
+# Two detections are the same Bullet Hole if their centres lie within
+# DUP_CENTER_FACTOR x the mean box diagonal, or their boxes overlap by more than
+# OVERLAP_THRESHOLD of the smaller box's area.
+#
+# Ported unchanged from tagging_bullets.is_duplicate_bullet, where 0.5 is
+# measured rather than chosen: across the sample images the closest genuinely
+# distinct Bullet Holes sit 0.93x diagonal apart while duplicate boxes of one
+# Bullet Hole sit below 0.3x, so the gate falls in the empty gap between them.
+#
+# This pipeline shipped without it and regressed. MATCH_TPL_PX is a constant in
+# TEMPLATE px, which is scale-invariant and correct as a floor, but says nothing
+# about how large the mark is: on CamB_20260915_102250 it came to 2.96 Board px
+# against a torn mark 13 Board px across, and one Bullet Hole was reported twice.
+# Box diagonals scale with the mark itself, which is the property needed here.
+DUP_CENTER_FACTOR = 0.5   # measured in tagging_bullets.py; not re-tuned here
+OVERLAP_THRESHOLD = 0.5
+
+
+def _overlap_fraction(a, b):
+    """Box intersection as a fraction of the smaller box's area."""
+    dx = min(a[0] + a[2] / 2, b[0] + b[2] / 2) - max(a[0] - a[2] / 2, b[0] - b[2] / 2)
+    dy = min(a[1] + a[3] / 2, b[1] + b[3] / 2) - max(a[1] - a[3] / 2, b[1] - b[3] / 2)
+    if dx <= 0 or dy <= 0:
+        return 0.0
+    smaller = min(a[2] * a[3], b[2] * b[3])
+    return float(dx * dy / smaller) if smaller > 0 else 0.0
+
+
+def same_bullet_hole(a, b, floor_px):
+    """Are two detections the same Bullet Hole? Each is (cx, cy) or (cx, cy, w, h).
+
+    Counting marks, not bullets — see docs/adr/0001. Two centres inside the
+    floor are one Bullet Hole whatever their boxes say; beyond it, the boxes
+    decide. Centres-only input keeps the old floor-only behaviour, so callers
+    that have no box (and the tracker's own tests) are unaffected.
+    """
+    distance = float(np.hypot(a[0] - b[0], a[1] - b[1]))
+    if distance < floor_px:
+        return True
+    if len(a) < 4 or len(b) < 4:
+        return False
+    if _overlap_fraction(a, b) > OVERLAP_THRESHOLD:
+        return True
+    mean_diagonal = (float(np.hypot(a[2], a[3])) + float(np.hypot(b[2], b[3]))) / 2
+    return distance < DUP_CENTER_FACTOR * mean_diagonal
+
 
 def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
                            window=PERSIST_FRAMES):
@@ -93,8 +139,8 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
 
     candidates = []  # [pos, seen_frame_idxs, first_idx]
     for idx, pts in per_frame:
-        for p in np.asarray(pts, np.float32).reshape(-1, 2):
-            match = next((c for c in candidates if np.linalg.norm(c[0] - p) < match_px), None)
+        for p in np.asarray(pts, np.float32):  # (cx, cy) or (cx, cy, w, h), always 2-D
+            match = next((c for c in candidates if same_bullet_hole(c[0], p, match_px)), None)
             if match is None:
                 candidates.append([p.copy(), [idx], idx])
             else:
@@ -111,16 +157,23 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
             continue
         ratio = sum(1 for i in seen if i < first + window) / span
         if ratio >= persist:
-            confirmed.append({"pos": pos, "first_frame": first,
+            confirmed.append({"pos": pos[:2], "box": pos, "first_frame": first,
                               "persistence": min(ratio, 1.0)})
     return sorted(confirmed, key=lambda c: c["first_frame"])
 
 
 def _detect(model, image, imgsz, conf):
-    r = model.predict(image, imgsz=imgsz, conf=conf, verbose=False)[0]
-    return np.array([[(float(b.xyxy[0][0]) + float(b.xyxy[0][2])) / 2,
-                      (float(b.xyxy[0][1]) + float(b.xyxy[0][3])) / 2]
-                     for b in r.boxes], np.float32).reshape(-1, 2)
+    """Detections as (cx, cy, w, h) in canvas px.
+
+    The size is not decoration: `same_bullet_hole` needs the mark's own
+    footprint, because a radius fixed in template px can come out smaller than
+    the Bullet Hole it is supposed to merge.
+    """
+    boxes = []
+    for b in model.predict(image, imgsz=imgsz, conf=conf, verbose=False)[0].boxes:
+        x0, y0, x1, y1 = (float(v) for v in b.xyxy[0])
+        boxes.append([(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0])
+    return np.array(boxes, np.float32).reshape(-1, 4)
 
 
 def _round32(x):
@@ -196,7 +249,14 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         canvas = current.rectify(frame)
         pts = _detect(model, canvas, imgsz, conf)
         if len(pts) and len(baseline):
-            pts = pts[np.min(np.linalg.norm(baseline[None] - pts[:, None], axis=2), axis=1) >= match_px]
+            # Floor only, deliberately: the box arms of `same_bullet_hole`
+            # belong to clustering, not to suppression. Measured on
+            # CamB_20260915_102250 25-36s, using them here swallowed a real new
+            # Bullet Hole next to a pre-existing one and took recall from 100%
+            # to 75%. Same trap as the 40 template-px radius in ADR-0003:
+            # whatever gates "already in the baseline" bounds recall directly.
+            pts = pts[np.min(np.linalg.norm(
+                baseline[None, :, :2] - pts[:, None, :2], axis=2), axis=1) >= match_px]
         if len(pts):
             changed = board.changed_regions(baseline_canvas, canvas)
             corroboration += [p for p in pts if _corroborated(p, changed, match_px / 2)]
@@ -210,7 +270,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     for hole in new:
         hole["target"] = last.assign(hole["pos"])
         hole["corroborated"] = any(
-            np.linalg.norm(np.asarray(c) - hole["pos"]) < match_px for c in corroboration)
+            same_bullet_hole(c, hole["box"], match_px) for c in corroboration)
 
     if require_change_evidence:
         before = len(new)
@@ -285,7 +345,7 @@ def _render(video, start, n_frames, fps, template_mask, reference, baseline, new
         for t in view.targets:
             cv2.polylines(vis, [np.int32(t)], True, (0, 200, 0), 2)
         for p in baseline:
-            cv2.circle(vis, tuple(np.int32(p)), 9, (150, 150, 150), 2)
+            cv2.circle(vis, tuple(np.int32(p[:2])), 9, (150, 150, 150), 2)
         shown = 0
         for hole in new:
             if idx < hole["first_frame"]:

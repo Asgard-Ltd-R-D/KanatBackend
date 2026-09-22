@@ -24,6 +24,7 @@ on top of it. See manifest.py.
 import argparse
 import glob
 import os
+import shutil
 
 import cv2
 import numpy as np
@@ -35,6 +36,19 @@ import new_bullet_holes as nbh
 # A Bullet Hole is roughly 25 template px across, so this is about one hole's
 # width of slack between a detection and the label it is credited to.
 MATCH_TOLERANCE_TPL = 40.0
+
+
+def damaged_lines(lines):
+    """Line numbers (1-based) an export cannot be read cleanly from.
+
+    The one place that decides what damage is, so the evaluation (which warns
+    and carries on) and the derivation (which refuses) cannot drift apart on
+    what counts as a readable line. See `load_labels` for the rule.
+    """
+    rows = [l.split()[1:] for l in lines]
+    if rows and all(len(r) == 4 for r in rows):
+        return []
+    return [n for n, r in enumerate(rows, 1) if len(r) < 6 or len(r) % 2]
 
 
 def load_labels(path):
@@ -56,17 +70,14 @@ def load_labels(path):
     if rows and all(len(r) == 4 for r in rows):
         return np.array([r[:2] for r in rows], np.float32).reshape(-1, 2), 0
 
-    centroids, damaged = [], 0
+    centroids = []
     for values in rows:
         if len(values) < 6:            # fewer than 3 points is not a polygon
-            damaged += 1
             continue
-        if len(values) % 2:
-            values = values[:-1]
-            damaged += 1
-        pts = np.array(values, np.float32).reshape(-1, 2)
-        centroids.append(pts.mean(axis=0))
-    return np.array(centroids, np.float32).reshape(-1, 2), damaged
+        pts = np.array(values[:len(values) - len(values) % 2], np.float32)
+        centroids.append(pts.reshape(-1, 2).mean(axis=0))
+    return (np.array(centroids, np.float32).reshape(-1, 2),
+            len(damaged_lines(lines)))
 
 
 def truth_in_template(image_path, label_path, template_mask):
@@ -154,6 +165,115 @@ def score(truth, found, tolerance=MATCH_TOLERANCE_TPL):
     f1 = 2 * tp / (2 * tp + fp + fn) if tp else 0.0
     return {"tp": tp, "fp": fp, "fn": fn, "precision": precision,
             "recall": recall, "f1": f1, "pairs": pairs, "missed": missed}
+
+
+# --- ground truth from a before/after photograph pair ----------------------
+#
+# The new Bullet Holes are the after photograph's labels minus the before
+# photograph's, which replaces adjudicating pre-existing marks by hand. A
+# single after-photograph cannot show when a mark arrived: CamB was scored
+# against all four of its labels, one of which sat on a mark already on the
+# Board at the baseline frame, and an earlier HANDOVER revision reported F1
+# 1.00 on that basis.
+#
+# The two photographs are taken from different positions, so they are compared
+# in template coordinates — and matched by the same `match` at the same
+# tolerance the scoring uses, so a mark that shifted between the photographs is
+# one mark and two marks near one pre-existing mark are not folded together.
+
+DERIVED_NAME = "board.new.txt"
+RAW_NAMES = {"before": "board.before.export.txt",
+             "after": "board.after.export.txt"}
+
+
+def read_export(path):
+    """`(lines, normalised centroids)`, one centroid per line, or refuse.
+
+    The scoring tolerates a damaged line and warns; a derivation cannot.
+    Dropping a line here would silently move a mark out of ground truth
+    altogether — out of the before set, where it stops suppressing a
+    pre-existing mark, or out of the after set, where it flatters recall. It
+    also breaks the line-for-line correspondence the derived file is built
+    from. So a mixed or damaged export is reported and nothing is written.
+    """
+    lines = [l for l in open(path).read().strip().splitlines() if l.strip()]
+    bad = damaged_lines(lines)
+    if bad:
+        raise SystemExit(
+            f"[REFUSED] {path} is a mixed or damaged export: "
+            f"{', '.join(f'line {n}' for n in bad)} cannot be read as a "
+            "polygon. Export from Roboflow as DETECTION, not segmentation; "
+            "where the export needs correcting, keep the raw file and correct "
+            "a derived copy. Dropping the line would understate ground truth.")
+    return lines, load_labels(path)[0]
+
+
+def _unmatched(pairs, count):
+    """The after-labels no before-label was matched to."""
+    pre_existing = {i for i, _, _ in pairs}
+    return [i for i in range(count) if i not in pre_existing]
+
+
+def new_label_indices(before, after, tolerance=MATCH_TOLERANCE_TPL):
+    """Indices into `after` of the marks that are not in `before`.
+
+    Both arrays are template coordinates. A before-mark with no counterpart in
+    the after photograph simply goes unmatched: it subtracts nothing, and the
+    caller reports it, because it more often means the registration slipped
+    than that a mark left the Board.
+    """
+    return _unmatched(match(before, after, tolerance)[0], len(after))
+
+
+def derive_new_holes(before_image, before_labels, after_image, after_labels,
+                     template_path=board.DEFAULT_TEMPLATE,
+                     tolerance=MATCH_TOLERANCE_TPL):
+    """The new Bullet Holes, as indices into the after export's lines.
+
+    `before_image` is the photograph of the Board before firing, or — where the
+    recording was already shot and nobody can return to the Board — the frame
+    an operator hand-labelled. That is explicitly not the detector's own
+    baseline output; independence from the model is what makes it evidence.
+    """
+    lines, _ = read_export(after_labels)
+    read_export(before_labels)          # refuse a damaged before export too
+
+    template = cv2.imread(template_path)
+    if template is None:
+        raise SystemExit(f"cannot read template {template_path}")
+    _, template_mask = board.find_targets(template, min_area=1)
+
+    before, before_correlation, _ = truth_in_template(
+        before_image, before_labels, template_mask)
+    after, after_correlation, _ = truth_in_template(
+        after_image, after_labels, template_mask)
+
+    pairs, only_before = match(before, after, tolerance)
+    return {"lines": lines,
+            "new": _unmatched(pairs, len(after)),
+            "pre_existing": sorted(i for i, _, _ in pairs),
+            "only_before": only_before,
+            "before_correlation": before_correlation,
+            "after_correlation": after_correlation}
+
+
+def write_derived(out_dir, lines, new, before_labels, after_labels):
+    """The derived file, beside byte-for-byte copies of both raw exports.
+
+    The derived file is a correction; the exports are the evidence it was
+    derived from, so they are kept unchanged rather than overwritten.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    derived = os.path.join(out_dir, DERIVED_NAME)
+    with open(derived, "w") as f:
+        f.write("".join(lines[i] + "\n" for i in new))
+    written = {"derived": derived}
+    for which, source in (("before", before_labels), ("after", after_labels)):
+        raw = os.path.join(out_dir, RAW_NAMES[which])
+        if os.path.abspath(source) != os.path.abspath(raw):
+            shutil.copyfile(source, raw)
+        written[f"{which}_raw"] = raw
+    return written
 
 
 def _one(path, pattern):

@@ -36,8 +36,8 @@ Two clips now carry operator-labelled ground truth.
 | `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 |
 | `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 |
 
-Bullet Holes placed within 9–22 template px — under one hole's width. 73 tests
-pass in under a second.
+Bullet Holes placed within 9–22 template px — under one hole's width. 104 tests
+pass in about two seconds.
 
 **Every figure in this document was re-verified on 2026-09-17 after the
 memory-safety fix below**, on `opencv-python==4.10.0.84`. All three F1 scores,
@@ -59,6 +59,13 @@ labels; `board.new-since-25s.txt` is the three used above and is what
 
 An earlier revision of this file reported CamB as F1 1.00. That figure was
 wrong: it credited the pipeline with finding a pre-existing mark.
+
+Those three are no longer worked out by hand. `board.before.txt` carries the one
+pre-existing mark as the operator identified it, and the derivation in
+`evaluate.py` — `derive_truth.py` is its command line — subtracts it,
+reproducing `board.new-since-25s.txt` line for line, which
+`test_derive_truth.py` pins. New recordings get the same treatment from a
+photograph pair rather than a hand-adjudicated frame.
 
 **That is nine Bullet Holes across two clips.** The thresholds are jointly
 optimal on exactly this sample and that says very little about the next one. SOW
@@ -91,6 +98,13 @@ Everything runs from `ImageRecognitionService/` with its `.venv`.
 # A Hit landing inside that window is absorbed into the baseline and never
 # reported, so --start must sit before the shooting.
 
+# Derive the new Bullet Holes from a before/after photograph pair. --truth-labels
+# then points at the board.new.txt this writes, never at the after export.
+.venv/bin/python derive_truth.py \
+    --before-image photos/CamB.before.jpeg --before-labels export/before.txt \
+    --after-image  photos/CamB.after.jpeg  --after-labels  export/after.txt \
+    --out-dir truth/camb-20260915-102250
+
 # Score a run against labelled ground truth — use this before believing any change
 .venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
     --truth-image truth/kanatv6/board.jpeg --truth-labels truth/kanatv6/board.txt
@@ -111,6 +125,18 @@ box fast path. A segmentation export is polygons, and if a single annotation was
 drawn as a box the file is mixed — that 4-value line is then counted as damaged
 and dropped, silently understating ground truth. The CamB export arrived this
 way and scored `[TRUTH] 3` against 4 drawn labels.
+
+This is not a one-off. In the `KanatV6.yolo26-3` export delivered with the five
+customer recordings, **five of the six after-files are mixed** — one box line
+among polygons in each of CamA 141546 (two), CamB 101550, 102250, 102450 and
+103223. `derive_truth.py` refuses such a file by line number rather than
+deriving from a set that is quietly one mark short; re-export as detection, or
+correct a derived copy and keep the raw bytes beside it.
+
+That delivery also labels the **after** photograph only. Both photographs have
+to be labelled before a recording has ground truth — the before-labels are what
+stop a pre-existing mark being credited to the pipeline — so the five customer
+recordings cannot be scored until the before pass is annotated.
 
 Where an export needs correcting, **keep the raw file** and correct a derived
 copy: `truth/camb-25-36/board.roboflow.txt` is Roboflow's bytes unchanged, and

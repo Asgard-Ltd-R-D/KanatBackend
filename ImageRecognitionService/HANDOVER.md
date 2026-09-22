@@ -164,6 +164,24 @@ of resolved alphabetically — in `truth/camb-25-36` that first file is
 optimal on exactly this sample and that says very little about the next one. SOW
 2.3.6 asks for 99% over a statistically meaningful sample, which this is not.
 
+## The held-out set is two recordings of one Capture Setup
+
+The six delivered files are **three** Capture Setups, and the five customer
+recordings are **two** — not the one ADR-0005 allowed they might collapse to.
+Which recording carries which role is `recordings.json`, and the grounds are
+[`capture_setups.md`](capture_setups.md); neither is restated here, so that
+changing an allocation is one edit and not three.
+
+**The split came out three threshold-work / two sealed, not the other way
+round.** `CamB_20260915_102250` is in the results table above; every current
+constant is jointly fitted to it and CamA. Its two unopened siblings share its
+camera pose, Board and light, so sealing them would hold out an arrangement
+already fitted and report re-detection as generalisation — the error ADR-0005
+exists to prevent. The wide pair is the only footage here with a camera pose
+nothing has been fitted to, so the wide pair is what is sealed. Two recordings,
+roughly two Bullet Holes: a thin held-out set, and the only one the delivery
+contains.
+
 **CamB is the first footage where a bullet landed on a Target** — two of its
 four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had
 only unit tests behind them.
@@ -242,11 +260,15 @@ copy: `truth/camb-25-36/board.roboflow.txt` is Roboflow's bytes unchanged, and
 
 **Every recording needs a manifest entry before any tool will open it.**
 `recordings.json` maps sha256 to Capture Setup, role (`sealed`,
-`threshold-work` or `spent`), frame rate and analysis window. A file in no
-entry is refused, and so is an entry whose role is none of those three —
+`threshold-work` or `spent`), frame rate and analysis window, plus a
+`window_basis` line saying whether that window was verified against labelled
+ground truth or is a provisional whole-clip stand-in. No tool reads
+`window_basis`; it is there so an operator does not trust a window nobody
+established. A file in no entry is refused, and so is an entry whose role is none of those three —
 an unallocated recording has no role, and guessing one is how the held-out set
-gets spent. `CamA_20260914_141546.mkv` and `CamB_20260915_102250.mkv` are not
-on this machine, so the two commands above need their entries adding first:
+gets spent. All six delivered recordings now carry one, grouped and allocated
+in [`capture_setups.md`](capture_setups.md). A recording arriving later needs
+its hash taking first:
 
 ```bash
 .venv/bin/python -c "import manifest; print(manifest.content_hash('CLIP.mkv'))"

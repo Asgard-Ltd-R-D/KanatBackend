@@ -120,3 +120,18 @@ def test_a_detection_out_of_reach_of_everything_is_still_a_false_positive():
     """Maximum cardinality must not mean reaching past the tolerance."""
     result = score(np.float32([[0, 0]]), np.float32([[1, 0], [500, 0]]), tolerance=10)
     assert result["tp"] == 1 and result["fp"] == 1
+
+
+def test_the_nearer_pairing_wins_when_both_score_the_same():
+    """Which mark is left over is the answer, not a tie-break.
+
+    Before-marks at 0 and 6, after-marks at 0, 1 and 4: pairing {0-0, 6-4}
+    and pairing {0-1, 6-0} both score two, and they disagree about which
+    after-mark is new. `derive_new_holes` writes that leftover into the ground
+    truth, so the nearer pairing has to win.
+    """
+    truth = np.float32([[0, 0], [0, 6]])
+    found = np.float32([[0, 0], [0, 1], [0, 4]])
+    pairs, missed = match(truth, found, tolerance=6)
+    assert [(i, j) for i, j, _ in pairs] == [(0, 0), (2, 1)]
+    assert missed == []

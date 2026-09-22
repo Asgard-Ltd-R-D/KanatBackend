@@ -27,6 +27,7 @@ import os
 import shutil
 
 import cv2
+import networkx
 import numpy as np
 
 import board
@@ -104,25 +105,8 @@ def truth_in_template(image_path, label_path, template_mask):
     return board._apply(np.linalg.inv(H), pixels), correlation, damaged
 
 
-def _claim(i, within, owner, tried):
-    """Let detection `i` take a label, re-routing whoever already holds it.
-
-    One augmenting path (Kuhn's algorithm). The re-routing is the whole point:
-    a detection that finds its options taken asks each holder to move aside,
-    and the holder only does so if it can take another label itself.
-    """
-    for j in within[i]:
-        if j in tried:
-            continue
-        tried.add(j)
-        if j not in owner or _claim(owner[j], within, owner, tried):
-            owner[j] = i
-            return True
-    return False
-
-
 def match(truth, found, tolerance):
-    """Maximum-cardinality one-to-one matching, nearest first.
+    """Minimum-distance maximum-cardinality one-to-one matching.
 
     One-to-one matters: without it a cluster of false positives all credit
     themselves to the same label and precision looks far better than it is.
@@ -136,26 +120,32 @@ def match(truth, found, tolerance):
     negative out of nothing but the order it happened to consider things in,
     and these numbers are what thresholds get set from.
 
-    Detections are still seeded nearest-first, so where greedy was already
-    optimal the pairing is unchanged; only the distances within a re-routed
-    chain may be longer than a distance-optimal assignment would give. Every
-    pair is within tolerance either way, so the counts — which is what scores —
-    are exact.
+    Minimum distance among those maximum-cardinality pairings matters for
+    *which* things paired, which the counts cannot show. With before-marks at 0
+    and 6, after-marks at 0, 1 and 4 and a tolerance of 6, two pairings both
+    score two: {0-0, 6-4} leaves the mark at 1 over, {0-1, 6-0} leaves the mark
+    at 4. `derive_new_holes` writes that leftover into the ground truth and
+    seeds the refit with the pairs, so the nearer reading has to win.
+
+    Weighting every in-reach edge `tolerance + 1 - distance` and taking the
+    maximum-weight maximum-cardinality matching gives exactly that: cardinality
+    first, total distance second, no dependence on the order marks arrive in.
 
     Returns `(pairs, missed)` where pairs is [(found_index, truth_index, distance)].
     """
-    within, order = {}, []          # detection -> labels in reach, nearest first
+    graph = networkx.Graph()
     for i, p in enumerate(found):
         if not len(truth):
             break
-        distances = np.linalg.norm(truth - p, axis=1)
-        within[i] = [int(j) for j in np.argsort(distances)
-                     if distances[j] <= tolerance]
-        order.append((float(distances.min()), i))
+        for j, d in enumerate(np.linalg.norm(truth - p, axis=1)):
+            if d <= tolerance:
+                graph.add_edge(("found", i), ("truth", j),
+                               weight=tolerance + 1 - float(d))
 
     owner = {}                      # label -> the detection credited with it
-    for _, i in sorted(order):
-        _claim(i, within, owner, set())
+    for a, b in networkx.max_weight_matching(graph, maxcardinality=True):
+        (_, i), (_, j) = (a, b) if a[0] == "found" else (b, a)
+        owner[j] = i
 
     pairs = sorted((i, j, float(np.linalg.norm(truth[j] - found[i])))
                    for j, i in owner.items())

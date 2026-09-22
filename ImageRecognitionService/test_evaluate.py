@@ -2,7 +2,8 @@
 import numpy as np
 import pytest
 
-from evaluate import load_labels, match, score
+from evaluate import (DETECTOR, DISPLACEMENT, UNKNOWN, attribute,
+                      load_labels, match, score)
 
 
 def test_greedy_matching_is_one_to_one():
@@ -136,3 +137,65 @@ def test_the_nearer_pairing_wins_when_both_score_the_same():
     assert [(i, j) for i, j, _ in pairs] == [(0, 0), (2, 1)]
     assert missed == []
 
+
+# --- attributing false positives ------------------------------------------
+#
+# Positions are template px and the default tolerance is 40, so a mark is
+# "displaced" out to 40 and "the detector's" past 80.
+
+
+def _attribute(found, baseline, tolerance=40):
+    """Attribute a run that matched no label, so every detection is a false
+    positive."""
+    return attribute(found, [], baseline, tolerance)
+
+
+def test_a_false_positive_on_a_pre_existing_mark_is_displacement():
+    """The CamB 25.60s case: a mark already on the Board, reported as new once
+    registration moved it past the suppression radius."""
+    got = _attribute(np.float32([[23, 0]]), np.float32([[0, 0]]))
+    assert [(i, c) for i, c, _ in got] == [(0, DISPLACEMENT)]
+
+
+def test_a_false_positive_far_from_every_mark_is_the_detector():
+    got = _attribute(np.float32([[200, 0]]), np.float32([[0, 0]]))
+    assert [(i, c) for i, c, _ in got] == [(0, DETECTOR)]
+
+
+def test_unknown_is_reachable():
+    """Not a rounding of the evidence. Nothing bounds how far registration can
+    displace a mark — the residual that would is censored at the match radius
+    on both labelled clips — so a false positive one and a half Bullet Hole
+    widths from a pre-existing mark is neither cause, and is reported as
+    neither."""
+    got = _attribute(np.float32([[60, 0]]), np.float32([[0, 0]]))
+    assert [(i, c) for i, c, _ in got] == [(0, UNKNOWN)]
+
+
+def test_with_nothing_on_the_board_every_false_positive_is_the_detector():
+    """No mark was there for registration to move."""
+    got = _attribute(np.float32([[5, 0]]), np.zeros((0, 2), np.float32))
+    assert [(i, c) for i, c, _ in got] == [(0, DETECTOR)]
+
+
+def test_attribution_is_exactly_the_false_positives_and_changes_no_count():
+    """One entry per false positive, none for a credited detection, and the
+    headline is `score`'s regardless. A breakdown that moved the counts would
+    make every earlier score incomparable."""
+    truth = np.float32([[0, 0]])
+    found = np.float32([[1, 0], [23, 300], [300, 300]])
+    baseline = np.float32([[0, 300]])
+    result = score(truth, found, tolerance=40)
+    got = attribute(found, result["pairs"], baseline, tolerance=40)
+    assert result["tp"] == 1 and result["fp"] == 2 and result["fn"] == 0
+    assert [(i, c) for i, c, _ in got] == [(1, DISPLACEMENT), (2, DETECTOR)]
+    assert len(got) == result["fp"]
+
+
+def test_a_baseline_of_boxes_is_read_as_marks():
+    """`process` hands over its baseline as (cx, cy, w, h). Read blindly as
+    pairs, each mark reshapes into two points that are nowhere on the Board and
+    every attribution is wrong."""
+    boxes = np.float32([[0, 0, 9, 9], [300, 300, 9, 9]])
+    assert [(i, c) for i, c, _ in _attribute(np.float32([[23, 0]]), boxes)] \
+        == [(0, DISPLACEMENT)]

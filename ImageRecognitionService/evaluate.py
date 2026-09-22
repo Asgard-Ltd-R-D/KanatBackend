@@ -35,8 +35,10 @@ import manifest
 import new_bullet_holes as nbh
 
 # A Bullet Hole is roughly 25 template px across, so this is about one hole's
-# width of slack between a detection and the label it is credited to.
-MATCH_TOLERANCE_TPL = 40.0
+# width of slack between a detection and the label it is credited to. It is also
+# the near attribution band — see `attribute` — and provisional in both roles:
+# it is a physical scale reused, never a value swept against a score.
+MATCH_TOLERANCE_TPL = 40.0   # PROVISIONAL: one Bullet Hole's width, not a fit
 
 
 def damaged_lines(lines):
@@ -163,6 +165,91 @@ def score(truth, found, tolerance=MATCH_TOLERANCE_TPL):
     f1 = 2 * tp / (2 * tp + fp + fn) if tp else 0.0
     return {"tp": tp, "fp": fp, "fn": fn, "precision": precision,
             "recall": recall, "f1": f1, "pairs": pairs, "missed": missed}
+
+
+# --- attributing a false positive ------------------------------------------
+#
+# Registration displacement is the one OPEN failure mode in HANDOVER.md, and a
+# displaced pre-existing mark is a perfectly persistent false positive that
+# persistence is structurally unable to filter. Unattributed, a precision drop
+# on new footage reads as a model problem and sends the work to the wrong place
+# — which HANDOVER records as having already happened to two of three
+# investigated failures.
+#
+# BOTH BANDS ARE PROVISIONAL DIAGNOSTIC BOUNDARIES. Neither is a validated
+# threshold, and neither was derived from the two clips it is reported on: the
+# near band is `MATCH_TOLERANCE_TPL`, which comes from a Bullet Hole's own width
+# and was already the scoring's slack before any of this, and the far band is a
+# judgement (see `UNKNOWN_FACTOR`). Nothing was fitted to make CamA come out
+# `detector` and CamB `displacement` — the measured distances are 827 and 29
+# template px against bands at 80 and 40, so only CamB's sits near an edge at
+# all, and it is the case HANDOVER had already traced by hand.
+#
+# The near band is the scoring's own slack, not a new constant: a false positive
+# within `tolerance` of a mark that was already on the Board is ON that mark, by
+# exactly the standard that credits a detection with a label. `UNKNOWN_FACTOR x
+# tolerance` out, nothing pre-existing is near enough for registration to have
+# put a detection there, so what is left is the detector.
+#
+# In between is `unknown`, and unknown is an outcome rather than a rounding of
+# the evidence. The one measurement that could bound displacement — the
+# registration residual — is censored at the match radius on both labelled
+# clips, so nothing in this project bounds it. `UNKNOWN_FACTOR` is therefore a
+# judgement about how wide to leave that band, deliberately generous, and NOT a
+# validated threshold: calling a detector error registration hides a model
+# problem, calling registration a detector error is the misdirection this whole
+# attribution exists to stop, and `unknown` costs neither.
+#
+# The registration residual is NOT an input here, though it is the other thing
+# the suppression step already computes. It cannot be one: it is censored at the
+# match radius, so it carries no information about the marks that escaped
+# suppression, which are exactly the ones being attributed.
+#
+# Nothing here refuses a run or marks one unscoreable. The headline counts come
+# from `score` and this reads them; it cannot change them. See
+# docs/adr/0006-every-false-positive-is-attributed.md.
+UNKNOWN_FACTOR = 2.0   # PROVISIONAL: a judgement, widened by the held-out set
+
+DISPLACEMENT = "displacement"
+DETECTOR = "detector"
+UNKNOWN = "unknown"
+CAUSES = (DISPLACEMENT, DETECTOR, UNKNOWN)
+
+
+def attribute(found, pairs, baseline, tolerance=MATCH_TOLERANCE_TPL):
+    """A likely cause per false positive, as `(found index, cause, distance)`.
+
+    `found` and `baseline` are both in template coordinates — the run's
+    detections and the marks that were already on the Board at its baseline
+    frame, as `(cx, cy)` or the baseline's own `(cx, cy, w, h)`. `pairs` is
+    `score`'s, so the false positives are exactly the detections it credited
+    with no label, and there is one entry per false positive: this is a
+    breakdown of the headline, never an adjustment to it.
+
+    An empty baseline gives every false positive to the detector, and says so
+    with an infinite distance: no mark was on the Board for registration to
+    have moved.
+
+    **The baseline is the detector's own output**, not ground truth — nothing
+    else says what was on the Board at frame one. So a pre-existing mark the
+    detector missed at baseline leaves its displaced sighting looking like a
+    detector error, and a baseline phantom lends a genuine detector error the
+    look of displacement. Both are bounded by how good the baseline is, which
+    `[INFO] baseline: N pre-existing Bullet Holes` prints on every run.
+    """
+    credited = {i for i, _, _ in pairs}
+    marks = (np.asarray(baseline, np.float32)[:, :2] if len(baseline)
+             else np.zeros((0, 2), np.float32))
+    out = []
+    for i in range(len(found)):
+        if i in credited:
+            continue
+        distance = (float(np.min(np.linalg.norm(marks - found[i], axis=1)))
+                    if len(marks) else float("inf"))
+        cause = (DISPLACEMENT if distance <= tolerance else
+                 DETECTOR if distance > UNKNOWN_FACTOR * tolerance else UNKNOWN)
+        out.append((i, cause, distance))
+    return out
 
 
 # --- ground truth from a before/after photograph pair ----------------------
@@ -525,11 +612,11 @@ if __name__ == "__main__":
               f"before the recording. The run cannot find those, and recall is "
               f"understated by that much. See {SOURCE_NAME}.")
 
-    holes = nbh.process(a.video, a.start, a.end, a.model, a.confidence,
-                        template_path=a.template,
-                        require_change_evidence=not a.no_change_filter,
-                        merge_displaced=a.merge_displaced,
-                        baseline_frames=a.baseline_frames)
+    run = nbh.process(a.video, a.start, a.end, a.model, a.confidence,
+                      template_path=a.template,
+                      require_change_evidence=not a.no_change_filter,
+                      merge_displaced=a.merge_displaced,
+                      baseline_frames=a.baseline_frames)
 
     # The run's positions are in Board space; ground truth is in template space.
     # Board space is fixed by the BASELINE frame, so rebuild it from exactly that
@@ -541,8 +628,13 @@ if __name__ == "__main__":
     if not ok:
         raise SystemExit(f"cannot re-read {a.video} at {a.start}s")
     view, _ = board.build_view(baseline_frame, template_mask)
-    found = board._apply(np.linalg.inv(view.tpl_to_board),
-                         np.array([h["pos"] for h in holes], np.float32).reshape(-1, 2))
+    to_template = np.linalg.inv(view.tpl_to_board)
+    found = board._apply(to_template,
+                         np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
+    # The marks that were already on the Board, in the same frame of reference —
+    # what tells a displaced one of those from a detector false positive.
+    pre_existing = board._apply(
+        to_template, np.asarray(run.baseline, np.float32)[:, :2])
 
     result = score(truth, found, a.tolerance)
     print(f"\n[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "
@@ -552,3 +644,26 @@ if __name__ == "__main__":
         print(f"   found #{i + 1} -> truth #{j + 1}   {d:5.0f} template px")
     if result["missed"]:
         print(f"   missed: {', '.join(f'truth #{j + 1}' for j in result['missed'])}")
+
+    # Under the headline, never in it.
+    attribution = attribute(found, result["pairs"], pre_existing, a.tolerance)
+    if attribution:
+        counted = {c: sum(1 for _, cause, _ in attribution if cause == c)
+                   for c in CAUSES}
+        print(f"\n[ATTRIBUTION] {len(attribution)} false positive(s): "
+              + ", ".join(f"{n} {c}" for c, n in counted.items())
+              + f" (displacement within {a.tolerance:.0f} template px of a mark "
+                f"the baseline already held, detector beyond "
+                f"{UNKNOWN_FACTOR * a.tolerance:.0f})")
+        for i, cause, distance in attribution:
+            near = "none" if distance == float("inf") else f"{distance:.0f} px"
+            print(f"   found #{i + 1}  {cause:<12} nearest pre-existing mark {near}")
+
+    # On every score, in the template px a score is read in, and a bar on
+    # nothing: no registration-failure threshold has been validated — not
+    # against Bullet Hole scale, not against SOW 2.3.2's 5 mm — and inventing
+    # one from a single clip is the error this project keeps finding in its own
+    # constants. So a run is never refused or marked unscoreable on this line.
+    print(nbh.registration_note(
+        np.asarray(run.residual, np.float32) / view.board_scale,
+        board.MATCH_TPL_PX, "template px"))

@@ -62,6 +62,15 @@ the same side of the boundary. Distinct from a Capture Profile, which is the
 settings chosen for a setup rather than the setup itself.
 _Avoid_: scene, clip, session
 
+**Registration Displacement**:
+A Detection reported at the wrong place on the Board because the frame
+registered imperfectly, not because the detector was wrong. A pre-existing
+Bullet Hole displaced far enough stops matching the baseline and is reported as
+a new one — a false positive that persists perfectly, which persistence is
+structurally unable to filter. Named as one of the three causes a false positive
+is attributed to, beside the detector and `unknown`.
+_Avoid_: drift, registration error, misregistration
+
 **Sealed**:
 A recording held out from every kind of tuning. No pixels of it are used for
 anything — not thresholds, not labels, not unlabelled background crops — until

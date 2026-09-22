@@ -31,12 +31,17 @@ for why the detection design is what it is.
 
 Two clips now carry operator-labelled ground truth.
 
-| Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 |
-|---|---|---|---|---|---|---|---|---|
-| `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 |
-| `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 |
+| Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
+|---|---|---|---|---|---|---|---|---|---|
+| `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 | detector, 827 tpl px out |
+| `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 | displacement, 29 tpl px out |
 
-Bullet Holes placed within 9–22 template px — under one hole's width. 108 tests
+Bullet Holes placed within 9–22 template px — under one hole's width. **The two
+clips fail differently**, and that is the point of the last column: one lost
+precision to the model, the other to registration, and until `[ATTRIBUTION]`
+existed both read as the same 1 FP. The counts are untouched by it, and the
+two attributions were measured on 2026-09-22 — every other figure below
+dates from the 2026-09-17 re-verification. 124 tests
 pass in about a second.
 
 **Every figure in this document was re-verified on 2026-09-17 after the
@@ -376,6 +381,13 @@ already measured on this clip (100% -> 75%) and the trap ADR-0003 records for th
 40 template-px radius. The defence is disclosure, not suppression: see
 `[REGISTRATION]` below.
 
+**The 25.60s report no longer has to be worked out by hand.** `evaluate.py`
+attributes it — `1 displacement`, 29 template px from the nearest mark that was
+on the Board at the baseline frame, against a suppression radius of 20. CamA's
+surviving false positive attributes to the detector at 827 template px out, so
+the two clips' single false positives have different causes and the scores say
+so. See [ADR-0006](../docs/adr/0006-every-false-positive-is-attributed.md).
+
 **3. A confirmed Bullet Hole is never re-examined when it stops existing. NO
 SURVIVING INSTANCE — it is the same mark as mode 1.** The 0.04s mark is detected
 at 0.82-0.86 for its first ~3.8 seconds, then the detector returns **nothing at
@@ -461,8 +473,13 @@ count is still 5.
 
 ### Every run now reports what it could not do
 
-Three disclosures, all of them cheap, none of them corrective:
+Four disclosures, all of them cheap, none of them corrective:
 
+- `[ATTRIBUTION] N false positive(s): a displacement, b detector, c unknown`, from
+  `evaluate.py`. Every false positive in a scored run gets a likely cause and its
+  distance to the nearest mark that was already on the Board, and the counts
+  above it are untouched by it. See
+  [ADR-0006](../docs/adr/0006-every-false-positive-is-attributed.md).
 - `[REGISTRATION] residual on N baseline-matched detection(s): median X Board px`.
   A residual is the distance from a detection to the baseline mark it matched —
   same physical mark, so the distance is registration error and nothing else.
@@ -484,6 +501,13 @@ Three disclosures, all of them cheap, none of them corrective:
   That the max sits exactly on the radius in both is the ceiling, not a
   coincidence, and it means **displaced pre-existing marks are reaching the
   threshold on both clips, not only the one where a false positive was noticed.**
+
+  `evaluate.py` repeats this line under every score, in template px, whether or
+  not any detection matched a baseline mark. It is a disclosure and nothing
+  more: **no run is refused or marked unscoreable on the strength of its
+  residual.** No registration-failure bar has been validated — not against
+  Bullet Hole scale, not against SOW 2.3.2's 5 mm — and deriving one from a
+  single clip is the error this project keeps finding in its own constants.
 - `[WARN] truncated: processed N of M requested frames`, and confirmation is
   measured against frames actually read. **This is a short read, not a crash** —
   see the OpenCV pin below for the crash, which is a different failure and
@@ -578,7 +602,9 @@ next.**
 
 **One false positive survives** the change filter on CamA, and it is genuine —
 it sits inside the ground-truth photo's coverage, so it is not an unlabelled hole
-outside the frame.
+outside the frame. `[ATTRIBUTION]` puts it on the detector, 827 template px from
+anything that was already on the Board, so it is not registration displacement
+wearing a detector's clothes.
 
 **The merge gate does not actually separate the two cases it is asked to.**
 `same_bullet_hole` merges two detections whose centres fall within

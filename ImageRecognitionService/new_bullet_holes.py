@@ -28,7 +28,9 @@ docs/adr/0001-report-bullet-holes-not-hits.md. Two bullets through one mark are
 one Bullet Hole, and no amount of temporal evidence separates them.
 """
 import argparse
+import itertools
 import os
+from typing import NamedTuple
 
 import cv2
 import numpy as np
@@ -342,9 +344,11 @@ def _next_view(cap, template_mask, last):
     failed — no evidence from that frame, either way — and `(None, None)` when
     the read itself failed, which is the end of what the file holds.
 
-    The baseline loop and the main loop both go through here on purpose: a
-    difference between how they read frames is a silent difference between what
-    the baseline sees and what the run is measured against.
+    Every caller that DETECTS goes through `RegisteredFrames.looks`, on
+    purpose: a second way of reading and registering frames is a silent
+    difference between what one caller measures and what the runtime sees.
+    `_render` still reads the clip itself, and may — it repeats no detection,
+    so it cannot disagree about the image the model was shown.
     """
     ok, frame = cap.read()
     if not ok:
@@ -356,98 +360,192 @@ def _next_view(cap, template_mask, last):
     return frame, current
 
 
+class Look(NamedTuple):
+    """One frame, as the runtime saw it.
+
+    `view` is None — and with it `canvas` and `detections` — when the Board was
+    not found or ECC failed. That is deliberately not the same value as an empty
+    `detections` array: "the Board was lost" and "looked and saw nothing" mean
+    opposite things to any rate whose denominator is frames that got a look, and
+    a caller that cannot tell them apart scores a registration failure as a
+    detector miss.
+    """
+    index: int
+    view: board.BoardView | None
+    canvas: np.ndarray | None
+    detections: np.ndarray | None
+
+    @property
+    def registered(self):
+        return self.view is not None
+
+
+class RegisteredFrames:
+    """One iteration over a recording: read, register, rectify, detect.
+
+    The pipeline and anything measuring the detector go through here, so that a
+    probe cannot silently measure a different image than the runtime does. The
+    risk is measured, not hypothetical: two scalings compose into the detector's
+    effective scale, at net scale 1.81 the model returns ZERO detections, and
+    `imgsz` fits the canvas's LONGEST side — an early version of this pipeline
+    read it as the width, letterboxed a 709x1063 Board to 0.66 instead of 0.99
+    and starved the detector without saying so (HANDOVER.md, "Five things").
+    A second loop written beside this one can differ in either and then report a
+    number about a distribution the runtime never sees.
+
+    Board space is fixed once, by the frame at `--start`, and every later frame
+    is registered onto it.
+
+    Built by `open`. The constructor takes its collaborators directly so the
+    iteration can be exercised without a video file or a model.
+    """
+
+    def __init__(self, cap, model, template_mask, view, base, imgsz, conf,
+                 fps, start):
+        self.cap, self.model, self.template_mask = cap, model, template_mask
+        # Two views, and the difference matters: `view` is the Board space
+        # everything is registered ONTO, fixed by the frame at `--start`, and
+        # `last` is the most recently registered frame, which is what the next
+        # ECC fit starts from and what Target assignment reads at the end.
+        self.view = self.last = view
+        self.imgsz, self.conf = imgsz, conf
+        self.fps, self.start = fps, start
+        self._base = base
+        self.net_scale = None   # measured by `open`; see the warning there
+        self.processed = self.lost = 0
+
+    @classmethod
+    def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
+             template_path=board.DEFAULT_TEMPLATE):
+        from ultralytics import YOLO  # imported lazily: pulls in torch
+        model = YOLO(model_path)
+
+        template = cv2.imread(template_path)
+        if template is None:
+            raise SystemExit(f"cannot read Target artwork at {template_path}")
+        _, template_mask = board.find_targets(template, min_area=1)
+
+        cap = cv2.VideoCapture(video)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
+        ok, base = cap.read()
+        if not ok:
+            raise SystemExit(f"cannot read {video} at {start}s")
+
+        view, correlation = board.build_view(base, template_mask)
+        if view is None:
+            raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+        canvas_w, canvas_h = view.canvas_size
+        # ultralytics fits the LONGEST side to imgsz, so that is what must match.
+        imgsz = _round32(max(canvas_w, canvas_h))
+        frame_span = board.contour_span(board.find_targets(base)[0][0])
+        tpl_span = board.contour_span(board.template_contour(template_mask))
+        scale = board.net_scale(view.board_scale, tpl_span, frame_span, imgsz,
+                                max(canvas_w, canvas_h))
+        # Detection is zero by net scale 1.81 and flat below ~1.1, so any figure
+        # taken through this loop is only comparable to another at the same
+        # scale. Kept on the instance rather than only printed, so a caller can
+        # say what its measurement was taken under.
+
+        # Correlation is deliberately NOT called a registration-health figure. It
+        # sat at 0.94-0.96 on CamB_20260915_102250 through a window in which a
+        # stationary mark's Board-space position walked 4.6 px out of place. It says
+        # the ECC fit converged, nothing more. The [REGISTRATION] line in `process`
+        # is the figure that bears on geometry.
+        print(f"[BOARD] {len(view.targets)} Target(s), ECC converged at {correlation:.4f} "
+              f"(convergence, not geometric accuracy)")
+        print(f"[BOARD] rectified {canvas_w}x{canvas_h}, imgsz {imgsz}, net scale {scale:.2f}")
+        if not 0.5 <= scale <= 1.2:
+            print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
+                  f"(0.5-1.2, flat within it); detection is zero by ~1.8")
+        loop = cls(cap, model, template_mask, view, base, imgsz, conf, fps, start)
+        loop.net_scale = scale
+        return loop
+
+    def frames_until(self, end):
+        """How many frames lie between `--start` and `end` seconds."""
+        return int((end - self.start) * self.fps)
+
+    def looks(self, n_frames):
+        """Yield a `Look` per frame read, up to `n_frames` from `--start`.
+
+        Frames that failed to register are yielded too, unregistered — see
+        `Look`. Iteration stops early when the file runs out, which is why
+        callers take `processed` from here rather than assuming `n_frames`.
+
+        The first frame is the one Board space was built from, so it is already
+        read and already registered; it is yielded like any other.
+        """
+        try:
+            while self.processed < n_frames:
+                if self.processed:
+                    frame, current = _next_view(self.cap, self.template_mask, self.last)
+                    if frame is None:
+                        break  # the end of what the file holds
+                else:
+                    frame, current = self._base, self.view
+                index, self.processed = self.processed, self.processed + 1
+                if current is None:
+                    self.lost += 1
+                    yield Look(index, None, None, None)
+                    continue
+                self.last = current
+                canvas = current.rectify(frame)
+                yield Look(index, current, canvas,
+                           _detect(self.model, canvas, self.imgsz, self.conf))
+        finally:
+            self.cap.release()
+
+
 def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, ring_diameter_mm=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
             baseline_frames=BASELINE_FRAMES):
-    from ultralytics import YOLO  # imported lazily: pulls in torch
-    model = YOLO(model_path)
-
-    template = cv2.imread(template_path)
-    if template is None:
-        raise SystemExit(f"cannot read Target artwork at {template_path}")
-    _, template_mask = board.find_targets(template, min_area=1)
-
-    cap = cv2.VideoCapture(video)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
-    ok, base = cap.read()
-    if not ok:
-        raise SystemExit(f"cannot read {video} at {start}s")
-
-    # Board space is fixed here, once, and every later frame reuses it.
-    view, correlation = board.build_view(base, template_mask)
-    if view is None:
-        raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
-    canvas_w, canvas_h = view.canvas_size
-    # ultralytics fits the LONGEST side to imgsz, so that is what must match.
-    imgsz = _round32(max(canvas_w, canvas_h))
-    frame_span = board.contour_span(board.find_targets(base)[0][0])
-    tpl_span = board.contour_span(board.template_contour(template_mask))
-    scale = board.net_scale(view.board_scale, tpl_span, frame_span, imgsz,
-                            max(canvas_w, canvas_h))
-
-    # Correlation is deliberately NOT called a registration-health figure. It
-    # sat at 0.94-0.96 on CamB_20260915_102250 through a window in which a
-    # stationary mark's Board-space position walked 4.6 px out of place. It says
-    # the ECC fit converged, nothing more. The [REGISTRATION] line below is the
-    # figure that bears on geometry.
-    print(f"[BOARD] {len(view.targets)} Target(s), ECC converged at {correlation:.4f} "
-          f"(convergence, not geometric accuracy)")
-    print(f"[BOARD] rectified {canvas_w}x{canvas_h}, imgsz {imgsz}, net scale {scale:.2f}")
-    if not 0.5 <= scale <= 1.2:
-        print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
-              f"(0.5-1.2, flat within it); detection is zero by ~1.8")
-
-    baseline_canvas = view.rectify(base)
-    match_px = view.match_radius
+    loop = RegisteredFrames.open(video, start, model_path, conf, template_path)
+    fps, match_px = loop.fps, loop.view.match_radius
+    n_frames = loop.frames_until(end)
+    looks = loop.looks(n_frames)
 
     # The baseline is built from BASELINE_FRAMES frames, not one. Everything it
     # fails to see is reported as a new Bullet Hole, and a single frame passes
     # its own misses straight through. These frames contribute no persistence
     # evidence: within the baseline window nothing can be new, which is exactly
     # the risk the constant documents.
+    #
+    # They come off the front of the same iterator the run continues on, so the
+    # baseline cannot be built from a differently rectified Board than the one
+    # it is subtracted from.
     baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
-    last, processed = view, 1
-    baseline_detections = [_detect(model, baseline_canvas, imgsz, conf)]
-    for _ in range(1, baseline_frames):
-        frame, current = _next_view(cap, template_mask, last)
-        if frame is None:
-            break
-        processed += 1
-        if current is None:
+    baseline_canvas, baseline_detections = None, []
+    for look in itertools.islice(looks, baseline_frames):
+        if not look.registered:
             continue
-        last = current
-        baseline_detections.append(_detect(model, current.rectify(frame), imgsz, conf))
+        if baseline_canvas is None:
+            # Always look 0's: Board space is built from that frame, so `open`
+            # has already raised if it did not register. This is the image
+            # change detection is measured against for the rest of the run.
+            baseline_canvas = look.canvas
+        baseline_detections.append(look.detections)
     baseline = baseline_marks(baseline_detections, match_px)
     short = ("" if len(baseline_detections) == baseline_frames else
              f" (of {baseline_frames} requested; the rest were lost or unread)")
     print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes over "
           f"{len(baseline_detections)} frame(s) from {start}s{short}")
 
-    n_frames = int((end - start) * fps)
     per_frame, corroboration, residuals_per_frame, lost = [], [], [], 0
-    for idx in range(processed, n_frames):
-        frame, current = _next_view(cap, template_mask, last)
-        if frame is None:
-            break
-        processed += 1
-        if current is None:
+    for look in looks:
+        if not look.registered:
             lost += 1
             continue  # no evidence from this frame, either way
-        last = current
-
-        canvas = current.rectify(frame)
-        pts = _detect(model, canvas, imgsz, conf)
-        pts, matched = strip_pre_existing(pts, baseline, match_px)
+        pts, matched = strip_pre_existing(look.detections, baseline, match_px)
         residuals_per_frame.append(matched)
         if len(pts):
-            changed = board.changed_regions(baseline_canvas, canvas)
+            changed = board.changed_regions(baseline_canvas, look.canvas)
             corroboration += [p for p in pts if _corroborated(p, changed, match_px / 2)]
-        per_frame.append((idx, pts))  # empty is meaningful: looked, saw nothing
+        per_frame.append((look.index, pts))  # empty is meaningful: looked, saw nothing
 
-    cap.release()
+    processed = loop.processed
     if lost:
         print(f"[WARN] Board lost on {lost} frame(s); excluded from persistence")
 
@@ -476,7 +574,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
 
     new = track_new_bullet_holes(per_frame, processed, match_px)
     for hole in new:
-        hole["target"] = last.assign(hole["pos"])
+        hole["target"] = loop.last.assign(hole["pos"])
         hole["corroborated"] = any(
             same_bullet_hole(c, hole["box"], match_px) for c in corroboration)
 
@@ -486,7 +584,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         print(f"[FILTER] change evidence required: {before} -> {len(new)} Bullet Holes")
 
     if merge_displaced:
-        new, merged = merge_displaced_tracks(new, last)
+        new, merged = merge_displaced_tracks(new, loop.last)
         for survivor, absorbed in merged:
             print(f"[MERGE] displaced sighting at t="
                   f"{start + absorbed['first_frame'] / fps:.2f}s folded into the Bullet Hole "
@@ -496,10 +594,11 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         if not merged:
             print("[MERGE] no displaced sightings found")
 
-    _report(new, start, fps, last, ring_diameter_mm,
+    _report(new, start, fps, loop.last, ring_diameter_mm,
             [idx for idx, _ in per_frame])
     if out_video:
-        _render(video, start, processed, fps, template_mask, view, baseline, new, out_video)
+        _render(video, start, processed, fps, loop.template_mask, loop.view,
+                baseline, new, out_video)
     return new
 
 

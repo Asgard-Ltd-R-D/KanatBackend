@@ -36,7 +36,7 @@ Two clips now carry operator-labelled ground truth.
 | `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 |
 | `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 |
 
-Bullet Holes placed within 9–22 template px — under one hole's width. 54 tests
+Bullet Holes placed within 9–22 template px — under one hole's width. 73 tests
 pass in under a second.
 
 **Every figure in this document was re-verified on 2026-09-17 after the
@@ -119,7 +119,7 @@ copy: `truth/camb-25-36/board.roboflow.txt` is Roboflow's bytes unchanged, and
 | File | Holds |
 |---|---|
 | `board.py` | Board geometry: find, register, rectify, Target/Miss, scoring, mm |
-| `new_bullet_holes.py` | The pipeline: baseline, persistence, change evidence, reporting |
+| `new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
 | `evaluate.py` | Scoring a run against labelled ground truth |
 | `targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `truth/kanatv6/` | The one piece of ground truth that exists |

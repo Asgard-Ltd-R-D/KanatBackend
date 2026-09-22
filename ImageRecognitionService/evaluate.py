@@ -17,6 +17,9 @@ Usage:
 
     python evaluate.py CLIP.mkv --start 13 --end 25 \\
         --truth-image truth/board.jpeg --truth-labels truth/board.txt
+
+The clip needs a `recordings.json` entry; sealed footage needs `--final-run`
+on top of it. See manifest.py.
 """
 import argparse
 import glob
@@ -26,6 +29,7 @@ import cv2
 import numpy as np
 
 import board
+import manifest
 import new_bullet_holes as nbh
 
 # A Bullet Hole is roughly 25 template px across, so this is about one hole's
@@ -147,7 +151,12 @@ if __name__ == "__main__":
                         "new_bullet_holes")
     p.add_argument("--tolerance", type=float, default=MATCH_TOLERANCE_TPL,
                    help="how close a detection must be to claim a label, template px")
+    manifest.add_flag(p)
     a = p.parse_args()
+
+    # Split membership before anything is opened: a sealed recording is refused
+    # unless this run says it is the final one. See manifest.py and ADR-0005.
+    manifest.gate(a.video, a.final_run, a.model, "evaluate.py")
 
     template = cv2.imread(a.template)
     _, template_mask = board.find_targets(template, min_area=1)

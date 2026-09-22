@@ -8,6 +8,8 @@ import json
 import argparse
 import random
 
+import manifest
+
 # === CONFIG ===
 MODEL_PATH          = './trained_models/kanat_model10_v.2.0/weights/best.pt'
 VIDEO_PATH          = './videos/test_video.mp4'
@@ -320,7 +322,12 @@ if __name__ == "__main__":
     p.add_argument("--inference-size", type=int, default=None,
                    help=f"Inference size fed to the model, a multiple of 32 "
                         f"(default: the profile's, else {DEFAULT_INFERENCE_SIZE})")
+    manifest.add_flag(p)
     args = p.parse_args()
+
+    # The older pipeline opens a recording like any other tool, so it gates like
+    # any other tool. See manifest.py and ADR-0005.
+    manifest.gate(VIDEO_PATH, args.final_run, MODEL_PATH, "tagging_bullets.py")
 
     # Profile resolution stays here, in the command-line layer: process_video
     # takes plain numbers and knows nothing about profiles. An unknown name

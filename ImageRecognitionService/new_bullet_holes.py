@@ -36,6 +36,7 @@ import cv2
 import numpy as np
 
 import board
+import manifest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -738,6 +739,12 @@ if __name__ == "__main__":
                         "absorbed into the baseline and never reported, so the "
                         "window must precede the shooting.")
     p.add_argument("--out", help="write an annotated video of the rectified Board here")
+    manifest.add_flag(p)
     a = p.parse_args()
+
+    # Split membership before anything is opened: a sealed recording is refused
+    # unless this run says it is the final one. See manifest.py and ADR-0005.
+    manifest.gate(a.video, a.final_run, a.model, "new_bullet_holes.py")
+
     process(a.video, a.start, a.end, a.model, a.confidence, a.out, a.ring_mm,
             a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames)

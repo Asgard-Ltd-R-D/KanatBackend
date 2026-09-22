@@ -1,0 +1,16 @@
+{
+  "2789a9cdbc1baf5e03276a98a49b4402496c705cdf925452f950fc75852ae1fb": {
+    "file": "good_shooting_vid2.mp4",
+    "capture_setup": "legacy-dev",
+    "role": "spent",
+    "fps": 25.0,
+    "window": [0.0, 79.76]
+  },
+  "de262e617aeb7dceb47ae784cf1a1e16e228c1d3223dafedefd8bd2c24551751": {
+    "file": "test_video.mp4",
+    "capture_setup": "legacy-dev",
+    "role": "spent",
+    "fps": 30.004,
+    "window": [0.0, 8.2]
+  }
+}

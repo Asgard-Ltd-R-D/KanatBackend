@@ -644,3 +644,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Customer recordings: hundreds of megabytes, and the sealed ones must not
+# travel. ImageRecognitionService/recordings.json links a file on disk to its
+# role by content hash instead (ADR-0005).
+ImageRecognitionService/videos/*.mkv
+
+# ...but the record of every look at sealed footage is the whole point, and
+# `*.log` above would have swallowed it. It is evidence, so it is committed.
+!ImageRecognitionService/sealed_runs.log

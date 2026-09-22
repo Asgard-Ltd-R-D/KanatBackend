@@ -53,3 +53,17 @@ A named, reusable set of detection settings tied to one physical setup —
 camera placement and zoom, distance to the Board, and calibre. Selected when a
 Range starts; unchanged while the hardware stays put.
 _Avoid_: range profile, lane profile, calibration
+
+**Capture Setup**:
+One physical arrangement that footage was shot in — camera pose, Board,
+lighting, distance. The unit the held-out split is allocated by: three files
+from one afternoon on one camera are one Capture Setup, and all three land on
+the same side of the boundary. Distinct from a Capture Profile, which is the
+settings chosen for a setup rather than the setup itself.
+_Avoid_: scene, clip, session
+
+**Sealed**:
+A recording held out from every kind of tuning. No pixels of it are used for
+anything — not thresholds, not labels, not unlabelled background crops — until
+the once-only final measurement, which is logged. See ADR-0005.
+_Avoid_: held back, reserved, test split

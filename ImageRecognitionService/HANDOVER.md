@@ -116,11 +116,36 @@ Where an export needs correcting, **keep the raw file** and correct a derived
 copy: `truth/camb-25-36/board.roboflow.txt` is Roboflow's bytes unchanged, and
 `board.txt` is the file the evaluation reads.
 
+**Every recording needs a manifest entry before any tool will open it.**
+`recordings.json` maps sha256 to Capture Setup, role (`sealed`,
+`threshold-work` or `spent`), frame rate and analysis window. A file in no
+entry is refused, and so is an entry whose role is none of those three —
+an unallocated recording has no role, and guessing one is how the held-out set
+gets spent. `CamA_20260914_141546.mkv` and `CamB_20260915_102250.mkv` are not
+on this machine, so the two commands above need their entries adding first:
+
+```bash
+.venv/bin/python -c "import manifest; print(manifest.content_hash('CLIP.mkv'))"
+```
+
+A recording whose role is `sealed` is refused unless `--final-run` is passed,
+and that run is appended to `sealed_runs.log` — which is committed, not
+ignored — with the date, model and commit. Lookup is by content hash, so
+renaming a file cannot move it across the split boundary. See `manifest.py` and
+ADR-0005.
+
+The guard sits on the recording, because that is where provenance is.
+`new_bullet_holes.py`, `evaluate.py` and `tagging_bullets.py` all call
+`manifest.gate` before opening one; `sweep_profile.py` takes a frame already on
+disk, which cannot be traced back to the footage it came from. Gating the
+extraction is what keeps sealed pixels out of it.
+
 | File | Holds |
 |---|---|
 | `board.py` | Board geometry: find, register, rectify, Target/Miss, scoring, mm |
 | `new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
 | `evaluate.py` | Scoring a run against labelled ground truth |
+| `manifest.py`, `recordings.json` | Split membership by content hash, the sealed guard, the run log |
 | `targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `truth/kanatv6/` | The one piece of ground truth that exists |
 | `tagging_bullets.py`, `sweep_profile.py` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |

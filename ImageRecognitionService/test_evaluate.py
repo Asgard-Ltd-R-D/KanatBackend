@@ -135,3 +135,4 @@ def test_the_nearer_pairing_wins_when_both_score_the_same():
     pairs, missed = match(truth, found, tolerance=6)
     assert [(i, j) for i, j, _ in pairs] == [(0, 0), (2, 1)]
     assert missed == []
+

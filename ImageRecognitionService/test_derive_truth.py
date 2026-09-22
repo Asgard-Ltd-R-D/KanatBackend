@@ -279,3 +279,29 @@ def test_a_refit_needs_enough_pairs_to_carry_evidence():
     assert evaluate.refit_on_matched_marks(before, after,
                                            [(0, 0, 1.4), (1, 1, 1.4)]) is None
 
+
+
+def test_a_refit_supported_by_only_two_of_its_seeds_is_refused():
+    """RANSAC reaches the two-point fit the long way round.
+
+    Four correspondences, two of which disagree with the other two: the
+    similarity that fits either pair perfectly is free to call the other pair
+    outliers. Counting the seeds says four, counting the inliers says two, and
+    two correspondences determine a similarity exactly — the fit reproduces
+    its own input and is not evidence of anything.
+    """
+    before = _pts((0, 0), (100, 0), (0, 100), (100, 100))
+    after = _pts((0, 0), (100, 0), (900, 700), (150, 480))
+    assert evaluate.refit_on_matched_marks(
+        before, after, [(i, i, 0.0) for i in range(4)]) is None
+
+
+def test_a_refit_that_only_re_deals_the_same_pairs_is_not_adopted():
+    """A tie is not an improvement: same number of pairs, different marks,
+    so a different after-label is written down as a new Bullet Hole with
+    nothing gained to justify it."""
+    pairs = [(0, 0, 1.0), (1, 1, 1.0)]
+    assert evaluate.keep_refit(pairs, [(0, 1, 0.5), (2, 0, 0.5)]) is False
+    assert evaluate.keep_refit(pairs, [(0, 0, 0.1), (1, 1, 0.1)]) is True
+    assert evaluate.keep_refit(pairs, [(0, 0, 3.0)]) is False
+    assert evaluate.keep_refit(pairs, [(0, 1, 1.0), (1, 0, 1.0), (2, 2, 1.0)]) is True

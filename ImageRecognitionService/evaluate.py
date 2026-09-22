@@ -270,16 +270,35 @@ def refit_on_matched_marks(before_photo_px, after, pairs):
     the fit to carry evidence. The caller re-matches at the same tolerance, so
     a refit can only pull the same mark together — never widen what counts as
     one mark.
+
+    `MIN_REFIT_PAIRS` is checked twice, because RANSAC can throw the
+    overdetermination away: handed pairs it cannot reconcile it is free to
+    return the similarity its two-point sample supports and mark the rest
+    outliers, which is the two-point fit `MIN_REFIT_PAIRS` exists to refuse,
+    reached the long way round. The inliers have to carry it, not the seeds.
     """
     if len(pairs) < MIN_REFIT_PAIRS:
         return None
     src = np.float32([before_photo_px[j] for _, j, _ in pairs]).reshape(-1, 1, 2)
     dst = np.float32([after[i] for i, _, _ in pairs]).reshape(-1, 1, 2)
-    M, _ = cv2.estimateAffinePartial2D(src, dst)
-    if M is None:
+    M, inliers = cv2.estimateAffinePartial2D(src, dst)
+    if M is None or inliers is None or int(inliers.sum()) < MIN_REFIT_PAIRS:
         return None
     return cv2.transform(
         np.float32(before_photo_px).reshape(-1, 1, 2), M).reshape(-1, 2)
+
+
+def keep_refit(pairs, refit_pairs):
+    """Is the second registration worth adopting over the first?
+
+    Only if it pulls in marks the first one left out, or pairs exactly the
+    same marks it did. A refit that loses a pair has found a worse frame of
+    reference, not a better one — and one that merely re-deals the same number
+    of pairs among different marks has changed which after-label is written
+    down as a new Bullet Hole while gaining nothing to justify it.
+    """
+    return (len(refit_pairs) > len(pairs)
+            or {(i, j) for i, j, _ in refit_pairs} == {(i, j) for i, j, _ in pairs})
 
 
 def photo_tolerance(tolerance, target_span_px, template_span_px):
@@ -338,14 +357,12 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
 
     pairs, only_before = match(before, after, reach)
 
-    # A second registration, fitted to the marks the first one agreed on. Kept
-    # only if it matches at least as many: a refit that loses a pair has found
-    # a worse frame of reference, not a better one.
+    # A second registration, fitted to the marks the first one agreed on.
     refit = refit_on_matched_marks(before_px, after, pairs)
     refitted = False
     if refit is not None:
         refit_pairs, refit_only_before = match(refit, after, reach)
-        if len(refit_pairs) >= len(pairs):
+        if keep_refit(pairs, refit_pairs):
             pairs, only_before, refitted = refit_pairs, refit_only_before, True
 
     return {"lines": lines,

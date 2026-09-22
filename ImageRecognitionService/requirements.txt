@@ -1,4 +1,20 @@
-ultralytics
-opencv-python
+# Pinned exactly, and the opencv pin is load-bearing.
+#
+# opencv-python was unpinned and resolved to 5.0.0.93. Every version from
+# 4.11 onward — including 5.x — ships KleidiCV as a custom HAL, whose NEON
+# resize kernel writes out of bounds. Reached through ultralytics' letterbox
+# on every _detect call, it segfaulted on CamA_20260914_141846.mkv at a
+# DIFFERENT frame each run (61, 222 on 5.0.0; 28, 111 on 4.14.0), which is
+# heap corruption, not a data-dependent fault.
+#
+# 4.10.0.84 is the last release without KleidiCV ('Custom HAL: carotene'
+# only). It survives the same clip for 499 frames, three runs, exit 0.
+# A RANGE IS NOT ENOUGH: `>=4.10,<5` resolves straight back to 4.14.
+#
+# The thresholds in this project are measured against footage. An unpinned
+# resolution swaps the detector or its image pipeline out from under those
+# measurements without anything failing loudly.
+ultralytics==8.4.126
+opencv-python==4.10.0.84
 pandas
 openpyxl

@@ -14,6 +14,13 @@ substantially larger change (frame-to-frame Board registration, per-frame state,
 sensitivity to camera and Board movement) and stands outside this work. It
 remains the upgrade path if true Hit counts are ever required.
 
+**Since built — see [ADR-0003](0003-a-bullet-hole-is-new-when-it-persists.md).**
+Temporal analysis is now implemented, and it does separate a Bullet Hole that
+appears during a Range from one that was already there. It does *not* recover
+the second Hit of an overlapping pair: a bullet passing through an existing
+Bullet Hole leaves no visual change in any frame, so no amount of temporal
+evidence reveals it. The conclusion below therefore stands unchanged.
+
 ## Consequences
 
 Reported counts are a floor on Hits, not an exact count. This particular error is

@@ -73,3 +73,38 @@ def test_label_too_short_to_be_a_polygon_is_counted_as_damaged(tmp_path):
     f.write_text("0 0.1 0.1 0.2")
     centroids, damaged = load_labels(str(f))
     assert len(centroids) == 0 and damaged == 1
+
+
+def test_a_crossed_pair_costs_nothing():
+    """Nearest-first alone manufactures a false positive and a false negative.
+
+    Labels at 0 and 10, detections at 4 and -5, tolerance 7. The detection at 4
+    is nearest to label 0 and takes it, leaving -5 with nothing in reach — one
+    true positive. Pairing -5 with 0 and 4 with 10 credits both, and both are
+    within tolerance. Thresholds get set from these counts.
+    """
+    truth = np.float32([[0, 0], [10, 0]])
+    found = np.float32([[4, 0], [-5, 0]])
+    result = score(truth, found, tolerance=7)
+    assert result["tp"] == 2
+    assert result["fp"] == 0 and result["fn"] == 0
+
+
+def test_re_routing_never_costs_a_pair():
+    """A detection that can only reach one label keeps it.
+
+    The chain has to stop somewhere: detection 0 reaches both labels, detection
+    1 reaches only label 0. Handing label 0 to detection 1 is what lets both
+    score, but only because detection 0 has somewhere else to go.
+    """
+    truth = np.float32([[0, 0], [10, 0]])
+    found = np.float32([[5, 0], [0, 0]])
+    pairs, missed = match(truth, found, tolerance=6)
+    assert sorted(j for _, j, _ in pairs) == [0, 1]
+    assert missed == []
+
+
+def test_a_detection_out_of_reach_of_everything_is_still_a_false_positive():
+    """Maximum cardinality must not mean reaching past the tolerance."""
+    result = score(np.float32([[0, 0]]), np.float32([[1, 0], [500, 0]]), tolerance=10)
+    assert result["tp"] == 1 and result["fp"] == 1

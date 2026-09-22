@@ -85,30 +85,62 @@ def truth_in_template(image_path, label_path, template_mask):
     return board._apply(np.linalg.inv(H), pixels), correlation, damaged
 
 
+def _claim(i, within, owner, tried):
+    """Let detection `i` take a label, re-routing whoever already holds it.
+
+    One augmenting path (Kuhn's algorithm). The re-routing is the whole point:
+    a detection that finds its options taken asks each holder to move aside,
+    and the holder only does so if it can take another label itself.
+    """
+    for j in within[i]:
+        if j in tried:
+            continue
+        tried.add(j)
+        if j not in owner or _claim(owner[j], within, owner, tried):
+            owner[j] = i
+            return True
+    return False
+
+
 def match(truth, found, tolerance):
-    """Greedy one-to-one matching, nearest first.
+    """Maximum-cardinality one-to-one matching, nearest first.
 
     One-to-one matters: without it a cluster of false positives all credit
     themselves to the same label and precision looks far better than it is.
+
+    Maximum cardinality matters for the same reason, in the other direction.
+    Taking the nearest free label each time is not enough — with labels at 0 and
+    10, detections at 4 and -5 and a tolerance of 7, the detection at 4 takes
+    label 0 because it is nearest, and the one at -5 is then left with nothing
+    within reach. That pairing scores one true positive; pairing -5 with 0 and 4
+    with 10 scores two. Greedy manufactures a false positive AND a false
+    negative out of nothing but the order it happened to consider things in,
+    and these numbers are what thresholds get set from.
+
+    Detections are still seeded nearest-first, so where greedy was already
+    optimal the pairing is unchanged; only the distances within a re-routed
+    chain may be longer than a distance-optimal assignment would give. Every
+    pair is within tolerance either way, so the counts — which is what scores —
+    are exact.
+
     Returns `(pairs, missed)` where pairs is [(found_index, truth_index, distance)].
     """
-    pairs, claimed = [], set()
-    order = []
+    within, order = {}, []          # detection -> labels in reach, nearest first
     for i, p in enumerate(found):
         if not len(truth):
             break
         distances = np.linalg.norm(truth - p, axis=1)
-        order.append((float(distances.min()), i, int(np.argmin(distances))))
-    for _, i, _ in sorted(order):
-        distances = np.linalg.norm(truth - found[i], axis=1)
-        for j in np.argsort(distances):
-            if j in claimed:
-                continue
-            if distances[j] <= tolerance:
-                claimed.add(int(j))
-                pairs.append((i, int(j), float(distances[j])))
-            break
-    missed = [j for j in range(len(truth)) if j not in claimed]
+        within[i] = [int(j) for j in np.argsort(distances)
+                     if distances[j] <= tolerance]
+        order.append((float(distances.min()), i))
+
+    owner = {}                      # label -> the detection credited with it
+    for _, i in sorted(order):
+        _claim(i, within, owner, set())
+
+    pairs = sorted((i, j, float(np.linalg.norm(truth[j] - found[i])))
+                   for j, i in owner.items())
+    missed = [j for j in range(len(truth)) if j not in owner]
     return pairs, missed
 
 

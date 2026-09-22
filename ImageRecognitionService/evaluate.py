@@ -24,8 +24,10 @@ on top of it. See manifest.py.
 import argparse
 import glob
 import os
+import shutil
 
 import cv2
+import networkx
 import numpy as np
 
 import board
@@ -37,36 +39,54 @@ import new_bullet_holes as nbh
 MATCH_TOLERANCE_TPL = 40.0
 
 
+def damaged_lines(lines):
+    """Line numbers (1-based) an export cannot be read exactly.
+
+    A line is damaged when it carries fewer than four values, or an odd number
+    of them — one export was seen cut off mid-number. Anything else is a label:
+    four values is a box, six or more is a polygon. Nothing else is guessed at.
+
+    The one place that decides what damage is, so the scoring (which warns and
+    carries on) and the derivation (which refuses) cannot drift apart on what
+    counts as a readable line.
+    """
+    rows = [l.split()[1:] for l in lines]
+    return [n for n, r in enumerate(rows, 1) if len(r) < 4 or len(r) % 2]
+
+
+def box_lines(lines):
+    """Line numbers (1-based) that carry a box rather than a polygon."""
+    return [n for n, l in enumerate(lines, 1) if len(l.split()) - 1 == 4]
+
+
+def _centroid(values):
+    """A label's centre, whichever way it was drawn.
+
+    `class cx cy w h` for a box, `class x1 y1 x2 y2 ...` for a polygon. The
+    rule is per LINE, and a four-value line is always a box — Roboflow never
+    emits a two-point polygon, so the only thing four values can be is an
+    annotation somebody drew as a box. Reading it as one keeps the label; the
+    earlier per-file rule dropped it whenever the rest of the file was
+    polygons, which understates ground truth and flatters recall.
+    """
+    if len(values) == 4:
+        return np.array(values[:2], np.float32)
+    points = np.array(values[:len(values) - len(values) % 2], np.float32)
+    return points.reshape(-1, 2).mean(axis=0)
+
+
 def load_labels(path):
     """Centroids of YOLO labels, normalised. Handles boxes and polygons.
 
-    Roboflow exports the same annotations either way — `class cx cy w h` for
-    detection, `class x1 y1 x2 y2 ...` for segmentation — and a bare line of
-    five fields is ambiguous between a box and a (meaningless) two-point
-    polygon. The format is therefore decided per FILE, not per line: if every
-    line carries exactly four values it is a box file.
-
-    That distinction matters. In a polygon file a five-field line is a
-    truncated instance, and one export was seen cut off mid-number. Dropping it
-    silently would understate ground truth and flatter recall, so it is counted
-    as damaged and reported.
+    A mixed file — polygons with a box annotation among them — is read in full
+    and the damaged count is returned for the caller to report. Only a line
+    that cannot be read at all is dropped, and it is never dropped silently.
     """
     lines = [l for l in open(path).read().strip().splitlines() if l.strip()]
     rows = [[float(v) for v in l.split()[1:]] for l in lines]
-    if rows and all(len(r) == 4 for r in rows):
-        return np.array([r[:2] for r in rows], np.float32).reshape(-1, 2), 0
-
-    centroids, damaged = [], 0
-    for values in rows:
-        if len(values) < 6:            # fewer than 3 points is not a polygon
-            damaged += 1
-            continue
-        if len(values) % 2:
-            values = values[:-1]
-            damaged += 1
-        pts = np.array(values, np.float32).reshape(-1, 2)
-        centroids.append(pts.mean(axis=0))
-    return np.array(centroids, np.float32).reshape(-1, 2), damaged
+    centroids = [_centroid(values) for values in rows if len(values) >= 4]
+    return (np.array(centroids, np.float32).reshape(-1, 2),
+            len(damaged_lines(lines)))
 
 
 def truth_in_template(image_path, label_path, template_mask):
@@ -85,25 +105,8 @@ def truth_in_template(image_path, label_path, template_mask):
     return board._apply(np.linalg.inv(H), pixels), correlation, damaged
 
 
-def _claim(i, within, owner, tried):
-    """Let detection `i` take a label, re-routing whoever already holds it.
-
-    One augmenting path (Kuhn's algorithm). The re-routing is the whole point:
-    a detection that finds its options taken asks each holder to move aside,
-    and the holder only does so if it can take another label itself.
-    """
-    for j in within[i]:
-        if j in tried:
-            continue
-        tried.add(j)
-        if j not in owner or _claim(owner[j], within, owner, tried):
-            owner[j] = i
-            return True
-    return False
-
-
 def match(truth, found, tolerance):
-    """Maximum-cardinality one-to-one matching, nearest first.
+    """Minimum-distance maximum-cardinality one-to-one matching.
 
     One-to-one matters: without it a cluster of false positives all credit
     themselves to the same label and precision looks far better than it is.
@@ -117,26 +120,32 @@ def match(truth, found, tolerance):
     negative out of nothing but the order it happened to consider things in,
     and these numbers are what thresholds get set from.
 
-    Detections are still seeded nearest-first, so where greedy was already
-    optimal the pairing is unchanged; only the distances within a re-routed
-    chain may be longer than a distance-optimal assignment would give. Every
-    pair is within tolerance either way, so the counts — which is what scores —
-    are exact.
+    Minimum distance among those maximum-cardinality pairings matters for
+    *which* things paired, which the counts cannot show. With before-marks at 0
+    and 6, after-marks at 0, 1 and 4 and a tolerance of 6, two pairings both
+    score two: {0-0, 6-4} leaves the mark at 1 over, {0-1, 6-0} leaves the mark
+    at 4. `derive_new_holes` writes that leftover into the ground truth and
+    seeds the refit with the pairs, so the nearer reading has to win.
+
+    Weighting every in-reach edge `tolerance + 1 - distance` and taking the
+    maximum-weight maximum-cardinality matching gives exactly that: cardinality
+    first, total distance second, no dependence on the order marks arrive in.
 
     Returns `(pairs, missed)` where pairs is [(found_index, truth_index, distance)].
     """
-    within, order = {}, []          # detection -> labels in reach, nearest first
+    graph = networkx.Graph()
     for i, p in enumerate(found):
         if not len(truth):
             break
-        distances = np.linalg.norm(truth - p, axis=1)
-        within[i] = [int(j) for j in np.argsort(distances)
-                     if distances[j] <= tolerance]
-        order.append((float(distances.min()), i))
+        for j, d in enumerate(np.linalg.norm(truth - p, axis=1)):
+            if d <= tolerance:
+                graph.add_edge(("found", i), ("truth", j),
+                               weight=tolerance + 1 - float(d))
 
     owner = {}                      # label -> the detection credited with it
-    for _, i in sorted(order):
-        _claim(i, within, owner, set())
+    for a, b in networkx.max_weight_matching(graph, maxcardinality=True):
+        (_, i), (_, j) = (a, b) if a[0] == "found" else (b, a)
+        owner[j] = i
 
     pairs = sorted((i, j, float(np.linalg.norm(truth[j] - found[i])))
                    for j, i in owner.items())
@@ -156,13 +165,320 @@ def score(truth, found, tolerance=MATCH_TOLERANCE_TPL):
             "recall": recall, "f1": f1, "pairs": pairs, "missed": missed}
 
 
+# --- ground truth from a before/after photograph pair ----------------------
+#
+# The new Bullet Holes are the after photograph's labels minus the before
+# photograph's, which replaces adjudicating pre-existing marks by hand. A
+# single after-photograph cannot show when a mark arrived: CamB was scored
+# against all four of its labels, one of which sat on a mark already on the
+# Board at the baseline frame, and an earlier HANDOVER revision reported F1
+# 1.00 on that basis.
+#
+# The comparison happens in the AFTER photograph's own pixels. Registering each
+# photograph to the template separately was tried first and does not work: on
+# the customer photographs that registration correlates 0.69-0.76, the two
+# errors compound, and every pre-existing mark came out unmatched — 41 marks
+# that are plainly the same holes in both photographs, 0.001 apart in
+# normalised photo coordinates, landing 60 to 4000 template px apart. Marks far
+# outside the printed artwork fared worst, which is the homography
+# extrapolating.
+#
+# One ECC between the two photographs replaces both. The tolerance stays the
+# scoring's 40 template px, converted into photograph px by the Target span
+# ratio — the same isotropic approximation `board_scale_for` makes — so the
+# slack is the same physical distance, one Bullet Hole's width, measured where
+# the marks actually are.
+
+DERIVED_NAME = "board.new.txt"
+RAW_NAMES = {"before": "board.before.export.txt",
+             "after": "board.after.export.txt"}
+
+
+def read_export(path):
+    """`(lines, normalised centroids)`, one centroid per line, or refuse.
+
+    A mixed file is read, not refused: every label is kept, boxes as boxes and
+    polygons as polygons, and the caller reports the mix. A *damaged* line is
+    another matter — it is a number cut short, so its position is wrong rather
+    than merely differently drawn, and it breaks the line-for-line
+    correspondence the derived file is built from. The derivation refuses it
+    where the scoring only warns, because a ground-truth file is written once
+    and read for months.
+    """
+    lines = [l for l in open(path).read().strip().splitlines() if l.strip()]
+    bad = damaged_lines(lines)
+    if bad:
+        raise SystemExit(
+            f"[REFUSED] {path} is damaged: "
+            f"{', '.join(f'line {n}' for n in bad)} carries too few values or "
+            "an odd number of them, so a coordinate was cut short. Re-export "
+            "that file; keep the raw bytes and correct a derived copy. "
+            "Deriving from it would put a mark in the wrong place.")
+    return lines, load_labels(path)[0]
+
+
+def _unmatched(pairs, count):
+    """The after-labels no before-label was matched to."""
+    pre_existing = {i for i, _, _ in pairs}
+    return [i for i in range(count) if i not in pre_existing]
+
+
+def new_label_indices(before, after, tolerance=MATCH_TOLERANCE_TPL):
+    """Indices into `after` of the marks that are not in `before`.
+
+    Both arrays are template coordinates. A before-mark with no counterpart in
+    the after photograph simply goes unmatched: it subtracts nothing, and the
+    caller reports it, because it more often means the registration slipped
+    than that a mark left the Board.
+    """
+    return _unmatched(match(before, after, tolerance)[0], len(after))
+
+
+# A similarity has 4 degrees of freedom, so 4 correspondences already
+# over-determine it. Fewer than that and the fit reproduces its own input and
+# says nothing about whether the two photographs agree.
+MIN_REFIT_PAIRS = 4
+
+
+def refit_on_matched_marks(before_photo_px, after, pairs):
+    """The before-marks re-registered on the marks the artwork already matched.
+
+    ECC aligns the printed Target, which spans about a sixth of these
+    photographs, so the homography is at its best on the artwork and
+    extrapolating everywhere else. On CamB_20260915_103223 the residual runs
+    1.4 px on the Target and 6-7 px a Target-span away from it, which left two
+    marks that are plainly the same hole in both photographs looking like two
+    different ones — and each of those becomes a pre-existing mark counted as a
+    new Bullet Hole.
+
+    The marks the first registration did agree on are correspondences for a
+    second one, and unlike the artwork they are spread over the whole Board. A
+    similarity is deliberate: 4 degrees of freedom against 8 or more
+    correspondences cannot bend to fit noise the way a homography can, and the
+    residual left over is a real disagreement rather than a curve through it.
+
+    `before_photo_px` is the before photograph's own pixels, NOT the registered
+    ones: the fit replaces the artwork homography rather than correcting it.
+    Two photographs of one Board from nearly the same place are related by
+    something close to a similarity, and the perspective the homography adds
+    only holds where it was fitted. Correcting H with a similarity instead of
+    replacing it was tried and is worse — on CamB_20260915_103223 it leaves
+    residuals of 0.2-4.7 px and one mark still unpaired, against 0.1-1.5 px and
+    none.
+
+    Returns the moved before-marks, or None when there are too few pairs for
+    the fit to carry evidence. The caller re-matches at the same tolerance, so
+    a refit can only pull the same mark together — never widen what counts as
+    one mark.
+
+    `MIN_REFIT_PAIRS` is checked twice, because RANSAC can throw the
+    overdetermination away: handed pairs it cannot reconcile it is free to
+    return the similarity its two-point sample supports and mark the rest
+    outliers, which is the two-point fit `MIN_REFIT_PAIRS` exists to refuse,
+    reached the long way round. The inliers have to carry it, not the seeds.
+    """
+    if len(pairs) < MIN_REFIT_PAIRS:
+        return None
+    src = np.float32([before_photo_px[j] for _, j, _ in pairs]).reshape(-1, 1, 2)
+    dst = np.float32([after[i] for i, _, _ in pairs]).reshape(-1, 1, 2)
+    M, inliers = cv2.estimateAffinePartial2D(src, dst)
+    if M is None or inliers is None or int(inliers.sum()) < MIN_REFIT_PAIRS:
+        return None
+    return cv2.transform(
+        np.float32(before_photo_px).reshape(-1, 1, 2), M).reshape(-1, 2)
+
+
+def keep_refit(pairs, refit_pairs):
+    """Is the second registration worth adopting over the first?
+
+    Only if it pulls in marks the first one left out, or pairs exactly the
+    same marks it did. A refit that loses a pair has found a worse frame of
+    reference, not a better one — and one that merely re-deals the same number
+    of pairs among different marks has changed which after-label is written
+    down as a new Bullet Hole while gaining nothing to justify it.
+    """
+    return (len(refit_pairs) > len(pairs)
+            or {(i, j) for i, j, _ in refit_pairs} == {(i, j) for i, j, _ in pairs})
+
+
+def photo_tolerance(tolerance, target_span_px, template_span_px):
+    """A template-px tolerance expressed in photograph px.
+
+    Isotropic: one span ratio for the whole photograph, as `board_scale_for`
+    already assumes. Perspective makes the true scale vary across the Board,
+    but the marks sit on and around one Target and the slack is a whole Bullet
+    Hole wide, so the variation is well inside it.
+    """
+    return tolerance * target_span_px / template_span_px
+
+
+def _photograph(path):
+    """A photograph's pixels, its Target mask and its largest Target."""
+    image = cv2.imread(path)
+    if image is None:
+        raise SystemExit(f"cannot read photograph {path}")
+    contours, mask = board.find_targets(image)
+    if not contours:
+        raise SystemExit(f"no Target found in {path}; cannot register it")
+    return image, mask, contours[0]
+
+
+def derive_new_holes(before_image, before_labels, after_image, after_labels,
+                     template_path=board.DEFAULT_TEMPLATE,
+                     tolerance=MATCH_TOLERANCE_TPL):
+    """The new Bullet Holes, as indices into the after export's lines.
+
+    `before_image` is the photograph of the Board before firing, or — where the
+    recording was already shot and nobody can return to the Board — the frame
+    an operator hand-labelled. That is explicitly not the detector's own
+    baseline output; independence from the model is what makes it evidence.
+    """
+    lines, after_normalised = read_export(after_labels)
+    before_lines, before_normalised = read_export(before_labels)
+
+    template = cv2.imread(template_path)
+    if template is None:
+        raise SystemExit(f"cannot read template {template_path}")
+    _, template_mask = board.find_targets(template, min_area=1)
+
+    before_photo, before_mask, _ = _photograph(before_image)
+    after_photo, after_mask, after_target = _photograph(after_image)
+
+    # One homography between the two photographs, not one each to the template.
+    H, correlation = board.register(before_mask, after_mask, after_target)
+    reach = photo_tolerance(
+        tolerance, board.contour_span(after_target),
+        board.contour_span(board.template_contour(template_mask)))
+
+    height, width = after_photo.shape[:2]
+    after = after_normalised * [width, height]
+    before_px = before_normalised * [before_photo.shape[1], before_photo.shape[0]]
+    before = board._apply(H, before_px)
+
+    pairs, only_before = match(before, after, reach)
+
+    # A second registration, fitted to the marks the first one agreed on.
+    refit = refit_on_matched_marks(before_px, after, pairs)
+    refitted = False
+    if refit is not None:
+        refit_pairs, refit_only_before = match(refit, after, reach)
+        if keep_refit(pairs, refit_pairs):
+            pairs, only_before, refitted = refit_pairs, refit_only_before, True
+
+    return {"lines": lines,
+            "before_lines": before_lines,
+            "new": _unmatched(pairs, len(after)),
+            "pre_existing": sorted(i for i, _, _ in pairs),
+            "only_before": only_before,
+            "correlation": correlation,
+            "tolerance_px": reach,
+            "refitted": refitted,
+            "distances": sorted(d for _, _, d in pairs)}
+
+
+SOURCE_NAME = "board.source.txt"
+UNPAIRED_FIELD = "before-marks-without-a-counterpart"
+
+
+def write_derived(out_dir, result, before_image, before_labels,
+                  after_image, after_labels):
+    """The derived file, the raw exports byte-for-byte, and where they came from.
+
+    The derived file is a correction; the exports are the evidence it was
+    derived from, so they are kept unchanged rather than overwritten. The
+    photographs are not copied — they are large, and like the recordings they
+    are not version-controlled — so their paths are written down instead.
+    Without that, a derived label file is anonymous: nothing says which
+    photograph its coordinates are normalised against, and `evaluate.py` needs
+    exactly that image.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    derived = os.path.join(out_dir, DERIVED_NAME)
+    with open(derived, "w") as f:
+        f.write("".join(result["lines"][i] + "\n" for i in result["new"]))
+
+    written = {"derived": derived}
+    for which, source in (("before", before_labels), ("after", after_labels)):
+        raw = os.path.join(out_dir, RAW_NAMES[which])
+        if os.path.abspath(source) != os.path.abspath(raw):
+            shutil.copyfile(source, raw)
+        written[f"{which}_raw"] = raw
+
+    written["source"] = os.path.join(out_dir, SOURCE_NAME)
+    with open(written["source"], "w") as f:
+        f.write(
+            f"# {DERIVED_NAME} is the after photograph's labels minus the "
+            f"before photograph's.\n"
+            f"# Its coordinates are normalised against the after photograph.\n"
+            f"before-image: {before_image}\n"
+            f"before-labels: {before_labels}\n"
+            f"after-image: {after_image}\n"
+            f"after-labels: {after_labels}\n"
+            f"photograph-registration-correlation: {result['correlation']:.4f}\n"
+            f"refitted-on-matched-marks: "
+            f"{'yes' if result.get('refitted') else 'no'}\n"
+            f"match-tolerance-photo-px: {result['tolerance_px']:.1f}\n"
+            f"labelled-after: {len(result['lines'])}\n"
+            f"pre-existing: {len(result['pre_existing'])}\n"
+            f"new-bullet-holes: {len(result['new'])}\n"
+            f"{UNPAIRED_FIELD}: {len(result['only_before'])}\n")
+    return written
+
+
+def unpaired_before_marks(label_path):
+    """Before-marks the derivation could not pair, per the sibling source file.
+
+    Each one is a mark that was on the Board and whose counterpart in the after
+    photograph was therefore counted as new — so the truth being scored against
+    holds a mark the run cannot legitimately find. The derivation prints this
+    when it writes the file; a run scoring against that file months later
+    prints nothing, which is how a flag stops being a flag. Zero for truth that
+    was not derived from a photograph pair at all.
+    """
+    source = os.path.join(os.path.dirname(label_path), SOURCE_NAME)
+    if not os.path.exists(source):
+        return 0
+    for line in open(source):
+        key, _, value = line.partition(": ")
+        if key == UNPAIRED_FIELD:
+            return int(value)
+    return 0
+
+
 def _one(path, pattern):
+    """A file, or the single `pattern` match under a directory.
+
+    Several matches are refused rather than resolved alphabetically.
+    `truth/camb-25-36` holds four .txt files — the before labels, the raw
+    export, the derived file and the corrected one — and taking the first
+    scored the run against `board.before.txt`, the marks that were on the Board
+    before it started. Silence is what made that possible, so it says which
+    files it found and makes the caller name one.
+    """
     if os.path.isfile(path):
         return path
     hits = sorted(glob.glob(os.path.join(path, pattern)))
     if not hits:
         raise SystemExit(f"no {pattern} under {path}")
+    if len(hits) > 1:
+        raise SystemExit(
+            f"{path} holds {len(hits)} files matching {pattern} "
+            f"({', '.join(os.path.basename(h) for h in hits)}); name the one "
+            "to use. Scoring against the wrong one is silent.")
     return hits[0]
+
+
+def truth_labels(path):
+    """The labels to score against, given a file or a truth directory.
+
+    A derived truth directory holds the raw after export beside the derived
+    file, and `board.after.export.txt` sorts first. Taking it would score the
+    run against every mark on the Board, pre-existing ones included — the exact
+    error the derivation exists to prevent, reached by nothing but alphabetical
+    order. So the derived file wins whenever it is there.
+    """
+    derived = os.path.join(path, DERIVED_NAME)
+    return derived if os.path.exists(derived) else _one(path, "*.txt")
 
 
 if __name__ == "__main__":
@@ -193,13 +509,21 @@ if __name__ == "__main__":
     template = cv2.imread(a.template)
     _, template_mask = board.find_targets(template, min_area=1)
 
+    labels = truth_labels(a.truth_labels)
     truth, correlation, damaged = truth_in_template(
-        _one(a.truth_image, "*.jp*g"), _one(a.truth_labels, "*.txt"), template_mask)
-    print(f"[TRUTH] {len(truth)} labelled Bullet Holes, "
+        _one(a.truth_image, "*.jp*g"), labels, template_mask)
+    print(f"[TRUTH] {len(truth)} labelled Bullet Holes from "
+          f"{os.path.basename(labels)}, "
           f"ground-truth registration correlation {correlation:.4f}")
     if damaged:
         print(f"[WARN] {damaged} label(s) were malformed or truncated; "
               f"their positions are approximate")
+    unpaired = unpaired_before_marks(labels)
+    if unpaired:
+        print(f"[WARN] the derivation left {unpaired} before-mark(s) unpaired, "
+              f"so up to {unpaired} of these labels were already on the Board "
+              f"before the recording. The run cannot find those, and recall is "
+              f"understated by that much. See {SOURCE_NAME}.")
 
     holes = nbh.process(a.video, a.start, a.end, a.model, a.confidence,
                         template_path=a.template,

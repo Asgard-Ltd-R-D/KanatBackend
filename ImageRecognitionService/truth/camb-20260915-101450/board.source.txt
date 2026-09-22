@@ -1,0 +1,13 @@
+# board.new.txt is the after photograph's labels minus the before photograph's.
+# Its coordinates are normalised against the after photograph.
+before-image: /Users/ronen.sasgardsys.co.il/Downloads/KanatVideos/CamB_20260915_101450.before.jpeg
+before-labels: /Users/ronen.sasgardsys.co.il/Downloads/KanatVideos/Before_ Annotated/train/labels/CamB_20260915_101450-before_jpeg.rf.3CFlj2pTBTcbSeXiaql5.txt
+after-image: /Users/ronen.sasgardsys.co.il/Downloads/KanatVideos/CamB_20260915_101450.after.jpeg
+after-labels: /Users/ronen.sasgardsys.co.il/Downloads/KanatVideos/After_ Annotated/test/labels/CamB_20260915_101450-after_jpeg.rf.SNN3foFn8TeoHSKaz1qN.txt
+photograph-registration-correlation: 0.9376
+refitted-on-matched-marks: no
+match-tolerance-photo-px: 5.4
+labelled-after: 1
+pre-existing: 0
+new-bullet-holes: 1
+before-marks-without-a-counterpart: 0

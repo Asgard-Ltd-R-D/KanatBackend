@@ -18,3 +18,4 @@ ultralytics==8.4.126
 opencv-python==4.10.0.84
 pandas
 openpyxl
+networkx

@@ -36,8 +36,8 @@ Two clips now carry operator-labelled ground truth.
 | `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 |
 | `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 |
 
-Bullet Holes placed within 9–22 template px — under one hole's width. 73 tests
-pass in under a second.
+Bullet Holes placed within 9–22 template px — under one hole's width. 108 tests
+pass in about a second.
 
 **Every figure in this document was re-verified on 2026-09-17 after the
 memory-safety fix below**, on `opencv-python==4.10.0.84`. All three F1 scores,
@@ -59,6 +59,101 @@ labels; `board.new-since-25s.txt` is the three used above and is what
 
 An earlier revision of this file reported CamB as F1 1.00. That figure was
 wrong: it credited the pipeline with finding a pre-existing mark.
+
+**The derivation compares the two photographs in the after photograph's own
+pixels**, not in template coordinates. Registering each photograph to the
+template separately was tried first and does not work: on the customer
+photographs that registration correlates 0.69–0.76, the two errors compound,
+and every one of the 19 pre-existing marks came out unmatched — marks that are
+plainly the same holes in both photographs, 0.001 apart in normalised photo
+coordinates, landing 60 to 4000 template px apart. Marks far outside the
+printed artwork fared worst, which is the homography extrapolating. One ECC
+between the two photographs replaces both registrations, and the 40 template px
+tolerance is converted into photograph px by the Target span ratio — on these
+photographs the Target spans about a sixth of the template, so the slack is
+about 6 photo px. Every pre-existing mark then matches 0.5–5.5 px out.
+
+Those three are no longer worked out by hand. `board.before.txt` carries the one
+pre-existing mark as the operator identified it, and the derivation in
+`evaluate.py` — `derive_truth.py` is its command line — subtracts it,
+reproducing `board.new-since-25s.txt` line for line, which
+`test_derive_truth.py` pins. New recordings get the same treatment from a
+photograph pair rather than a hand-adjudicated frame.
+
+## Photograph-derived ground truth for the customer recordings
+
+Six recordings now carry ground truth derived from a before/after photograph
+pair, in `truth/{cam}-{date}-{time}/`. `board.new.txt` is the derived new
+Bullet Holes, `board.{before,after}.export.txt` are the raw exports byte for
+byte, and `board.source.txt` names the photographs the coordinates belong to —
+the photographs themselves are not version-controlled, like the recordings.
+
+| Recording | After | Pre-existing | **New** | Photo registration |
+|---|---|---|---|---|
+| `CamA_20260914_141546` | 6 | 0 | **6** | 0.9927 |
+| `CamB_20260915_101450` | 1 | 0 | **1** | 0.9376 |
+| `CamB_20260915_101550` | 2 | 1 | **1** | 0.9259 |
+| `CamB_20260915_102250` | 6 | 2 | **4** | 0.9038 |
+| `CamB_20260915_102450` | 10 | 6 | **4** | 0.9456 |
+| `CamB_20260915_103223` | 12 | 10 | **2** | 0.8941 |
+
+**Both passes now come from one detection-format delivery** — `Before_
+Annotated` and `After_ Annotated`, re-annotated as boxes after the first
+delivery arrived as polygons. All twelve label files are `class cx cy w h` on
+every line, no polygons and no mixed files, so nothing is reported as mixed any
+more. The marks moved 0.001–0.003 in normalised photograph coordinates from the
+polygon pass, which is a re-draw of the same holes.
+
+**CamA is the cross-check.** Its before photograph is clean, so all six after
+labels are new — and those six land 4.9–9.4 template px from the six labels of
+`truth/kanatv6`, which were drawn by hand on a *different* photograph. Six of
+six match within tolerance. Two independent annotation passes, two
+photographs, one answer.
+
+**The derivation registers twice, and the second time on the marks
+themselves.** The artwork is a sixth of these photographs, so an ECC
+homography fitted to it is extrapolating everywhere else, and the residual
+grows with distance from it: on `CamB_20260915_103223`, 1.4 px on the Target
+and 6–7 px a Target-span away. That left two before-marks unpaired at 7.3 and
+6.14 px against a 6.1 px tolerance, and each unpaired before-mark is a
+pre-existing mark counted as a new Bullet Hole. Cropping the photographs of
+both marks settles what they are: the same hole, in both photographs, displaced
+— not a new hole beside an old one, which would show two holes in the after
+photograph and shows one.
+
+So the marks the first registration *did* agree on become the correspondences
+for a second one. They are spread over the whole Board rather than the sixth
+of it the artwork covers, and a similarity — 4 degrees of freedom against 8
+correspondences — cannot bend to fit noise. It replaces the homography rather
+than correcting it, because two photographs taken from nearly the same place
+are related by something close to a similarity, and the perspective the
+homography adds only holds where it was fitted. Correcting H instead was tried:
+0.2–4.7 px and one mark still unpaired, against 0.1–1.5 px and none.
+
+Re-matching happens at the **same** tolerance, so a refit can only pull the
+same mark together, never widen what counts as one mark — the criterion that
+two distinct marks are not folded together is untouched. It is kept only if it
+matches at least as many marks as the artwork registration did, and is refused
+below 4 correspondences, where a similarity reproduces its own input and says
+nothing. `board.source.txt` records whether it was used.
+
+On `CamB_20260915_103223` that takes the residuals from 1.4–7.3 px to
+0.1–1.5 px, pairs all ten before-marks, and leaves **2** new Bullet Holes: one
+high on the white Board and one at the top of the green silhouette. The
+operator confirms those two independently. `CamB_20260915_102450` also refits
+(0.2–0.7 px, from 0.7–4.7) and its answer is unchanged; the other four have too
+few pairs to refit and are untouched, including the pinned `truth/camb-25-36`
+case.
+
+`evaluate.py` warns when a derived file still has unpaired before-marks: it
+reads `board.source.txt` beside the labels it was given. No recording trips it
+now, which is the point — it is there for the next delivery.
+Pointing `--truth-labels` at a derived directory also picks `board.new.txt`
+rather than `board.after.export.txt`, which sorts first and would have scored
+the run against the pre-existing marks as well. Where there is no derived file
+to prefer, a directory of several `.txt` files is now refused by name instead
+of resolved alphabetically — in `truth/camb-25-36` that first file is
+`board.before.txt`.
 
 **That is nine Bullet Holes across two clips.** The thresholds are jointly
 optimal on exactly this sample and that says very little about the next one. SOW
@@ -91,6 +186,13 @@ Everything runs from `ImageRecognitionService/` with its `.venv`.
 # A Hit landing inside that window is absorbed into the baseline and never
 # reported, so --start must sit before the shooting.
 
+# Derive the new Bullet Holes from a before/after photograph pair. --truth-labels
+# then points at the board.new.txt this writes, never at the after export.
+.venv/bin/python derive_truth.py \
+    --before-image photos/CamB.before.jpeg --before-labels export/before.txt \
+    --after-image  photos/CamB.after.jpeg  --after-labels  export/after.txt \
+    --out-dir truth/camb-20260915-102250
+
 # Score a run against labelled ground truth — use this before believing any change
 .venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
     --truth-image truth/kanatv6/board.jpeg --truth-labels truth/kanatv6/board.txt
@@ -111,6 +213,23 @@ box fast path. A segmentation export is polygons, and if a single annotation was
 drawn as a box the file is mixed — that 4-value line is then counted as damaged
 and dropped, silently understating ground truth. The CamB export arrived this
 way and scored `[TRUTH] 3` against 4 drawn labels.
+
+That is no longer how it is read. **The rule is per line: four values is a box,
+six or more is a polygon**, wherever it sits in the file. Mixed files are the
+norm, not the exception — in the first two customer deliveries, nine of the
+twelve label files carried a box line among polygons — and the old per-file
+rule dropped every one of those labels. A dropped before-label lets a
+pre-existing mark through as a new Bullet Hole; a dropped after-label flatters
+recall. Both are now read, and the mix is reported.
+
+The delivery in use is detection throughout and reports no mix, so that rule is
+now insurance rather than the daily path. It stays: the next delivery is one
+annotator's checkbox away from arriving as polygons again.
+
+What is still refused is a **damaged** line: fewer than four values, or an odd
+number of them, which is a coordinate cut short. That is a wrong position
+rather than a differently drawn one, so `derive_truth.py` refuses the file by
+line number instead of deriving a mark in the wrong place.
 
 Where an export needs correcting, **keep the raw file** and correct a derived
 copy: `truth/camb-25-36/board.roboflow.txt` is Roboflow's bytes unchanged, and

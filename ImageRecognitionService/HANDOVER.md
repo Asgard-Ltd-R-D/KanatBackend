@@ -36,8 +36,8 @@ Two clips now carry operator-labelled ground truth.
 | `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 |
 | `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 |
 
-Bullet Holes placed within 9–22 template px — under one hole's width. 104 tests
-pass in about two seconds.
+Bullet Holes placed within 9–22 template px — under one hole's width. 108 tests
+pass in about a second.
 
 **Every figure in this document was re-verified on 2026-09-17 after the
 memory-safety fix below**, on `opencv-python==4.10.0.84`. All three F1 scores,
@@ -60,12 +60,61 @@ labels; `board.new-since-25s.txt` is the three used above and is what
 An earlier revision of this file reported CamB as F1 1.00. That figure was
 wrong: it credited the pipeline with finding a pre-existing mark.
 
+**The derivation compares the two photographs in the after photograph's own
+pixels**, not in template coordinates. Registering each photograph to the
+template separately was tried first and does not work: on the customer
+photographs that registration correlates 0.69–0.76, the two errors compound,
+and every one of the 19 pre-existing marks came out unmatched — marks that are
+plainly the same holes in both photographs, 0.001 apart in normalised photo
+coordinates, landing 60 to 4000 template px apart. Marks far outside the
+printed artwork fared worst, which is the homography extrapolating. One ECC
+between the two photographs replaces both registrations, and the 40 template px
+tolerance is converted into photograph px by the Target span ratio — on these
+photographs the Target spans about a sixth of the template, so the slack is
+about 6 photo px. Every pre-existing mark then matches 0.5–5.5 px out.
+
 Those three are no longer worked out by hand. `board.before.txt` carries the one
 pre-existing mark as the operator identified it, and the derivation in
 `evaluate.py` — `derive_truth.py` is its command line — subtracts it,
 reproducing `board.new-since-25s.txt` line for line, which
 `test_derive_truth.py` pins. New recordings get the same treatment from a
 photograph pair rather than a hand-adjudicated frame.
+
+## Photograph-derived ground truth for the customer recordings
+
+Six recordings now carry ground truth derived from a before/after photograph
+pair, in `truth/{cam}-{date}-{time}/`. `board.new.txt` is the derived new
+Bullet Holes, `board.{before,after}.export.txt` are the raw exports byte for
+byte, and `board.source.txt` names the photographs the coordinates belong to —
+the photographs themselves are not version-controlled, like the recordings.
+
+| Recording | After | Pre-existing | **New** | Photo registration |
+|---|---|---|---|---|
+| `CamA_20260914_141546` | 6 | 0 | **6** | 0.9927 |
+| `CamB_20260915_101450` | 1 | 0 | **1** | 0.9376 |
+| `CamB_20260915_101550` | 2 | 1 | **1** | 0.9259 |
+| `CamB_20260915_102250` | 6 | 2 | **4** | 0.9038 |
+| `CamB_20260915_102450` | 10 | 6 | **4** | 0.9456 |
+| `CamB_20260915_103223` | 12 | 9 | **3** | 0.8941 |
+
+**CamA is the cross-check.** Its before photograph is clean, so all six after
+labels are new — and those six land 2–9 template px from the six labels of
+`truth/kanatv6`, which were drawn by hand on a *different* photograph. Six of
+six match within tolerance. Two independent annotation passes, two
+photographs, one answer.
+
+**`CamB_20260915_103223` carries one flag.** A before-mark 9.1 px from its
+nearest after-mark, against a 6.1 px tolerance, so it is reported as having no
+counterpart — which means one after-mark that was probably already on the Board
+is counted as new. That recording also has the weakest photograph registration
+of the six (0.8941). Check it before the recording is scored; do not widen the
+tolerance to make it go away.
+
+**The after labels come from the earlier `KanatV6.yolo26-3` export**, because
+the corrected delivery (`My First Project.yolo26`) contains the before pass
+only — six before images and six before labels, no after side. Re-running one
+command per recording replaces the derived file if a corrected after export
+arrives.
 
 **That is nine Bullet Holes across two clips.** The thresholds are jointly
 optimal on exactly this sample and that says very little about the next one. SOW
@@ -126,17 +175,18 @@ drawn as a box the file is mixed — that 4-value line is then counted as damage
 and dropped, silently understating ground truth. The CamB export arrived this
 way and scored `[TRUTH] 3` against 4 drawn labels.
 
-This is not a one-off. In the `KanatV6.yolo26-3` export delivered with the five
-customer recordings, **five of the six after-files are mixed** — one box line
-among polygons in each of CamA 141546 (two), CamB 101550, 102250, 102450 and
-103223. `derive_truth.py` refuses such a file by line number rather than
-deriving from a set that is quietly one mark short; re-export as detection, or
-correct a derived copy and keep the raw bytes beside it.
+That is no longer how it is read. **The rule is per line: four values is a box,
+six or more is a polygon**, wherever it sits in the file. Mixed files are the
+norm, not the exception — in the two customer deliveries, nine of the twelve
+label files carry a box line among polygons — and the old per-file rule dropped
+every one of those labels. A dropped before-label lets a pre-existing mark
+through as a new Bullet Hole; a dropped after-label flatters recall. Both are
+now read, and the mix is reported.
 
-That delivery also labels the **after** photograph only. Both photographs have
-to be labelled before a recording has ground truth — the before-labels are what
-stop a pre-existing mark being credited to the pipeline — so the five customer
-recordings cannot be scored until the before pass is annotated.
+What is still refused is a **damaged** line: fewer than four values, or an odd
+number of them, which is a coordinate cut short. That is a wrong position
+rather than a differently drawn one, so `derive_truth.py` refuses the file by
+line number instead of deriving a mark in the wrong place.
 
 Where an export needs correcting, **keep the raw file** and correct a derived
 copy: `truth/camb-25-36/board.roboflow.txt` is Roboflow's bytes unchanged, and

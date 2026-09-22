@@ -43,18 +43,36 @@ if __name__ == "__main__":
                                        a.template, a.tolerance)
     print(f"[TRUTH] before "
           f"{len(result['pre_existing']) + len(result['only_before'])} labelled, "
-          f"after {len(result['lines'])} labelled  (registration correlation "
-          f"{result['before_correlation']:.4f} / {result['after_correlation']:.4f})")
+          f"after {len(result['lines'])} labelled  (photograph-to-photograph "
+          f"registration {result['correlation']:.4f}, marks are one mark within "
+          f"{result['tolerance_px']:.1f} photo px)")
+    if result["distances"]:
+        print(f"   pre-existing marks matched at "
+              f"{result['distances'][0]:.1f}-{result['distances'][-1]:.1f} px")
+
+    for which, lines in (("before", result["before_lines"]),
+                         ("after", result["lines"])):
+        boxes = evaluate.box_lines(lines)
+        if boxes and len(boxes) != len(lines):
+            print(f"[MIXED] {which} export: "
+                  f"{', '.join(f'line {n}' for n in boxes)} "
+                  f"{'is a box' if len(boxes) == 1 else 'are boxes'} among "
+                  "polygons, read as such rather than dropped")
+
     if result["only_before"]:
         print(f"[WARN] {len(result['only_before'])} mark(s) in the before "
               "photograph have no counterpart in the after photograph. They "
-              "subtract nothing, but check the registration before trusting "
-              "this — a slipped homography looks exactly like this.")
+              "subtract nothing — but each one is a mark that was on the Board "
+              "and is about to be counted as a new Bullet Hole, so check it "
+              "before trusting this. A slipped registration looks exactly like "
+              "this.")
 
-    written = evaluate.write_derived(a.out_dir, result["lines"], result["new"],
-                                     a.before_labels, a.after_labels)
+    written = evaluate.write_derived(a.out_dir, result, a.before_image,
+                                     a.before_labels, a.after_image,
+                                     a.after_labels)
     print(f"[NEW] {len(result['new'])} new Bullet Hole(s), "
           f"{len(result['pre_existing'])} already on the Board")
     print(f"   {written['derived']}")
     print(f"   raw exports kept: {os.path.basename(written['before_raw'])}, "
-          f"{os.path.basename(written['after_raw'])}")
+          f"{os.path.basename(written['after_raw'])}; sources in "
+          f"{os.path.basename(written['source'])}")

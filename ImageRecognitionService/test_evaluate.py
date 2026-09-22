@@ -40,7 +40,7 @@ def test_finding_nothing_is_not_a_pass():
 
 
 def test_box_format_is_read_as_centres(tmp_path):
-    """class cx cy w h — five fields on every line means a detection export."""
+    """class cx cy w h — four values after the class is a box."""
     f = tmp_path / "labels.txt"
     f.write_text("0 0.25 0.75 0.02 0.03\n0 0.5 0.5 0.02 0.02")
     centres, damaged = load_labels(str(f))
@@ -49,12 +49,24 @@ def test_box_format_is_read_as_centres(tmp_path):
     assert centres[1] == pytest.approx([0.5, 0.5])
 
 
-def test_five_fields_among_polygons_is_damaged_not_a_box(tmp_path):
-    """The same line shape means different things in different files."""
+def test_a_box_among_polygons_is_read_as_a_box(tmp_path):
+    """Roboflow exports an annotation drawn as a box this way, and five of six
+    files in one delivery arrived so. The rule is per line: four values is a
+    box wherever it sits. Dropping it, as the old per-file rule did, takes a
+    mark out of ground truth and flatters recall."""
     f = tmp_path / "labels.txt"
-    f.write_text("0 0.1 0.1 0.2 0.1 0.2 0.2 0.1 0.2\n0 0.5 0.5 0.6 0.5")
+    f.write_text("0 0.1 0.1 0.2 0.1 0.2 0.2 0.1 0.2\n0 0.5 0.5 0.02 0.03")
     centres, damaged = load_labels(str(f))
-    assert len(centres) == 1 and damaged == 1
+    assert len(centres) == 2 and damaged == 0
+    assert centres[1] == pytest.approx([0.5, 0.5])
+
+
+def test_a_truncated_line_is_still_damaged(tmp_path):
+    """An odd number of values is a coordinate cut short, not a box."""
+    f = tmp_path / "labels.txt"
+    f.write_text("0 0.1 0.1 0.2 0.1 0.2 0.2 0.1 0.2\n0 0.5 0.5 0.6 0.5 0.6")
+    _, damaged = load_labels(str(f))
+    assert damaged == 1
 
 
 def test_truncated_label_is_kept_not_dropped(tmp_path):

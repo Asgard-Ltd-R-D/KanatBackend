@@ -39,43 +39,51 @@ MATCH_TOLERANCE_TPL = 40.0
 
 
 def damaged_lines(lines):
-    """Line numbers (1-based) an export cannot be read cleanly from.
+    """Line numbers (1-based) an export cannot be read exactly.
 
-    The one place that decides what damage is, so the evaluation (which warns
-    and carries on) and the derivation (which refuses) cannot drift apart on
-    what counts as a readable line. See `load_labels` for the rule.
+    A line is damaged when it carries fewer than four values, or an odd number
+    of them — one export was seen cut off mid-number. Anything else is a label:
+    four values is a box, six or more is a polygon. Nothing else is guessed at.
+
+    The one place that decides what damage is, so the scoring (which warns and
+    carries on) and the derivation (which refuses) cannot drift apart on what
+    counts as a readable line.
     """
     rows = [l.split()[1:] for l in lines]
-    if rows and all(len(r) == 4 for r in rows):
-        return []
-    return [n for n, r in enumerate(rows, 1) if len(r) < 6 or len(r) % 2]
+    return [n for n, r in enumerate(rows, 1) if len(r) < 4 or len(r) % 2]
+
+
+def box_lines(lines):
+    """Line numbers (1-based) that carry a box rather than a polygon."""
+    return [n for n, l in enumerate(lines, 1) if len(l.split()) - 1 == 4]
+
+
+def _centroid(values):
+    """A label's centre, whichever way it was drawn.
+
+    `class cx cy w h` for a box, `class x1 y1 x2 y2 ...` for a polygon. The
+    rule is per LINE, and a four-value line is always a box — Roboflow never
+    emits a two-point polygon, so the only thing four values can be is an
+    annotation somebody drew as a box. Reading it as one keeps the label; the
+    earlier per-file rule dropped it whenever the rest of the file was
+    polygons, which understates ground truth and flatters recall.
+    """
+    if len(values) == 4:
+        return np.array(values[:2], np.float32)
+    points = np.array(values[:len(values) - len(values) % 2], np.float32)
+    return points.reshape(-1, 2).mean(axis=0)
 
 
 def load_labels(path):
     """Centroids of YOLO labels, normalised. Handles boxes and polygons.
 
-    Roboflow exports the same annotations either way — `class cx cy w h` for
-    detection, `class x1 y1 x2 y2 ...` for segmentation — and a bare line of
-    five fields is ambiguous between a box and a (meaningless) two-point
-    polygon. The format is therefore decided per FILE, not per line: if every
-    line carries exactly four values it is a box file.
-
-    That distinction matters. In a polygon file a five-field line is a
-    truncated instance, and one export was seen cut off mid-number. Dropping it
-    silently would understate ground truth and flatter recall, so it is counted
-    as damaged and reported.
+    A mixed file — polygons with a box annotation among them — is read in full
+    and the damaged count is returned for the caller to report. Only a line
+    that cannot be read at all is dropped, and it is never dropped silently.
     """
     lines = [l for l in open(path).read().strip().splitlines() if l.strip()]
     rows = [[float(v) for v in l.split()[1:]] for l in lines]
-    if rows and all(len(r) == 4 for r in rows):
-        return np.array([r[:2] for r in rows], np.float32).reshape(-1, 2), 0
-
-    centroids = []
-    for values in rows:
-        if len(values) < 6:            # fewer than 3 points is not a polygon
-            continue
-        pts = np.array(values[:len(values) - len(values) % 2], np.float32)
-        centroids.append(pts.reshape(-1, 2).mean(axis=0))
+    centroids = [_centroid(values) for values in rows if len(values) >= 4]
     return (np.array(centroids, np.float32).reshape(-1, 2),
             len(damaged_lines(lines)))
 
@@ -176,10 +184,20 @@ def score(truth, found, tolerance=MATCH_TOLERANCE_TPL):
 # Board at the baseline frame, and an earlier HANDOVER revision reported F1
 # 1.00 on that basis.
 #
-# The two photographs are taken from different positions, so they are compared
-# in template coordinates — and matched by the same `match` at the same
-# tolerance the scoring uses, so a mark that shifted between the photographs is
-# one mark and two marks near one pre-existing mark are not folded together.
+# The comparison happens in the AFTER photograph's own pixels. Registering each
+# photograph to the template separately was tried first and does not work: on
+# the customer photographs that registration correlates 0.69-0.76, the two
+# errors compound, and every pre-existing mark came out unmatched — 41 marks
+# that are plainly the same holes in both photographs, 0.001 apart in
+# normalised photo coordinates, landing 60 to 4000 template px apart. Marks far
+# outside the printed artwork fared worst, which is the homography
+# extrapolating.
+#
+# One ECC between the two photographs replaces both. The tolerance stays the
+# scoring's 40 template px, converted into photograph px by the Target span
+# ratio — the same isotropic approximation `board_scale_for` makes — so the
+# slack is the same physical distance, one Bullet Hole's width, measured where
+# the marks actually are.
 
 DERIVED_NAME = "board.new.txt"
 RAW_NAMES = {"before": "board.before.export.txt",
@@ -189,22 +207,23 @@ RAW_NAMES = {"before": "board.before.export.txt",
 def read_export(path):
     """`(lines, normalised centroids)`, one centroid per line, or refuse.
 
-    The scoring tolerates a damaged line and warns; a derivation cannot.
-    Dropping a line here would silently move a mark out of ground truth
-    altogether — out of the before set, where it stops suppressing a
-    pre-existing mark, or out of the after set, where it flatters recall. It
-    also breaks the line-for-line correspondence the derived file is built
-    from. So a mixed or damaged export is reported and nothing is written.
+    A mixed file is read, not refused: every label is kept, boxes as boxes and
+    polygons as polygons, and the caller reports the mix. A *damaged* line is
+    another matter — it is a number cut short, so its position is wrong rather
+    than merely differently drawn, and it breaks the line-for-line
+    correspondence the derived file is built from. The derivation refuses it
+    where the scoring only warns, because a ground-truth file is written once
+    and read for months.
     """
     lines = [l for l in open(path).read().strip().splitlines() if l.strip()]
     bad = damaged_lines(lines)
     if bad:
         raise SystemExit(
-            f"[REFUSED] {path} is a mixed or damaged export: "
-            f"{', '.join(f'line {n}' for n in bad)} cannot be read as a "
-            "polygon. Export from Roboflow as DETECTION, not segmentation; "
-            "where the export needs correcting, keep the raw file and correct "
-            "a derived copy. Dropping the line would understate ground truth.")
+            f"[REFUSED] {path} is damaged: "
+            f"{', '.join(f'line {n}' for n in bad)} carries too few values or "
+            "an odd number of them, so a coordinate was cut short. Re-export "
+            "that file; keep the raw bytes and correct a derived copy. "
+            "Deriving from it would put a mark in the wrong place.")
     return lines, load_labels(path)[0]
 
 
@@ -225,6 +244,28 @@ def new_label_indices(before, after, tolerance=MATCH_TOLERANCE_TPL):
     return _unmatched(match(before, after, tolerance)[0], len(after))
 
 
+def photo_tolerance(tolerance, target_span_px, template_span_px):
+    """A template-px tolerance expressed in photograph px.
+
+    Isotropic: one span ratio for the whole photograph, as `board_scale_for`
+    already assumes. Perspective makes the true scale vary across the Board,
+    but the marks sit on and around one Target and the slack is a whole Bullet
+    Hole wide, so the variation is well inside it.
+    """
+    return tolerance * target_span_px / template_span_px
+
+
+def _photograph(path):
+    """A photograph's pixels, its Target mask and its largest Target."""
+    image = cv2.imread(path)
+    if image is None:
+        raise SystemExit(f"cannot read photograph {path}")
+    contours, mask = board.find_targets(image)
+    if not contours:
+        raise SystemExit(f"no Target found in {path}; cannot register it")
+    return image, mask, contours[0]
+
+
 def derive_new_holes(before_image, before_labels, after_image, after_labels,
                      template_path=board.DEFAULT_TEMPLATE,
                      tolerance=MATCH_TOLERANCE_TPL):
@@ -235,44 +276,82 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
     an operator hand-labelled. That is explicitly not the detector's own
     baseline output; independence from the model is what makes it evidence.
     """
-    lines, _ = read_export(after_labels)
-    read_export(before_labels)          # refuse a damaged before export too
+    lines, after_normalised = read_export(after_labels)
+    before_lines, before_normalised = read_export(before_labels)
 
     template = cv2.imread(template_path)
     if template is None:
         raise SystemExit(f"cannot read template {template_path}")
     _, template_mask = board.find_targets(template, min_area=1)
 
-    before, before_correlation, _ = truth_in_template(
-        before_image, before_labels, template_mask)
-    after, after_correlation, _ = truth_in_template(
-        after_image, after_labels, template_mask)
+    before_photo, before_mask, _ = _photograph(before_image)
+    after_photo, after_mask, after_target = _photograph(after_image)
 
-    pairs, only_before = match(before, after, tolerance)
+    # One homography between the two photographs, not one each to the template.
+    H, correlation = board.register(before_mask, after_mask, after_target)
+    reach = photo_tolerance(
+        tolerance, board.contour_span(after_target),
+        board.contour_span(board.template_contour(template_mask)))
+
+    height, width = after_photo.shape[:2]
+    after = after_normalised * [width, height]
+    before = board._apply(
+        H, before_normalised * [before_photo.shape[1], before_photo.shape[0]])
+
+    pairs, only_before = match(before, after, reach)
     return {"lines": lines,
+            "before_lines": before_lines,
             "new": _unmatched(pairs, len(after)),
             "pre_existing": sorted(i for i, _, _ in pairs),
             "only_before": only_before,
-            "before_correlation": before_correlation,
-            "after_correlation": after_correlation}
+            "correlation": correlation,
+            "tolerance_px": reach,
+            "distances": sorted(d for _, _, d in pairs)}
 
 
-def write_derived(out_dir, lines, new, before_labels, after_labels):
-    """The derived file, beside byte-for-byte copies of both raw exports.
+SOURCE_NAME = "board.source.txt"
+
+
+def write_derived(out_dir, result, before_image, before_labels,
+                  after_image, after_labels):
+    """The derived file, the raw exports byte-for-byte, and where they came from.
 
     The derived file is a correction; the exports are the evidence it was
-    derived from, so they are kept unchanged rather than overwritten.
+    derived from, so they are kept unchanged rather than overwritten. The
+    photographs are not copied — they are large, and like the recordings they
+    are not version-controlled — so their paths are written down instead.
+    Without that, a derived label file is anonymous: nothing says which
+    photograph its coordinates are normalised against, and `evaluate.py` needs
+    exactly that image.
     """
     os.makedirs(out_dir, exist_ok=True)
     derived = os.path.join(out_dir, DERIVED_NAME)
     with open(derived, "w") as f:
-        f.write("".join(lines[i] + "\n" for i in new))
+        f.write("".join(result["lines"][i] + "\n" for i in result["new"]))
+
     written = {"derived": derived}
     for which, source in (("before", before_labels), ("after", after_labels)):
         raw = os.path.join(out_dir, RAW_NAMES[which])
         if os.path.abspath(source) != os.path.abspath(raw):
             shutil.copyfile(source, raw)
         written[f"{which}_raw"] = raw
+
+    written["source"] = os.path.join(out_dir, SOURCE_NAME)
+    with open(written["source"], "w") as f:
+        f.write(
+            f"# {DERIVED_NAME} is the after photograph's labels minus the "
+            f"before photograph's.\n"
+            f"# Its coordinates are normalised against the after photograph.\n"
+            f"before-image: {before_image}\n"
+            f"before-labels: {before_labels}\n"
+            f"after-image: {after_image}\n"
+            f"after-labels: {after_labels}\n"
+            f"photograph-registration-correlation: {result['correlation']:.4f}\n"
+            f"match-tolerance-photo-px: {result['tolerance_px']:.1f}\n"
+            f"labelled-after: {len(result['lines'])}\n"
+            f"pre-existing: {len(result['pre_existing'])}\n"
+            f"new-bullet-holes: {len(result['new'])}\n"
+            f"before-marks-without-a-counterpart: {len(result['only_before'])}\n")
     return written
 
 

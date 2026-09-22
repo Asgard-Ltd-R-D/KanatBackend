@@ -87,20 +87,23 @@ def test_a_polygon_export_is_read_line_for_line(tmp_path):
     assert len(lines) == 2 and len(centres) == 2
 
 
-def test_a_box_among_polygons_is_refused_by_line_number(tmp_path):
-    """Roboflow exports one annotation drawn as a box this way, and the CamB
-    export arrived so. Reading it as a polygon drops the label, and a dropped
-    label flatters recall — so the file is reported, not quietly reduced."""
+def test_a_box_among_polygons_is_read_and_reported(tmp_path):
+    """Roboflow exports one annotation drawn as a box this way, and most files
+    in both deliveries arrived so. Refusing the file, or reading it one label
+    short, both cost a mark: the first stops the derivation, the second lets a
+    pre-existing mark through as new. So it is read, and the mix is reported."""
     f = tmp_path / "labels.txt"
     f.write_text("0 0.1 0.1 0.2 0.1 0.2 0.2 0.1 0.2\n"
                  "0 0.42 0.43 0.006 0.009\n")
-    with pytest.raises(SystemExit) as refused:
-        evaluate.read_export(str(f))
-    assert "line 2" in str(refused.value)
+    lines, centres = evaluate.read_export(str(f))
+    assert len(lines) == 2 and len(centres) == 2
+    assert evaluate.box_lines(lines) == [2]
+    assert centres[1] == pytest.approx([0.42, 0.43])
 
 
 def test_a_truncated_polygon_is_refused(tmp_path):
-    """One export was seen cut off mid-number."""
+    """One export was seen cut off mid-number. That is a wrong position, not
+    a differently drawn one, so the derivation refuses it."""
     f = tmp_path / "labels.txt"
     f.write_text("0 0.1 0.1 0.2 0.1 0.2 0.2 0.1 0.2\n"
                  "0 0.5 0.5 0.6 0.5 0.6 0.6 0.04\n")
@@ -114,6 +117,22 @@ def test_an_empty_export_reads_as_no_marks(tmp_path):
     f.write_text("\n")
     lines, centres = evaluate.read_export(str(f))
     assert lines == [] and len(centres) == 0
+
+
+# --- the tolerance, carried into the photograph's frame --------------------
+
+def test_the_tolerance_is_the_same_physical_slack_in_photograph_px():
+    """40 template px is one Bullet Hole's width. The Target in these customer
+    photographs spans about a sixth of the template, so the same slack is about
+    six photo px — matching at 40 photo px there would fold distinct marks
+    together."""
+    assert evaluate.photo_tolerance(40.0, target_span_px=160.0,
+                                    template_span_px=1049.0) == pytest.approx(6.1,
+                                                                              abs=0.1)
+
+
+def test_a_photograph_at_template_scale_keeps_the_template_tolerance():
+    assert evaluate.photo_tolerance(40.0, 1049.0, 1049.0) == 40.0
 
 
 # --- the CamB case, pinned by name ----------------------------------------
@@ -149,13 +168,33 @@ def test_writing_keeps_the_raw_export_byte_for_byte(tmp_path):
     after.write_text(raw)
     before = tmp_path / "before.txt"
     before.write_text("0 0.1 0.1 0.2 0.1 0.2 0.2 0.1 0.2\n")
+    result = {"lines": raw.splitlines(), "new": [1], "pre_existing": [0],
+              "only_before": [], "correlation": 0.99, "tolerance_px": 6.1}
 
-    out = tmp_path / "out"
-    written = evaluate.write_derived(str(out), lines=raw.splitlines(), new=[1],
-                                     before_labels=str(before),
-                                     after_labels=str(after))
+    written = evaluate.write_derived(str(tmp_path / "out"), result,
+                                     "before.jpeg", str(before),
+                                     "after.jpeg", str(after))
 
     assert open(written["derived"]).read().splitlines() == [
         "0 0.5 0.5 0.6 0.5 0.6 0.6 0.5 0.6"]
     assert open(written["after_raw"]).read() == raw
     assert open(written["before_raw"]).read() == before.read_text()
+
+
+def test_the_derived_file_records_which_photograph_it_belongs_to(tmp_path):
+    """Normalised coordinates mean nothing without the image they are
+    normalised against, and the photographs are too large to keep in the repo."""
+    after = tmp_path / "after.txt"
+    after.write_text("0 0.5 0.5 0.02 0.02\n")
+    before = tmp_path / "before.txt"
+    before.write_text("")
+    result = {"lines": ["0 0.5 0.5 0.02 0.02"], "new": [0], "pre_existing": [],
+              "only_before": [], "correlation": 0.99, "tolerance_px": 6.1}
+
+    written = evaluate.write_derived(str(tmp_path / "out"), result,
+                                     "/photos/CamB.before.jpeg", str(before),
+                                     "/photos/CamB.after.jpeg", str(after))
+
+    source = open(written["source"]).read()
+    assert "after-image: /photos/CamB.after.jpeg" in source
+    assert "new-bullet-holes: 1" in source

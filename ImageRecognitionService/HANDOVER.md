@@ -95,26 +95,43 @@ the photographs themselves are not version-controlled, like the recordings.
 | `CamB_20260915_101550` | 2 | 1 | **1** | 0.9259 |
 | `CamB_20260915_102250` | 6 | 2 | **4** | 0.9038 |
 | `CamB_20260915_102450` | 10 | 6 | **4** | 0.9456 |
-| `CamB_20260915_103223` | 12 | 9 | **3** | 0.8941 |
+| `CamB_20260915_103223` | 12 | 8 | **4** | 0.8941 |
+
+**Both passes now come from one detection-format delivery** — `Before_
+Annotated` and `After_ Annotated`, re-annotated as boxes after the first
+delivery arrived as polygons. All twelve label files are `class cx cy w h` on
+every line, no polygons and no mixed files, so nothing is reported as mixed any
+more. The marks moved 0.001–0.003 in normalised photograph coordinates from the
+polygon pass, which is a re-draw of the same holes; five of the six derivations
+come out line for line as before.
 
 **CamA is the cross-check.** Its before photograph is clean, so all six after
-labels are new — and those six land 2–9 template px from the six labels of
+labels are new — and those six land 4.9–9.4 template px from the six labels of
 `truth/kanatv6`, which were drawn by hand on a *different* photograph. Six of
 six match within tolerance. Two independent annotation passes, two
 photographs, one answer.
 
-**`CamB_20260915_103223` carries one flag.** A before-mark 9.1 px from its
-nearest after-mark, against a 6.1 px tolerance, so it is reported as having no
-counterpart — which means one after-mark that was probably already on the Board
-is counted as new. That recording also has the weakest photograph registration
-of the six (0.8941). Check it before the recording is scored; do not widen the
-tolerance to make it go away.
+**`CamB_20260915_103223` carries two flags, and is the one recording that got
+worse.** Two before-marks have no counterpart within the 6.1 px tolerance: one
+at 7.3 px (it was 9.1 px in the polygon pass, so closer now and still out)
+and one at 6.14 px,
+which misses by 0.06 px. Both mean an after-mark that was probably already on
+the Board is counted as new, so this recording's four "new" Bullet Holes are
+really two or three. It also has the weakest photograph registration of the six
+(0.8941), and its matched marks sit 1.4–4.2 px out, so 6–7 px is an outlier
+rather than the normal spread. Check those two marks by eye before the
+recording is scored; do not widen the tolerance to make them go away — at 6.14
+px the temptation is obvious and the cost is folding genuinely distinct marks
+together everywhere else.
 
-**The after labels come from the earlier `KanatV6.yolo26-3` export**, because
-the corrected delivery (`My First Project.yolo26`) contains the before pass
-only — six before images and six before labels, no after side. Re-running one
-command per recording replaces the derived file if a corrected after export
-arrives.
+`evaluate.py` now prints that flag too: it reads `board.source.txt` beside the
+labels it was given and warns when the derivation left before-marks unpaired.
+Pointing `--truth-labels` at a derived directory also picks `board.new.txt`
+rather than `board.after.export.txt`, which sorts first and would have scored
+the run against the pre-existing marks as well. Where there is no derived file
+to prefer, a directory of several `.txt` files is now refused by name instead
+of resolved alphabetically — in `truth/camb-25-36` that first file is
+`board.before.txt`.
 
 **That is nine Bullet Holes across two clips.** The thresholds are jointly
 optimal on exactly this sample and that says very little about the next one. SOW
@@ -177,11 +194,15 @@ way and scored `[TRUTH] 3` against 4 drawn labels.
 
 That is no longer how it is read. **The rule is per line: four values is a box,
 six or more is a polygon**, wherever it sits in the file. Mixed files are the
-norm, not the exception — in the two customer deliveries, nine of the twelve
-label files carry a box line among polygons — and the old per-file rule dropped
-every one of those labels. A dropped before-label lets a pre-existing mark
-through as a new Bullet Hole; a dropped after-label flatters recall. Both are
-now read, and the mix is reported.
+norm, not the exception — in the first two customer deliveries, nine of the
+twelve label files carried a box line among polygons — and the old per-file
+rule dropped every one of those labels. A dropped before-label lets a
+pre-existing mark through as a new Bullet Hole; a dropped after-label flatters
+recall. Both are now read, and the mix is reported.
+
+The delivery in use is detection throughout and reports no mix, so that rule is
+now insurance rather than the daily path. It stays: the next delivery is one
+annotator's checkbox away from arriving as polygons again.
 
 What is still refused is a **damaged** line: fewer than four values, or an odd
 number of them, which is a coordinate cut short. That is a wrong position

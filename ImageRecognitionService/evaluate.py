@@ -310,6 +310,7 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
 
 
 SOURCE_NAME = "board.source.txt"
+UNPAIRED_FIELD = "before-marks-without-a-counterpart"
 
 
 def write_derived(out_dir, result, before_image, before_labels,
@@ -351,17 +352,64 @@ def write_derived(out_dir, result, before_image, before_labels,
             f"labelled-after: {len(result['lines'])}\n"
             f"pre-existing: {len(result['pre_existing'])}\n"
             f"new-bullet-holes: {len(result['new'])}\n"
-            f"before-marks-without-a-counterpart: {len(result['only_before'])}\n")
+            f"{UNPAIRED_FIELD}: {len(result['only_before'])}\n")
     return written
 
 
+def unpaired_before_marks(label_path):
+    """Before-marks the derivation could not pair, per the sibling source file.
+
+    Each one is a mark that was on the Board and whose counterpart in the after
+    photograph was therefore counted as new — so the truth being scored against
+    holds a mark the run cannot legitimately find. The derivation prints this
+    when it writes the file; a run scoring against that file months later
+    prints nothing, which is how a flag stops being a flag. Zero for truth that
+    was not derived from a photograph pair at all.
+    """
+    source = os.path.join(os.path.dirname(label_path), SOURCE_NAME)
+    if not os.path.exists(source):
+        return 0
+    for line in open(source):
+        key, _, value = line.partition(": ")
+        if key == UNPAIRED_FIELD:
+            return int(value)
+    return 0
+
+
 def _one(path, pattern):
+    """A file, or the single `pattern` match under a directory.
+
+    Several matches are refused rather than resolved alphabetically.
+    `truth/camb-25-36` holds four .txt files — the before labels, the raw
+    export, the derived file and the corrected one — and taking the first
+    scored the run against `board.before.txt`, the marks that were on the Board
+    before it started. Silence is what made that possible, so it says which
+    files it found and makes the caller name one.
+    """
     if os.path.isfile(path):
         return path
     hits = sorted(glob.glob(os.path.join(path, pattern)))
     if not hits:
         raise SystemExit(f"no {pattern} under {path}")
+    if len(hits) > 1:
+        raise SystemExit(
+            f"{path} holds {len(hits)} files matching {pattern} "
+            f"({', '.join(os.path.basename(h) for h in hits)}); name the one "
+            "to use. Scoring against the wrong one is silent.")
     return hits[0]
+
+
+def truth_labels(path):
+    """The labels to score against, given a file or a truth directory.
+
+    A derived truth directory holds the raw after export beside the derived
+    file, and `board.after.export.txt` sorts first. Taking it would score the
+    run against every mark on the Board, pre-existing ones included — the exact
+    error the derivation exists to prevent, reached by nothing but alphabetical
+    order. So the derived file wins whenever it is there.
+    """
+    derived = os.path.join(path, DERIVED_NAME)
+    return derived if os.path.exists(derived) else _one(path, "*.txt")
 
 
 if __name__ == "__main__":
@@ -392,13 +440,21 @@ if __name__ == "__main__":
     template = cv2.imread(a.template)
     _, template_mask = board.find_targets(template, min_area=1)
 
+    labels = truth_labels(a.truth_labels)
     truth, correlation, damaged = truth_in_template(
-        _one(a.truth_image, "*.jp*g"), _one(a.truth_labels, "*.txt"), template_mask)
-    print(f"[TRUTH] {len(truth)} labelled Bullet Holes, "
+        _one(a.truth_image, "*.jp*g"), labels, template_mask)
+    print(f"[TRUTH] {len(truth)} labelled Bullet Holes from "
+          f"{os.path.basename(labels)}, "
           f"ground-truth registration correlation {correlation:.4f}")
     if damaged:
         print(f"[WARN] {damaged} label(s) were malformed or truncated; "
               f"their positions are approximate")
+    unpaired = unpaired_before_marks(labels)
+    if unpaired:
+        print(f"[WARN] the derivation left {unpaired} before-mark(s) unpaired, "
+              f"so up to {unpaired} of these labels were already on the Board "
+              f"before the recording. The run cannot find those, and recall is "
+              f"understated by that much. See {SOURCE_NAME}.")
 
     holes = nbh.process(a.video, a.start, a.end, a.model, a.confidence,
                         template_path=a.template,

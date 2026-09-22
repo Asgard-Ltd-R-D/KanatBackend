@@ -198,3 +198,54 @@ def test_the_derived_file_records_which_photograph_it_belongs_to(tmp_path):
     source = open(written["source"]).read()
     assert "after-image: /photos/CamB.after.jpeg" in source
     assert "new-bullet-holes: 1" in source
+
+
+# --- reading the derived truth back ----------------------------------------
+
+def test_a_derived_truth_directory_reads_the_derived_file_not_the_export(tmp_path):
+    """Both files sit in the directory and the export sorts first.
+
+    Pointing `--truth-labels` at the directory and getting
+    `board.after.export.txt` scores the run against every mark on the Board,
+    pre-existing ones included — the error this whole derivation exists to
+    prevent, arrived at by an alphabetical accident.
+    """
+    (tmp_path / evaluate.RAW_NAMES["after"]).write_text("0 0.1 0.1 0.02 0.02\n"
+                                                        "0 0.5 0.5 0.02 0.02\n")
+    (tmp_path / evaluate.DERIVED_NAME).write_text("0 0.5 0.5 0.02 0.02\n")
+    assert evaluate.truth_labels(str(tmp_path)) == str(
+        tmp_path / evaluate.DERIVED_NAME)
+
+
+def test_a_directory_with_one_label_file_takes_it(tmp_path):
+    (tmp_path / "board.txt").write_text("0 0.5 0.5 0.02 0.02\n")
+    assert evaluate.truth_labels(str(tmp_path)) == str(tmp_path / "board.txt")
+
+
+def test_a_directory_of_several_label_files_is_refused(tmp_path):
+    """`truth/camb-25-36` holds four. Without the derived file to prefer there
+    is no right answer to guess, and the first one alphabetically is
+    `board.before.txt` — the marks that were already on the Board."""
+    for name in ("board.before.txt", "board.txt"):
+        (tmp_path / name).write_text("0 0.5 0.5 0.02 0.02\n")
+    with pytest.raises(SystemExit) as refused:
+        evaluate.truth_labels(str(tmp_path))
+    assert "board.before.txt" in str(refused.value)
+
+
+def test_an_unpaired_before_mark_travels_with_the_derived_file(tmp_path):
+    """`board.source.txt` records it, and the scoring run is the place it
+    matters: an unpaired before-mark means one of these labels was probably
+    already on the Board, so the run is charged a miss it could not have made.
+    A flag only the derivation prints is a flag nobody sees again."""
+    labels = tmp_path / evaluate.DERIVED_NAME
+    labels.write_text("0 0.5 0.5 0.02 0.02\n")
+    (tmp_path / evaluate.SOURCE_NAME).write_text(
+        "labelled-after: 12\nbefore-marks-without-a-counterpart: 2\n")
+    assert evaluate.unpaired_before_marks(str(labels)) == 2
+
+
+def test_truth_that_was_never_derived_has_nothing_to_flag(tmp_path):
+    labels = tmp_path / "board.txt"
+    labels.write_text("0 0.5 0.5 0.02 0.02\n")
+    assert evaluate.unpaired_before_marks(str(labels)) == 0

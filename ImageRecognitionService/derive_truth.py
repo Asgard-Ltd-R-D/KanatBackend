@@ -48,7 +48,8 @@ if __name__ == "__main__":
           f"{result['tolerance_px']:.1f} photo px)")
     if result["distances"]:
         print(f"   pre-existing marks matched at "
-              f"{result['distances'][0]:.1f}-{result['distances'][-1]:.1f} px")
+              f"{result['distances'][0]:.1f}-{result['distances'][-1]:.1f} px"
+              f"{', after refitting on them' if result['refitted'] else ''}")
 
     for which, lines in (("before", result["before_lines"]),
                          ("after", result["lines"])):

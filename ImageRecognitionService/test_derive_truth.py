@@ -249,3 +249,33 @@ def test_truth_that_was_never_derived_has_nothing_to_flag(tmp_path):
     labels = tmp_path / "board.txt"
     labels.write_text("0 0.5 0.5 0.02 0.02\n")
     assert evaluate.unpaired_before_marks(str(labels)) == 0
+
+
+# --- the second registration, fitted to the marks themselves ---------------
+
+def test_a_refit_pulls_in_marks_the_artwork_registration_left_out():
+    """The artwork covers a sixth of the photograph, so the homography is
+    extrapolating away from it and the residual grows with distance. The marks
+    it did agree on are correspondences spread over the whole Board, and a
+    similarity fitted to them puts the stragglers back on their counterparts —
+    at the same tolerance, so nothing new can fold together."""
+    after = _pts((100, 100), (200, 100), (300, 100), (400, 100), (900, 900))
+    # Every mark is displaced by a uniform 5 px, which is inside the tolerance
+    # for none of them at 4, and the fit recovers it exactly.
+    before = after[:4] + [5, 5]
+    pairs, _ = evaluate.match(before, after, 4.0)
+    assert len(pairs) == 0
+
+    moved = evaluate.refit_on_matched_marks(
+        before, after, [(i, i, 0.0) for i in range(4)])
+    pairs, unmatched = evaluate.match(moved, after, 4.0)
+    assert len(pairs) == 4 and unmatched == []
+
+
+def test_a_refit_needs_enough_pairs_to_carry_evidence():
+    """Two correspondences determine a similarity exactly, so it fits them
+    perfectly and says nothing. A fit that cannot be wrong is not evidence."""
+    before, after = _pts((0, 0), (10, 10)), _pts((1, 1), (11, 11))
+    assert evaluate.refit_on_matched_marks(before, after,
+                                           [(0, 0, 1.4), (1, 1, 1.4)]) is None
+

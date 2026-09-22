@@ -5,6 +5,7 @@ before-labels: /Users/ronen.sasgardsys.co.il/Downloads/KanatVideos/Before_ Annot
 after-image: /Users/ronen.sasgardsys.co.il/Downloads/KanatVideos/CamB_20260915_102250.after.jpeg
 after-labels: /Users/ronen.sasgardsys.co.il/Downloads/KanatVideos/After_ Annotated/valid/labels/CamB_20260915_102250-after_jpeg.rf.lsVPbum5K8Hi665AES5b.txt
 photograph-registration-correlation: 0.9038
+refitted-on-matched-marks: no
 match-tolerance-photo-px: 5.7
 labelled-after: 6
 pre-existing: 2

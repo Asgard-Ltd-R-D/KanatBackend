@@ -244,6 +244,54 @@ def new_label_indices(before, after, tolerance=MATCH_TOLERANCE_TPL):
     return _unmatched(match(before, after, tolerance)[0], len(after))
 
 
+# A similarity has 4 degrees of freedom, so 4 correspondences already
+# over-determine it. Fewer than that and the fit reproduces its own input and
+# says nothing about whether the two photographs agree.
+MIN_REFIT_PAIRS = 4
+
+
+def refit_on_matched_marks(before_photo_px, after, pairs):
+    """The before-marks re-registered on the marks the artwork already matched.
+
+    ECC aligns the printed Target, which spans about a sixth of these
+    photographs, so the homography is at its best on the artwork and
+    extrapolating everywhere else. On CamB_20260915_103223 the residual runs
+    1.4 px on the Target and 6-7 px a Target-span away from it, which left two
+    marks that are plainly the same hole in both photographs looking like two
+    different ones — and each of those becomes a pre-existing mark counted as a
+    new Bullet Hole.
+
+    The marks the first registration did agree on are correspondences for a
+    second one, and unlike the artwork they are spread over the whole Board. A
+    similarity is deliberate: 4 degrees of freedom against 8 or more
+    correspondences cannot bend to fit noise the way a homography can, and the
+    residual left over is a real disagreement rather than a curve through it.
+
+    `before_photo_px` is the before photograph's own pixels, NOT the registered
+    ones: the fit replaces the artwork homography rather than correcting it.
+    Two photographs of one Board from nearly the same place are related by
+    something close to a similarity, and the perspective the homography adds
+    only holds where it was fitted. Correcting H with a similarity instead of
+    replacing it was tried and is worse — on CamB_20260915_103223 it leaves
+    residuals of 0.2-4.7 px and one mark still unpaired, against 0.1-1.5 px and
+    none.
+
+    Returns the moved before-marks, or None when there are too few pairs for
+    the fit to carry evidence. The caller re-matches at the same tolerance, so
+    a refit can only pull the same mark together — never widen what counts as
+    one mark.
+    """
+    if len(pairs) < MIN_REFIT_PAIRS:
+        return None
+    src = np.float32([before_photo_px[j] for _, j, _ in pairs]).reshape(-1, 1, 2)
+    dst = np.float32([after[i] for i, _, _ in pairs]).reshape(-1, 1, 2)
+    M, _ = cv2.estimateAffinePartial2D(src, dst)
+    if M is None:
+        return None
+    return cv2.transform(
+        np.float32(before_photo_px).reshape(-1, 1, 2), M).reshape(-1, 2)
+
+
 def photo_tolerance(tolerance, target_span_px, template_span_px):
     """A template-px tolerance expressed in photograph px.
 
@@ -295,10 +343,21 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
 
     height, width = after_photo.shape[:2]
     after = after_normalised * [width, height]
-    before = board._apply(
-        H, before_normalised * [before_photo.shape[1], before_photo.shape[0]])
+    before_px = before_normalised * [before_photo.shape[1], before_photo.shape[0]]
+    before = board._apply(H, before_px)
 
     pairs, only_before = match(before, after, reach)
+
+    # A second registration, fitted to the marks the first one agreed on. Kept
+    # only if it matches at least as many: a refit that loses a pair has found
+    # a worse frame of reference, not a better one.
+    refit = refit_on_matched_marks(before_px, after, pairs)
+    refitted = False
+    if refit is not None:
+        refit_pairs, refit_only_before = match(refit, after, reach)
+        if len(refit_pairs) >= len(pairs):
+            pairs, only_before, refitted = refit_pairs, refit_only_before, True
+
     return {"lines": lines,
             "before_lines": before_lines,
             "new": _unmatched(pairs, len(after)),
@@ -306,6 +365,7 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
             "only_before": only_before,
             "correlation": correlation,
             "tolerance_px": reach,
+            "refitted": refitted,
             "distances": sorted(d for _, _, d in pairs)}
 
 
@@ -348,6 +408,8 @@ def write_derived(out_dir, result, before_image, before_labels,
             f"after-image: {after_image}\n"
             f"after-labels: {after_labels}\n"
             f"photograph-registration-correlation: {result['correlation']:.4f}\n"
+            f"refitted-on-matched-marks: "
+            f"{'yes' if result.get('refitted') else 'no'}\n"
             f"match-tolerance-photo-px: {result['tolerance_px']:.1f}\n"
             f"labelled-after: {len(result['lines'])}\n"
             f"pre-existing: {len(result['pre_existing'])}\n"

@@ -95,15 +95,14 @@ the photographs themselves are not version-controlled, like the recordings.
 | `CamB_20260915_101550` | 2 | 1 | **1** | 0.9259 |
 | `CamB_20260915_102250` | 6 | 2 | **4** | 0.9038 |
 | `CamB_20260915_102450` | 10 | 6 | **4** | 0.9456 |
-| `CamB_20260915_103223` | 12 | 8 | **4** | 0.8941 |
+| `CamB_20260915_103223` | 12 | 10 | **2** | 0.8941 |
 
 **Both passes now come from one detection-format delivery** — `Before_
 Annotated` and `After_ Annotated`, re-annotated as boxes after the first
 delivery arrived as polygons. All twelve label files are `class cx cy w h` on
 every line, no polygons and no mixed files, so nothing is reported as mixed any
 more. The marks moved 0.001–0.003 in normalised photograph coordinates from the
-polygon pass, which is a re-draw of the same holes; five of the six derivations
-come out line for line as before.
+polygon pass, which is a re-draw of the same holes.
 
 **CamA is the cross-check.** Its before photograph is clean, so all six after
 labels are new — and those six land 4.9–9.4 template px from the six labels of
@@ -111,21 +110,44 @@ labels are new — and those six land 4.9–9.4 template px from the six labels 
 six match within tolerance. Two independent annotation passes, two
 photographs, one answer.
 
-**`CamB_20260915_103223` carries two flags, and is the one recording that got
-worse.** Two before-marks have no counterpart within the 6.1 px tolerance: one
-at 7.3 px (it was 9.1 px in the polygon pass, so closer now and still out)
-and one at 6.14 px,
-which misses by 0.06 px. Both mean an after-mark that was probably already on
-the Board is counted as new, so this recording's four "new" Bullet Holes are
-really two or three. It also has the weakest photograph registration of the six
-(0.8941), and its matched marks sit 1.4–4.2 px out, so 6–7 px is an outlier
-rather than the normal spread. Check those two marks by eye before the
-recording is scored; do not widen the tolerance to make them go away — at 6.14
-px the temptation is obvious and the cost is folding genuinely distinct marks
-together everywhere else.
+**The derivation registers twice, and the second time on the marks
+themselves.** The artwork is a sixth of these photographs, so an ECC
+homography fitted to it is extrapolating everywhere else, and the residual
+grows with distance from it: on `CamB_20260915_103223`, 1.4 px on the Target
+and 6–7 px a Target-span away. That left two before-marks unpaired at 7.3 and
+6.14 px against a 6.1 px tolerance, and each unpaired before-mark is a
+pre-existing mark counted as a new Bullet Hole. Cropping the photographs of
+both marks settles what they are: the same hole, in both photographs, displaced
+— not a new hole beside an old one, which would show two holes in the after
+photograph and shows one.
 
-`evaluate.py` now prints that flag too: it reads `board.source.txt` beside the
-labels it was given and warns when the derivation left before-marks unpaired.
+So the marks the first registration *did* agree on become the correspondences
+for a second one. They are spread over the whole Board rather than the sixth
+of it the artwork covers, and a similarity — 4 degrees of freedom against 8
+correspondences — cannot bend to fit noise. It replaces the homography rather
+than correcting it, because two photographs taken from nearly the same place
+are related by something close to a similarity, and the perspective the
+homography adds only holds where it was fitted. Correcting H instead was tried:
+0.2–4.7 px and one mark still unpaired, against 0.1–1.5 px and none.
+
+Re-matching happens at the **same** tolerance, so a refit can only pull the
+same mark together, never widen what counts as one mark — the criterion that
+two distinct marks are not folded together is untouched. It is kept only if it
+matches at least as many marks as the artwork registration did, and is refused
+below 4 correspondences, where a similarity reproduces its own input and says
+nothing. `board.source.txt` records whether it was used.
+
+On `CamB_20260915_103223` that takes the residuals from 1.4–7.3 px to
+0.1–1.5 px, pairs all ten before-marks, and leaves **2** new Bullet Holes: one
+high on the white Board and one at the top of the green silhouette. The
+operator confirms those two independently. `CamB_20260915_102450` also refits
+(0.2–0.7 px, from 0.7–4.7) and its answer is unchanged; the other four have too
+few pairs to refit and are untouched, including the pinned `truth/camb-25-36`
+case.
+
+`evaluate.py` warns when a derived file still has unpaired before-marks: it
+reads `board.source.txt` beside the labels it was given. No recording trips it
+now, which is the point — it is there for the next delivery.
 Pointing `--truth-labels` at a derived directory also picks `board.new.txt`
 rather than `board.after.export.txt`, which sorts first and would have scored
 the run against the pre-existing marks as well. Where there is no derived file

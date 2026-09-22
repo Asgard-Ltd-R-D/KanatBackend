@@ -498,6 +498,45 @@ class RegisteredFrames:
             self.cap.release()
 
 
+class Run(NamedTuple):
+    """What a run found, and the evidence needed to attribute what it got wrong.
+
+    The baseline and the residual leave `process` for the same reason the
+    `[REGISTRATION]` line is printed: a false positive sitting on a pre-existing
+    mark is registration displacement, not a detector error, and nothing
+    downstream can tell those apart without the marks that were already on the
+    Board. Board space, all three — `baseline` is directly comparable with
+    `holes[i]["pos"]`.
+    """
+    holes: list
+    baseline: np.ndarray   # pre-existing marks, (cx, cy, w, h)
+    residual: np.ndarray   # distance from a suppressed detection to its mark
+
+
+def registration_note(residual, radius, unit="Board px"):
+    """The one `[REGISTRATION]` sentence, in whatever units the caller measures in.
+
+    `process` reports it in Board px, `evaluate.py` in the template px a score is
+    read in. One sentence either way, so the censoring rule has a single place to
+    be wrong in — and one that says the same thing in both.
+
+    It is a disclosure and never a gate. No registration-failure bar has been
+    validated, so nothing refuses a run on the strength of this line. See
+    docs/adr/0006-every-false-positive-is-attributed.md.
+    """
+    if not len(residual):
+        return ("[REGISTRATION] no detection matched a baseline mark, so this "
+                "run measures no registration residual at all")
+    # A max sitting at the radius is the ceiling, not the worst error: it says
+    # displaced marks are probably being reported as new Bullet Holes.
+    return (f"[REGISTRATION] residual on {len(residual)} baseline-matched "
+            f"detection(s): median {np.median(residual):.1f}, max "
+            f"{residual.max():.1f} {unit}, censored at the {radius:.1f} {unit} "
+            f"match radius — beyond it a displaced mark is reported as new, so "
+            f"a max at the ceiling means displaced marks are reaching the "
+            f"threshold. Not a pass/fail bar; none is validated")
+
+
 def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, ring_diameter_mm=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
@@ -565,13 +604,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # false positive, and persistence cannot filter it. See HANDOVER.md.
     residuals = (np.concatenate(residuals_per_frame)
                  if any(len(r) for r in residuals_per_frame) else np.zeros(0))
-    if len(residuals):
-        # A max sitting at the radius is the ceiling, not the worst error: it
-        # says displaced marks are probably being reported as new Bullet Holes.
-        print(f"[REGISTRATION] residual on {len(residuals)} baseline-matched "
-              f"detection(s): median {np.median(residuals):.1f} Board px "
-              f"(max {residuals.max():.1f}, censored at the {match_px:.1f} px "
-              f"match radius — beyond it a displaced mark is reported as new)")
+    print(registration_note(residuals, match_px))
 
     # Target assignment reads ONE frame — the last that registered — and Target
     # identity is that frame's contour order, largest first. So a Bullet Hole on
@@ -615,7 +648,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     if out_video:
         _render(video, start, processed, fps, loop.template_mask, loop.view,
                 baseline, new, out_video)
-    return new
+    return Run(new, baseline, residuals)
 
 
 def _report(new, start, fps, view, ring_diameter_mm, looked_at):

@@ -159,3 +159,8 @@ above is three.
 The two CamA files this ADR names as spent, `_141446` and `_141846`, were not in
 the delivery. They arrived on 2026-09-23 with a third, `_141646`, which this ADR
 does not name; all three measure as `cama-20260914` and carry `spent`.
+
+Nine afternoon CamA files, `_153603` to `_163136`, arrived the same day and are
+**sealed**: `cama-20260914-wide-tight` and `cama-20260914-wide`, one Board at
+two framings, three times further back than anything fitted. Reported as one
+scene, not two. The held-out set is now the CamB wide pair and this afternoon.

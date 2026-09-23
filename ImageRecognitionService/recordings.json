@@ -86,5 +86,77 @@
     "fps": 25.0,
     "window": [0.0, 51.88],
     "window_basis": "provisional: whole clip, which is what the photograph pair in truth/camb-20260915-103223 covers. Narrow it once the shooting is located"
+  },
+  "86428943d3904a01a38143836c3b7c2bec8fbc35fe90538c709c2495f79e13a7": {
+    "file": "CamA_20260914_153603.mkv",
+    "capture_setup": "cama-20260914-wide-tight",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 40.0],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "052764bec3812f14d4c6f932139ef04bb15c01cea95b9c5731ab6f16734b6110": {
+    "file": "CamA_20260914_153908.mkv",
+    "capture_setup": "cama-20260914-wide-tight",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 40.48],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "135fdbad3192ffefad178036558fb8519956eb84287e0358c5232ee9949f5de1": {
+    "file": "CamA_20260914_154008.mkv",
+    "capture_setup": "cama-20260914-wide",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 37.44],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "a6f6526b04199649d51f3f515699ca0aaaf9bfaf0fd9acb6f01d31761b0f3cd2": {
+    "file": "CamA_20260914_154108.mkv",
+    "capture_setup": "cama-20260914-wide",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 33.28],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "3f812e5b1282264da34003c1c98f815e63413698e60bfa463d46b875001b5f9c": {
+    "file": "CamA_20260914_161935.mkv",
+    "capture_setup": "cama-20260914-wide",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 35.04],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "4861ff968bd8e96935ebc5317ee87a88b7b15451ec23127f82d1ceca61d496ad": {
+    "file": "CamA_20260914_162035.mkv",
+    "capture_setup": "cama-20260914-wide",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 22.8],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "3a29a5749c1dd3218e76d63a54365e6e5ae8ac17c1fb369b8fd5ad0e22821c0e": {
+    "file": "CamA_20260914_162936.mkv",
+    "capture_setup": "cama-20260914-wide",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 39.6],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "0c65fadd0e040b10ee02d7dd71deea901a7b2ff9c010be3228e25ee355d1e172": {
+    "file": "CamA_20260914_163036.mkv",
+    "capture_setup": "cama-20260914-wide",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 39.88],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "c991170ec769ab40079dcb2e82771f55fa310b15ff4001acd2590087ac68c68d": {
+    "file": "CamA_20260914_163136.mkv",
+    "capture_setup": "cama-20260914-wide",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 39.44],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
   }
 }

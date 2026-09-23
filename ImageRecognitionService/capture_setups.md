@@ -15,16 +15,21 @@ delivery folder; `truth/*/board.source.txt` still names them.
 ## The count
 
 **Three distinct Capture Setups across the six files. Two across the five
-customer recordings.** The three CamA files that arrived on 2026-09-23 join
-`cama-20260914` and change neither count — see below. Five files do not collapse to one Capture Setup, as ADR-0005
-allowed they might; they collapse to two, and the boundary does not fall where
-file count would put it.
+customer recordings.** Five files do not collapse to one Capture Setup, as
+ADR-0005 allowed they might; they collapse to two, and the boundary does not
+fall where file count would put it.
+
+Later arrivals, 2026-09-23: three CamA files join `cama-20260914` and change
+neither count; nine more make **two further setups, both sealed** — one Board,
+one afternoon, at two framings. See the last two sections.
 
 | Capture Setup | Recordings | Role |
 |---|---|---|
 | `cama-20260914` | `CamA_20260914_141446`, `_141546`, `_141646`, `_141846` | spent |
 | `camb-20260915-wide-two-boards` | `CamB_20260915_101450`, `_101550` | **sealed** |
 | `camb-20260915-close-one-board` | `CamB_20260915_102250` (spent), `_102450`, `_103223` | threshold-work |
+| `cama-20260914-wide-tight` | `CamA_20260914_153603`, `_153908` | **sealed** |
+| `cama-20260914-wide` | `CamA_20260914_154008`, `_154108`, `_161935`, `_162035`, `_162936`, `_163036`, `_163136` | **sealed** |
 
 ## What was measured
 
@@ -216,3 +221,79 @@ constant was moved on it, no model saw it, and nothing beyond frame 0 was read.
 Every later run is gated: `recordings.json` now carries all six files, both
 sealed recordings are refused without `--final-run`, and a permitted run appends
 its date, model and commit to `sealed_runs.log`.
+
+## Nine CamA files from the afternoon — two setups, both sealed
+
+**Measured 2026-09-23**, frame 0 and the container header only; no detector,
+scoring, sweep or mining touched them. They arrived in the `2026_09_14_Dvira`
+delivery folder, and their copies in `~/Downloads` are byte-identical. All nine
+are 1920x1080, 25.0 fps, FMP4. Every mtime lands 19–25 s after filename time
+plus duration: one recorder, one clock, filenames trusted.
+
+| Recording | Capture time | Duration | Targets in frame 0 (centroid, span px) | Mean grey |
+|---|---|---|---|---|
+| `CamA_20260914_153603` | 15:36:03 | 40.00 s | (1543, 475) 202 · (1845, 86) 172 · (56, 566) 212 · (42, 320) 192 | 95.7 |
+| `CamA_20260914_153908` | 15:39:08 | 40.48 s | (1547, 277) 202 · (45, 113) 198 · (52, 364) 200 | 84.7 |
+| `CamA_20260914_154008` | 15:40:08 | 37.44 s | (1491, 126) 164 | 85.8 |
+| `CamA_20260914_154108` | 15:41:08 | 33.28 s | (1480, 143) 158 | 86.3 |
+| `CamA_20260914_161935` | 16:19:35 | 35.04 s | (1498, 133) 166 · (1228, 480) 160 | 95.0 |
+| `CamA_20260914_162035` | 16:20:35 | 22.80 s | (1495, 132) 168 · (1219, 478) 164 | 82.6 |
+| `CamA_20260914_162936` | 16:29:36 | 39.60 s | (1481, 132) 168 · (1216, 474) 160 | 81.6 |
+| `CamA_20260914_163036` | 16:30:36 | 39.88 s | (1488, 147) 166 | 82.0 |
+| `CamA_20260914_163136` | 16:31:36 | 39.44 s | (1498, 144) 164 · (1231, 494) 156 | 81.3 |
+
+References were unsealed only — `CamA_141546`, `CamA_141846`, `CamB_102450`.
+The sealed CamB pair was not opened.
+
+**MAD does not carry this grouping.** The frame is mostly dry-grass ground, and
+first-frame MAD runs 13.3–28.7 between any two of the nine *and* 22–30 against
+the CamA close-ups; only CamB stands apart, at 53–61. Within `-wide` it is
+13.3–23.7, the high end all `_161935`, whose exposure is brighter (grey 95.0).
+The evidence is Target geometry and what is in frame.
+
+### What the frames show
+
+A wide view of a large plywood Board: a sprayed black cross, three small green
+silhouettes on its right panel, a ringed panel top left, taped bottles, dry
+grass all round and a second Board's edge at the left of frame. Target spans of
+156–212 px against `cama-20260914`'s 482–502: the camera is about three times
+further back, an hour and a half later, in afternoon light. Nothing in the
+pipeline has been fitted to this pose. Whether it is the close-up's Board
+re-dressed cannot be told from frame 0, and does not need to be: ADR-0005
+already sealed the CamB wide pair on exactly those terms — same Board, same
+day, a pose nothing was fitted on.
+
+### `cama-20260914-wide-tight` — 153603 and 153908
+
+Spans 172–212, the Board running off the right edge. Between the two files the
+lead Target moves 198 px vertically at an unchanged span of 202 — a tilt, as
+between `_141546` and `_141646`, not a move.
+
+### `cama-20260914-wide` — 154008 through 163136
+
+In the 20 s between `_153908` and `_154008` the camera zooms out about 20%
+(span 202 → 164) and re-aims; the Board is then wholly in frame, and the lead
+Target holds at (1480–1498, 126–147), span 158–168, for fifty minutes across
+all seven. From `_161935` a blue-taped dummy stands against the Board. That is
+Board dressing, not a Capture Setup: pose, distance and light are unchanged.
+
+### Two setups, one scene
+
+The split follows the CamB precedent, where a 12–17% zoom and a re-aim were a
+boundary. But these are one Board in one session, 20 s apart at the join, so
+as held-out evidence they are **one scene at two framings**, and must be
+reported that way — not as two independent Capture Setups.
+
+### Roles
+
+**Both sealed.** Neither pose has been analysed, and both are what the
+held-out set is for. Making `-wide-tight` threshold-work to mine its ground was
+considered and rejected: it is 20 s and one zoom step from the sealed block, so
+its gravel and light are the sealed set's, and ADR-0005 forbids exactly that.
+They add no negatives to #28; the miner refuses them.
+
+This roughly quadruples the held-out footage: until now it was one setup and
+about two Bullet Holes.
+
+Still unallocated and unopened: `_144747`, `_145047` and `_150248`–`_150548`,
+in `2026_09_14_Dvira` only. With no manifest entry, every tool refuses them.

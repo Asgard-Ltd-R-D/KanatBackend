@@ -37,7 +37,9 @@ class _FakeCap:
 
 class _FakeModel:
     """One box per frame, wherever it is asked to look."""
-    def predict(self, image, imgsz, conf, verbose=False):
+    names = {0: "bullet_hole"}
+
+    def predict(self, image, imgsz, conf, verbose=False, classes=None):
         box = types.SimpleNamespace(xyxy=[[10.0, 10.0, 20.0, 20.0]])
         return [types.SimpleNamespace(boxes=[box])]
 
@@ -94,3 +96,28 @@ def test_the_capture_is_released_when_iteration_ends(monkeypatch):
 def test_frames_until_counts_from_the_start_timestamp(monkeypatch):
     loop = _loop(monkeypatch, lambda i: True)
     assert loop.frames_until(14.0) == 100      # 4s at 25 fps
+
+
+def test_detection_asks_for_bullet_holes_only_whatever_their_id():
+    """The v2.0 checkpoint also emits Board and Target, and bullet_hole is id 1."""
+    asked = {}
+
+    class ThreeClass(_FakeModel):
+        names = {0: "board", 1: "bullet_hole", 2: "target"}
+
+        def predict(self, image, imgsz, conf, verbose=False, classes=None):
+            asked["classes"] = classes
+            return super().predict(image, imgsz, conf, verbose, classes)
+
+    nbh._detect(ThreeClass(), None, 64, 0.02)
+    assert asked["classes"] == [1]
+
+
+def test_a_model_without_bullet_holes_is_refused():
+    import pytest
+
+    class NoHoles(_FakeModel):
+        names = {0: "target"}
+
+    with pytest.raises(SystemExit):
+        nbh._detect(NoHoles(), None, 64, 0.02)

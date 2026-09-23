@@ -23,12 +23,21 @@ Measured on `CamB_20260915_102250.mkv`, on the mark first detected at 0.04s:
 | | |
 |---|---|
 | detected at 0.82-0.86 | 0.04s to ~3.8s, about 95 frames |
-| nearest detection at a **0.02** floor thereafter | 4.0s: 116 px · 10.0s: 104 px · 25.0s: 98 px |
+| detected at a **0.02** floor thereafter | on and off, 40 of 526 frames over 4.0–25.0s, the last at 12.36s |
 | visible to the operator | until 25.0s |
-| reappears | never, over ~525 frames |
+| reappears after 12.40s | never, through the clip's end at 45.96s |
 
-The detector lost a real mark for twenty-one seconds while it sat in plain view.
+The detector lost a real mark for at least twelve seconds while it sat in plain
+view. Before that it had spent eight seconds seeing it only now and then.
 Any rule that retracts on absence retracts this one.
+
+*Corrected 2026-09-23.* This table used to say the mark was never detected from
+4.0s, citing the nearest detection as 116 px at 4.0s, 104 px at 10.0s and 98 px
+at 25.0s. That probe compared a fixed Board-px point with frames that had each
+been registered on their own. It also sampled only ten timestamps. The
+reproduction and both defects are in `ImageRecognitionService/HANDOVER.md`,
+failure mode 3. The decision is unchanged, because the corrected figures show
+the same thing: detections stop while the mark stays.
 
 ## Considered options
 

@@ -164,6 +164,17 @@ def near_duplicate(thumb, kept, max_mad=DUP_MAD):
     return any(np.abs(thumb - k).mean() < max_mad for k in kept)
 
 
+def pad_to_tile(tile, size=TILE_PX):
+    """`tile` padded black to `size` square, never scaled.
+
+    Training at `imgsz=size` would upscale a smaller tile, and the runtime never
+    does: its `imgsz` is the canvas's own longest side. Black is what the warp
+    already puts beyond the frame.
+    """
+    h, w = tile.shape[:2]
+    return cv2.copyMakeBorder(tile, 0, size - h, 0, size - w, cv2.BORDER_CONSTANT, value=0)
+
+
 def sample_indices(fps, n_frames, step_s=STEP_S):
     """Frame indices one `step_s` apart, from the first frame to the last."""
     step = max(1, round(fps * step_s))
@@ -181,6 +192,10 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
     fps = cap.get(cv2.CAP_PROP_FPS)
     wanted = set(sample_indices(fps, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), step_s))
     written, repeats, looked, unusable, failed, index = 0, 0, 0, 0, 0, -1
+    # Board space is fixed once per recording, as `RegisteredFrames.open` fixes
+    # it, and tracked thereafter: rebuilding it per frame would rescale the
+    # gravel whenever the reference contour's apparent size changed.
+    reference = last = None
     while cap.grab():
         index += 1
         if index not in wanted:
@@ -190,31 +205,38 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
             continue
         looked += 1
         try:
-            view, correlation = board.build_view(frame, template_mask)
+            if reference is None:
+                view, correlation = board.build_view(frame, template_mask)
+            else:
+                view, correlation = board.track_view(frame, template_mask, last)
         except cv2.error:
             failed += 1   # registration did not converge; counted, not folded in
             continue
         if view is None or not usable_fit(view.canvas_size, correlation):
             unusable += 1
             continue
+        reference = reference or view
+        last = view
         canvas = view.rectify(frame)
         ground = ground_mask(canvas)
         negative = to_negative(canvas, ground)
         for x, y, fraction in pick_tiles(ground):
-            tile = negative[y:y + TILE_PX, x:x + TILE_PX]
+            region = negative[y:y + TILE_PX, x:x + TILE_PX]
+            tile = pad_to_tile(region)
             thumb = thumbnail(tile)
             if near_duplicate(thumb, kept):
                 repeats += 1
                 continue
             kept.append(thumb)
             written += 1
-            name = f"{stem}_f{index:05d}_x{x}_y{y}"
+            # The hash keeps two same-named files from different folders apart.
+            name = f"{stem}_{sha[:12]}_f{index:05d}_x{x}_y{y}"
             cv2.imwrite(os.path.join(out, "images", name + ".jpg"), tile)
             open(os.path.join(out, "labels", name + ".txt"), "w").close()
             writer.writerow({"image": name + ".jpg", "sha256": sha, "file": entry["file"],
                              "capture_setup": entry["capture_setup"], "role": entry["role"],
                              "frame": index, "time_s": f"{index / fps:.2f}",
-                             "x": x, "y": y, "w": tile.shape[1], "h": tile.shape[0],
+                             "x": x, "y": y, "w": region.shape[1], "h": region.shape[0],
                              "ground_fraction": f"{fraction:.3f}"})
     cap.release()
     print(f"[MINE] {os.path.basename(video)} ({entry['capture_setup']}, {entry['role']}): "

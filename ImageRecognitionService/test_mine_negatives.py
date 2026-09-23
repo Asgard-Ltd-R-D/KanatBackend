@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from manifest import NotInManifest, SEALED, SPENT, THRESHOLD_WORK
-from mine_negatives import (ground_mask, near_duplicate, pick_tiles,
+from mine_negatives import (ground_mask, near_duplicate, pad_to_tile, pick_tiles,
                             refuse_sealed, sample_indices, thumbnail,
                             to_negative, usable_fit)
 
@@ -107,6 +107,14 @@ def test_a_canvas_with_no_ground_yields_no_tile():
 def test_a_canvas_smaller_than_a_tile_is_one_tile_of_its_own_size():
     tiles = pick_tiles(np.ones((300, 500), bool), size=960, min_fraction=0.25)
     assert tiles == [(0, 0, 1.0)]
+
+
+def test_a_small_tile_is_padded_black_never_scaled():
+    tile = np.full((300, 500, 3), GRAVEL, np.uint8)
+    padded = pad_to_tile(tile, size=960)
+    assert padded.shape == (960, 960, 3)
+    assert (padded[:300, :500] == tile).all()
+    assert not padded[300:].any() and not padded[:, 500:].any()
 
 
 def test_a_static_camera_does_not_repeat_itself():

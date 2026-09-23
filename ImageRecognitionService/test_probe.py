@@ -80,3 +80,15 @@ def test_the_longest_blind_run_spans_registered_frames_only():
 def test_a_bullet_hole_always_seen_has_no_blind_run():
     [r] = probe.detection_rates([_look(0, HOLE), _look(1, HOLE)], [HOLE], RADIUS)
     assert r.blind is None
+
+
+def test_an_explicit_position_is_template_x_y():
+    assert probe.parse_point("512.5,-3") == (512.5, -3.0)
+
+
+def test_a_malformed_position_is_refused():
+    import argparse
+    import pytest
+    for bad in ("512.5", "1,2,3", "x,y"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            probe.parse_point(bad)

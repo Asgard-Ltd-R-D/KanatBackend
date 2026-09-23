@@ -24,10 +24,12 @@ runs each over the same footage against the same ground truth.
 
 The denominator is every registered frame from `--start`, so a Bullet Hole
 that lands mid-clip reads below 1.0 by the frames before it existed; its
-`first` time says where. Ground truth of NEW Bullet Holes (a derived
-`board.new.txt`) leaves out the marks already on the Board — to probe those,
-name the after export: CamB's 0.04s mark is only in
-`truth/camb-20260915-102250/board.after.export.txt`.
+`first` time says where.
+
+`--at X,Y` is a diagnostic apart from all that: it probes explicit
+template-space positions instead of ground truth, for a mark no label holds.
+CamB's 0.04s mark is one — pre-existing, so absent from every derived
+`board.new.txt`, and in no label set this repo carries. Its rate is not recall.
 """
 import argparse
 import os
@@ -104,9 +106,24 @@ def detection_rates(looks, positions, radius):
     return rates
 
 
+def parse_point(text):
+    """`--at X,Y` as a template-space (x, y)."""
+    try:
+        x, y = (float(v) for v in text.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected X,Y in template px, got {text!r}")
+    return x, y
+
+
 def probe(video, start, end, model_path, truth_tpl, radius_tpl,
-          conf=PROBE_CONFIDENCE, template_path=board.DEFAULT_TEMPLATE):
-    """Run one checkpoint over the clip and print a rate per Bullet Hole."""
+          conf=PROBE_CONFIDENCE, template_path=board.DEFAULT_TEMPLATE,
+          names=None):
+    """Run one checkpoint over the clip and print a rate per position.
+
+    `names` labels each line; by default the positions are ground truth and
+    read `truth #n`.
+    """
+    names = names or [f"truth #{n}" for n in range(1, len(truth_tpl) + 1)]
     print(f"\n[PROBE] {os.path.relpath(model_path)} at conf {conf}")
     loop = nbh.RegisteredFrames.open(video, start, model_path, conf, template_path)
     view = loop.view
@@ -123,11 +140,11 @@ def probe(video, start, end, model_path, truth_tpl, radius_tpl,
     def t(index):
         return f"{start + index / loop.fps:.2f}s"
 
-    for n, r in enumerate(rates, 1):
+    for name, r in zip(names, rates):
         if r.rate is None:
-            print(f"   truth #{n}  no registered frame looked at it")
+            print(f"   {name}  no registered frame looked at it")
             continue
-        line = f"   truth #{n}  rate {r.rate:.2f}  of {r.looked} frames"
+        line = f"   {name}  rate {r.rate:.2f}  of {r.looked} frames"
         if r.first is not None:
             line += f"   first {t(r.first)}  last {t(r.last)}"
         if r.blind:
@@ -143,8 +160,12 @@ if __name__ == "__main__":
     p.add_argument("--start", type=float, required=True,
                    help="the frame Board space is built from, seconds")
     p.add_argument("--end", type=float, required=True)
-    p.add_argument("--truth-image", required=True, help="photo of the Board, or a directory")
-    p.add_argument("--truth-labels", required=True, help="YOLO .txt, or a directory")
+    p.add_argument("--truth-image", help="photo of the Board, or a directory")
+    p.add_argument("--truth-labels", help="YOLO .txt, or a directory")
+    p.add_argument("--at", type=parse_point, action="append",
+                   help="DIAGNOSTIC, instead of ground truth: probe this "
+                        "template-space X,Y (repeatable). For a mark no label "
+                        "holds; its rate is not a recall figure")
     p.add_argument("--model", nargs="+", default=[nbh.DEFAULT_MODEL],
                    help="one or more checkpoints, each run over the same footage")
     p.add_argument("--template", default=board.DEFAULT_TEMPLATE)
@@ -154,13 +175,25 @@ if __name__ == "__main__":
                         "with a label when a run is scored")
     manifest.add_flag(p)
     a = p.parse_args()
+    if bool(a.at) == bool(a.truth_image or a.truth_labels):
+        p.error("give either --truth-image with --truth-labels, or --at")
+    if not a.at and not (a.truth_image and a.truth_labels):
+        p.error("--truth-image and --truth-labels go together")
 
     for model in a.model:
         manifest.gate(a.video, a.final_run, model, "probe.py")
 
-    template = cv2.imread(a.template)
-    _, template_mask = board.find_targets(template, min_area=1)
-    truth = evaluate.load_truth(a.truth_image, a.truth_labels, template_mask)
+    if a.at:
+        truth = np.array(a.at, np.float32)
+        names = [f"at ({x:.1f}, {y:.1f})" for x, y in a.at]
+        print(f"[DIAGNOSTIC] {len(truth)} explicit template-space position(s), "
+              f"no ground truth: rates below are not recall")
+    else:
+        template = cv2.imread(a.template)
+        _, template_mask = board.find_targets(template, min_area=1)
+        truth = evaluate.load_truth(a.truth_image, a.truth_labels, template_mask)
+        names = None
 
     for model in a.model:
-        probe(a.video, a.start, a.end, model, truth, a.radius, a.confidence, a.template)
+        probe(a.video, a.start, a.end, model, truth, a.radius, a.confidence,
+              a.template, names)

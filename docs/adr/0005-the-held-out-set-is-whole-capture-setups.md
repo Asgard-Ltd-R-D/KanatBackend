@@ -164,3 +164,8 @@ Nine afternoon CamA files, `_153603` to `_163136`, arrived the same day and are
 **sealed**: `cama-20260914-wide-tight` and `cama-20260914-wide`, one Board at
 two framings, three times further back than anything fitted. Reported as one
 scene, not two. The held-out set is now the CamB wide pair and this afternoon.
+
+The six remaining CamA files split by aim: `_144747`, `_145047` and `_150248`
+share the fitted close-up and join `cama-20260914` as spent; `_150348` to
+`_150548` look close up at a part of the wide Board nothing was fitted on, and
+are sealed as `cama-20260914-close-cross`.

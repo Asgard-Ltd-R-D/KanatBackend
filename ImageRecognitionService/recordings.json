@@ -158,5 +158,53 @@
     "fps": 25.0,
     "window": [0.0, 39.44],
     "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "51b411a04923fa6418306df99135914692d2ba0665d58e6a191d72d84cc0c9d4": {
+    "file": "CamA_20260914_144747.mkv",
+    "capture_setup": "cama-20260914",
+    "role": "spent",
+    "fps": 25.0,
+    "window": [0.0, 48.64],
+    "window_basis": "whole clip: never analysed, no ground truth; a negative-mining source (ADR-0005), which draws from anywhere in it"
+  },
+  "4f231757a72754ae84796da6b0cc143ca18680e9d35db23e925ce93f91aee2fa": {
+    "file": "CamA_20260914_145047.mkv",
+    "capture_setup": "cama-20260914",
+    "role": "spent",
+    "fps": 25.0,
+    "window": [0.0, 48.12],
+    "window_basis": "whole clip: never analysed, no ground truth; a negative-mining source (ADR-0005), which draws from anywhere in it"
+  },
+  "12e34b4e950b94caca97c869c923516c7fddbb251cf01679359ac6143cf081bb": {
+    "file": "CamA_20260914_150248.mkv",
+    "capture_setup": "cama-20260914",
+    "role": "spent",
+    "fps": 25.0,
+    "window": [0.0, 17.72],
+    "window_basis": "whole clip: never analysed, no ground truth; a negative-mining source (ADR-0005), which draws from anywhere in it"
+  },
+  "f077e46dc3b219beb523ab0851a9bf3e0a996433248e5f8627486929409a1309": {
+    "file": "CamA_20260914_150348.mkv",
+    "capture_setup": "cama-20260914-close-cross",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 20.44],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "b6b18551d1274594c4334ec82483618f2eec33da6a174b0616de788aed70a8cf": {
+    "file": "CamA_20260914_150448.mkv",
+    "capture_setup": "cama-20260914-close-cross",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 8.08],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
+  },
+  "fd098c5a7d4d03d98c79cb6f545ed186448c3f0bad79720e0782630da84140d0": {
+    "file": "CamA_20260914_150548.mkv",
+    "capture_setup": "cama-20260914-close-cross",
+    "role": "sealed",
+    "fps": 25.0,
+    "window": [0.0, 15.28],
+    "window_basis": "provisional: whole clip. The shooting window is not established, and establishing it means watching sealed footage"
   }
 }

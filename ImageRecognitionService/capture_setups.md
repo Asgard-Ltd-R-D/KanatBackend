@@ -19,17 +19,19 @@ customer recordings.** Five files do not collapse to one Capture Setup, as
 ADR-0005 allowed they might; they collapse to two, and the boundary does not
 fall where file count would put it.
 
-Later arrivals, 2026-09-23: three CamA files join `cama-20260914` and change
+Later arrivals, 2026-09-23: six CamA files join `cama-20260914` and change
 neither count; nine more make **two further setups, both sealed** — one Board,
-one afternoon, at two framings. See the last two sections.
+one afternoon, at two framings — and three more a **third sealed setup**, the
+same Board close up. See the last three sections.
 
 | Capture Setup | Recordings | Role |
 |---|---|---|
-| `cama-20260914` | `CamA_20260914_141446`, `_141546`, `_141646`, `_141846` | spent |
+| `cama-20260914` | `CamA_20260914_141446`, `_141546`, `_141646`, `_141846`, `_144747`, `_145047`, `_150248` | spent |
 | `camb-20260915-wide-two-boards` | `CamB_20260915_101450`, `_101550` | **sealed** |
 | `camb-20260915-close-one-board` | `CamB_20260915_102250` (spent), `_102450`, `_103223` | threshold-work |
 | `cama-20260914-wide-tight` | `CamA_20260914_153603`, `_153908` | **sealed** |
 | `cama-20260914-wide` | `CamA_20260914_154008`, `_154108`, `_161935`, `_162035`, `_162936`, `_163036`, `_163136` | **sealed** |
+| `cama-20260914-close-cross` | `CamA_20260914_150348`, `_150448`, `_150548` | **sealed** |
 
 ## What was measured
 
@@ -295,5 +297,63 @@ They add no negatives to #28; the miner refuses them.
 This roughly quadruples the held-out footage: until now it was one setup and
 about two Bullet Holes.
 
-Still unallocated and unopened: `_144747`, `_145047` and `_150248`–`_150548`,
-in `2026_09_14_Dvira` only. With no manifest entry, every tool refuses them.
+The six CamA files still unallocated at this point are the next section.
+
+## Six more CamA files — three spent, three sealed
+
+**Measured 2026-09-23**, frame 0 and the container header only. From the
+`2026_09_14_Dvira` delivery folder; all 1920x1080, 25.0 fps, FMP4. Compared with
+the unsealed `_141546` and `_141846` and with frame-0 thumbnails of the sealed
+wide setups already taken for their allocation — no sealed file was decoded again.
+
+| Recording | Capture time | Duration | Targets in frame 0 (centroid, span px) | Mean grey |
+|---|---|---|---|---|
+| `CamA_20260914_144747` | 14:47:47 | 48.64 s | (1145, 546) 516 · (1077, 111) 438 · (456, 922) 432 | 87.9 |
+| `CamA_20260914_145047` | 14:50:47 | 48.12 s | (1119, 560) 522 · (1092, 114) 440 · (468, 927) 424 | 87.0 |
+| `CamA_20260914_150248` | 15:02:48 | 17.72 s | (1074, 576) 524 · (1048, 122) 444 · (426, 934) 428 | 85.2 |
+| `CamA_20260914_150348` | 15:03:48 | 20.44 s | (1084, 872) 440 · (1771, 99) 298 | 84.7 |
+| `CamA_20260914_150448` | 15:04:48 | 8.08 s | (1094, 873) 436 · (1774, 99) 292 | 84.5 |
+| `CamA_20260914_150548` | 15:05:48 | 15.28 s | (1127, 885) 438 · (1790, 110) 260 | 84.3 |
+
+First-frame MAD: 8.2–10.5 within the first three, 3.2–8.8 within the last
+three, 21.7–23.5 between them — but 16.8–22.3 from either to `_141546` and
+`_141846`, the same band as within `cama-20260914`. MAD separates the two
+groups from each other, and neither from the spent setup; geometry has to.
+
+### `_144747`, `_145047`, `_150248` — `cama-20260914`, spent
+
+The fitted view: the ringed panel at left and the silhouette with the arc of
+Bullet Holes beside it — `_141546`'s lower Target, now in mid-frame. The camera
+has tipped down about 150 px, bringing a third, washed-out silhouette in at
+bottom left; span 516–524 against 482–502, 4% larger. That is less than the
+270 px re-aim between `_141546` and `_141646` already inside this setup. Sealing
+them would hold out a scene the constants were fitted on — ADR-0005's named
+error — and setup integrity gives them the setup's role. They are
+negative-mining sources.
+
+### `_150348`, `_150448`, `_150548` — `cama-20260914-close-cross`, sealed
+
+A different part of the Board: a sprayed black cross fills the frame, a
+silhouette below it, a partial one top right; the ringed panel is a sliver at
+the left edge. The lead Target sits about 300 px lower than in any
+`cama-20260914` frame, span 436–440, 12% smaller. The layout — cross, a
+silhouette top right, one below and to its left — matches the right-hand
+panel of the sealed wide Board, so this is very likely that Board close up,
+half an hour before it was filmed from three times further back.
+
+**The judgement call.** The change lies between the two precedents: `_141546`
+→ `_141646`, a 270 px tilt at unchanged distance, one setup; and CamB wide →
+close, a 12–17% span change with a 245 px re-aim, two. Sealed, because nothing
+was fitted on this aim, and spending it would train on the Board and afternoon
+light the sealed wide setups hold. Folding it into `cama-20260914` as spent was
+the alternative, and would have bought a few negatives for held-out footage.
+
+### Short files
+
+`_150248` to `_150548` last 8–20 s although the recorder starts one a minute,
+and their mtimes land 40–52 s after filename time plus duration, against 9–25 s
+everywhere else. Most likely the recorder was stopped early or the header
+understates the length. Neither moves the grouping, and establishing which
+would mean decoding past frame 0.
+
+Every CamA file of 2026-09-14 in the delivery now has a manifest role.

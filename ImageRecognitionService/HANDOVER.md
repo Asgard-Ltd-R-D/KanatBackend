@@ -744,9 +744,11 @@ before any architecture change.
 `mine_negatives.py` makes them, from spent and threshold-work footage only — it
 refuses sealed recordings outright, with no flag. It covers the gravel and not
 the rings: an empty label file on the Board would be a lie, because the Board
-carries Bullet Holes. On 2026-09-23 it yields **7** negatives, all
-`cama-20260914`, from four CamA clips — near-duplicates are dropped across the
-whole Capture Setup, and `_141646` adds nothing its siblings had not. Nothing comes from the CamB close trio,
+carries Bullet Holes. On 2026-09-23, over every recording the manifest does
+not seal, it yields **30** negatives, all `cama-20260914`: 18 from `_144747`,
+whose canvas moves across the gravel, and 5, 5 and 2 from `_141546`, `_145047`
+and `_141846`. Near-duplicates are dropped across the whole Capture Setup, so
+its other three files add nothing new. Nothing comes from the CamB close trio,
 whose canvas is all Board, or from the legacy clips, which carry no green Target.
 A static camera gives only a few distinct gravel tiles per clip, so more
 negatives means more Capture Setups, not a smaller `--step`.

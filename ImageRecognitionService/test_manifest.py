@@ -1,14 +1,16 @@
 """Checks for split membership, the sealed guard and the run log.
 
-Pure functions over a hand-built manifest. No video, no model, no torch — the
-rule being protected here (ADR-0005: sealed means zero pixels) is one that gets
-broken months later during a long sweep, by someone who was not party to the
-decision, so the guard has to hold without anything heavy being available.
+Pure functions over a hand-built manifest, plus three at the end that read the
+shipped `recordings.json` because the allocation itself is what they check. No
+video, no model, no torch — the rule being protected here (ADR-0005: sealed
+means zero pixels) is one that gets broken months later during a long sweep, by
+someone who was not party to the decision, so the guard has to hold without
+anything heavy being available.
 """
 import pytest
 
 import manifest
-from manifest import (ManifestError, NotInManifest, SEALED, THRESHOLD_WORK, Sealed,
+from manifest import (ManifestError, NotInManifest, SEALED, SPENT, THRESHOLD_WORK, Sealed,
                       authorise, check_allowed, content_hash, log_final_run, role_for)
 
 MANIFEST = {
@@ -137,3 +139,83 @@ def test_a_permitted_final_run_is_logged(tmp_path, monkeypatch):
                       entries={sha: {"role": SEALED}}, log_path=str(log))
     assert entry["role"] == SEALED
     assert sha in log.read_text() and "commit=abc1234" in log.read_text()
+
+
+# The allocation. The invariant is a pure function over entries, like everything
+# above it; only the last two tests read `recordings.json`, because the property
+# ADR-0005 turns on is one of the real allocation and nothing else checks it.
+# See capture_setups.md for the grouping evidence behind that allocation.
+
+DOCUMENTED_FIELDS = ("file", "capture_setup", "role", "fps", "window", "window_basis")
+
+
+def _setups_with_two_roles(entries):
+    """Capture Setups with recordings on both sides of the sealed boundary.
+
+    The unit of the split is the Capture Setup, not the file (ADR-0005). Holding
+    out one file of a Capture Setup the constants were fitted to measures
+    re-detection of an arrangement already fitted, and reports it as
+    generalisation. Two files from one afternoon exercise no threshold
+    independently, so the whole setup goes one side of the boundary or the other.
+    `spent` and `threshold-work` are both the unsealed side, so a setup may mix
+    them and each file keeps its own provenance.
+    """
+    roles = {}
+    for entry in entries.values():
+        roles.setdefault(entry["capture_setup"], set()).add(entry["role"])
+    return {setup: sorted(r) for setup, r in roles.items()
+            if SEALED in r and len(r) > 1}
+
+
+def test_a_setup_whose_files_all_carry_one_role_is_not_reported():
+    assert _setups_with_two_roles(MANIFEST) == {}
+
+
+def test_a_setup_split_across_the_boundary_is_reported():
+    """The failure this exists to catch: two files, one afternoon, two roles."""
+    split = dict(MANIFEST, **{
+        "d" * 64: {"file": "CamC_20260920_090100.mkv",
+                   "capture_setup": "cam-c-20260920",  # same setup as "b" * 64
+                   "role": THRESHOLD_WORK, "fps": 30.0, "window": [0.0, 40.0]}})
+
+    assert _setups_with_two_roles(split) == {
+        "cam-c-20260920": [SEALED, THRESHOLD_WORK]}
+
+
+def test_spent_and_threshold_work_in_one_setup_is_not_a_split():
+    """Both are the unsealed side; a fitted clip keeps `spent` beside its
+    unopened siblings without either being mislabelled to pass."""
+    entries = {"a" * 64: {"capture_setup": "camb", "role": SPENT},
+               "b" * 64: {"capture_setup": "camb", "role": THRESHOLD_WORK}}
+    assert _setups_with_two_roles(entries) == {}
+
+
+def test_a_setup_is_grouped_by_name_not_by_filename():
+    """Two files one minute apart are one setup; the filenames differ and the
+    `capture_setup` does not. Grouping on the filename would miss it."""
+    entries = {"a" * 64: {"capture_setup": "camb", "role": SEALED},
+               "b" * 64: {"capture_setup": "camb", "role": SEALED}}
+    assert _setups_with_two_roles(entries) == {}
+
+
+def test_every_shipped_entry_carries_the_documented_fields():
+    """`NotInManifest` tells an operator to add a Capture Setup, role, frame
+    rate and analysis window. An entry missing one should fail here and say so,
+    not `KeyError` somewhere downstream."""
+    for sha, entry in manifest.load().items():
+        missing = [f for f in DOCUMENTED_FIELDS if f not in entry]
+        assert not missing, f"{entry.get('file', sha)} is missing {missing}"
+        assert role_for(manifest.load(), sha) in manifest.ROLES
+
+
+def test_the_shipped_allocation_splits_no_capture_setup():
+    split = _setups_with_two_roles(manifest.load())
+    assert not split, f"one Capture Setup, two roles: {split}"
+
+
+def test_the_shipped_allocation_seals_something():
+    """Sealing nothing passes every other check here and leaves the question
+    the held-out set exists to answer unanswerable."""
+    sealed = {e["capture_setup"] for e in manifest.load().values()
+              if e["role"] == SEALED}
+    assert sealed, "no Capture Setup is sealed; nothing can measure generalisation"

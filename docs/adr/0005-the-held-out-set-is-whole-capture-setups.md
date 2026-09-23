@@ -6,6 +6,12 @@ camera pose, Board, lighting, distance — not by file and not by frame: two go 
 threshold work, the rest are sealed, and sealed means no pixels are used for
 anything, not even unlabelled background crops.
 
+**The counts in that sentence did not survive measurement.** The delivery turned
+out to be two customer Capture Setups of three recordings and two, so preserving
+setup integrity inverted the split to three threshold-work and two sealed — see
+"What the delivery turned out to be" at the end. The unit, a whole Capture
+Setup, is the part of this decision that held, and it is the part that matters.
+
 [ADR-0003](0003-a-bullet-hole-is-new-when-it-persists.md) records that every
 threshold in the pipeline is tuned on six Bullet Holes in one clip and "will
 overfit to it", and names the held-out test set as the only thing that settles
@@ -123,3 +129,32 @@ No run is made unscoreable on the residual. There is no validated
 registration-failure threshold tied to Bullet Hole scale or to SOW 2.3.2's 5 mm,
 and inventing one from a single clip is the error this project keeps finding in
 its own constants.
+
+## What the delivery turned out to be
+
+Measured 2026-09-22 on the six delivered files; grounds and figures in
+[`../../ImageRecognitionService/capture_setups.md`](../../ImageRecognitionService/capture_setups.md),
+roles in `recordings.json`.
+
+**Three Capture Setups across the delivery, two across the five customer
+recordings.** Not the one this ADR allowed they might collapse to, and not five.
+
+The split came out **three threshold-work, two sealed** — the reverse of the
+two-and-the-rest above. `CamB_20260915_102250` is one of the two clips every
+current constant is fitted to, and its two unopened siblings share its camera
+pose, Board and light. Sealing them would hold out a session already fitted and
+report re-detection as generalisation, which is the thing this ADR names as the
+error. The wide pair, `_101450` and `_101550`, is the only footage in the
+delivery with a pose nothing has been fitted to, so it is what is sealed.
+
+Which means the held-out set is one Capture Setup and roughly two Bullet Holes
+— thinner than the two-to-four setups this ADR hoped for, and the honest size of
+what arrived. The rule that the unit is a Capture Setup is what forced it; the
+file count was never the thing being protected.
+
+Negatives accordingly come from `cama-20260914`, `legacy-dev` and the three
+`camb-20260915-close-one-board` recordings — the "two threshold-work recordings"
+above is three.
+
+The two CamA files this ADR names as spent, `_141446` and `_141846`, were not in
+the delivery. They get manifest entries when they arrive.

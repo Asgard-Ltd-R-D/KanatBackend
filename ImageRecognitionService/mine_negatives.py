@@ -175,10 +175,13 @@ def pad_to_tile(tile, size=TILE_PX):
     return cv2.copyMakeBorder(tile, 0, size - h, 0, size - w, cv2.BORDER_CONSTANT, value=0)
 
 
-def sample_indices(fps, n_frames, step_s=STEP_S):
-    """Frame indices one `step_s` apart, from the first frame to the last."""
-    step = max(1, round(fps * step_s))
-    return list(range(0, n_frames, step))
+def sample_step(fps, step_s=STEP_S):
+    """Every how many frames one is sampled: `step_s` apart, at least every frame.
+
+    Applied while decoding, not to the container's frame count, which some
+    backends report as zero.
+    """
+    return max(1, round(fps * step_s))
 
 
 def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
@@ -190,33 +193,44 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
     stem = os.path.splitext(os.path.basename(video))[0]
     cap = cv2.VideoCapture(video)
     fps = cap.get(cv2.CAP_PROP_FPS)
-    wanted = set(sample_indices(fps, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), step_s))
+    # A recording that cannot be decoded must fail, not pass as one with no ground.
+    if not cap.isOpened() or not fps > 0:
+        raise SystemExit(f"[FAILED] cannot decode {video} (fps {fps})")
+    step = sample_step(fps, step_s)
     written, repeats, looked, unusable, failed, index = 0, 0, 0, 0, 0, -1
     # Board space is fixed once per recording, as `RegisteredFrames.open` fixes
     # it, and tracked thereafter: rebuilding it per frame would rescale the
     # gravel whenever the reference contour's apparent size changed.
     reference = last = None
-    while cap.grab():
-        index += 1
-        if index not in wanted:
-            continue
-        ok, frame = cap.retrieve()
+    # Once it exists, every frame is tracked, not only the samples: `track_view`
+    # seeds from the previous frame's homography, as `RegisteredFrames.looks`
+    # does, and one 25 frames old would register moving footage differently.
+    while True:
+        ok, frame = cap.read()
         if not ok:
-            continue
-        looked += 1
+            break
+        index += 1
+        sampled = index % step == 0
+        if reference is None and not sampled:
+            continue   # Board space is found on a sample; nothing to track yet
+        looked += sampled
         try:
             if reference is None:
                 view, correlation = board.build_view(frame, template_mask)
             else:
                 view, correlation = board.track_view(frame, template_mask, last)
         except cv2.error:
-            failed += 1   # registration did not converge; counted, not folded in
+            failed += sampled   # registration did not converge; counted, not folded in
+            continue
+        if reference is not None and view is not None:
+            last = view   # as the runtime: every registered frame seeds the next
+        if not sampled:
             continue
         if view is None or not usable_fit(view.canvas_size, correlation):
             unusable += 1
             continue
-        reference = reference or view
-        last = view
+        if reference is None:
+            reference = last = view
         canvas = view.rectify(frame)
         ground = ground_mask(canvas)
         negative = to_negative(canvas, ground)
@@ -239,6 +253,8 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
                              "x": x, "y": y, "w": region.shape[1], "h": region.shape[0],
                              "ground_fraction": f"{fraction:.3f}"})
     cap.release()
+    if index < 0:
+        raise SystemExit(f"[FAILED] {video} opened but yielded no frame")
     print(f"[MINE] {os.path.basename(video)} ({entry['capture_setup']}, {entry['role']}): "
           f"{written} negative(s) from {looked} sampled frame(s); "
           f"{repeats} tile(s) repeating its Capture Setup; "

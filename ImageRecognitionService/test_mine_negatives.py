@@ -11,7 +11,7 @@ import pytest
 
 from manifest import NotInManifest, SEALED, SPENT, THRESHOLD_WORK
 from mine_negatives import (ground_mask, near_duplicate, pad_to_tile, pick_tiles,
-                            refuse_sealed, sample_indices, thumbnail,
+                            refuse_sealed, sample_step, thumbnail,
                             to_negative, usable_fit)
 
 GRAVEL = (40, 80, 110)    # BGR: warm brown, hue ~17 as measured on CamA
@@ -127,8 +127,8 @@ def test_a_static_camera_does_not_repeat_itself():
 
 
 def test_sampling_is_sparse_and_covers_the_clip():
-    assert sample_indices(fps=25.0, n_frames=100, step_s=1.0) == [0, 25, 50, 75]
-    assert sample_indices(fps=25.0, n_frames=0, step_s=1.0) == []
+    assert sample_step(fps=25.0, step_s=1.0) == 25
+    assert sample_step(fps=10.0, step_s=0.01) == 1
 
 
 def test_a_rock_inside_the_gravel_is_not_mistaken_for_board():

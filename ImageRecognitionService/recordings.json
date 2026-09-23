@@ -4,14 +4,16 @@
     "capture_setup": "legacy-dev",
     "role": "spent",
     "fps": 25.0,
-    "window": [0.0, 79.76]
+    "window": [0.0, 79.76],
+    "window_basis": "whole clip: legacy development footage, analysed end to end"
   },
   "de262e617aeb7dceb47ae784cf1a1e16e228c1d3223dafedefd8bd2c24551751": {
     "file": "test_video.mp4",
     "capture_setup": "legacy-dev",
     "role": "spent",
     "fps": 30.004,
-    "window": [0.0, 8.2]
+    "window": [0.0, 8.2],
+    "window_basis": "whole clip: legacy development footage, analysed end to end"
   },
   "0ce88d4f6a12184f4a1fbfd47c8c7f34d4f4ba909988654aa2b714ccbd1c7625": {
     "file": "CamA_20260914_141546.mkv",
@@ -40,7 +42,7 @@
   "ed4c3afdd88213c5ec56e68d8f243710b8ad64d3964ccad537cf30b848d93e6f": {
     "file": "CamB_20260915_102250.mkv",
     "capture_setup": "camb-20260915-close-one-board",
-    "role": "threshold-work",
+    "role": "spent",
     "fps": 25.0,
     "window": [25.0, 36.0],
     "window_basis": "verified: the labelled window of truth/camb-25-36, pinned by HANDOVER. Photograph-derived truth in truth/camb-20260915-102250 spans the whole 46.0s clip and counts 4 new Bullet Holes to this window's 3"

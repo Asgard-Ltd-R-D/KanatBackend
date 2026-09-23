@@ -23,7 +23,7 @@ file count would put it.
 |---|---|---|
 | `cama-20260914` | `CamA_20260914_141546` | spent |
 | `camb-20260915-wide-two-boards` | `CamB_20260915_101450`, `_101550` | **sealed** |
-| `camb-20260915-close-one-board` | `CamB_20260915_102250`, `_102450`, `_103223` | threshold-work |
+| `camb-20260915-close-one-board` | `CamB_20260915_102250` (spent), `_102450`, `_103223` | threshold-work |
 
 ## What was measured
 

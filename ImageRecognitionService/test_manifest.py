@@ -10,7 +10,7 @@ anything heavy being available.
 import pytest
 
 import manifest
-from manifest import (ManifestError, NotInManifest, SEALED, THRESHOLD_WORK, Sealed,
+from manifest import (ManifestError, NotInManifest, SEALED, SPENT, THRESHOLD_WORK, Sealed,
                       authorise, check_allowed, content_hash, log_final_run, role_for)
 
 MANIFEST = {
@@ -146,22 +146,25 @@ def test_a_permitted_final_run_is_logged(tmp_path, monkeypatch):
 # ADR-0005 turns on is one of the real allocation and nothing else checks it.
 # See capture_setups.md for the grouping evidence behind that allocation.
 
-DOCUMENTED_FIELDS = ("file", "capture_setup", "role", "fps", "window")
+DOCUMENTED_FIELDS = ("file", "capture_setup", "role", "fps", "window", "window_basis")
 
 
 def _setups_with_two_roles(entries):
-    """Capture Setups whose recordings do not all carry the same role.
+    """Capture Setups with recordings on both sides of the sealed boundary.
 
     The unit of the split is the Capture Setup, not the file (ADR-0005). Holding
     out one file of a Capture Setup the constants were fitted to measures
     re-detection of an arrangement already fitted, and reports it as
     generalisation. Two files from one afternoon exercise no threshold
     independently, so the whole setup goes one side of the boundary or the other.
+    `spent` and `threshold-work` are both the unsealed side, so a setup may mix
+    them and each file keeps its own provenance.
     """
     roles = {}
     for entry in entries.values():
         roles.setdefault(entry["capture_setup"], set()).add(entry["role"])
-    return {setup: sorted(r) for setup, r in roles.items() if len(r) > 1}
+    return {setup: sorted(r) for setup, r in roles.items()
+            if SEALED in r and len(r) > 1}
 
 
 def test_a_setup_whose_files_all_carry_one_role_is_not_reported():
@@ -177,6 +180,14 @@ def test_a_setup_split_across_the_boundary_is_reported():
 
     assert _setups_with_two_roles(split) == {
         "cam-c-20260920": [SEALED, THRESHOLD_WORK]}
+
+
+def test_spent_and_threshold_work_in_one_setup_is_not_a_split():
+    """Both are the unsealed side; a fitted clip keeps `spent` beside its
+    unopened siblings without either being mislabelled to pass."""
+    entries = {"a" * 64: {"capture_setup": "camb", "role": SPENT},
+               "b" * 64: {"capture_setup": "camb", "role": THRESHOLD_WORK}}
+    assert _setups_with_two_roles(entries) == {}
 
 
 def test_a_setup_is_grouped_by_name_not_by_filename():

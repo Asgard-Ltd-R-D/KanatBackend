@@ -192,8 +192,10 @@ is not the held-out test set, and model selection still waits on it (blocked
 item 2).
 
 It is also not the whole story about recall. Outside the labelled window, on the
-full 0–46s CamB clip, the detector returns **nothing at conf 0.02** for a mark
-that stays plainly visible for 21 seconds — see "Three failure modes" below.
+full 0–46s CamB clip, the detector loses a mark that is still plainly visible.
+It finds it only on and off from 4.0s, not at all from 12.40s onward, while the
+operator still sees it at 25.0s — see "Three failure modes" below, which also
+corrects the earlier "21 seconds" figure.
 
 ---
 
@@ -412,10 +414,44 @@ so. See [ADR-0006](../docs/adr/0006-every-false-positive-is-attributed.md).
 
 **3. A confirmed Bullet Hole is never re-examined when it stops existing. NO
 SURVIVING INSTANCE — it is the same mark as mode 1.** The 0.04s mark is detected
-at 0.82-0.86 for its first ~3.8 seconds, then the detector returns **nothing at
-conf 0.02** from 4.0s (nearest detection 116 px away) and never recovers it
-through 25.0s, while the mark stays visible to the eye. It confirmed only because
-its ~95 detected frames contain the 50-frame window.
+at 0.82-0.86 for its first ~3.8 seconds. After that, the shared frame loop at
+conf 0.02 finds it only on and off: 40 of 526 frames between 4.0s and 25.0s,
+most of them in 6.2–9.1s, and the last at 12.36s. **From 12.40s it is never
+detected again**, through the clip's end at 45.96s, while the operator can still
+see it at 25.0s. It confirmed only because its ~95 detected frames contain the
+50-frame window.
+
+Measured with `probe.py --at 774.8,1417.7` on the full clip. That is the mark's
+template position in frame 1 (0.04s), found as HANDOVER defines the mark: the
+conf-0.40 detection that frame 0 lacks and frames 1–4 hold, 128 Board px from
+anything in frame 0.
+
+**Correction (2026-09-23).** This paragraph used to say the detector returns
+"nothing at conf 0.02 from 4.0s (nearest detection 116 px away) and never
+recovers it through 25.0s". That was wrong. The 2026-09-17 probe behind it was
+reproduced exactly, down to the decimal (4.0s: 115.9, 10.0s: 103.9, 25.0s: 98.4
+Board px). It had two defects that compounded:
+
+1. **Its coordinates did not stay on the mark.** Each sampled frame was
+   registered with a fresh `board.build_view` and got its own Board space,
+   whose scale ranges from 0.141 to 0.187 over the clip. It was then compared
+   with one fixed Board-px point taken from t=0. At 6.0s the old probe reported
+   57.4 Board px; the same detection is 12.2 template px from the mark, inside
+   the 40 px radius. Run on every frame instead of ten, that comparison still
+   finds a single detection after 4.0s (6.40s).
+2. **It sampled sparsely.** It looked only at t = 2, 4, 6, 8, 10, 14, 18, 22, 24
+   and 25s. With coordinates that do stay on the mark, whole-second samples
+   catch at most 2 of the 40–55 frames that hold a detection, so sampling alone
+   would still have read as "gone".
+
+The two registrations also disagree about when the mark is last seen. Under a
+fresh view per frame, measured in template space, there are 55 detections
+after 4.0s and the last is at 19.24s. Under the chained registration the
+runtime uses, the last is at 12.36s. The 12.40s figure is therefore a statement
+about what the runtime sees, not a registration-independent fact.
+
+The conclusion holds: a real mark stops being detected while it is plainly
+visible, for at least 12.6 s. Only the onset moved, from 4.0s to 12.40s.
 
 Once the multi-frame baseline classifies that mark pre-existing, it is not
 reported at all, and **no case remains of a genuinely new Bullet Hole that

@@ -10,9 +10,11 @@ Recall only. Detector precision is already characterised (~86% of raw
 detections land on gravel), and the false positives the customer feels are the
 pipeline's, which `evaluate.py` scores against the same photograph.
 
-The generalised form of the probe that found CamB's 0.04s mark invisible at
-conf 0.02 from 4.0s through 25.0s while it sat in plain view. A rate hides a
-finding like that, so each Bullet Hole also gets its longest blind run.
+The generalised form of the probe that found CamB's 0.04s mark lost at conf
+0.02 while it sat in plain view. That earlier probe sampled ten timestamps, each
+registered on its own, and got the onset wrong (HANDOVER.md, failure mode 3).
+This one looks at every frame through the runtime loop. A rate hides a finding
+like that, so each Bullet Hole also gets its longest blind run.
 
 Frames come from `new_bullet_holes.RegisteredFrames`, never a loop of this
 file's own — see the warning there. `--model` takes several checkpoints and

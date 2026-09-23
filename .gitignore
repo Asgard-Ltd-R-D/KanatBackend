@@ -653,3 +653,9 @@ ImageRecognitionService/videos/*.mkv
 # ...but the record of every look at sealed footage is the whole point, and
 # `*.log` above would have swallowed it. It is evidence, so it is committed.
 !ImageRecognitionService/sealed_runs.log
+
+# Mined background negatives: regenerated from the recordings by
+# ImageRecognitionService/mine_negatives.py. Its sources.csv is the audit record
+# of what was mined, and is committed.
+ImageRecognitionService/negatives/images/
+ImageRecognitionService/negatives/labels/

@@ -55,6 +55,13 @@ def test_two_holes_get_independent_rates():
     assert _rate(looks, [HOLE, other]) == [1.0, 0.25]
 
 
+def test_one_detection_between_two_close_holes_credits_only_one():
+    """One-to-one, as `evaluate.match` scores a run: one mark seen, not two."""
+    other = (HOLE[0] + RADIUS, HOLE[1])
+    between = (HOLE[0] + RADIUS / 2, HOLE[1])
+    assert sum(_rate([_look(0, between)], [HOLE, other])) == 1.0
+
+
 def test_two_detections_on_one_hole_count_its_frame_once():
     assert _rate([_look(0, HOLE, (101.0, 100.0)), _look(1)]) == [0.5]
 

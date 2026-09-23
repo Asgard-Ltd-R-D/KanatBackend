@@ -72,8 +72,9 @@ def detection_rates(looks, positions, radius):
     `looks` are `new_bullet_holes.Look`s, `positions` Board-space (x, y), and
     `radius` Board px, inclusive. A frame that failed to register is left out
     of the denominator rather than scored as no detection — the rule
-    persistence follows. Each position is measured on its own; a detection near
-    one credits no other, and several on one Bullet Hole count its frame once.
+    persistence follows. Within a frame detections pair with positions
+    one-to-one (`evaluate.match`), so one detection between two close Bullet
+    Holes credits only one of them, and several on one count its frame once.
 
     Returns one `Rate` per position.
     """
@@ -83,12 +84,10 @@ def detection_rates(looks, positions, radius):
         if not look.registered:
             continue
         looked.append(look.index)
-        centres = look.detections[:, :2]
-        if len(centres):
-            nearest = np.linalg.norm(centres[None] - positions[:, None], axis=2).min(axis=1)
-            hit.append(nearest <= radius)
-        else:
-            hit.append(np.zeros(len(positions), bool))
+        seen = np.zeros(len(positions), bool)
+        pairs, _ = evaluate.match(positions, look.detections[:, :2], radius)
+        seen[[j for _, j, _ in pairs]] = True
+        hit.append(seen)
 
     rates = []
     for p in range(len(positions)):

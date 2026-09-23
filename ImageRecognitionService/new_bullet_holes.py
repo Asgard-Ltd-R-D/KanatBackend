@@ -43,6 +43,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Single-class yolo26n, trained on Bullet Holes only. Replaces
 # kanat_model10_v.2.0 (3-class, board/bullet_hole/target), which scored below its
 # own Capture Profile floor on real range footage and so reported nothing.
+BULLET_HOLE_CLASS = "bullet_hole"   # by name: its id differs between checkpoints
 DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26n_v1", "weights", "best.pt")
 
 # --- Provisional working values --------------------------------------------
@@ -317,12 +318,24 @@ def _detect(model, image, imgsz, conf):
     The size is not decoration: `same_bullet_hole` needs the mark's own
     footprint, because a radius fixed in template px can come out smaller than
     the Bullet Hole it is supposed to merge.
+
+    Bullet Holes only: the v2.0 checkpoint also emits Board and Target boxes,
+    and a Target box read as a mark is a false positive nothing downstream
+    can tell apart.
     """
     boxes = []
-    for b in model.predict(image, imgsz=imgsz, conf=conf, verbose=False)[0].boxes:
+    for b in model.predict(image, imgsz=imgsz, conf=conf, verbose=False,
+                           classes=_bullet_hole_classes(model))[0].boxes:
         x0, y0, x1, y1 = (float(v) for v in b.xyxy[0])
         boxes.append([(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0])
     return np.array(boxes, np.float32).reshape(-1, 4)
+
+
+def _bullet_hole_classes(model):
+    classes = [k for k, v in model.names.items() if v == BULLET_HOLE_CLASS]
+    if not classes:
+        raise SystemExit(f"model has no {BULLET_HOLE_CLASS!r} class: {model.names}")
+    return classes
 
 
 def _round32(x):
@@ -420,6 +433,7 @@ class RegisteredFrames:
              template_path=board.DEFAULT_TEMPLATE):
         from ultralytics import YOLO  # imported lazily: pulls in torch
         model = YOLO(model_path)
+        _bullet_hole_classes(model)   # refuse a wrong checkpoint before any video work
 
         template = cv2.imread(template_path)
         if template is None:

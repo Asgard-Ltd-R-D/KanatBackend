@@ -568,6 +568,30 @@ def truth_labels(path):
     return derived if os.path.exists(derived) else _one(path, "*.txt")
 
 
+def load_truth(image_path, label_path, template_mask):
+    """Ground truth in template coordinates, with every caveat printed.
+
+    Shared by the scoring and the detector probe: both report recall, and a
+    label the recording could never have found understates it in either.
+    """
+    labels = truth_labels(label_path)
+    truth, correlation, damaged = truth_in_template(
+        _one(image_path, "*.jp*g"), labels, template_mask)
+    print(f"[TRUTH] {len(truth)} labelled Bullet Holes from "
+          f"{os.path.basename(labels)}, "
+          f"ground-truth registration correlation {correlation:.4f}")
+    if damaged:
+        print(f"[WARN] {damaged} label(s) were malformed or truncated; "
+              f"their positions are approximate")
+    unpaired = unpaired_before_marks(labels)
+    if unpaired:
+        print(f"[WARN] the derivation left {unpaired} before-mark(s) unpaired, "
+              f"so up to {unpaired} of these labels were already on the Board "
+              f"before the recording. The run cannot find those, and recall is "
+              f"understated by that much. See {SOURCE_NAME}.")
+    return truth
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser("Score a run against labelled ground truth")
     p.add_argument("video")
@@ -596,23 +620,9 @@ if __name__ == "__main__":
     template = cv2.imread(a.template)
     _, template_mask = board.find_targets(template, min_area=1)
 
-    labels = truth_labels(a.truth_labels)
-    truth, correlation, damaged = truth_in_template(
-        _one(a.truth_image, "*.jp*g"), labels, template_mask)
-    print(f"[TRUTH] {len(truth)} labelled Bullet Holes from "
-          f"{os.path.basename(labels)}, "
-          f"ground-truth registration correlation {correlation:.4f}")
-    if damaged:
-        print(f"[WARN] {damaged} label(s) were malformed or truncated; "
-              f"their positions are approximate")
-    unpaired = unpaired_before_marks(labels)
-    if unpaired:
-        print(f"[WARN] the derivation left {unpaired} before-mark(s) unpaired, "
-              f"so up to {unpaired} of these labels were already on the Board "
-              f"before the recording. The run cannot find those, and recall is "
-              f"understated by that much. See {SOURCE_NAME}.")
+    truth = load_truth(a.truth_image, a.truth_labels, template_mask)
 
-    run = nbh.process(a.video, a.start, a.end, a.model, a.confidence,
+    run =nbh.process(a.video, a.start, a.end, a.model, a.confidence,
                       template_path=a.template,
                       require_change_evidence=not a.no_change_filter,
                       merge_displaced=a.merge_displaced,

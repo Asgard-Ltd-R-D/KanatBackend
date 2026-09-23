@@ -157,4 +157,5 @@ Negatives accordingly come from `cama-20260914`, `legacy-dev` and the three
 above is three.
 
 The two CamA files this ADR names as spent, `_141446` and `_141846`, were not in
-the delivery. They get manifest entries when they arrive.
+the delivery. They arrived on 2026-09-23 with a third, `_141646`, which this ADR
+does not name; all three measure as `cama-20260914` and carry `spent`.

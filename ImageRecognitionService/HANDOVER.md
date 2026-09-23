@@ -741,6 +741,16 @@ Holes. **Add background frames with empty label files.** No annotation work, jus
 images. That is the cheap, standard remedy for this exact failure, and it comes
 before any architecture change.
 
+`mine_negatives.py` makes them, from spent and threshold-work footage only — it
+refuses sealed recordings outright, with no flag. It covers the gravel and not
+the rings: an empty label file on the Board would be a lie, because the Board
+carries Bullet Holes. On 2026-09-23 it yields **7** negatives, all
+`cama-20260914`, from four CamA clips — near-duplicates are dropped across the
+whole Capture Setup, and `_141646` adds nothing its siblings had not. Nothing comes from the CamB close trio,
+whose canvas is all Board, or from the legacy clips, which carry no green Target.
+A static camera gives only a few distinct gravel tiles per clip, so more
+negatives means more Capture Setups, not a smaller `--step`.
+
 `yolo26.yaml` and `yolo26-p2.yaml` are both present in the installed ultralytics
 (8.4.126), so `m` and the P2 experiment are available whenever the test set makes
 them measurable.

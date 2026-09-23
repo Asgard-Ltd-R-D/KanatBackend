@@ -15,13 +15,14 @@ delivery folder; `truth/*/board.source.txt` still names them.
 ## The count
 
 **Three distinct Capture Setups across the six files. Two across the five
-customer recordings.** Five files do not collapse to one Capture Setup, as ADR-0005
+customer recordings.** The three CamA files that arrived on 2026-09-23 join
+`cama-20260914` and change neither count — see below. Five files do not collapse to one Capture Setup, as ADR-0005
 allowed they might; they collapse to two, and the boundary does not fall where
 file count would put it.
 
 | Capture Setup | Recordings | Role |
 |---|---|---|
-| `cama-20260914` | `CamA_20260914_141546` | spent |
+| `cama-20260914` | `CamA_20260914_141446`, `_141546`, `_141646`, `_141846` | spent |
 | `camb-20260915-wide-two-boards` | `CamB_20260915_101450`, `_101550` | **sealed** |
 | `camb-20260915-close-one-board` | `CamB_20260915_102250` (spent), `_102450`, `_103223` | threshold-work |
 
@@ -82,7 +83,47 @@ larger. Afternoon light, mean grey 80.7 against CamB's 121.7–126.7. MAD 60.4�
 against every CamB frame. Nothing in the delivery groups with it.
 
 ADR-0005 names two further CamA files, `_141446` and `_141846`, as part of this
-setup. Neither arrived in this delivery; they get entries when they do.
+setup. Neither arrived in this delivery; they arrived later, with a third,
+below.
+
+### Three later CamA files — `_141446`, `_141646`, `_141846`
+
+**Measured 2026-09-23**, the same way: frame 0, container header, sha256. All
+three are 1920x1080, 25.0 fps, FMP4, and byte-identical to their copies in the
+`2026_09_14_Dvira` delivery folder. `_141646` is named in no ADR; it arrived
+beside the two that are.
+
+| Recording | Capture time | Duration | Targets in frame 0 (centroid, span px) | Mean grey |
+|---|---|---|---|---|
+| `CamA_20260914_141446` | 2026-09-14 14:14:46 | 48.64 s | (1064, 719) 502 · (1010, 166) 436 | 92.8 |
+| `CamA_20260914_141546` | 2026-09-14 14:15:46 | 51.24 s | (1104, 699) 502 · (1048, 155) 432 | 80.7 |
+| `CamA_20260914_141646` | 2026-09-14 14:16:46 | 52.08 s | (1034, 430) 484 · (1088, 949) 416 | 80.9 |
+| `CamA_20260914_141846` | 2026-09-14 14:18:46 | 53.00 s | (1008, 405) 482 · (1059, 935) 422 | 79.9 |
+
+First-frame MAD, full resolution: 141446–141546 19.46, 141446–141646 24.97,
+141446–141846 25.35, 141546–141646 18.56, 141546–141846 18.77, 141646–141846
+**10.19**. Against the CamB close trio (`_102450`), 56.7–60.5. The sealed pair
+was not opened for this.
+
+**One Capture Setup.** The same Board — the two green silhouettes stacked, the
+ringed panel with its cross to their left, the same pre-existing marks on the
+left of the lower silhouette — the same light and the same distance: Target
+spans 482–502 px against CamB's 146–182. Every within-CamA MAD, 10.2–25.4, lies
+in the within-setup band this document found for CamB (19.9–26.3), none near
+the 53–64 that separates setups.
+
+What varies is aim. Between `_141546` and `_141646` the camera tilted up: the
+Board sits about 270 px lower in frame, the lower silhouette is cut off at the
+bottom edge and the upper one becomes the largest Target. That is a re-aim at
+unchanged distance, not the move-in that separates the CamB groups, where the
+Targets grew 12–17% and crossed 245 px of frame. And it would change no role:
+every CamA file shares the Board and afternoon every current constant was fitted
+on, and none of it is sealed.
+
+**`spent`**, all three — the role ADR-0005 gives `_141446` and `_141846` by
+name, and which `_141646` must share, sitting one minute between them with a
+frame closer to `_141846` than any other pair in this delivery. Spent is the
+negative-mining source.
 
 ### `camb-20260915-wide-two-boards` — 101450 and 101550
 

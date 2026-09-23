@@ -23,6 +23,30 @@
     "window": [13.0, 25.0],
     "window_basis": "verified: the labelled window of truth/kanatv6, pinned by HANDOVER"
   },
+  "2f5fbb9ad8dfc44501118ab17450a4d80b09b62b186df3e1ec661cf6e0c15d21": {
+    "file": "CamA_20260914_141446.mkv",
+    "capture_setup": "cama-20260914",
+    "role": "spent",
+    "fps": 25.0,
+    "window": [0.0, 48.64],
+    "window_basis": "whole clip: never analysed, no ground truth; a negative-mining source (ADR-0005), which draws from anywhere in it"
+  },
+  "ef813508cc6ac14acc189ae5a0bbc3a5ee76a880d59c52b61ae5250506ba3691": {
+    "file": "CamA_20260914_141646.mkv",
+    "capture_setup": "cama-20260914",
+    "role": "spent",
+    "fps": 25.0,
+    "window": [0.0, 52.08],
+    "window_basis": "whole clip: never analysed, no ground truth; a negative-mining source (ADR-0005), which draws from anywhere in it"
+  },
+  "4de0722a3bc69362316792e90793c680522d75d9d1e21f7192d2d95ec4874488": {
+    "file": "CamA_20260914_141846.mkv",
+    "capture_setup": "cama-20260914",
+    "role": "spent",
+    "fps": 25.0,
+    "window": [0.0, 53.0],
+    "window_basis": "whole clip: never analysed for accuracy (only run to reproduce the OpenCV crash), no ground truth; a negative-mining source (ADR-0005)"
+  },
   "7b725aa8441610e4f8d6bc35cac02849ba22d2e638fee270536ed67f6164b528": {
     "file": "CamB_20260915_101450.mkv",
     "capture_setup": "camb-20260915-wide-two-boards",

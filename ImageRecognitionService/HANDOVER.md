@@ -51,7 +51,13 @@ photographs threw labels up to 58 000 template px out. Both counts above
 reproduce; the pairs now sit at 3–11 px on CamA and 5–29 on CamB (one pair
 further, two nearer). The threshold-work pair scores for the first time:
 `_102450` TP 2 / FP 0 / FN 2 (both misses off the canvas, #41) and `_103223`
-TP 2 / FP 1 / FN 0. A derived score now prints `[PLACEMENT]`: the after
+TP 2 / FP 1 / FN 0. The newer derived truths score CamA 6 / 1 / 0 (pairs 2–7
+px) and `camb-20260915-102250` 4 / 0 / 0 at 25–36s, up from 1 / 3 / 3 —
+**but that 1.00 is flattered**: the derivation's before photograph predates the
+whole recording, so its four labels include the mark already on the Board at
+25s, and the displaced sighting `camb-25-36` attributes to displacement is
+credited to it at 26 px. Derived truth does not yet fit a window that starts
+mid-recording. A derived score now prints `[PLACEMENT]`: the after
 photograph's pre-existing marks against the run's baseline, 3–16 and 6–12 px
 on those two — the placement's own error, measured on every run. 171 tests
 pass.

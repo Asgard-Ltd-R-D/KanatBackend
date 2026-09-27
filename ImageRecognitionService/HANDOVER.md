@@ -44,6 +44,18 @@ two attributions were measured on 2026-09-22 — every other figure below
 dates from the 2026-09-17 re-verification. 124 tests
 pass in about a second.
 
+**Since #40 (2026-09-27) the truth photograph is registered to the baseline
+video frame**, over the whole picture, and reaches template space through
+that frame's homography — no longer straight to the artwork, which on the CamB
+photographs threw labels up to 58 000 template px out. Both counts above
+reproduce; the pairs now sit at 3–11 px on CamA and 5–29 on CamB (one pair
+further, two nearer). The threshold-work pair scores for the first time:
+`_102450` TP 2 / FP 0 / FN 2 (both misses off the canvas, #41) and `_103223`
+TP 2 / FP 1 / FN 0. A derived score now prints `[PLACEMENT]`: the after
+photograph's pre-existing marks against the run's baseline, 3–16 and 6–12 px
+on those two — the placement's own error, measured on every run. 171 tests
+pass.
+
 **Every figure in this document was re-verified on 2026-09-17 after the
 memory-safety fix below**, on `opencv-python==4.10.0.84`. All three F1 scores,
 the drift ranges, the ECC medians, the co-occurrence counts and the anchor

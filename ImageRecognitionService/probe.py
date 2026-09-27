@@ -194,7 +194,8 @@ if __name__ == "__main__":
     else:
         template = cv2.imread(a.template)
         _, template_mask = board.find_targets(template, min_area=1)
-        truth = evaluate.load_truth(a.truth_image, a.truth_labels, template_mask)
+        frame, view = evaluate.baseline_view(a.video, a.start, template_mask)
+        truth, _ = evaluate.load_truth(a.truth_image, a.truth_labels, frame, view)
         names = None
 
     for model in a.model:

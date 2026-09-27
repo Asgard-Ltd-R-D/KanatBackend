@@ -1,9 +1,12 @@
 """Checks for ground-truth scoring. No model, no video, no torch."""
+import cv2
 import numpy as np
 import pytest
 
-from evaluate import (DETECTOR, DISPLACEMENT, UNKNOWN, attribute,
-                      load_labels, match, score)
+import board
+from evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, RAW_NAMES, UNKNOWN,
+                      attribute, load_labels, match, off_canvas,
+                      pre_existing_labels, register_photograph, score)
 
 
 def test_greedy_matching_is_one_to_one():
@@ -199,3 +202,61 @@ def test_a_baseline_of_boxes_is_read_as_marks():
     boxes = np.float32([[0, 0, 9, 9], [300, 300, 9, 9]])
     assert [(i, c) for i, c, _ in _attribute(np.float32([[23, 0]]), boxes)] \
         == [(0, DISPLACEMENT)]
+
+
+# --- placing photograph truth through the baseline frame -------------------
+
+def _scene():
+    """A textured Board with a small green disk for artwork.
+
+    A disk's outline says nothing about rotation, so a registration fitted to
+    the artwork alone is free to turn about it and lands everything away from
+    the disk in the wrong place — the extrapolation #40 is about, in miniature.
+    """
+    rng = np.random.default_rng(0)
+    noise = cv2.GaussianBlur(rng.random((700, 1200)).astype(np.float32), (0, 0), 12)
+    grey = cv2.normalize(noise, None, 90, 230, cv2.NORM_MINMAX).astype(np.uint8)
+    image = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
+    cv2.circle(image, (250, 350), 90, (60, 160, 30), -1)
+    return image
+
+
+def test_a_photograph_registers_to_the_frame_far_from_the_artwork():
+    """Fitted to the artwork alone this scene misses by 18.6 px at correlation
+    0.9999. The bound is the blur's price in precision, ~3 px here."""
+    photo = _scene()
+    true = np.float32([[0.97, -0.06, 60], [0.05, 0.98, 30], [2e-5, 1e-5, 1]])
+    frame = cv2.warpPerspective(photo, true, (1300, 800))
+    far = np.float32([[1100, 80], [1100, 620], [700, 350]])
+
+    def miss(H):
+        return np.abs(board._apply(H, far) - board._apply(true, far)).max()
+
+    photo_targets, photo_mask = board.find_targets(photo)
+    frame_targets, frame_mask = board.find_targets(frame)
+    artwork_only, _ = board.register(photo_mask, frame_mask, frame_targets[0])
+    assert miss(artwork_only) > 10
+    assert miss(register_photograph(photo, frame)[0]) < 5
+
+
+def test_a_label_off_the_rectified_board_is_named():
+    view = board.BoardView(H=np.eye(3, dtype=np.float32),
+                           tpl_to_board=board._as_matrix(0.5, (10, 10)),
+                           canvas_size=(500, 400), targets=[])
+    truth = np.float32([[100, 100], [-40, 100], [100, 790], [100, 770]])
+    assert off_canvas(truth, view) == [1, 2]
+
+
+def test_derived_truth_names_its_pre_existing_marks(tmp_path):
+    """The after export's labels the derivation did not write as new."""
+    (tmp_path / RAW_NAMES["after"]).write_text(
+        "0 0.1 0.1 0.01 0.01\n0 0.5 0.5 0.01 0.01\n0 0.9 0.2 0.01 0.01\n")
+    (tmp_path / DERIVED_NAME).write_text("0 0.5 0.5 0.01 0.01\n")
+    got = pre_existing_labels(str(tmp_path / DERIVED_NAME))
+    np.testing.assert_allclose(got, [[0.1, 0.1], [0.9, 0.2]], atol=1e-6)
+
+
+def test_truth_not_derived_has_no_pre_existing_marks(tmp_path):
+    labels = tmp_path / "board.txt"
+    labels.write_text("0 0.5 0.5 0.01 0.01\n")
+    assert pre_existing_labels(str(labels)) is None

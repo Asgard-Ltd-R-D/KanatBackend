@@ -109,10 +109,13 @@ Change detection as a filter is doing most of the precision work: the same run
 without it scores TP 6, FP 7, F1 0.63.
 
 `evaluate.py` is what produced these numbers and is the reason the thresholds are
-no longer guesses. It registers the ground-truth photograph and the video frame
-to the same printed artwork, so positions taken from different viewpoints are
-comparable, and matches one-to-one so a cluster of false positives cannot all
-claim the same label.
+no longer guesses. It registers the ground-truth photograph to the recording's
+baseline frame and reaches the printed artwork through that frame's own
+homography, so positions taken from different viewpoints are comparable, and
+matches one-to-one so a cluster of false positives cannot all claim the same
+label. (Registering the photograph straight to the artwork, as it first did,
+held on CamA and fails on photographs where the artwork is a small part of the
+picture — #40.)
 
 A sweep over confidence, persistence, match radius and the change filter
 confirms these four values are jointly optimal on this ground truth. That is

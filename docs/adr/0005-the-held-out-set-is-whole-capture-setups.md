@@ -51,8 +51,10 @@ held-out scene. The report says one.
 
 Ground truth is two labelled photographs of the Board per recording — before
 firing and after. The set difference is the new Bullet Holes; `evaluate.py`
-already registers such a photograph to the printed artwork, so positions taken
-from a different viewpoint are comparable.
+registers such a photograph to the recording's baseline frame, and through it
+to the printed artwork, so positions taken from a different viewpoint are
+comparable. (Straight to the artwork, as it first did, fails on the CamB
+photographs — #40.)
 
 This is what makes leakage a non-question rather than a procedure. **No video
 frame is annotated, so there are no adjacent frames to split.** The

@@ -130,12 +130,9 @@ every line, no polygons and no mixed files, so nothing is reported as mixed any
 more. The marks moved 0.001–0.003 in normalised photograph coordinates from the
 polygon pass, which is a re-draw of the same holes.
 
-**CamA is the cross-check.** Its before photograph is clean, so all six after
-labels are new — and those six landed 4.9–9.4 template px from the recording's
-first, hand-drawn labels (six, drawn on a *different* photograph; folded into
-this directory and since removed, as they were one recording's truth twice).
-Six of six matched within tolerance: two annotation passes of one recording,
-one answer — a check on the annotation, not a second recording.
+CamA's before photograph is clean, so all six after labels are new.
+(`kanatv6` was an older annotation set for this recording, superseded as
+unreliable and removed; nothing here is measured against it.)
 
 **The derivation registers twice, and the second time on the marks
 themselves.** The artwork is a sixth of these photographs, so an ECC

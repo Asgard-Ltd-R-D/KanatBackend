@@ -239,6 +239,18 @@ def test_a_photograph_registers_to_the_frame_far_from_the_artwork():
     assert miss(register_photograph(photo, frame)[0]) < 5
 
 
+def test_registration_survives_the_largest_target_changing():
+    """Two Targets, and a viewpoint that makes the photograph's smaller one the
+    frame's largest. Seeded largest-to-largest this lands ~1400 px out."""
+    photo = _scene()
+    cv2.circle(photo, (850, 350), 86, (60, 160, 30), -1)
+    true = np.float32([[1.0, 0, 40], [0, 1.0, 20], [-2e-4, 0, 1]])
+    frame = cv2.warpPerspective(photo, true, (1600, 900))
+    far = np.float32([[1100, 80], [1100, 620], [700, 350], [100, 100]])
+    H, _ = register_photograph(photo, frame)
+    assert np.abs(board._apply(H, far) - board._apply(true, far)).max() < 5
+
+
 def test_a_label_off_the_rectified_board_is_named():
     view = board.BoardView(H=np.eye(3, dtype=np.float32),
                            tpl_to_board=board._as_matrix(0.5, (10, 10)),

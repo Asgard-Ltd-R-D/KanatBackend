@@ -132,18 +132,30 @@ def register_photograph(photo, frame):
     if not contours or not frame_contours:
         raise SystemExit("no Target found in the ground-truth photograph or the "
                          "baseline frame; cannot register one to the other")
-    try:
-        seed, _ = board.register(mask, frame_mask, frame_contours[0])
-        grey = [cv2.cvtColor(i, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
-                for i in (photo, frame)]
-        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
-        correlation, H = cv2.findTransformECC(
-            grey[0], grey[1], seed, cv2.MOTION_HOMOGRAPHY, criteria, None,
-            PHOTO_ECC_BLUR)
-    except cv2.error as e:
+    # The photograph's largest Target need not be the frame's largest: a change
+    # of viewpoint reorders them, and a seed one Target-spacing out converges on
+    # the repeated artwork there. Seed from each frame Target; over the whole
+    # picture the wrong correspondence cannot correlate as well as the right one.
+    grey = [cv2.cvtColor(i, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
+            for i in (photo, frame)]
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
+    best, errors = None, []
+    for reference in frame_contours:
+        try:
+            seed, _ = board.register(mask, frame_mask, reference)
+            fit = cv2.findTransformECC(
+                grey[0], grey[1], seed, cv2.MOTION_HOMOGRAPHY, criteria, None,
+                PHOTO_ECC_BLUR)
+        except cv2.error as e:
+            errors.append(e.err)
+            continue
+        if best is None or fit[0] > best[0]:
+            best = fit
+    if best is None:
         raise SystemExit(f"the ground-truth photograph did not register to the "
-                         f"baseline frame ({e.err}); no position from it is "
+                         f"baseline frame ({errors[0]}); no position from it is "
                          f"evidence")
+    correlation, H = best
     return H, correlation
 
 

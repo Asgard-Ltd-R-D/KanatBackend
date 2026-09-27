@@ -195,8 +195,8 @@ residuals and a verdict per constant. No constant moved. Two things broke:
 Placed through a video frame instead and checked in the pixels, every Bullet
 Hole on the canvas was found, and the one false positive is a real object —
 insect or debris — that persistence and change evidence pass by construction.
-Both recordings are the `_102250` Capture Setup, so this adds Bullet Holes and
-no setup.
+Both recordings share `_102250`'s Capture Setup, so this adds Bullet Holes and
+no setup. `_103223`'s high mark is credited by eye, not by the scorer.
 
 ## The held-out set is two recordings of one Capture Setup
 
@@ -756,7 +756,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `OVERLAP_THRESHOLD` | 0.5 | `new_bullet_holes.py` | Ported; merging on *any* overlap regresses CamA |
 | `TARGET_NET_SCALE` | 0.90 | `board.py` | Inside a flat band, not a measured peak |
 | `ABSDIFF_SIGMA` | 2.0 | `board.py` | At 2.5 the evidence channel was dead |
-| `BOARD_MARGIN` | 0.50 | `board.py` | Bounds recall; see above |
+| `BOARD_MARGIN` | 0.50 | `board.py` | Bounds recall; see above. **Breaks** on `_102450` — #41 |
 | `GREEN_LO` / `GREEN_HI` | — | `board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `board.py` | May reject distant Targets |
 

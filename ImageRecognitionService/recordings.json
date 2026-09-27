@@ -68,8 +68,8 @@
     "capture_setup": "camb-20260915-close-one-board",
     "role": "spent",
     "fps": 25.0,
-    "window": [25.0, 36.0],
-    "window_basis": "verified: the labelled window of truth/camb-20260915-102250/window-25s, pinned by HANDOVER. Photograph-derived truth in truth/camb-20260915-102250/board.new.txt spans the whole 46.0s clip and counts 4 new Bullet Holes to this window's 3"
+    "window": [0.0, 46.0],
+    "window_basis": "whole clip: what the photograph pair in truth/camb-20260915-102250 covers. The frame-labelled 25-36s annotation was superseded, its quality not trusted"
   },
   "44b0b62c51d17220a9dfca13a3cd5fedcfb59ce925a5a3bccdbf9e8f4f991edc": {
     "file": "CamB_20260915_102450.mkv",

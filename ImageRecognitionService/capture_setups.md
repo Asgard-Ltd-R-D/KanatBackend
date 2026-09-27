@@ -183,8 +183,8 @@ sealed — would put the wide pair on threshold work and seal the close trio. Th
 is the wrong way round, and the reason is that **`CamB_20260915_102250` has
 already been analysed at length.**
 
-It is one of the two clips in HANDOVER's results table, scored F1 0.86 over
-25–36 s. The registration drift figures, the ECC medians, the 0.59x merge
+It is one of the two clips in HANDOVER's results table, scored F1 0.89 over
+the whole clip. The registration drift figures, the ECC medians, the 0.59x merge
 measurement and the residual censoring that ADR-0006 rests on were all taken on
 it, and HANDOVER's own instruction is "do not move any constant further on CamA
 and CamB alone." Every current constant in the pipeline is jointly fitted to

@@ -261,9 +261,9 @@ def score(truth, found, tolerance=MATCH_TOLERANCE_TPL):
 # threshold, and neither was derived from the two clips it is reported on: the
 # near band is `MATCH_TOLERANCE_TPL`, which comes from a Bullet Hole's own width
 # and was already the scoring's slack before any of this, and the far band is a
-# judgement (see `UNKNOWN_FACTOR`). Nothing was fitted to make CamA come out
-# `detector` and CamB `displacement` — the measured distances are 827 and 29
-# template px against bands at 80 and 40, so only CamB's sits near an edge at
+# judgement (see `UNKNOWN_FACTOR`). Nothing was fitted to the clips: the
+# measured distances are 827 template px (CamA) and 29 (CamB's 25.60s report
+# over 25-36s) against bands at 80 and 40, so only CamB's sits near an edge at
 # all, and it is the case HANDOVER had already traced by hand.
 #
 # The near band is the scoring's own slack, not a new constant: a false positive
@@ -655,8 +655,8 @@ def _one(path, pattern):
     """A file, or the single `pattern` match under a directory.
 
     Several matches are refused rather than resolved alphabetically.
-    `truth/camb-20260915-102250/window-25s` holds four .txt files — the before labels, the raw
-    export, the derived file and the corrected one — and taking the first
+    A frame-labelled truth directory once held four .txt files — the before
+    labels, the raw export, the derived file and the corrected one — and taking the first
     scored the run against `board.before.txt`, the marks that were on the Board
     before it started. Silence is what made that possible, so it says which
     files it found and makes the caller name one.

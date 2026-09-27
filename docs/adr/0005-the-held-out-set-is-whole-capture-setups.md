@@ -102,8 +102,8 @@ want. The rule this protects is one that gets broken by accident, months later,
 during a long sweep, by someone who was not party to the decision.
 
 **The two threshold-work recordings may falsify a constant, not optimise one.**
-They raise the evidence from two Capture Setups and nine Bullet Holes to at most
-four and seventeen. A joint sweep over seventeen produces a number that looks
+They raise the evidence from two Capture Setups and ten Bullet Holes by at most
+two setups and eight Bullet Holes. A joint sweep over eighteen produces a number that looks
 earned and is not; this project has already paid for that once, and ADR-0002's
 0.5x shows what an earned threshold looks like — two populations measured and
 separated, not a grid-search maximum. A constant that breaks on new footage

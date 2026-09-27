@@ -9,7 +9,7 @@ Four independent pieces, one git repo:
 - `PacketProcessingService/` — the product: .NET 8 ASP.NET Core service (the only project in `kanat_server.sln`). Directory is `PacketProcessingService`, but the C# root namespace is `PacketProcessing.*` and the README still calls the folder `PacketProcessing/`.
 - `Composer_cli/` + `composer.py` + `build_artifacts.sh` — Python packaging/lifecycle CLI (`composer`) that builds the service, starts the Docker stack, and produces installers. Deployment docs: `Composer_cli/DEPLOY_README.md`.
 - `MotionSimulator/` — standalone Python TCP/UDP simulator + pcap replay, used to feed the service without real hardware.
-- `ImageRecognitionService/` — separate Python experiments (OpenCV), not wired into the .NET service.
+- `ImageRecognitionService/` — Python Bullet Hole detection (OpenCV + YOLO), not wired into the .NET service. Start at `ImageRecognitionService/HANDOVER.md`.
 - `VideoService/` — git submodule (`KanatVideo`); empty until `git submodule update --init`.
 
 ## Commands

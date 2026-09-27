@@ -145,6 +145,14 @@ def _blurred(mask):
     return cv2.GaussianBlur(mask.astype(np.float32) / 255, (21, 21), 0)
 
 
+def box_seed(source_contour, reference_contour):
+    """Homography taking one contour's bounding box onto another's."""
+    def corners(contour):
+        x, y, w, h = cv2.boundingRect(contour)
+        return np.float32([[x, y], [x + w, y], [x + w, y + h], [x, y + h]])
+    return cv2.getPerspectiveTransform(corners(source_contour), corners(reference_contour))
+
+
 def register(template_mask, frame_mask, reference_contour, init=None):
     """Homography mapping template coordinates onto the frame.
 
@@ -157,11 +165,7 @@ def register(template_mask, frame_mask, reference_contour, init=None):
     callers must treat as "this frame is no evidence" rather than as a position.
     """
     if init is None:
-        tx, ty, tw, th = cv2.boundingRect(template_contour(template_mask))
-        fx, fy, fw, fh = cv2.boundingRect(reference_contour)
-        init = cv2.getPerspectiveTransform(
-            np.float32([[tx, ty], [tx + tw, ty], [tx + tw, ty + th], [tx, ty + th]]),
-            np.float32([[fx, fy], [fx + fw, fy], [fx + fw, fy + fh], [fx, fy + fh]]))
+        init = box_seed(template_contour(template_mask), reference_contour)
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
     correlation, H = cv2.findTransformECC(
         _blurred(template_mask), _blurred(frame_mask),

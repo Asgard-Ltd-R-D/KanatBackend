@@ -251,6 +251,18 @@ def test_registration_survives_the_largest_target_changing():
     assert np.abs(board._apply(H, far) - board._apply(true, far)).max() < 5
 
 
+def test_registration_survives_the_largest_target_being_cropped_out():
+    """The photograph's largest Target is outside the frame. Seeded from it,
+    whichever frame Target it is paired with, this lands ~480 px out."""
+    photo = _scene()
+    cv2.circle(photo, (850, 350), 86, (60, 160, 30), -1)
+    true = np.float32([[1.0, 0.03, -480], [-0.02, 1.0, 20], [1e-5, 0, 1]])
+    frame = cv2.warpPerspective(photo, true, (720, 700))
+    far = np.float32([[1100, 80], [1100, 620], [700, 350], [600, 600]])
+    H, _ = register_photograph(photo, frame)
+    assert np.abs(board._apply(H, far) - board._apply(true, far)).max() < 5
+
+
 def test_a_label_off_the_rectified_board_is_named():
     view = board.BoardView(H=np.eye(3, dtype=np.float32),
                            tpl_to_board=board._as_matrix(0.5, (10, 10)),

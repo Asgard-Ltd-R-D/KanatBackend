@@ -6,9 +6,9 @@
 boxes a torn mark as two halves and both fold into one candidate, so a frame was
 counted twice and a Bullet Hole could clear the bar on fewer distinct frames than
 the bar asks for. `min(ratio, 1.0)` was hiding it — the only symptom was a
-persistence wanting to exceed 100%. Both labelled clips score unchanged after the
-fix — CamA 13–25s TP 6 / FP 1 / FN 0, F1 0.92 with every persistence value
-identical, and CamB 25–36s TP 3 / FP 1 / FN 0, F1 0.86. What moved is CamB's torn
+persistence wanting to exceed 100%. CamA scored unchanged after the fix —
+13–25s TP 6 / FP 1 / FN 0, F1 0.92 with every persistence value identical.
+What moved is CamB's torn
 mark, whose frame count fell from 254 to 135; that is the double-counting, and it
 confirms the inflation was concentrated on the one mark the detector splits.
 
@@ -33,16 +33,40 @@ Two clips now carry operator-labelled ground truth.
 
 | Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
 |---|---|---|---|---|---|---|---|---|---|
-| `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 | detector, 827 tpl px out |
-| `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 | displacement, 29 tpl px out |
+| `CamA_20260914_141546.mkv` (`truth/cama-20260914-141546`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 | detector, 827 tpl px out |
+| `CamB_20260915_102250.mkv` (`truth/camb-20260915-102250`) | 0–46s | 4 | 4 | 1 | 0 | 80% | 100% | 0.89 | detector, 855 tpl px out |
 
-Bullet Holes placed within 9–22 template px — under one hole's width. **The two
-clips fail differently**, and that is the point of the last column: one lost
-precision to the model, the other to registration, and until `[ATTRIBUTION]`
-existed both read as the same 1 FP. The counts are untouched by it, and the
-two attributions were measured on 2026-09-22 — every other figure below
-dates from the 2026-09-17 re-verification. 124 tests
-pass in about a second.
+Bullet Holes placed within 2–28 template px — under one hole's width. Both
+surviving false positives attribute to the detector: CamA's at 827 template px
+from anything pre-existing, CamB's a 62%-persistent report at 38.56s, 855 px
+out. The registration-displacement case ADR-0006 was built on — a 25.60s
+report in CamB's old 25–36s window — does not arise over the whole clip,
+because the mark it was a displaced sighting of is reported at 1.64s, when it
+arrived. Measured 2026-09-27; figures below that do not say otherwise date from
+the 2026-09-17 re-verification.
+
+**Since #40 (2026-09-27) the truth photograph is registered to the baseline
+video frame**, over the whole picture, and reaches template space through
+that frame's homography — no longer straight to the artwork, which on the CamB
+photographs threw labels up to 58 000 template px out. CamA reproduces, its
+pairs moving from 9–16 to 2–7 px; CamB's truth could not be scored before it
+(TP 1 / FP 3 / FN 3 over 25–36s). The threshold-work pair scores for the first time:
+`_102450` TP 2 / FP 0 / FN 2 (both misses off the canvas, #41) and `_103223`
+TP 2 / FP 1 / FN 0.
+
+**CamB is scored over the whole clip, 0–46s**, because that is what its
+truth covers: the before photograph predates the recording. Over the old
+25–36s window the same truth reads 4 / 0 / 0, F1 1.00 — flattered, because
+one of its four new Bullet Holes arrived at 1.64s and a displaced sighting of
+it at 25.60s is credited to it. (The frame-labelled 25–36s annotation,
+formerly `truth/camb-25-36`, was superseded and removed because its annotation
+quality was not trusted.) A derived score now prints `[PLACEMENT]`: the after
+photograph's pre-existing marks against the run's baseline, 3–16 and 6–12 px
+on those two — the placement's own error, measured on every run. Truth with no
+pre-existing mark (CamA's) prints `[WARN] placement unverified` instead. Which
+export lines were pre-existing is recorded by line number in `board.source.txt`
+(`pre-existing-export-lines`), so correcting a label in `board.new.txt` does not
+change it. 174 tests pass.
 
 **Every figure in this document was re-verified on 2026-09-17 after the
 memory-safety fix below**, on `opencv-python==4.10.0.84`. All three F1 scores,
@@ -54,16 +78,9 @@ different resize implementations and marginal detections land either side of the
 confidence floor. That the aggregates survived that perturbation is a stronger
 check than bit-equality would have been.
 
-**CamB is scored against 3 labels, not the 4 the operator drew.** The fourth sits
-on a mark that was *already on the Board* at the 25s baseline frame — clean at
-t=0, present at t=25.0 and still there at t=45.5. It is not a new Bullet Hole in
-this window, and a single final frame cannot show when a mark arrived, so the
-label was reasonable and the scoring was not. `board.txt` is the operator's four
-labels; `board.new-since-25s.txt` is the three used above and is what
-`--truth-labels` should point at for this window.
-
-An earlier revision of this file reported CamB as F1 1.00. That figure was
-wrong: it credited the pipeline with finding a pre-existing mark.
+An earlier revision of this file reported CamB as F1 1.00 against a single
+after-photograph's labels. That figure was wrong: it credited the pipeline with
+finding a pre-existing mark, which is what the before photograph now prevents.
 
 **The derivation compares the two photographs in the after photograph's own
 pixels**, not in template coordinates. Registering each photograph to the
@@ -78,12 +95,10 @@ tolerance is converted into photograph px by the Target span ratio — on these
 photographs the Target spans about a sixth of the template, so the slack is
 about 6 photo px. Every pre-existing mark then matches 0.5–5.5 px out.
 
-Those three are no longer worked out by hand. `board.before.txt` carries the one
-pre-existing mark as the operator identified it, and the derivation in
-`evaluate.py` — `derive_truth.py` is its command line — subtracts it,
-reproducing `board.new-since-25s.txt` line for line, which
-`test_derive_truth.py` pins. New recordings get the same treatment from a
-photograph pair rather than a hand-adjudicated frame.
+Pre-existing marks are no longer worked out by hand: the derivation in
+`evaluate.py` — `derive_truth.py` is its command line — subtracts the before
+photograph's labels, and every recording gets the same treatment from a
+photograph pair.
 
 ## Photograph-derived ground truth for the customer recordings
 
@@ -109,11 +124,9 @@ every line, no polygons and no mixed files, so nothing is reported as mixed any
 more. The marks moved 0.001–0.003 in normalised photograph coordinates from the
 polygon pass, which is a re-draw of the same holes.
 
-**CamA is the cross-check.** Its before photograph is clean, so all six after
-labels are new — and those six land 4.9–9.4 template px from the six labels of
-`truth/kanatv6`, which were drawn by hand on a *different* photograph. Six of
-six match within tolerance. Two independent annotation passes, two
-photographs, one answer.
+CamA's before photograph is clean, so all six after labels are new.
+(`kanatv6` was an older annotation set for this recording, superseded as
+unreliable and removed; nothing here is measured against it.)
 
 **The derivation registers twice, and the second time on the marks
 themselves.** The artwork is a sixth of these photographs, so an ECC
@@ -147,8 +160,7 @@ On `CamB_20260915_103223` that takes the residuals from 1.4–7.3 px to
 high on the white Board and one at the top of the green silhouette. The
 operator confirms those two independently. `CamB_20260915_102450` also refits
 (0.2–0.7 px, from 0.7–4.7) and its answer is unchanged; the other four have too
-few pairs to refit and are untouched, including the pinned `truth/camb-25-36`
-case.
+few pairs to refit and are untouched.
 
 `evaluate.py` warns when a derived file still has unpaired before-marks: it
 reads `board.source.txt` beside the labels it was given. No recording trips it
@@ -157,10 +169,10 @@ Pointing `--truth-labels` at a derived directory also picks `board.new.txt`
 rather than `board.after.export.txt`, which sorts first and would have scored
 the run against the pre-existing marks as well. Where there is no derived file
 to prefer, a directory of several `.txt` files is now refused by name instead
-of resolved alphabetically — in `truth/camb-25-36` that first file is
+of resolved alphabetically — beside `board.txt`, that first file is
 `board.before.txt`.
 
-**That is nine Bullet Holes across two clips.** The thresholds are jointly
+**That is ten Bullet Holes across two clips.** The thresholds are jointly
 optimal on exactly this sample and that says very little about the next one. SOW
 2.3.6 asks for 99% over a statistically meaningful sample, which this is not.
 
@@ -220,11 +232,11 @@ Everything runs from `ImageRecognitionService/` with its `.venv`.
 
 # Score a run against labelled ground truth — use this before believing any change
 .venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
-    --truth-image truth/kanatv6/board.jpeg --truth-labels truth/kanatv6/board.txt
+    --truth-labels truth/cama-20260914-141546
 # Derived truth names its own photograph in board.source.txt; --truth-image
 # is then optional, and one that disagrees is warned about by name
-.venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
-    --truth-labels truth/camb-20260915-103223
+.venv/bin/python evaluate.py videos/CamB_20260915_102250.mkv --start 0 --end 46 \
+    --truth-labels truth/camb-20260915-102250
 
 .venv/bin/python -m pytest -q
 ```
@@ -261,8 +273,8 @@ rather than a differently drawn one, so `derive_truth.py` refuses the file by
 line number instead of deriving a mark in the wrong place.
 
 Where an export needs correcting, **keep the raw file** and correct a derived
-copy: `truth/camb-25-36/board.roboflow.txt` is Roboflow's bytes unchanged, and
-`board.txt` is the file the evaluation reads.
+copy: in a derived truth directory `board.after.export.txt` is the export's
+bytes unchanged, and `board.new.txt` is the file the evaluation reads.
 
 **Every recording needs a manifest entry before any tool will open it.**
 `recordings.json` maps sha256 to Capture Setup, role (`sealed`,
@@ -299,7 +311,7 @@ extraction is what keeps sealed pixels out of it.
 | `evaluate.py` | Scoring a run against labelled ground truth |
 | `manifest.py`, `recordings.json` | Split membership by content hash, the sealed guard, the run log |
 | `targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
-| `truth/kanatv6/` | The one piece of ground truth that exists |
+| `truth/<recording>/` | Ground truth, one directory per recording |
 | `tagging_bullets.py`, `sweep_profile.py` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
 
 ---
@@ -375,9 +387,9 @@ was attributed to it and is not the same defect — see mode 2.
 
 **Verified on the full 0–46s clip after the fix.** The baseline now holds 4
 pre-existing marks over 5 frames where one frame found 2, **no report is made at
-0.04s**, and the run completes 1150 frames at exit 0. Ground truth covers only
-25–36s, so the full-clip output is not scored; what is established is that the
-specific defect is gone. The earliest report is now t=1.64s, a different mark
+0.04s**, and the run completes 1150 frames at exit 0. Scored over the whole
+clip against `truth/camb-20260915-102250` it reads TP 4 / FP 1 / FN 0 (see
+the results table), so the specific defect is gone. The earliest report is now t=1.64s, a different mark
 that first appears mid-clip and is then detected in 98% of the frames after it —
 consistent with a real Hit, and unlabelled, so not claimed as one.
 
@@ -409,12 +421,13 @@ already measured on this clip (100% -> 75%) and the trap ADR-0003 records for th
 40 template-px radius. The defence is disclosure, not suppression: see
 `[REGISTRATION]` below.
 
-**The 25.60s report no longer has to be worked out by hand.** `evaluate.py`
-attributes it — `1 displacement`, 29 template px from the nearest mark that was
-on the Board at the baseline frame, against a suppression radius of 20. CamA's
-surviving false positive attributes to the detector at 827 template px out, so
-the two clips' single false positives have different causes and the scores say
-so. See [ADR-0006](../docs/adr/0006-every-false-positive-is-attributed.md).
+**The 25.60s report no longer has to be worked out by hand.** Run over
+25–36s, `evaluate.py`'s attribution put it 29 template px from the nearest
+mark on the Board at the baseline frame, against a suppression radius of 20 —
+`displacement`. That distance is the pipeline's own baseline and needs no
+annotation; the mark it was displaced from is the one the canonical truth has
+arriving at 1.64s. Over the whole clip, which is how CamB is now scored, the
+report does not arise. See [ADR-0006](../docs/adr/0006-every-false-positive-is-attributed.md).
 
 **3. A confirmed Bullet Hole is never re-examined when it stops existing. NO
 SURVIVING INSTANCE — it is the same mark as mode 1.** The 0.04s mark is detected

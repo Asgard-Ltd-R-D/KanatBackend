@@ -51,8 +51,10 @@ held-out scene. The report says one.
 
 Ground truth is two labelled photographs of the Board per recording — before
 firing and after. The set difference is the new Bullet Holes; `evaluate.py`
-already registers such a photograph to the printed artwork, so positions taken
-from a different viewpoint are comparable.
+registers such a photograph to the recording's baseline frame, and through it
+to the printed artwork, so positions taken from a different viewpoint are
+comparable. (Straight to the artwork, as it first did, fails on the CamB
+photographs — #40.)
 
 This is what makes leakage a non-question rather than a procedure. **No video
 frame is annotated, so there are no adjacent frames to split.** The
@@ -100,8 +102,8 @@ want. The rule this protects is one that gets broken by accident, months later,
 during a long sweep, by someone who was not party to the decision.
 
 **The two threshold-work recordings may falsify a constant, not optimise one.**
-They raise the evidence from two Capture Setups and nine Bullet Holes to at most
-four and seventeen. A joint sweep over seventeen produces a number that looks
+They raise the evidence from two Capture Setups and ten Bullet Holes by at most
+two setups and eight Bullet Holes. A joint sweep over eighteen produces a number that looks
 earned and is not; this project has already paid for that once, and ADR-0002's
 0.5x shows what an earned threshold looks like — two populations measured and
 separated, not a grid-search maximum. A constant that breaks on new footage

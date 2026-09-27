@@ -8,10 +8,11 @@ because nothing could measure them. This is that measurement.
 Ground truth is a photograph of the Board with the Bullet Holes labelled —
 typically a Roboflow YOLO-segmentation export. The photo is taken from a
 different position than the camera, so positions are compared in **template
-coordinates**: both the photo and the video frame are registered to the same
-printed Target artwork, which puts them in one frame of reference.
+coordinates**. The photograph is registered to the recording's baseline frame,
+and reaches the template through that frame's own homography — the one the
+run's detections are placed with — so both sides share one frame of reference:
 
-    photo  --register-->  template coords  <--register--  video Board space
+    photo  --register-->  baseline frame  --H-->  template coords  <--  Board space
 
 Usage:
 
@@ -29,6 +30,7 @@ on top of it. See manifest.py.
 """
 import argparse
 import glob
+import itertools
 import os
 import shutil
 
@@ -83,6 +85,12 @@ def _centroid(values):
     return points.reshape(-1, 2).mean(axis=0)
 
 
+def _centroids(lines):
+    rows = [[float(v) for v in l.split()[1:]] for l in lines]
+    return np.array([_centroid(values) for values in rows if len(values) >= 4],
+                    np.float32).reshape(-1, 2)
+
+
 def load_labels(path):
     """Centroids of YOLO labels, normalised. Handles boxes and polygons.
 
@@ -91,26 +99,109 @@ def load_labels(path):
     that cannot be read at all is dropped, and it is never dropped silently.
     """
     lines = [l for l in open(path).read().strip().splitlines() if l.strip()]
-    rows = [[float(v) for v in l.split()[1:]] for l in lines]
-    centroids = [_centroid(values) for values in rows if len(values) >= 4]
-    return (np.array(centroids, np.float32).reshape(-1, 2),
-            len(damaged_lines(lines)))
+    return _centroids(lines), len(damaged_lines(lines))
 
 
-def truth_in_template(image_path, label_path, template_mask):
-    """Ground-truth Bullet Hole positions in template coordinates."""
+# The grey-image ECC's own smoothing, in px. From the artwork's seed it needs
+# the pictures blurred well past the masks' 5 before it converges: at 5 it
+# settled on CamB_20260915_103223 at correlation 0.66 with every pre-existing
+# mark 34-70 template px out; 11 and 21 both put them 5-12 px out, on both
+# threshold-work recordings. A convergence setting, not a scoring value.
+PHOTO_ECC_BLUR = 21   # PROVISIONAL: picked on the two recordings it is judged on
+
+
+def register_photograph(photo, frame):
+    """Homography from a photograph's pixels to a video frame's, and its ECC
+    correlation.
+
+    Fitted to the whole picture, not the artwork. On the CamB photographs the
+    green artwork is a small fraction of the image, so a fit to its hue mask
+    is extrapolating everywhere a label sits: straight to the template it
+    correlated 0.69-0.74 and threw labels up to 58 000 template px out (#40). The
+    Board around the artwork — plywood, staples, the other Targets, the marks
+    themselves — is the same plane and is everywhere the labels are, so a
+    grey-image ECC over all of it holds where the artwork cannot. The artwork
+    still seeds it: that fit is coarse but in the right place.
+
+    Correlation is convergence, not geometry: the artwork fit scores 0.9999 on
+    a disk and misses by 18 px a Board-width away (test_evaluate). The check
+    that bears on geometry is the pre-existing marks, which `evaluate.py`
+    prints after the run.
+    """
+    contours, mask = board.find_targets(photo)
+    frame_contours, frame_mask = board.find_targets(frame)
+    if not contours or not frame_contours:
+        raise SystemExit("no Target found in the ground-truth photograph or the "
+                         "baseline frame; cannot register one to the other")
+    # Which photograph Target is which frame Target is unknown: a change of
+    # viewpoint reorders them by size or crops one out of either picture, and a
+    # seed one Target-spacing out converges on the repeated artwork there. Seed
+    # from every pair; over the whole picture the wrong correspondence cannot
+    # correlate as well as the right one.
+    grey = [cv2.cvtColor(i, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
+            for i in (photo, frame)]
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
+    best, errors = None, []
+    # ponytail: pairs x ECC runs, fine for the few Targets a Board holds
+    for source, reference in itertools.product(contours, frame_contours):
+        try:
+            seed, _ = board.register(mask, frame_mask, reference,
+                                     board.box_seed(source, reference))
+            fit = cv2.findTransformECC(
+                grey[0], grey[1], seed, cv2.MOTION_HOMOGRAPHY, criteria, None,
+                PHOTO_ECC_BLUR)
+        except cv2.error as e:
+            errors.append(e.err)
+            continue
+        if best is None or fit[0] > best[0]:
+            best = fit
+    if best is None:
+        raise SystemExit(f"the ground-truth photograph did not register to the "
+                         f"baseline frame ({errors[0]}); no position from it is "
+                         f"evidence")
+    correlation, H = best
+    return H, correlation
+
+
+def truth_in_template(image_path, label_path, frame, view):
+    """Ground-truth positions in template coordinates, through the baseline
+    frame: `(truth, photo px -> template matrix, correlation, damaged)`."""
     image = cv2.imread(image_path)
     if image is None:
         raise SystemExit(f"cannot read ground-truth image {image_path}")
     height, width = image.shape[:2]
-    contours, mask = board.find_targets(image)
-    if not contours:
-        raise SystemExit("no Target found in the ground-truth image; cannot register it")
-    H, correlation = board.register(template_mask, mask, contours[0])
+    H, correlation = register_photograph(image, frame)
+    to_template = np.linalg.inv(view.H) @ H @ np.diag([width, height, 1.0])
 
     normalised, damaged = load_labels(label_path)
-    pixels = normalised * [width, height]
-    return board._apply(np.linalg.inv(H), pixels), correlation, damaged
+    return board._apply(to_template, normalised), to_template, correlation, damaged
+
+
+def off_canvas(truth, view):
+    """Indices of template positions outside the rectified Board the detector
+    is shown — positions no run can find, whatever the reason."""
+    width, height = view.canvas_size
+    placed = board._apply(view.tpl_to_board, truth)
+    return [i for i, (x, y) in enumerate(placed)
+            if not (0 <= x < width and 0 <= y < height)]
+
+
+def baseline_view(video, start, template_mask):
+    """The frame Board space is built from, and that Board space.
+
+    Rebuilt from exactly the frame at `start` — reading frame 0 instead would
+    silently use a different origin.
+    """
+    cap = cv2.VideoCapture(video)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * cap.get(cv2.CAP_PROP_FPS)))
+    ok, frame = cap.read()
+    cap.release()
+    if not ok:
+        raise SystemExit(f"cannot re-read {video} at {start}s")
+    view, _ = board.build_view(frame, template_mask)
+    if view is None:
+        raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+    return frame, view
 
 
 def match(truth, found, tolerance):
@@ -186,9 +277,9 @@ def score(truth, found, tolerance=MATCH_TOLERANCE_TPL):
 # threshold, and neither was derived from the two clips it is reported on: the
 # near band is `MATCH_TOLERANCE_TPL`, which comes from a Bullet Hole's own width
 # and was already the scoring's slack before any of this, and the far band is a
-# judgement (see `UNKNOWN_FACTOR`). Nothing was fitted to make CamA come out
-# `detector` and CamB `displacement` — the measured distances are 827 and 29
-# template px against bands at 80 and 40, so only CamB's sits near an edge at
+# judgement (see `UNKNOWN_FACTOR`). Nothing was fitted to the clips: the
+# measured distances are 827 template px (CamA) and 29 (CamB's 25.60s report
+# over 25-36s) against bands at 80 and 40, so only CamB's sits near an edge at
 # all, and it is the case HANDOVER had already traced by hand.
 #
 # The near band is the scoring's own slack, not a new constant: a false positive
@@ -471,6 +562,8 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
 
 SOURCE_NAME = "board.source.txt"
 UNPAIRED_FIELD = "before-marks-without-a-counterpart"
+# 1-based lines of the after export, counting only non-blank ones.
+PRE_EXISTING_FIELD = "pre-existing-export-lines"
 
 
 def write_derived(out_dir, result, before_image, before_labels,
@@ -513,6 +606,8 @@ def write_derived(out_dir, result, before_image, before_labels,
             f"match-tolerance-photo-px: {result['tolerance_px']:.1f}\n"
             f"labelled-after: {len(result['lines'])}\n"
             f"pre-existing: {len(result['pre_existing'])}\n"
+            f"{PRE_EXISTING_FIELD}: "
+            f"{','.join(str(i + 1) for i in result['pre_existing'])}\n"
             f"new-bullet-holes: {len(result['new'])}\n"
             f"{UNPAIRED_FIELD}: {len(result['only_before'])}\n")
     return written
@@ -580,8 +675,8 @@ def _one(path, pattern):
     """A file, or the single `pattern` match under a directory.
 
     Several matches are refused rather than resolved alphabetically.
-    `truth/camb-25-36` holds four .txt files — the before labels, the raw
-    export, the derived file and the corrected one — and taking the first
+    A frame-labelled truth directory once held four .txt files — the before
+    labels, the raw export, the derived file and the corrected one — and taking the first
     scored the run against `board.before.txt`, the marks that were on the Board
     before it started. Silence is what made that possible, so it says which
     files it found and makes the caller name one.
@@ -612,18 +707,43 @@ def truth_labels(path):
     return derived if os.path.exists(derived) else _one(path, "*.txt")
 
 
-def load_truth(image_path, label_path, template_mask):
-    """Ground truth in template coordinates, with every caveat printed.
+def pre_existing_labels(label_path):
+    """Normalised centroids of the after photograph's pre-existing marks, or
+    None for truth not derived from a photograph pair.
 
-    Shared by the scoring and the detector probe: both report recall, and a
-    label the recording could never have found understates it in either.
+    They are the after export's lines the derivation recorded as pre-existing,
+    by line number in the source file. Not the export minus the derived file:
+    a corrected label no longer equals its export line, and that subtraction
+    would then count the new Bullet Hole as pre-existing. These marks need no
+    ground truth to check — the run's baseline holds them — which makes them
+    the one measurement of where the truth placement puts labels. None, too,
+    for a derivation that predates the field.
+    """
+    export = os.path.join(os.path.dirname(label_path), RAW_NAMES["after"])
+    recorded = _source_field(label_path, PRE_EXISTING_FIELD)
+    if (os.path.basename(label_path) != DERIVED_NAME or recorded is None
+            or not os.path.exists(export)):
+        return None
+    lines = [l for l in open(export).read().strip().splitlines() if l.strip()]
+    return _centroids([lines[int(n) - 1] for n in recorded.split(",") if n])
+
+
+def load_truth(image_path, label_path, frame, view):
+    """Ground truth in template coordinates, with every caveat printed, and the
+    derived truth's pre-existing marks placed the same way (None otherwise).
+
+    `frame` and `view` are the baseline frame and its Board space
+    (`baseline_view`). Shared by the scoring and the detector probe: both
+    report recall, and a label the recording could never have found
+    understates it in either.
     """
     labels = truth_labels(label_path)
-    truth, correlation, damaged = truth_in_template(
-        truth_photograph(image_path, labels), labels, template_mask)
+    photograph = truth_photograph(image_path, labels)
+    truth, to_template, correlation, damaged = truth_in_template(
+        photograph, labels, frame, view)
     print(f"[TRUTH] {len(truth)} labelled Bullet Holes from "
-          f"{os.path.basename(labels)}, "
-          f"ground-truth registration correlation {correlation:.4f}")
+          f"{os.path.basename(labels)}, registered to the baseline frame at "
+          f"correlation {correlation:.4f} (convergence, not geometry)")
     if damaged:
         print(f"[WARN] {damaged} label(s) were malformed or truncated; "
               f"their positions are approximate")
@@ -633,7 +753,39 @@ def load_truth(image_path, label_path, template_mask):
               f"so up to {unpaired} of these labels were already on the Board "
               f"before the recording. The run cannot find those, and recall is "
               f"understated by that much. See {SOURCE_NAME}.")
-    return truth
+    outside = off_canvas(truth, view)
+    if outside:
+        print(f"[WARN] {', '.join(f'truth #{j + 1}' for j in outside)} land(s) "
+              f"outside the rectified Board the detector is shown: the placement "
+              f"is wrong, or the Board runs past the canvas (#41). Scored all the "
+              f"same, and no run can find them.")
+    pre = pre_existing_labels(labels)
+    if pre is not None:
+        pre = board._apply(to_template, pre)
+    return truth, pre
+
+
+def placement_note(pre_existing_truth, baseline_tpl, tolerance):
+    """How far the photograph's pre-existing marks land from the baseline's.
+
+    They are the same Bullet Holes, so the distance is the truth placement's
+    own error — reported on every derived score, because a placement that
+    throws labels somewhere plausible-looking otherwise scores as silently as
+    one that throws them 58 000 px out. The baseline is the detector's output,
+    so an unpaired mark is a misplaced label or a mark the baseline missed.
+    """
+    pairs, missed = match(pre_existing_truth, baseline_tpl, tolerance)
+    note = (f"[PLACEMENT] {len(pairs)} of {len(pre_existing_truth)} "
+            f"pre-existing mark(s) in the photograph land within {tolerance:.0f} "
+            f"template px of a mark the baseline holds")
+    if pairs:
+        d = sorted(d for _, _, d in pairs)
+        note += f", {d[0]:.0f}-{d[-1]:.0f} px: that is the placement's error"
+    if missed:
+        note += (f"\n[WARN] {len(missed)} pre-existing mark(s) land on nothing "
+                 f"the baseline holds: the truth placement is off, or the "
+                 f"baseline missed them. Scores below carry that doubt.")
+    return note
 
 
 if __name__ == "__main__":
@@ -666,7 +818,12 @@ if __name__ == "__main__":
     template = cv2.imread(a.template)
     _, template_mask = board.find_targets(template, min_area=1)
 
-    truth = load_truth(a.truth_image, a.truth_labels, template_mask)
+    # The run's positions are in Board space; ground truth is in template space.
+    # Board space is fixed by the BASELINE frame, and the truth is placed
+    # through that same frame.
+    baseline_frame, view = baseline_view(a.video, a.start, template_mask)
+    truth, pre_labels = load_truth(a.truth_image, a.truth_labels,
+                                   baseline_frame, view)
 
     run =nbh.process(a.video, a.start, a.end, a.model, a.confidence,
                       template_path=a.template,
@@ -674,16 +831,6 @@ if __name__ == "__main__":
                       merge_displaced=a.merge_displaced,
                       baseline_frames=a.baseline_frames)
 
-    # The run's positions are in Board space; ground truth is in template space.
-    # Board space is fixed by the BASELINE frame, so rebuild it from exactly that
-    # frame — reading frame 0 instead would silently use a different origin.
-    cap = cv2.VideoCapture(a.video)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(a.start * cap.get(cv2.CAP_PROP_FPS)))
-    ok, baseline_frame = cap.read()
-    cap.release()
-    if not ok:
-        raise SystemExit(f"cannot re-read {a.video} at {a.start}s")
-    view, _ = board.build_view(baseline_frame, template_mask)
     to_template = np.linalg.inv(view.tpl_to_board)
     found = board._apply(to_template,
                          np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
@@ -691,6 +838,13 @@ if __name__ == "__main__":
     # what tells a displaced one of those from a detector false positive.
     pre_existing = board._apply(
         to_template, np.asarray(run.baseline, np.float32)[:, :2])
+    if pre_labels is not None and len(pre_labels):
+        print(placement_note(pre_labels, pre_existing, a.tolerance))
+    else:
+        print("[WARN] placement unverified: the truth names no pre-existing "
+              "mark to check it against, and the registration correlation is "
+              "not a geometry check. A wrong placement would change this "
+              "score silently.")
 
     result = score(truth, found, a.tolerance)
     print(f"\n[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "

@@ -9,5 +9,6 @@ refitted-on-matched-marks: no
 match-tolerance-photo-px: 16.3
 labelled-after: 6
 pre-existing: 0
+pre-existing-export-lines: 
 new-bullet-holes: 6
 before-marks-without-a-counterpart: 0

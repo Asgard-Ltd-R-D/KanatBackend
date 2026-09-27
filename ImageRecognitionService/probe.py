@@ -21,7 +21,7 @@ file's own — see the warning there. `--model` takes several checkpoints and
 runs each over the same footage against the same ground truth.
 
     python probe.py CLIP.mkv --start 13 --end 25 \\
-        --truth-image truth/kanatv6 --truth-labels truth/kanatv6 \\
+        --truth-labels truth/cama-20260914-141546 \\
         --model a/best.pt b/best.pt
 
 The denominator is every registered frame from `--start`, so a Bullet Hole
@@ -194,7 +194,8 @@ if __name__ == "__main__":
     else:
         template = cv2.imread(a.template)
         _, template_mask = board.find_targets(template, min_area=1)
-        truth = evaluate.load_truth(a.truth_image, a.truth_labels, template_mask)
+        frame, view = evaluate.baseline_view(a.video, a.start, template_mask)
+        truth, _ = evaluate.load_truth(a.truth_image, a.truth_labels, frame, view)
         names = None
 
     for model in a.model:

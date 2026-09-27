@@ -1,25 +1,13 @@
 """Checks for photograph-derived ground truth, the derivation in evaluate.py.
 
 No model, no video, no torch.
-
-The CamB case at the end does read two real files and registers a photograph,
-which costs about a second — it is the case that was got wrong by hand, so it
-is pinned against the files rather than against a fixture.
 """
-import os
-
 import numpy as np
 import pytest
 
 import evaluate
 
 TOL = 40.0
-TRUTH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "truth")
-
-
-def _truth(*parts):
-    return os.path.join(TRUTH_DIR, *parts)
-
 
 def _pts(*xy):
     return np.array(xy, np.float32).reshape(-1, 2)
@@ -137,29 +125,6 @@ def test_a_photograph_at_template_scale_keeps_the_template_tolerance():
 
 # --- the CamB case, pinned by name ----------------------------------------
 
-def test_camb_derivation_reproduces_the_three_hand_worked_labels(tmp_path):
-    """`truth/camb-25-36` is the case that was scored wrong.
-
-    Four labels were drawn on the after photograph; one of them sits on a mark
-    already on the Board at the 25s baseline frame, and scoring against all
-    four reported F1 1.00 in an earlier HANDOVER revision. The three were then
-    worked out by hand into `board.new-since-25s.txt`. This derives them
-    instead, from the operator's before-labels, and the two files must agree.
-    """
-    result = evaluate.derive_new_holes(
-        before_image=_truth("camb-25-36", "board.jpeg"),
-        before_labels=_truth("camb-25-36", "board.before.txt"),
-        after_image=_truth("camb-25-36", "board.jpeg"),
-        after_labels=_truth("camb-25-36", "board.txt"))
-
-    assert len(result["new"]) == 3
-    assert len(result["pre_existing"]) == 1
-    hand_worked = open(
-        _truth("camb-25-36", "board.new-since-25s.txt")).read().splitlines()
-    derived = [result["lines"][i] for i in result["new"]]
-    assert derived == [l for l in hand_worked if l.strip()]
-
-
 def test_writing_keeps_the_raw_export_byte_for_byte(tmp_path):
     """The derived file is a correction; the export it came from is evidence."""
     raw = ("0 0.1 0.1 0.2 0.1 0.2 0.2 0.1 0.2\n"
@@ -198,6 +163,24 @@ def test_the_derived_file_records_which_photograph_it_belongs_to(tmp_path):
     source = open(written["source"]).read()
     assert "after-image: /photos/CamB.after.jpeg" in source
     assert "new-bullet-holes: 1" in source
+    assert f"{evaluate.PRE_EXISTING_FIELD}: \n" in source
+
+
+def test_the_source_file_records_which_export_lines_were_pre_existing(tmp_path):
+    """By line number, so a label corrected in the derived file keeps its
+    identity: text no longer matches once it is corrected."""
+    after = tmp_path / "after.txt"
+    after.write_text("0 0.1 0.1 0.02 0.02\n\n0 0.5 0.5 0.02 0.02\n0 0.9 0.9 0.02 0.02\n")
+    before = tmp_path / "before.txt"
+    before.write_text("")
+    result = {"lines": evaluate.read_export(str(after))[0], "new": [1],
+              "pre_existing": [0, 2], "only_before": [], "correlation": 0.99,
+              "tolerance_px": 6.1}
+    written = evaluate.write_derived(str(tmp_path / "out"), result,
+                                     "b.jpeg", str(before), "a.jpeg", str(after))
+    assert f"{evaluate.PRE_EXISTING_FIELD}: 1,3\n" in open(written["source"]).read()
+    np.testing.assert_allclose(evaluate.pre_existing_labels(written["derived"]),
+                               [[0.1, 0.1], [0.9, 0.9]], atol=1e-6)
 
 
 # --- reading the derived truth back ----------------------------------------
@@ -223,7 +206,7 @@ def test_a_directory_with_one_label_file_takes_it(tmp_path):
 
 
 def test_a_directory_of_several_label_files_is_refused(tmp_path):
-    """`truth/camb-25-36` holds four. Without the derived file to prefer there
+    """A frame-labelled truth directory held four. Without the derived file to prefer there
     is no right answer to guess, and the first one alphabetically is
     `board.before.txt` — the marks that were already on the Board."""
     for name in ("board.before.txt", "board.txt"):

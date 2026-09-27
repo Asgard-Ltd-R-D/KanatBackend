@@ -89,30 +89,33 @@ detection the model already made.
 ## The thresholds were wrong, and only ground truth showed it
 
 The first values — a 70% persistence bar and a 40 template-px match radius — were
-set by intuition. Scored against an operator-labelled photograph of the same
-Board (`truth/kanatv6`, six Hits), they gave **1 true positive and 5 false**.
+set by intuition. Scored against the photograph-derived truth of the same
+Board (`truth/cama-20260914-141546`, six Hits), they give **2 true positives,
+5 false and 4 missed**. (First measured on an earlier annotation of this
+recording, since superseded as unreliable; every figure in this section is
+re-measured on the canonical truth, and the conclusions are unchanged.)
 
 | Change | Why it was wrong | Result |
 |---|---|---|
-| persistence 70% -> 50% | the real Bullet Holes sat at 0.50-0.62; the bar rejected almost the whole group | recall 1/6 -> 4/6 |
-| match radius 40 -> 20 template px | the radius also gates what counts as "already in the baseline", so it discarded a real Bullet Hole 125px clear of its neighbour | 4 -> 5 true positives |
+| persistence 70% -> 50% | the real Bullet Holes sat at 0.50-0.62; the bar rejected almost the whole group | recall 2/6 -> 5/6 |
+| match radius 40 -> 20 template px | the radius also gates what counts as "already in the baseline", so it discarded a real Bullet Hole 125px clear of its neighbour | 5 -> 6 true positives |
 | change evidence: metadata -> filter | every true Bullet Hole was corroborated; the false ones were not | 7 false -> 1 |
 
-Final on that clip, against a complete six-label export: **TP 6, FP 1, FN 0** —
-precision 86%, recall 100%, F1 0.92. Every Bullet Hole is placed within 15-22
-template px, under one hole's width. The sixth was confirmed once the annotator
-re-exported as boxes; an earlier segmentation export had truncated that label
-mid-number, and the detection 26 template px away turned out to be the Bullet
-Hole it described.
+Final on that clip: **TP 6, FP 1, FN 0** — precision 86%, recall 100%, F1
+0.92. Every Bullet Hole is placed within 2-7 template px, under one hole's
+width.
 
 Change detection as a filter is doing most of the precision work: the same run
 without it scores TP 6, FP 7, F1 0.63.
 
 `evaluate.py` is what produced these numbers and is the reason the thresholds are
-no longer guesses. It registers the ground-truth photograph and the video frame
-to the same printed artwork, so positions taken from different viewpoints are
-comparable, and matches one-to-one so a cluster of false positives cannot all
-claim the same label.
+no longer guesses. It registers the ground-truth photograph to the recording's
+baseline frame and reaches the printed artwork through that frame's own
+homography, so positions taken from different viewpoints are comparable, and
+matches one-to-one so a cluster of false positives cannot all claim the same
+label. (Registering the photograph straight to the artwork, as it first did,
+held on CamA and fails on photographs where the artwork is a small part of the
+picture — #40.)
 
 A sweep over confidence, persistence, match radius and the change filter
 confirms these four values are jointly optimal on this ground truth. That is

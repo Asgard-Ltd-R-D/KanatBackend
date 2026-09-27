@@ -31,7 +31,11 @@ Measured on the two labelled clips, they fail differently and it shows:
 | CamB 25–36s | 1 | 29 template px | displacement |
 
 CamB's is the 25.60s report `HANDOVER.md` traced by hand through a table of
-per-frame pairing distances. It now comes out of the run.
+per-frame pairing distances. It now comes out of the run. (The row was
+measured against a frame-labelled annotation since superseded as untrusted;
+the 29 px is to the pipeline's own baseline and does not depend on it. CamB
+is now scored over the whole clip, where this report does not arise and the
+one false positive attributes to the detector, 855 px out.)
 
 ## The bands are provisional diagnostic boundaries
 

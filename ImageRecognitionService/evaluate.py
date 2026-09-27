@@ -18,6 +18,12 @@ Usage:
     python evaluate.py CLIP.mkv --start 13 --end 25 \\
         --truth-image truth/board.jpeg --truth-labels truth/board.txt
 
+Truth derived from a photograph pair (derive_truth.py) names its own
+photograph in `board.source.txt`, so `--truth-image` can be left off:
+
+    python evaluate.py CLIP.mkv --start 13 --end 25 \\
+        --truth-labels truth/camb-20260915-103223
+
 The clip needs a `recordings.json` entry; sealed footage needs `--final-run`
 on top of it. See manifest.py.
 """
@@ -497,9 +503,9 @@ def write_derived(out_dir, result, before_image, before_labels,
             f"# {DERIVED_NAME} is the after photograph's labels minus the "
             f"before photograph's.\n"
             f"# Its coordinates are normalised against the after photograph.\n"
-            f"before-image: {before_image}\n"
+            f"before-image: {os.path.abspath(before_image)}\n"
             f"before-labels: {before_labels}\n"
-            f"after-image: {after_image}\n"
+            f"after-image: {os.path.abspath(after_image)}\n"
             f"after-labels: {after_labels}\n"
             f"photograph-registration-correlation: {result['correlation']:.4f}\n"
             f"refitted-on-matched-marks: "
@@ -522,14 +528,52 @@ def unpaired_before_marks(label_path):
     prints nothing, which is how a flag stops being a flag. Zero for truth that
     was not derived from a photograph pair at all.
     """
+    value = _source_field(label_path, UNPAIRED_FIELD)
+    return int(value) if value else 0
+
+
+def _source_field(label_path, field):
+    """One field of the sibling source file, or None — including when there is
+    no source file, i.e. truth not derived from a photograph pair."""
     source = os.path.join(os.path.dirname(label_path), SOURCE_NAME)
     if not os.path.exists(source):
-        return 0
+        return None
     for line in open(source):
-        key, _, value = line.partition(": ")
-        if key == UNPAIRED_FIELD:
-            return int(value)
-    return 0
+        key, _, value = line.partition(":")
+        if key == field:
+            return value.strip()
+    return None
+
+
+def truth_photograph(image_path, label_path):
+    """The photograph `label_path` is normalised against.
+
+    Derived truth names it in `after-image:`, so it need not be passed — and
+    passing one that disagrees used to register cleanly and score silently
+    wrong. The recorded path points outside the repo and is wrong on another
+    machine, so an explicit one still wins; the mismatch is printed instead.
+    Truth with no source file has nothing to check it against. The raw before
+    export, named explicitly, is normalised against the before photograph.
+    """
+    which = "before" if os.path.basename(label_path) == RAW_NAMES["before"] else "after"
+    recorded = _source_field(label_path, f"{which}-image")
+    if image_path is None:
+        if recorded is None:
+            raise SystemExit(
+                f"--truth-image is required: {label_path} has no {SOURCE_NAME} "
+                "beside it to name the photograph it was labelled on")
+        if not os.path.isfile(recorded):
+            raise SystemExit(
+                f"{SOURCE_NAME} names {recorded} as the {which} photograph, but "
+                "it is not there — moved or deleted? Pass --truth-image")
+        return recorded
+    image = _one(image_path, "*.jp*g")
+    if recorded is not None and os.path.realpath(image) != os.path.realpath(recorded):
+        print(f"[WARN] --truth-image {image} is not the {which} photograph "
+              f"{SOURCE_NAME} names ({recorded}); the labels are normalised "
+              f"against that one, so this scores wrong unless it is the same "
+              f"photograph moved")
+    return image
 
 
 def _one(path, pattern):
@@ -576,7 +620,7 @@ def load_truth(image_path, label_path, template_mask):
     """
     labels = truth_labels(label_path)
     truth, correlation, damaged = truth_in_template(
-        _one(image_path, "*.jp*g"), labels, template_mask)
+        truth_photograph(image_path, labels), labels, template_mask)
     print(f"[TRUTH] {len(truth)} labelled Bullet Holes from "
           f"{os.path.basename(labels)}, "
           f"ground-truth registration correlation {correlation:.4f}")
@@ -597,7 +641,9 @@ if __name__ == "__main__":
     p.add_argument("video")
     p.add_argument("--start", type=float, required=True)
     p.add_argument("--end", type=float, required=True)
-    p.add_argument("--truth-image", required=True, help="photo of the Board, or a directory")
+    p.add_argument("--truth-image",
+                   help="photo of the Board, or a directory; derived truth "
+                        "names its own in board.source.txt")
     p.add_argument("--truth-labels", required=True, help="YOLO-seg .txt, or a directory")
     p.add_argument("--model", default=nbh.DEFAULT_MODEL)
     p.add_argument("--template", default=board.DEFAULT_TEMPLATE)

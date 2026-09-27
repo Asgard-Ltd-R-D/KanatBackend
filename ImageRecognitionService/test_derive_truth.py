@@ -251,6 +251,64 @@ def test_truth_that_was_never_derived_has_nothing_to_flag(tmp_path):
     assert evaluate.unpaired_before_marks(str(labels)) == 0
 
 
+# --- the photograph the derived labels are normalised against --------------
+
+def _derived(tmp_path, after_image):
+    labels = tmp_path / evaluate.DERIVED_NAME
+    labels.write_text("0 0.5 0.5 0.02 0.02\n")
+    (tmp_path / evaluate.SOURCE_NAME).write_text(
+        f"before-image: {tmp_path / 'b.before.jpeg'}\n"
+        f"after-image: {after_image}\n")
+    return str(labels)
+
+
+def test_derived_truth_names_its_own_photograph(tmp_path):
+    after = tmp_path / "b.after.jpeg"
+    after.write_bytes(b"")
+    labels = _derived(tmp_path, after)
+    assert evaluate.truth_photograph(None, labels) == str(after)
+
+
+def test_a_disagreeing_photograph_is_reported_naming_both(tmp_path, capsys):
+    """The override stays — the recorded path is outside the repo and wrong on
+    another machine — but it is never silent."""
+    after, other = tmp_path / "b.after.jpeg", tmp_path / "b.before.jpeg"
+    after.write_bytes(b"")
+    other.write_bytes(b"")
+    labels = _derived(tmp_path, after)
+    assert evaluate.truth_photograph(str(other), labels) == str(other)
+    out = capsys.readouterr().out
+    assert str(other) in out and str(after) in out
+
+
+def test_the_recorded_photograph_passed_explicitly_says_nothing(tmp_path, capsys):
+    after = tmp_path / "b.after.jpeg"
+    after.write_bytes(b"")
+    labels = _derived(tmp_path, after)
+    assert evaluate.truth_photograph(str(after), labels) == str(after)
+    assert capsys.readouterr().out == ""
+
+
+def test_truth_never_derived_still_needs_the_photograph(tmp_path):
+    labels = tmp_path / "board.txt"
+    labels.write_text("0 0.5 0.5 0.02 0.02\n")
+    (tmp_path / "board.jpeg").write_bytes(b"")
+    with pytest.raises(SystemExit, match="--truth-image"):
+        evaluate.truth_photograph(None, str(labels))
+    assert evaluate.truth_photograph(str(tmp_path), str(labels)) == \
+        str(tmp_path / "board.jpeg")
+
+
+def test_a_recorded_photograph_that_has_gone_says_so(tmp_path):
+    gone = tmp_path / "moved.after.jpeg"
+    labels = _derived(tmp_path, gone)
+    with pytest.raises(SystemExit) as refused:
+        evaluate.truth_photograph(None, labels)
+    message = str(refused.value)
+    assert str(gone) in message and evaluate.SOURCE_NAME in message
+    assert "cannot read ground-truth image" not in message
+
+
 # --- the second registration, fitted to the marks themselves ---------------
 
 def test_a_refit_pulls_in_marks_the_artwork_registration_left_out():
@@ -305,3 +363,14 @@ def test_a_refit_that_only_re_deals_the_same_pairs_is_not_adopted():
     assert evaluate.keep_refit(pairs, [(0, 0, 0.1), (1, 1, 0.1)]) is True
     assert evaluate.keep_refit(pairs, [(0, 0, 3.0)]) is False
     assert evaluate.keep_refit(pairs, [(0, 1, 1.0), (1, 0, 1.0), (2, 2, 1.0)]) is True
+
+
+def test_the_before_export_is_matched_to_the_before_photograph(tmp_path):
+    """Named explicitly, the raw before export sits beside the same source
+    file; taking `after-image:` for it would be the silent mismatch again."""
+    before = tmp_path / "b.before.jpeg"
+    before.write_bytes(b"")
+    _derived(tmp_path, tmp_path / "b.after.jpeg")
+    labels = tmp_path / evaluate.RAW_NAMES["before"]
+    labels.write_text("0 0.5 0.5 0.02 0.02\n")
+    assert evaluate.truth_photograph(None, str(labels)) == str(before)

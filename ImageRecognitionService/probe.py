@@ -161,7 +161,8 @@ if __name__ == "__main__":
     p.add_argument("--start", type=float, required=True,
                    help="the frame Board space is built from, seconds")
     p.add_argument("--end", type=float, required=True)
-    p.add_argument("--truth-image", help="photo of the Board, or a directory")
+    p.add_argument("--truth-image", help="photo of the Board, or a directory; "
+                                         "derived truth names its own")
     p.add_argument("--truth-labels", help="YOLO .txt, or a directory")
     p.add_argument("--at", type=parse_point, action="append",
                    help="DIAGNOSTIC, instead of ground truth: probe this "
@@ -177,9 +178,10 @@ if __name__ == "__main__":
     manifest.add_flag(p)
     a = p.parse_args()
     if bool(a.at) == bool(a.truth_image or a.truth_labels):
-        p.error("give either --truth-image with --truth-labels, or --at")
-    if not a.at and not (a.truth_image and a.truth_labels):
-        p.error("--truth-image and --truth-labels go together")
+        p.error("give either --truth-labels (with --truth-image unless the "
+                "truth is derived), or --at")
+    if not a.at and not a.truth_labels:
+        p.error("--truth-image needs --truth-labels")
 
     for model in a.model:
         manifest.gate(a.video, a.final_run, model, "probe.py")

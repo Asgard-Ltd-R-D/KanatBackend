@@ -363,3 +363,14 @@ def test_a_refit_that_only_re_deals_the_same_pairs_is_not_adopted():
     assert evaluate.keep_refit(pairs, [(0, 0, 0.1), (1, 1, 0.1)]) is True
     assert evaluate.keep_refit(pairs, [(0, 0, 3.0)]) is False
     assert evaluate.keep_refit(pairs, [(0, 1, 1.0), (1, 0, 1.0), (2, 2, 1.0)]) is True
+
+
+def test_the_before_export_is_matched_to_the_before_photograph(tmp_path):
+    """Named explicitly, the raw before export sits beside the same source
+    file; taking `after-image:` for it would be the silent mismatch again."""
+    before = tmp_path / "b.before.jpeg"
+    before.write_bytes(b"")
+    _derived(tmp_path, tmp_path / "b.after.jpeg")
+    labels = tmp_path / evaluate.RAW_NAMES["before"]
+    labels.write_text("0 0.5 0.5 0.02 0.02\n")
+    assert evaluate.truth_photograph(None, str(labels)) == str(before)

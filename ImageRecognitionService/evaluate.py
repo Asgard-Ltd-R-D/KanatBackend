@@ -503,9 +503,9 @@ def write_derived(out_dir, result, before_image, before_labels,
             f"# {DERIVED_NAME} is the after photograph's labels minus the "
             f"before photograph's.\n"
             f"# Its coordinates are normalised against the after photograph.\n"
-            f"before-image: {before_image}\n"
+            f"before-image: {os.path.abspath(before_image)}\n"
             f"before-labels: {before_labels}\n"
-            f"after-image: {after_image}\n"
+            f"after-image: {os.path.abspath(after_image)}\n"
             f"after-labels: {after_labels}\n"
             f"photograph-registration-correlation: {result['correlation']:.4f}\n"
             f"refitted-on-matched-marks: "
@@ -552,9 +552,11 @@ def truth_photograph(image_path, label_path):
     passing one that disagrees used to register cleanly and score silently
     wrong. The recorded path points outside the repo and is wrong on another
     machine, so an explicit one still wins; the mismatch is printed instead.
-    Truth with no source file has nothing to check it against.
+    Truth with no source file has nothing to check it against. The raw before
+    export, named explicitly, is normalised against the before photograph.
     """
-    recorded = _source_field(label_path, "after-image")
+    which = "before" if os.path.basename(label_path) == RAW_NAMES["before"] else "after"
+    recorded = _source_field(label_path, f"{which}-image")
     if image_path is None:
         if recorded is None:
             raise SystemExit(
@@ -562,12 +564,12 @@ def truth_photograph(image_path, label_path):
                 "beside it to name the photograph it was labelled on")
         if not os.path.isfile(recorded):
             raise SystemExit(
-                f"{SOURCE_NAME} names {recorded} as the after photograph, but "
+                f"{SOURCE_NAME} names {recorded} as the {which} photograph, but "
                 "it is not there — moved or deleted? Pass --truth-image")
         return recorded
     image = _one(image_path, "*.jp*g")
-    if recorded is not None and os.path.abspath(image) != os.path.abspath(recorded):
-        print(f"[WARN] --truth-image {image} is not the after photograph "
+    if recorded is not None and os.path.realpath(image) != os.path.realpath(recorded):
+        print(f"[WARN] --truth-image {image} is not the {which} photograph "
               f"{SOURCE_NAME} names ({recorded}); the labels are normalised "
               f"against that one, so this scores wrong unless it is the same "
               f"photograph moved")

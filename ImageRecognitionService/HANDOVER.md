@@ -221,6 +221,10 @@ Everything runs from `ImageRecognitionService/` with its `.venv`.
 # Score a run against labelled ground truth — use this before believing any change
 .venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
     --truth-image truth/kanatv6/board.jpeg --truth-labels truth/kanatv6/board.txt
+# Derived truth names its own photograph in board.source.txt; --truth-image
+# is then optional, and one that disagrees is warned about by name
+.venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
+    --truth-labels truth/camb-20260915-103223
 
 .venv/bin/python -m pytest -q
 ```

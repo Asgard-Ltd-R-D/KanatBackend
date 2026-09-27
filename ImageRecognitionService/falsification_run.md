@@ -1,148 +1,136 @@
 # Falsification run on the threshold-work recordings
 
-**Measured 2026-09-27 at `ca7d595`**, `kanat_yolo26n_v1`, `opencv-python==4.10.0.84`,
-every constant at its current value. Issue #29. The two recordings are
-`CamB_20260915_102450` and `CamB_20260915_103223`, the threshold-work pair
-`recordings.json` allocates, each run over its manifest window. No sealed
-recording was opened and no `--final-run` was passed, so no sealed run was
-logged.
+**Measured 2026-09-27 at `7ef2ffe`** (after #34 and #40), `kanat_yolo26n_v1`,
+`opencv-python==4.10.0.84`, every constant at its current value. Issue #29. The
+two recordings are `CamB_20260915_102450` and `CamB_20260915_103223`, the
+threshold-work pair `recordings.json` allocates, each run over its manifest
+window. No sealed recording was opened and no `--final-run` was passed, so no
+sealed run was logged.
 
 These recordings may falsify a constant, not optimise one (ADR-0005). Nothing
-here moves a value. Two things broke, and each is a defect naming its mechanism:
-**#40** (scoring cannot place photograph truth on CamB) and **#41** (the canvas
-ends before the Board does).
+here moves a value. One constant breaks, and it is a defect naming its
+mechanism: **#41** (the canvas ends before the Board does).
+
+**This replaces the first run of this record**, made at `ca7d595` before #40.
+That run's headline — F1 0.00 on both recordings, probe rate 0.00 on every
+label, every false positive `detector` — was the photograph registration
+throwing labels up to 58 000 template px off the Board, **not a pipeline
+result**, and is not reproduced here as one. What changed, and why, is at the
+end.
 
 **Both recordings are the `camb-20260915-close-one-board` Capture Setup**, the
 same as `_102250`, which every constant is already fitted to. So this run adds
 six Bullet Holes and **no Capture Setup**: the evidence goes from two setups and
-nine Bullet Holes to two and fifteen, not the "at most four and seventeen" the
+ten Bullet Holes to two and sixteen, not the "at most four and seventeen" the
 ticket allowed. Anything that is a property of the physical set-up — the hue
 gate, the Target area floor, net scale — is exercised here only a second time
 on one arrangement, and that is said below per constant.
 
-## Headline, as the tools report it
+## Headline
 
 ```bash
 .venv/bin/python evaluate.py videos/CamB_20260915_102450.mkv --start 0 --end 47.76 \
-    --truth-image ~/Downloads/KanatVideos/CamB_20260915_102450.after.jpeg \
     --truth-labels truth/camb-20260915-102450
-# and the same for _103223 over 0-51.88; probe.py with the same arguments
+.venv/bin/python evaluate.py videos/CamB_20260915_103223.mkv --start 0 --end 51.88 \
+    --truth-labels truth/camb-20260915-103223
+# probe.py with the same arguments. --truth-image comes from board.source.txt (#34).
 ```
 
-| Recording | New (truth) | Reported | TP | FP | FN | F1 | FP attributed | Probe rate, every label |
-|---|---:|---:|---:|---:|---:|---:|---|---|
-| `_102450` | 4 | 2 | 0 | 2 | 4 | 0.00 | 2 detector | 0.00 |
-| `_103223` | 2 | 3 | 0 | 3 | 2 | 0.00 | 3 detector | 0.00 |
+Truth is placed through the baseline video frame (#40): photograph → frame at
+correlation 0.9947 and 0.9806, then the frame's own homography to template.
 
-**These numbers measure the scoring, not the pipeline.** A probe rate of 0.00
-at conf 0.02 over 1194 and 1297 frames, on every label of both recordings, is
-not a detector: the detector finds 7 and 9 marks in the baseline of the same
-footage. The labels are not on the Board.
+| Recording | New (truth) | Reported | TP | FP | FN | Precision | Recall | F1 | FP attributed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| `_102450` | 4 | 2 | 2 | 0 | 2 | 100% | 50% | 0.67 | — |
+| `_103223` | 2 | 3 | 2 | 1 | 0 | 67% | 100% | 0.80 | 1 detector, 255 px |
+| pooled | 6 | 5 | 4 | 1 | 2 | 80% | 67% | 0.73 | 1 detector |
 
-`evaluate.truth_in_template` registers the after photograph straight to the
-printed artwork. On the CamB photographs that fit correlates 0.69 and 0.74 and
-throws labels up to 58 000 template px from where they belong (the
-template is ~1 100 px across). **This contradicts ADR-0005**, which grounds
-photograph truth on `evaluate.py` already registering "such a photograph to
-the printed artwork"; for the CamB photographs it does not. CamA's photograph fits at 0.976, and
-`truth/camb-25-36` was scored against a **video frame**, never a photograph —
-so this is the first time a CamB recording has been scored against its
-photograph, and the path has never worked for one. Raised as **#40**.
+**Both false negatives are off the canvas** — Board y 346 and 359 on a 315 px
+canvas, so no detector setting could have found them (#41). Every new Bullet
+Hole the detector was shown was found and scored, by the scorer, with no
+adjudication by eye.
 
-## Headline, diagnostic: truth placed through a video frame
+**How far to trust the placement**, measured on every run without ground truth
+(`[PLACEMENT]`): the after photograph's pre-existing marks are the Bullet Holes
+the baseline holds, and they land **3–16 template px** from them on `_102450`
+(6 of 6) and **6–12 px** on `_103223` (8 of 10). The matches themselves sit at
+5–23 px. Placement now uses under half the 40 px tolerance, where the frame
+diagnostic of the first run used 13–35 of it.
 
-To get past #40 without fixing it here, the after photograph was registered to
-the baseline **video frame** (one ECC, photo → frame, the way the derivation
-registers photograph to photograph) and taken to template space through that
-frame's own homography — the runtime's frame of reference. Scoring and
-attribution are `evaluate.score` and `evaluate.attribute`, unchanged, at the
-40 px tolerance.
+`_103223`'s two unpaired pre-existing marks are **not a placement error**: they
+land at Board y 381 and 396 on a 348 px canvas, below it, where no baseline can
+hold them. `[PLACEMENT]` warns "the truth placement is off, or the baseline
+missed them" — neither; the canvas ends first (#41). The warning cannot tell
+the cases apart because it does not exclude off-canvas marks, as the scoring
+`[WARN]` does. Recorded, not changed here.
 
-How far to trust that placement, measured without ground truth: the after
-photograph's **pre-existing** marks are the same Bullet Holes the pipeline's
-baseline holds, and they land **13–32 template px** from them on `_102450` (6 of
-6 paired) and **17–35** on `_103223` (7 of 10 paired). Most of the 40 px
-tolerance is spent on placement before the detector is judged.
+### Every mark
 
-| Recording | TP | FP | FN | F1 |
-|---|---:|---:|---:|---:|
-| `_102450` | 2 | 0 | 2 | 0.67 |
-| `_103223` | 1 | 2 | 1 | 0.40 |
-| `_103223`, adjudicated by eye (below) | 2 | 1 | 0 | 0.80 |
+- **`_102450` truth #2, found #1, t=32.40s, Target 1, scores 10.** Matched at
+  5 px. The earlier pixel check stands: absent at 32.0s, present at 32.6s. The
+  probe's first detection at 11.04s is the detector on the printed ring
+  numerals for half a second, and persistence rejected it, as designed.
+- **`_102450` truth #1, found #2, t=32.92s, Miss**, above the Target. Matched at
+  23 px.
+- **`_102450` truth #3 and #4, never reported.** Two new Bullet Holes on the
+  white Board ~1.7 Target-spans below the Target, visible in the late frame and
+  labelled in the photograph, **outside the image the detector is given**
+  (#41).
+- **`_103223` truth #1, found #1, t=11.20s, Miss**, high on the white Board.
+  Matched at 18 px. The first run could credit it only by eye (the frame
+  diagnostic put the label 73 px out); the corrected placement credits it.
+  It sits on the canvas edge, Board y 1 of 348, and was confirmed only because
+  its first 50-frame window ran at 80% — 45% of the frames after it.
+- **`_103223` truth #2, found #2, t=11.20s, Target 1, outside rings** — the top
+  of the green silhouette. Matched at 11 px.
+- **`_103223` found #3, t=19.76s, Miss — a real false positive, and not a
+  hallucination.** The same detection the first run checked in the pixels:
+  something dark lands on clean Board at ~20s, with streaks that move between
+  frames, and stays through 45s; the after photograph shows clean Board there.
+  An insect or debris. It persists (96%) and is a real change (`[changed]`), so
+  persistence and change evidence both pass it **by construction**.
+  `[ATTRIBUTION]` calls it `detector` at 255 px from anything pre-existing,
+  which is right about where the error entered and says nothing about what the
+  object was.
 
-Every mark was then checked in the pixels — crops of the baseline and a late
-frame with detections and projected labels drawn, and the after photograph:
-
-- **`_102450` #1, t=32.40s, Target 1, scores 10.** Absent at 32.0s, present at
-  32.6s: reported inside the window it arrived in. The probe's earlier detection
-  at 11.04s is the detector on the printed ring numerals for half a second, and
-  persistence rejected it, as designed.
-- **`_102450` #2, t=32.92s, Miss**, above the Target. Matched at 20 px.
-- **`_102450` truth #3 and #4, never reported.** Two new Bullet Holes on the white
-  Board ~1.7 Target-spans below the Target, visible in the late frame and
-  labelled in the photograph. They project to Board y 341 and 353 on a 315 px
-  canvas: **outside the image the detector is given**. Raised as **#41**.
-- **`_103223` #1, t=11.20s, Miss**, high on the white Board. Scored FP + FN: the
-  label lands 73 px from it (42 under a second fit). The crops settle it — one
-  mark, absent at t=0, present late, with the label's cross one Bullet Hole's width below
-  it. It is the labelled Bullet Hole, and **placement** error pushed it past the
-  tolerance. It sits on the canvas edge (Board y 13 of 348), see #41.
-- **`_103223` #2, t=11.20s, Target 1, outside rings** — the top of the green
-  silhouette. Matched at 19 px.
-- **`_103223` #3, t=19.76s, Miss — a real false positive, and not a
-  hallucination.** Something dark lands on clean Board at ~20s, with streaks
-  that move between frames, and stays through 45s; the after photograph shows
-  clean Board there. An insect or debris on the Board. It persists (96%) and it
-  is a real change (`[changed]`), so persistence and change evidence both pass
-  it **by construction**. `[ATTRIBUTION]` calls it `detector` at 255 px from
-  anything pre-existing, which is right about where the error entered and
-  says nothing about what the object was.
-
-**Pooled: 6 new Bullet Holes, 4 found, 1 false positive.** All 4 on the canvas
-were found; both misses are off it. Recall 67%, 100% of what was in the image — **with `_103223` #1 credited by
-eye**, not by the scorer.
-
-**`[ATTRIBUTION]` cannot tell a placement miss from a detector error.** It asks
-only how far a false positive is from a mark the baseline held, so `_103223` #1
-— a correct detection the scoring could not credit — reads `detector, 490 px`.
-Under #40's placement every false positive on both recordings reads `detector`.
-Its causes are displacement, detector, unknown; a truth-placement miss is none
-of them and lands in `detector` — a gap in **ADR-0006**'s three causes,
-flagged here rather than patched. Recorded, not changed: #40 is the cause, and
-attribution is only as good as the truth it reads.
+**The ADR-0006 gap the first run flagged** — a truth-placement miss has no
+cause of its own and lands in `detector` — does not arise on the corrected
+run: no correct detection is scored false. It remains true in principle, since
+`attribute` only asks how far a false positive is from a baseline mark, and it
+is the reason `[PLACEMENT]` exists.
 
 ## Detector probe, per Bullet Hole
 
-`probe.py --at`, conf 0.02, at the diagnostic placements. The rate's
-denominator is every frame from t=0, so a mark arriving mid-clip cannot reach
-1.0; "since arrival" is the share of frames from its first detection.
+`probe.py`, conf 0.02, radius 40 template px, at the corrected placements. The
+rate's denominator is every registered frame from t=0 (1194 and 1297, none
+lost), so a mark arriving mid-clip cannot reach 1.0; "since arrival" is hits
+over the frames from its arrival, from the printed rate (±1 point of rounding).
 
-| Recording | Bullet Hole | Rate | First | Last | Since arrival | Note |
-|---|---|---:|---:|---:|---:|---|
-| `_102450` | #1 (10-ring) | 0.32 | 11.04s | 47.72s | ~97% from 32.40s | 11.04s is the numeral flicker |
-| `_102450` | #2 (above the Target) | 0.29 | 32.92s | 47.72s | ~94% | |
-| `_102450` | truth #3 | 0.00 | — | — | — | off canvas, #41 |
-| `_102450` | truth #4 | 0.00 | — | — | — | off canvas, #41 |
-| `_103223` | #1 (high Board), at the label | 0.00 | 13.36s | 14.24s | — | label 73 px off the mark |
-| `_103223` | #1, at the mark itself | 0.42 | 11.20s | 51.72s | ~54% | canvas edge |
-| `_103223` | #2 (silhouette) | 0.78 | 11.20s | 51.84s | ~99% | |
-| `_103223` | the object, not a Bullet Hole | 0.58 | 19.76s | 50.04s | ~94% | |
+| Recording | Bullet Hole | Board (x, y) / canvas | Rate | First | Last | Since arrival | Note |
+|---|---|---|---:|---:|---:|---:|---|
+| `_102450` | truth #1 (above the Target) | 228, 73 / 315² | 0.28 | 32.92s | 47.72s | ~90% | |
+| `_102450` | truth #2 (10-ring) | 151, 158 / 315² | 0.32 | 11.04s | 47.72s | ~99% from 32.40s | 11.04s is the numeral flicker; blind 11.52–32.36s |
+| `_102450` | truth #3 | 203, 346 / 315² | 0.00 | — | — | — | **off canvas**, #41 |
+| `_102450` | truth #4 | 211, 359 / 315² | 0.00 | — | — | — | **off canvas**, #41 |
+| `_103223` | truth #1 (high Board) | 219, 1 / 364×348 | 0.40 | 11.20s | 51.72s | ~51% | canvas edge |
+| `_103223` | truth #2 (silhouette) | 181, 103 / 364×348 | 0.78 | 11.20s | 51.84s | ~99% | |
 
-Every Bullet Hole in the image is seen by the detector. The one weak rate,
-~54% (the pipeline counts 45%), is the mark on the canvas edge.
+Every Bullet Hole on the canvas is seen by the detector at a rate that
+persistence can confirm. The one weak rate, ~51% (the pipeline counts 45% at
+conf 0.40), is the mark on the canvas edge. Net scale 0.91 and 0.87.
 
 ## Registration residual
 
-| Recording | median | max | match radius |
-|---|---:|---:|---:|
-| `_102450` | 1.1 Board px / **7.9** tpl px | 2.9 / 20.0 | 2.9 / 20.0 |
-| `_103223` | 1.7 Board px / **11.1** tpl px | 3.1 / 20.0 | 3.1 / 20.0 |
+| Recording | median | max | match radius | baseline-matched detections |
+|---|---:|---:|---:|---:|
+| `_102450` | 1.1 Board px / **7.9** tpl px | 2.9 / 20.0 | 2.9 / 20.0 | 7 555 |
+| `_103223` | 1.7 Board px / **11.1** tpl px | 3.1 / 20.0 | 3.1 / 20.0 | 9 827 |
 
-Over 7 555 and 9 827 baseline-matched detections. The medians sit with CamA's
-11.1 and `_102250`'s 10.1 template px, and the max is on the censoring ceiling
-again, on both — displaced pre-existing marks are reaching the threshold here
-too. None of them crossed it: no false positive attributes to displacement in
-either reading.
+Unchanged from the first run — the residual never depended on truth placement.
+The medians sit with CamA's 11.1 and `_102250`'s 10.1 template px, and the max
+is on the censoring ceiling on both: displaced pre-existing marks are reaching
+the threshold here too. None crossed it: no false positive attributes to
+displacement.
 
 ## Every provisional constant, against this footage
 
@@ -152,32 +140,46 @@ either reading.
 
 | Constant | Value | Verdict | Grounds |
 |---|---|---|---|
-| `PERSIST` | 0.50 | supports | All 4 Bullet Holes in the image confirmed, at 80–100%; the 11.04s numeral flicker rejected. Thinnest margin: `_103223` #1 at 80% in its window and 45% over the rest of the clip — a window starting later would have lost it. A physically present non-hole object passes it by design (`_103223` #3). |
+| `PERSIST` | 0.50 | supports | All 4 on-canvas Bullet Holes confirmed, at 80–100%; the 11.04s numeral flicker rejected. Thinnest margin: `_103223` truth #1 at 80% in its window and 45% over the rest of the clip — a window starting later would have lost it. A physically present non-hole object passes it by design (`_103223` found #3). |
 | `PERSIST_FRAMES` | 50 | says nothing | No Bullet Hole arrived near either clip's end, and nothing here compares window lengths. |
-| `DEFAULT_CONFIDENCE` | 0.40 | supports | No Bullet Hole in the image was lost to the floor; the only false positive is a real object, not a low-confidence box. Says nothing about the optimum. |
-| `BASELINE_FRAMES` | 5 | supports, weakly | No Hit in the first 200 ms, no 0.04s-style re-detection. Baselines hold 7 and 9 marks against 6 and 10 labelled pre-existing. |
+| `DEFAULT_CONFIDENCE` | 0.40 | supports | No on-canvas Bullet Hole lost to the floor; the only false positive is a real object, not a low-confidence box. Says nothing about the optimum. |
+| `BASELINE_FRAMES` | 5 | supports, weakly | No Hit in the first 200 ms, no 0.04s-style re-detection. The baselines hold every on-canvas labelled pre-existing mark: 6 of 6 and 8 of 8 (the other two are off canvas). |
 | `REQUIRE_CHANGE_EVIDENCE` | True | says nothing | 2 → 2 and 3 → 3: it removed nothing. The one false positive is a real change. |
 | `ABSDIFF_SIGMA` | 2.0 | supports | Every confirmed detection is `[changed]`; the evidence channel is alive. |
-| `MATCH_TPL_PX` | 20.0 | supports | No real new Bullet Hole suppressed, no displaced mark reported. Residual max on the ceiling on both, as before. |
+| `MATCH_TPL_PX` | 20.0 | supports | No real new Bullet Hole suppressed, no displaced mark reported. Residual max on the ceiling on both, as on CamA and `_102250`. |
 | `DUP_CENTER_FACTOR` | 0.5 | says nothing | No split marks and no close pairs of new Bullet Holes in either recording. |
 | `OVERLAP_THRESHOLD` | 0.5 | says nothing | Same. |
 | `TARGET_NET_SCALE` | 0.90 | supports, same setup | Net scale 0.91 and 0.87; detection healthy. One Capture Setup, already fitted. |
-| `BOARD_MARGIN` | 0.50 | **breaks — #41** | 2 of 6 new Bullet Holes outside the canvas, a third on its edge. The Board extends well past half a Target-span and gets shot. |
+| `BOARD_MARGIN` | 0.50 | **breaks — #41** | 2 of 6 new Bullet Holes and 2 of 16 labelled pre-existing marks are below the canvas; a third new one is on its edge (y 1 of 348). On both recordings the Board below the Target gets shot and is not in the image. |
 | `GREEN_LO` / `GREEN_HI` | — | supports, same setup | Target found in every frame, 0 lost. Same light and artwork as `_102250`. |
 | `MIN_TARGET_AREA_PX` | 5000 | says nothing | One large Target, same pose as `_102250`. |
-| `MATCH_TOLERANCE_TPL` | 40 | says nothing until #40 | Photograph placement error on this footage is 13–35 px, one case 73. The tolerance cannot be judged while placement uses most of it. |
-| `UNKNOWN_FACTOR` | 2.0 | says nothing | No false positive fell between 40 and 80 px under either placement. |
+| `MATCH_TOLERANCE_TPL` | 40 | supports, weakly | Scoring tolerance, not a pipeline threshold. Placement error 3–16 px, matches 5–23 px, the one false positive 255 px out: every correct detection credited, nothing falsely credited. Nothing landed between 23 and 255 px, so the boundary itself is not tested. |
+| `UNKNOWN_FACTOR` | 2.0 | says nothing | No false positive fell between 40 and 80 px. |
 | `NON_COOCCURRENCE_MERGE`, `MAX_DISPLACEMENT_FRACTION` | off, 0.35 | says nothing | Off by default, and no displaced pair appeared. Still one Target, so the distance scaling cannot be re-derived. |
 
 The measured artwork landmarks (`RING_*_TPL`) are readings, not tunables. The
-ring score on `_102450` #1 (10) is the second real Hit on a Target after
+ring score on `_102450` truth #2 (10) is the second real Hit on a Target after
 `_102250`'s two, and agrees with the crop.
+
+## What the corrected run changed
+
+| First run (before #40) | Corrected | Why |
+|---|---|---|
+| Tool headline F1 0.00 / 0.00, every label FN, probe 0.00 on every label | F1 0.67 / 0.80, probe 0.28–0.78 on every on-canvas label | The 0.00s were the photograph registered straight to the artwork (ECC 0.69–0.74), labels 52 000–58 000 tpl px out. They measured scoring, never the pipeline (#40, closed). |
+| Every false positive `detector`; `_103223`'s high mark `detector, 490 px` | One false positive, the real object; the high mark is a TP at 18 px | Same cause: no label was on the Board. |
+| `_103223` 0.40 by the scorer, 0.80 only with the high mark credited by eye | 0.80 by the scorer | The frame diagnostic's placement error (13–35 px, one mark 73) is gone; the corrected placement is 6–12 px. |
+| `MATCH_TOLERANCE_TPL`: says nothing until #40 | supports, weakly | Placement no longer spends most of the tolerance. |
+| `[ATTRIBUTION]` cannot tell a placement miss from a detector error — a case on this footage | Not exercised: no placement miss | Still true in principle; no longer evidenced here. |
+| `BOARD_MARGIN` breaks: 2 new Bullet Holes off canvas, one on the edge | breaks, and wider: also 2 pre-existing marks off canvas on `_103223` | Seen only once pre-existing marks were placed correctly. Adds nothing to FN (they are not new), but shows the uncovered region on both recordings, and makes `[PLACEMENT]` misread it as a placement doubt. |
+
+Every other verdict, the residual, the pooled "4 found of 4 on the canvas" and
+the ruling on `_103223` found #3 are unchanged.
 
 ## What this run does not show
 
 - **Generalisation.** One Capture Setup, already fitted. The sealed wide pair is
   the only held-out pose (#31).
-- **A pipeline F1 that stands without adjudication.** The diagnostic scores
-  depend on a placement whose error is most of the tolerance, and one mark was
-  credited by eye. The tool's own headline is 0.00 until #40 lands.
+- **Recall over the whole Board.** A third of the new Bullet Holes here are
+  outside the image the detector sees (#41). The pooled 67% is a canvas bound,
+  and on-canvas recall (4 of 4) says nothing about the Board below it.
 - **Anything about the ring scoring beyond one Hit.**

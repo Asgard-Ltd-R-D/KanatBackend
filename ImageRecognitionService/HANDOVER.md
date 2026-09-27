@@ -178,25 +178,30 @@ optimal on exactly this sample and that says very little about the next one. SOW
 
 ## The threshold-work recordings: what held, what broke
 
-Run end to end on 2026-09-27 at current constants —
-[`falsification_run.md`](falsification_run.md) has the counts, the probe, the
-residuals and a verdict per constant. No constant moved. Two things broke:
+Run end to end on 2026-09-27 at `7ef2ffe`, after #34 and #40, at current
+constants — [`falsification_run.md`](falsification_run.md) has the counts, the
+probe, the residuals and a verdict per constant. No constant moved.
 
-- **Scoring cannot place CamB photograph truth (#40).** Registering the after
-  photograph straight to the artwork correlates 0.69–0.74 and throws labels
-  tens of thousands of template px off, so `evaluate.py` scores both recordings
-  F1 0.00 and the probe reads 0.00 on every label. `truth/camb-25-36` never
-  took this path — its `board.jpeg` is a video frame. **Do not read a CamB
-  photograph score until #40 lands.**
-- **The canvas ends before the Board does (#41).** Two of the six new Bullet
-  Holes sit ~1.7 Target-spans below the Target, off the image the detector is
-  given. `BOARD_MARGIN` bounds recall, and on this setup it binds.
+| Recording | Window | New | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `CamB_20260915_102450` | 0–47.76s | 4 | 2 | 0 | 2 | 100% | 50% | 0.67 | — |
+| `CamB_20260915_103223` | 0–51.88s | 2 | 2 | 1 | 0 | 67% | 100% | 0.80 | detector, 255 tpl px out |
 
-Placed through a video frame instead and checked in the pixels, every Bullet
-Hole on the canvas was found, and the one false positive is a real object —
-insect or debris — that persistence and change evidence pass by construction.
-Both recordings share `_102250`'s Capture Setup, so this adds Bullet Holes and
-no setup. `_103223`'s high mark is credited by eye, not by the scorer.
+Placement error (`[PLACEMENT]`) is 3–16 and 6–12 template px. Every new Bullet
+Hole on the canvas was found and scored by the scorer; the one false positive
+is a real object — insect or debris — that persistence and change evidence pass
+by construction.
+
+**One constant breaks: the canvas ends before the Board does (#41).** Both
+false negatives, and two of `_103223`'s pre-existing marks, sit below the
+canvas the detector is given; a third new Bullet Hole is on its edge.
+`BOARD_MARGIN` bounds recall, and on this setup it binds.
+
+The first run of this record, before #40, scored both recordings F1 0.00 with
+probe rate 0.00 on every label. **That was the photograph registration, not the
+pipeline** — labels thrown up to 58 000 template px off the Board — and it is
+superseded. Both recordings share `_102250`'s Capture Setup, so this adds
+Bullet Holes and no setup.
 
 ## The held-out set is two recordings of one Capture Setup
 
@@ -756,14 +761,15 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `OVERLAP_THRESHOLD` | 0.5 | `new_bullet_holes.py` | Ported; merging on *any* overlap regresses CamA |
 | `TARGET_NET_SCALE` | 0.90 | `board.py` | Inside a flat band, not a measured peak |
 | `ABSDIFF_SIGMA` | 2.0 | `board.py` | At 2.5 the evidence channel was dead |
-| `BOARD_MARGIN` | 0.50 | `board.py` | Bounds recall; see above. **Breaks** on `_102450` — #41 |
+| `BOARD_MARGIN` | 0.50 | `board.py` | Bounds recall; see above. **Breaks** on both threshold-work recordings — #41 |
 | `GREEN_LO` / `GREEN_HI` | — | `board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `board.py` | May reject distant Targets |
 
 `MATCH_TOLERANCE_TPL` (40 px, `evaluate.py`) is provisional too — it is the
-*scoring* tolerance, not a pipeline threshold. Matches currently land at 9–22
-template px against it, which is encouraging and is not validation across a
-dataset.
+*scoring* tolerance, not a pipeline threshold. Matches land at 2–28 template
+px against it on the fitted clips and 5–23 on the threshold-work pair, whose
+one false positive is 255 px out — supported there, weakly, because nothing
+lands near 40. Encouraging, and not validation across a dataset.
 
 Measured artwork landmarks — `RING_CENTRE_TPL`, `RING_DIAMETER_TPL`,
 `RING_OFFSET_TPL`, `RING_RADII_TPL` — are *not* tunables. They are readings off

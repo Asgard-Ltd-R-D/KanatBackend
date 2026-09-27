@@ -138,7 +138,7 @@ def test_a_photograph_at_template_scale_keeps_the_template_tolerance():
 # --- the CamB case, pinned by name ----------------------------------------
 
 def test_camb_derivation_reproduces_the_three_hand_worked_labels(tmp_path):
-    """`truth/camb-25-36` is the case that was scored wrong.
+    """`truth/camb-20260915-102250/window-25s` is the case that was scored wrong.
 
     Four labels were drawn on the after photograph; one of them sits on a mark
     already on the Board at the 25s baseline frame, and scoring against all
@@ -147,15 +147,15 @@ def test_camb_derivation_reproduces_the_three_hand_worked_labels(tmp_path):
     instead, from the operator's before-labels, and the two files must agree.
     """
     result = evaluate.derive_new_holes(
-        before_image=_truth("camb-25-36", "board.jpeg"),
-        before_labels=_truth("camb-25-36", "board.before.txt"),
-        after_image=_truth("camb-25-36", "board.jpeg"),
-        after_labels=_truth("camb-25-36", "board.txt"))
+        before_image=_truth("camb-20260915-102250", "window-25s", "board.jpeg"),
+        before_labels=_truth("camb-20260915-102250", "window-25s", "board.before.txt"),
+        after_image=_truth("camb-20260915-102250", "window-25s", "board.jpeg"),
+        after_labels=_truth("camb-20260915-102250", "window-25s", "board.txt"))
 
     assert len(result["new"]) == 3
     assert len(result["pre_existing"]) == 1
     hand_worked = open(
-        _truth("camb-25-36", "board.new-since-25s.txt")).read().splitlines()
+        _truth("camb-20260915-102250", "window-25s", "board.new-since-25s.txt")).read().splitlines()
     derived = [result["lines"][i] for i in result["new"]]
     assert derived == [l for l in hand_worked if l.strip()]
 
@@ -223,7 +223,7 @@ def test_a_directory_with_one_label_file_takes_it(tmp_path):
 
 
 def test_a_directory_of_several_label_files_is_refused(tmp_path):
-    """`truth/camb-25-36` holds four. Without the derived file to prefer there
+    """`truth/camb-20260915-102250/window-25s` holds four. Without the derived file to prefer there
     is no right answer to guess, and the first one alphabetically is
     `board.before.txt` — the marks that were already on the Board."""
     for name in ("board.before.txt", "board.txt"):

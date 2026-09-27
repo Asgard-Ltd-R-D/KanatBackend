@@ -33,10 +33,10 @@ Two clips now carry operator-labelled ground truth.
 
 | Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
 |---|---|---|---|---|---|---|---|---|---|
-| `CamA_20260914_141546.mkv` (`truth/kanatv6`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 | detector, 827 tpl px out |
-| `CamB_20260915_102250.mkv` (`truth/camb-25-36`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 | displacement, 29 tpl px out |
+| `CamA_20260914_141546.mkv` (`truth/cama-20260914-141546`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 | detector, 827 tpl px out |
+| `CamB_20260915_102250.mkv` (`truth/camb-20260915-102250/window-25s`) | 25–36s | 3 | 3 | 1 | 0 | 75% | 100% | 0.86 | displacement, 29 tpl px out |
 
-Bullet Holes placed within 9–22 template px — under one hole's width. **The two
+Bullet Holes placed within 2–29 template px — under one hole's width. **The two
 clips fail differently**, and that is the point of the last column: one lost
 precision to the model, the other to registration, and until `[ATTRIBUTION]`
 existed both read as the same 1 FP. The counts are untouched by it, and the
@@ -48,16 +48,19 @@ pass in about a second.
 video frame**, over the whole picture, and reaches template space through
 that frame's homography — no longer straight to the artwork, which on the CamB
 photographs threw labels up to 58 000 template px out. Both counts above
-reproduce; the pairs now sit at 3–11 px on CamA and 5–29 on CamB (one pair
-further, two nearer). The threshold-work pair scores for the first time:
+reproduce; the pairs moved from 9–16 to 2–7 px on CamA and from 17/8/12 to
+8/29/5 on CamB (one pair further, two nearer). The threshold-work pair scores for the first time:
 `_102450` TP 2 / FP 0 / FN 2 (both misses off the canvas, #41) and `_103223`
-TP 2 / FP 1 / FN 0. The newer derived truths score CamA 6 / 1 / 0 (pairs 2–7
-px) and `camb-20260915-102250` 4 / 0 / 0 at 25–36s, up from 1 / 3 / 3 —
-**but that 1.00 is flattered**: the derivation's before photograph predates the
-whole recording, so its four labels include the mark already on the Board at
-25s, and the displaced sighting `camb-25-36` attributes to displacement is
-credited to it at 26 px. Derived truth does not yet fit a window that starts
-mid-recording. A derived score now prints `[PLACEMENT]`: the after
+TP 2 / FP 1 / FN 0.
+
+**CamB's 25–36s window is scored against `truth/camb-20260915-102250/window-25s/`, not the
+recording's derived `board.new.txt`.** Both are the one recording
+`CamB_20260915_102250`; the derived file comes from a before photograph that
+predates the whole clip, so its four labels include the mark already on the
+Board at 25s. Scored against it the run reads 4 / 0 / 0, F1 1.00 — flattered:
+the displaced sighting the table attributes to displacement is credited to
+that mark at 26 px. `window-25s/` holds the frame-labelled truth for this
+window. Derived truth does not yet fit a window that starts mid-recording. A derived score now prints `[PLACEMENT]`: the after
 photograph's pre-existing marks against the run's baseline, 3–16 and 6–12 px
 on those two — the placement's own error, measured on every run. 171 tests
 pass.
@@ -128,10 +131,11 @@ more. The marks moved 0.001–0.003 in normalised photograph coordinates from th
 polygon pass, which is a re-draw of the same holes.
 
 **CamA is the cross-check.** Its before photograph is clean, so all six after
-labels are new — and those six land 4.9–9.4 template px from the six labels of
-`truth/kanatv6`, which were drawn by hand on a *different* photograph. Six of
-six match within tolerance. Two independent annotation passes, two
-photographs, one answer.
+labels are new — and those six landed 4.9–9.4 template px from the recording's
+first, hand-drawn labels (six, drawn on a *different* photograph; folded into
+this directory and since removed, as they were one recording's truth twice).
+Six of six matched within tolerance: two annotation passes of one recording,
+one answer — a check on the annotation, not a second recording.
 
 **The derivation registers twice, and the second time on the marks
 themselves.** The artwork is a sixth of these photographs, so an ECC
@@ -165,7 +169,7 @@ On `CamB_20260915_103223` that takes the residuals from 1.4–7.3 px to
 high on the white Board and one at the top of the green silhouette. The
 operator confirms those two independently. `CamB_20260915_102450` also refits
 (0.2–0.7 px, from 0.7–4.7) and its answer is unchanged; the other four have too
-few pairs to refit and are untouched, including the pinned `truth/camb-25-36`
+few pairs to refit and are untouched, including the pinned `truth/camb-20260915-102250/window-25s`
 case.
 
 `evaluate.py` warns when a derived file still has unpaired before-marks: it
@@ -175,7 +179,7 @@ Pointing `--truth-labels` at a derived directory also picks `board.new.txt`
 rather than `board.after.export.txt`, which sorts first and would have scored
 the run against the pre-existing marks as well. Where there is no derived file
 to prefer, a directory of several `.txt` files is now refused by name instead
-of resolved alphabetically — in `truth/camb-25-36` that first file is
+of resolved alphabetically — in `truth/camb-20260915-102250/window-25s` that first file is
 `board.before.txt`.
 
 **That is nine Bullet Holes across two clips.** The thresholds are jointly
@@ -238,11 +242,13 @@ Everything runs from `ImageRecognitionService/` with its `.venv`.
 
 # Score a run against labelled ground truth — use this before believing any change
 .venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
-    --truth-image truth/kanatv6/board.jpeg --truth-labels truth/kanatv6/board.txt
+    --truth-labels truth/cama-20260914-141546
 # Derived truth names its own photograph in board.source.txt; --truth-image
-# is then optional, and one that disagrees is warned about by name
-.venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
-    --truth-labels truth/camb-20260915-103223
+# is then optional, and one that disagrees is warned about by name. Truth
+# labelled on a video frame has no source file and needs it:
+.venv/bin/python evaluate.py videos/CamB_20260915_102250.mkv --start 25 --end 36 \
+    --truth-image truth/camb-20260915-102250/window-25s/board.jpeg \
+    --truth-labels truth/camb-20260915-102250/window-25s/board.new-since-25s.txt
 
 .venv/bin/python -m pytest -q
 ```
@@ -279,7 +285,7 @@ rather than a differently drawn one, so `derive_truth.py` refuses the file by
 line number instead of deriving a mark in the wrong place.
 
 Where an export needs correcting, **keep the raw file** and correct a derived
-copy: `truth/camb-25-36/board.roboflow.txt` is Roboflow's bytes unchanged, and
+copy: `truth/camb-20260915-102250/window-25s/board.roboflow.txt` is Roboflow's bytes unchanged, and
 `board.txt` is the file the evaluation reads.
 
 **Every recording needs a manifest entry before any tool will open it.**
@@ -317,7 +323,7 @@ extraction is what keeps sealed pixels out of it.
 | `evaluate.py` | Scoring a run against labelled ground truth |
 | `manifest.py`, `recordings.json` | Split membership by content hash, the sealed guard, the run log |
 | `targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
-| `truth/kanatv6/` | The one piece of ground truth that exists |
+| `truth/<recording>/` | Ground truth, one directory per recording; `truth/camb-20260915-102250/window-25s/` is CamB's 25–36s window of the same recording |
 | `tagging_bullets.py`, `sweep_profile.py` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
 
 ---

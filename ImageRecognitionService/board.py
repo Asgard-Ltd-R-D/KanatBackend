@@ -76,7 +76,7 @@ TARGET_NET_SCALE = 0.90    # PROVISIONAL
 # frame-pixel value. 227 template px is the 10-ring diameter, so this converts to
 # millimetres the moment `to_millimetres` is unblocked.
 #
-# Swept against operator-labelled ground truth (KanatV6, 6 Bullet Holes): 40
+# Swept against operator-labelled ground truth (CamA_20260914_141546, 6 Bullet Holes): 40
 # scored 4 true / 2 false, 20 scored 5 true / 2 false. The radius also gates
 # which detections count as "already in the baseline", so an over-wide value
 # discards real Bullet Holes near a pre-existing one — which is how 40 lost a

@@ -90,7 +90,7 @@ detection the model already made.
 
 The first values — a 70% persistence bar and a 40 template-px match radius — were
 set by intuition. Scored against an operator-labelled photograph of the same
-Board (`truth/kanatv6`, six Hits), they gave **1 true positive and 5 false**.
+Board (`CamA_20260914_141546`, six Hits), they gave **1 true positive and 5 false**.
 
 | Change | Why it was wrong | Result |
 |---|---|---|

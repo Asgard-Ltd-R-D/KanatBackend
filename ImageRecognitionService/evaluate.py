@@ -655,7 +655,7 @@ def _one(path, pattern):
     """A file, or the single `pattern` match under a directory.
 
     Several matches are refused rather than resolved alphabetically.
-    `truth/camb-25-36` holds four .txt files — the before labels, the raw
+    `truth/camb-20260915-102250/window-25s` holds four .txt files — the before labels, the raw
     export, the derived file and the corrected one — and taking the first
     scored the run against `board.before.txt`, the marks that were on the Board
     before it started. Silence is what made that possible, so it says which

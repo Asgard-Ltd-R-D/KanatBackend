@@ -21,7 +21,7 @@ file's own — see the warning there. `--model` takes several checkpoints and
 runs each over the same footage against the same ground truth.
 
     python probe.py CLIP.mkv --start 13 --end 25 \\
-        --truth-image truth/kanatv6 --truth-labels truth/kanatv6 \\
+        --truth-labels truth/cama-20260914-141546 \\
         --model a/best.pt b/best.pt
 
 The denominator is every registered frame from `--start`, so a Bullet Hole

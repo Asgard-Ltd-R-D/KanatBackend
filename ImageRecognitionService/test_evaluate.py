@@ -74,7 +74,7 @@ def test_a_truncated_line_is_still_damaged(tmp_path):
 
 
 def test_truncated_label_is_kept_not_dropped(tmp_path):
-    """The KanatV6 export ended mid-number. Dropping the instance would
+    """CamA_20260914_141546's first export ended mid-number. Dropping the instance would
     understate ground truth, which flatters recall."""
     f = tmp_path / "labels.txt"
     f.write_text("0 0.1 0.1 0.2 0.1 0.2 0.2 0.1 0.2\n"

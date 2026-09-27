@@ -176,6 +176,28 @@ of resolved alphabetically — beside `board.txt`, that first file is
 optimal on exactly this sample and that says very little about the next one. SOW
 2.3.6 asks for 99% over a statistically meaningful sample, which this is not.
 
+## The threshold-work recordings: what held, what broke
+
+Run end to end on 2026-09-27 at current constants —
+[`falsification_run.md`](falsification_run.md) has the counts, the probe, the
+residuals and a verdict per constant. No constant moved. Two things broke:
+
+- **Scoring cannot place CamB photograph truth (#40).** Registering the after
+  photograph straight to the artwork correlates 0.69–0.74 and throws labels
+  tens of thousands of template px off, so `evaluate.py` scores both recordings
+  F1 0.00 and the probe reads 0.00 on every label. `truth/camb-25-36` never
+  took this path — its `board.jpeg` is a video frame. **Do not read a CamB
+  photograph score until #40 lands.**
+- **The canvas ends before the Board does (#41).** Two of the six new Bullet
+  Holes sit ~1.7 Target-spans below the Target, off the image the detector is
+  given. `BOARD_MARGIN` bounds recall, and on this setup it binds.
+
+Placed through a video frame instead and checked in the pixels, every Bullet
+Hole on the canvas was found, and the one false positive is a real object —
+insect or debris — that persistence and change evidence pass by construction.
+Both recordings are the `_102250` Capture Setup, so this adds Bullet Holes and
+no setup.
+
 ## The held-out set is two recordings of one Capture Setup
 
 The six delivered files are **three** Capture Setups, and the five customer

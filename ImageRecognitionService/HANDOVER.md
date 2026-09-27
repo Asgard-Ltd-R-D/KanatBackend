@@ -172,7 +172,8 @@ to prefer, a directory of several `.txt` files is now refused by name instead
 of resolved alphabetically — beside `board.txt`, that first file is
 `board.before.txt`.
 
-**That is ten Bullet Holes across two clips.** The thresholds are jointly
+**That is ten Bullet Holes across two clips** — the threshold-work pair adds
+six, for falsification only. The thresholds are jointly
 optimal on exactly this sample and that says very little about the next one. SOW
 2.3.6 asks for 99% over a statistically meaningful sample, which this is not.
 
@@ -225,7 +226,7 @@ contains.
 four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had
 only unit tests behind them.
 
-Recall is 100% on both clips with the `yolo26n` weights, *within the labelled
+Recall is 100% on both fitted clips with the `yolo26n` weights, *within the labelled
 windows*. That is **not** enough to close `yolo26n` vs `yolo26m`: two recordings
 is not the held-out test set, and model selection still waits on it (blocked
 item 2).

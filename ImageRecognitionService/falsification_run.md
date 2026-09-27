@@ -22,7 +22,8 @@ end.
 same as `_102250`, which every constant is already fitted to. So this run adds
 six Bullet Holes and **no Capture Setup**: the evidence goes from two setups and
 ten Bullet Holes to two and sixteen, not the "at most four and seventeen" the
-ticket allowed. Anything that is a property of the physical set-up — the hue
+ticket allowed (its starting nine predates the derived truth, which gives
+`_102250` four). Anything that is a property of the Capture Setup — the hue
 gate, the Target area floor, net scale — is exercised here only a second time
 on one arrangement, and that is said below per constant.
 
@@ -104,12 +105,12 @@ is the reason `[PLACEMENT]` exists.
 `probe.py`, conf 0.02, radius 40 template px, at the corrected placements. The
 rate's denominator is every registered frame from t=0 (1194 and 1297, none
 lost), so a mark arriving mid-clip cannot reach 1.0; "since arrival" is hits
-over the frames from its arrival, from the printed rate (±1 point of rounding).
+over the frames from its arrival, from the printed rate (±1 point of rounding; ±5 for truth #2, whose count includes the numeral flicker).
 
 | Recording | Bullet Hole | Board (x, y) / canvas | Rate | First | Last | Since arrival | Note |
 |---|---|---|---:|---:|---:|---:|---|
 | `_102450` | truth #1 (above the Target) | 228, 73 / 315² | 0.28 | 32.92s | 47.72s | ~90% | |
-| `_102450` | truth #2 (10-ring) | 151, 158 / 315² | 0.32 | 11.04s | 47.72s | ~99% from 32.40s | 11.04s is the numeral flicker; blind 11.52–32.36s |
+| `_102450` | truth #2 (10-ring) | 151, 158 / 315² | 0.32 | 11.04s | 47.72s | ≥95% from 32.40s | 11.04s is the numeral flicker; blind 11.52–32.36s |
 | `_102450` | truth #3 | 203, 346 / 315² | 0.00 | — | — | — | **off canvas**, #41 |
 | `_102450` | truth #4 | 211, 359 / 315² | 0.00 | — | — | — | **off canvas**, #41 |
 | `_103223` | truth #1 (high Board) | 219, 1 / 364×348 | 0.40 | 11.20s | 51.72s | ~51% | canvas edge |
@@ -150,7 +151,7 @@ displacement.
 | `DUP_CENTER_FACTOR` | 0.5 | says nothing | No split marks and no close pairs of new Bullet Holes in either recording. |
 | `OVERLAP_THRESHOLD` | 0.5 | says nothing | Same. |
 | `TARGET_NET_SCALE` | 0.90 | supports, same setup | Net scale 0.91 and 0.87; detection healthy. One Capture Setup, already fitted. |
-| `BOARD_MARGIN` | 0.50 | **breaks — #41** | 2 of 6 new Bullet Holes and 2 of 16 labelled pre-existing marks are below the canvas; a third new one is on its edge (y 1 of 348). On both recordings the Board below the Target gets shot and is not in the image. |
+| `BOARD_MARGIN` | 0.50 | **breaks — #41** | 2 of 6 new Bullet Holes and 2 of 16 labelled pre-existing marks are below the canvas; a third new one is on its edge (y 1 of 348). On both recordings the Board below the Target takes Bullet Holes and is not in the image. |
 | `GREEN_LO` / `GREEN_HI` | — | supports, same setup | Target found in every frame, 0 lost. Same light and artwork as `_102250`. |
 | `MIN_TARGET_AREA_PX` | 5000 | says nothing | One large Target, same pose as `_102250`. |
 | `MATCH_TOLERANCE_TPL` | 40 | supports, weakly | Scoring tolerance, not a pipeline threshold. Placement error 3–16 px, matches 5–23 px, the one false positive 255 px out: every correct detection credited, nothing falsely credited. Nothing landed between 23 and 255 px, so the boundary itself is not tested. |
@@ -158,7 +159,7 @@ displacement.
 | `NON_COOCCURRENCE_MERGE`, `MAX_DISPLACEMENT_FRACTION` | off, 0.35 | says nothing | Off by default, and no displaced pair appeared. Still one Target, so the distance scaling cannot be re-derived. |
 
 The measured artwork landmarks (`RING_*_TPL`) are readings, not tunables. The
-ring score on `_102450` truth #2 (10) is the second real Hit on a Target after
+ring score on `_102450` truth #2 (10) is the third real Hit on a Target, after
 `_102250`'s two, and agrees with the crop.
 
 ## What the corrected run changed

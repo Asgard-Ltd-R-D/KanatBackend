@@ -62,8 +62,11 @@ it at 25.60s is credited to it. (The frame-labelled 25–36s annotation,
 formerly `truth/camb-25-36`, was superseded and removed because its annotation
 quality was not trusted.) A derived score now prints `[PLACEMENT]`: the after
 photograph's pre-existing marks against the run's baseline, 3–16 and 6–12 px
-on those two — the placement's own error, measured on every run. 171 tests
-pass.
+on those two — the placement's own error, measured on every run. Truth with no
+pre-existing mark (CamA's) prints `[WARN] placement unverified` instead. Which
+export lines were pre-existing is recorded by line number in `board.source.txt`
+(`pre-existing-export-lines`), so correcting a label in `board.new.txt` does not
+change it. 174 tests pass.
 
 **Every figure in this document was re-verified on 2026-09-17 after the
 memory-safety fix below**, on `opencv-python==4.10.0.84`. All three F1 scores,

@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 import board
-from evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, RAW_NAMES, UNKNOWN,
+from evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
+                      RAW_NAMES, SOURCE_NAME, UNKNOWN,
                       attribute, load_labels, match, off_canvas,
                       pre_existing_labels, register_photograph, score)
 
@@ -272,12 +273,23 @@ def test_a_label_off_the_rectified_board_is_named():
 
 
 def test_derived_truth_names_its_pre_existing_marks(tmp_path):
-    """The after export's labels the derivation did not write as new."""
+    """The after export's lines the derivation recorded as pre-existing — not
+    the export minus the derived file. Here the new label was corrected, so
+    it no longer equals its export line, and the subtraction would count it
+    as pre-existing too."""
     (tmp_path / RAW_NAMES["after"]).write_text(
         "0 0.1 0.1 0.01 0.01\n0 0.5 0.5 0.01 0.01\n0 0.9 0.2 0.01 0.01\n")
-    (tmp_path / DERIVED_NAME).write_text("0 0.5 0.5 0.01 0.01\n")
+    (tmp_path / DERIVED_NAME).write_text("0 0.52 0.5 0.01 0.01\n")
+    (tmp_path / SOURCE_NAME).write_text(f"{PRE_EXISTING_FIELD}: 1,3\n")
     got = pre_existing_labels(str(tmp_path / DERIVED_NAME))
     np.testing.assert_allclose(got, [[0.1, 0.1], [0.9, 0.2]], atol=1e-6)
+
+
+def test_a_derivation_without_the_record_names_no_pre_existing_marks(tmp_path):
+    (tmp_path / RAW_NAMES["after"]).write_text("0 0.1 0.1 0.01 0.01\n")
+    (tmp_path / DERIVED_NAME).write_text("")
+    (tmp_path / SOURCE_NAME).write_text("pre-existing: 1\n")
+    assert pre_existing_labels(str(tmp_path / DERIVED_NAME)) is None
 
 
 def test_truth_not_derived_has_no_pre_existing_marks(tmp_path):

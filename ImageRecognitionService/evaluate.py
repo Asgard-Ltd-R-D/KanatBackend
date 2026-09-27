@@ -562,6 +562,8 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
 
 SOURCE_NAME = "board.source.txt"
 UNPAIRED_FIELD = "before-marks-without-a-counterpart"
+# 1-based lines of the after export, counting only non-blank ones.
+PRE_EXISTING_FIELD = "pre-existing-export-lines"
 
 
 def write_derived(out_dir, result, before_image, before_labels,
@@ -604,6 +606,8 @@ def write_derived(out_dir, result, before_image, before_labels,
             f"match-tolerance-photo-px: {result['tolerance_px']:.1f}\n"
             f"labelled-after: {len(result['lines'])}\n"
             f"pre-existing: {len(result['pre_existing'])}\n"
+            f"{PRE_EXISTING_FIELD}: "
+            f"{','.join(str(i + 1) for i in result['pre_existing'])}\n"
             f"new-bullet-holes: {len(result['new'])}\n"
             f"{UNPAIRED_FIELD}: {len(result['only_before'])}\n")
     return written
@@ -707,18 +711,21 @@ def pre_existing_labels(label_path):
     """Normalised centroids of the after photograph's pre-existing marks, or
     None for truth not derived from a photograph pair.
 
-    They are the after export's lines the derived file did not take: the
-    derived file is written line-for-line from that export, so the lines
-    compare exactly. These marks need no ground truth to check — the run's
-    baseline holds them — which makes them the one measurement of where the
-    truth placement puts labels.
+    They are the after export's lines the derivation recorded as pre-existing,
+    by line number in the source file. Not the export minus the derived file:
+    a corrected label no longer equals its export line, and that subtraction
+    would then count the new Bullet Hole as pre-existing. These marks need no
+    ground truth to check — the run's baseline holds them — which makes them
+    the one measurement of where the truth placement puts labels. None, too,
+    for a derivation that predates the field.
     """
     export = os.path.join(os.path.dirname(label_path), RAW_NAMES["after"])
-    if os.path.basename(label_path) != DERIVED_NAME or not os.path.exists(export):
+    recorded = _source_field(label_path, PRE_EXISTING_FIELD)
+    if (os.path.basename(label_path) != DERIVED_NAME or recorded is None
+            or not os.path.exists(export)):
         return None
-    new = set(open(label_path).read().splitlines())
-    return _centroids([l for l in open(export).read().strip().splitlines()
-                       if l.strip() and l not in new])
+    lines = [l for l in open(export).read().strip().splitlines() if l.strip()]
+    return _centroids([lines[int(n) - 1] for n in recorded.split(",") if n])
 
 
 def load_truth(image_path, label_path, frame, view):
@@ -833,6 +840,11 @@ if __name__ == "__main__":
         to_template, np.asarray(run.baseline, np.float32)[:, :2])
     if pre_labels is not None and len(pre_labels):
         print(placement_note(pre_labels, pre_existing, a.tolerance))
+    else:
+        print("[WARN] placement unverified: the truth names no pre-existing "
+              "mark to check it against, and the registration correlation is "
+              "not a geometry check. A wrong placement would change this "
+              "score silently.")
 
     result = score(truth, found, a.tolerance)
     print(f"\n[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "

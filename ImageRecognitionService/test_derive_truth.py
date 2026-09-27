@@ -163,6 +163,24 @@ def test_the_derived_file_records_which_photograph_it_belongs_to(tmp_path):
     source = open(written["source"]).read()
     assert "after-image: /photos/CamB.after.jpeg" in source
     assert "new-bullet-holes: 1" in source
+    assert f"{evaluate.PRE_EXISTING_FIELD}: \n" in source
+
+
+def test_the_source_file_records_which_export_lines_were_pre_existing(tmp_path):
+    """By line number, so a label corrected in the derived file keeps its
+    identity: text no longer matches once it is corrected."""
+    after = tmp_path / "after.txt"
+    after.write_text("0 0.1 0.1 0.02 0.02\n\n0 0.5 0.5 0.02 0.02\n0 0.9 0.9 0.02 0.02\n")
+    before = tmp_path / "before.txt"
+    before.write_text("")
+    result = {"lines": evaluate.read_export(str(after))[0], "new": [1],
+              "pre_existing": [0, 2], "only_before": [], "correlation": 0.99,
+              "tolerance_px": 6.1}
+    written = evaluate.write_derived(str(tmp_path / "out"), result,
+                                     "b.jpeg", str(before), "a.jpeg", str(after))
+    assert f"{evaluate.PRE_EXISTING_FIELD}: 1,3\n" in open(written["source"]).read()
+    np.testing.assert_allclose(evaluate.pre_existing_labels(written["derived"]),
+                               [[0.1, 0.1], [0.9, 0.9]], atol=1e-6)
 
 
 # --- reading the derived truth back ----------------------------------------

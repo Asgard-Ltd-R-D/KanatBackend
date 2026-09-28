@@ -431,6 +431,7 @@ class RegisteredFrames:
         # in Board px — the baseline's is only the first (#41).
         uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
         self.reach = self._baseline_reach = uncovered and uncovered[1]
+        self.unmeasured = 0   # later frames whose view had no footprint to measure
 
     @classmethod
     def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
@@ -533,7 +534,9 @@ class RegisteredFrames:
         if self.reach is None:
             return  # the baseline's view was already unmeasurable; said so
         uncovered = board.uncovered_view(current, (frame.shape[1], frame.shape[0]))
-        if uncovered is not None:
+        if uncovered is None:
+            self.unmeasured += 1
+        else:
             self.reach = {k: max(v, uncovered[1][k]) for k, v in self.reach.items()}
 
     def _report_reach(self):
@@ -547,6 +550,10 @@ class RegisteredFrames:
         """
         if self.reach is None:
             return
+        if self.unmeasured:
+            print(f"[WARN] {self.unmeasured} registered frame(s)' view did not map "
+                  f"onto the Board plane; how much of it was off the canvas there "
+                  f"is unknown (#41)")
         # The same rounding floor the baseline's reach is cut at; anything past
         # it is Board the baseline's view did not show.
         grew = {k: v for k, v in self.reach.items()

@@ -48,12 +48,14 @@ class _FakeModel:
 def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0):
     """A loop over `frames` frames; `registers(index)` says which ones register,
     and `below(index)` how far that frame's view runs past the canvas bottom,
-    in Board px against a 100 px Target span."""
+    in Board px against a 100 px Target span — None for an unmeasurable view."""
     seen = iter(range(1, frames + 1))
     measured = itertools.count()   # the baseline in __init__, then each look
     edges = dict.fromkeys(("left", "right", "above"), 0.0)
-    monkeypatch.setattr(nbh.board, "uncovered_view",
-                        lambda view, size: (0.0, {**edges, "below": below(next(measured))}))
+    def uncovered(view, size):
+        reach = below(next(measured))
+        return None if reach is None else (0.0, {**edges, "below": reach})
+    monkeypatch.setattr(nbh.board, "uncovered_view", uncovered)
     monkeypatch.setattr(nbh.board, "target_span", lambda view: 100.0)
     monkeypatch.setattr(nbh.board, "track_view",
                         lambda frame, mask, last: (
@@ -155,3 +157,12 @@ def test_any_growth_past_rounding_is_reported(monkeypatch, capsys):
                  below=lambda i: [30.0, 30.0, 31.0, 30.0][i])
     list(loop.looks(3))
     assert "further off the canvas than the baseline did" in capsys.readouterr().out
+
+
+def test_a_later_view_that_cannot_be_measured_is_reported(monkeypatch, capsys):
+    """The baseline measured fine, so its line said nothing is unknown; a later
+    frame past the Board plane's horizon still has to say so."""
+    loop = _loop(monkeypatch, lambda i: True, frames=3,
+                 below=lambda i: [0.0, 0.0, None, 0.0, 0.0][i])
+    list(loop.looks(4))
+    assert "[WARN] 1 registered frame(s)' view did not map" in capsys.readouterr().out

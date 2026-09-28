@@ -11,13 +11,16 @@ right frame of reference:
   length converts to millimetres the moment one ruler reading exists — see
   `to_millimetres`.
 
-**One homography for the whole Board**, with Targets located inside it. This
+**One homography for the whole Board**, with Targets located inside it: the
+baseline frame's is fitted to the reference Target's silhouette, and every later
+frame is registered to the baseline frame on the Board's own texture (#50). This
 assumes the Board is a single plane. The sheets are stapled separately and
 visibly curl, so the assumption is known to be imperfect; `residuals` exists to
 measure what it costs if SOW 2.3.2's 5mm proves unreachable. The alternative is
 one homography per Target, which absorbs curl a Board-level fit cannot.
 """
 import os
+from typing import NamedTuple
 
 import cv2
 import numpy as np
@@ -106,6 +109,15 @@ ABSDIFF_SIGMA = 2.0        # PROVISIONAL: change-detection gate, evidence only
 BOARD_MARGIN = 0.50        # PROVISIONAL
 
 
+# Registration after the baseline frame (#50). ECC on the greyscale Board within
+# this many Target spans of the ring (a square: its corners reach ~2.1), fitted
+# at this fraction of the frame's resolution. Measured with
+# registration_reach.py on the four spent/threshold-work recordings; not swept.
+REGION_SPANS = 1.5         # PROVISIONAL
+ECC_SCALE = 0.5            # PROVISIONAL: half resolution
+ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drift
+
+
 class NotCalibrated(RuntimeError):
     """Raised when a physical measurement is requested before calibration."""
 
@@ -185,6 +197,60 @@ def register(template_mask, frame_mask, reference_contour, init=None):
     return H, correlation
 
 
+def ecc_warp(ref, cur, motion, init, mask=None):
+    """`(W, correlation)`: the 3x3 warp taking `ref` frame coordinates onto
+    `cur`'s, by ECC at `ECC_SCALE`, seeded with `init` (same convention), over
+    `mask`'s nonzero pixels of `ref` (all when None). Raises `cv2.error` when
+    ECC does not converge.
+
+    The mask goes to ECC as its mask. Multiplied into both images instead, its
+    fixed edge would pull W towards no motion.
+
+    ECC works over the whole image and masks afterwards, so both images are
+    first cropped to the mask's box plus `ECC_CROP_MARGIN`: the region is ~12%
+    of a CamB frame, and the fit ran 4x slower than the old chain uncropped."""
+    T = np.eye(3, dtype=np.float32)
+    if mask is not None:
+        x, y, w, h = cv2.boundingRect(mask)
+        x0, y0 = max(0, x - ECC_CROP_MARGIN), max(0, y - ECC_CROP_MARGIN)
+        x1 = min(ref.shape[1], x + w + ECC_CROP_MARGIN)
+        y1 = min(ref.shape[0], y + h + ECC_CROP_MARGIN)
+        ref, cur, mask = (im[y0:y1, x0:x1] for im in (ref, cur, mask))
+        T[:2, 2] = x0, y0
+    D = np.diag([ECC_SCALE, ECC_SCALE, 1.0]).astype(np.float32) @ np.linalg.inv(T)
+    small = lambda im, how=cv2.INTER_AREA: cv2.resize(im, None, fx=ECC_SCALE, fy=ECC_SCALE,
+                                                      interpolation=how)
+    rows = 3 if motion == cv2.MOTION_HOMOGRAPHY else 2
+    seed = (D @ init @ np.linalg.inv(D))[:rows].astype(np.float32)
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
+    correlation, w = cv2.findTransformECC(small(ref), small(cur), seed, motion, criteria,
+                                          None if mask is None else small(mask, cv2.INTER_NEAREST), 5)
+    w = w if rows == 3 else np.vstack([w, [0, 0, 1]])
+    return (np.linalg.inv(D) @ w @ D).astype(np.float32), correlation
+
+
+def texture_region(H, frame_size, template_span):
+    """ECC mask in the frame `H` maps the template onto: the square within
+    `REGION_SPANS` Target spans of the ring, so gravel and sky, which move
+    differently from the Board, do not vote."""
+    square = RING_CENTRE_TPL + REGION_SPANS * template_span * np.array(
+        [[-1, -1], [1, -1], [1, 1], [-1, 1]])
+    region = np.zeros(frame_size[::-1], np.uint8)
+    cv2.fillConvexPoly(region, _apply(H, square).astype(np.int32), 255)
+    return region
+
+
+def _gray(frame):
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
+
+
+class Anchor(NamedTuple):
+    """The baseline frame every later frame is registered to (#50)."""
+    gray: np.ndarray     # the baseline frame, greyscale, 0-1
+    region: np.ndarray   # the ECC mask, baseline frame coords
+    H: np.ndarray        # template -> baseline frame
+
+
 def net_scale(board_scale, template_span_px, frame_span_px, imgsz, canvas_long_side):
     """Apparent size of a Bullet Hole in the tensor, relative to the raw frame.
 
@@ -223,11 +289,12 @@ class BoardView:
     any other frame's view, because both live in Board space.
     """
 
-    def __init__(self, H, tpl_to_board, canvas_size, targets):
+    def __init__(self, H, tpl_to_board, canvas_size, targets, anchor=None):
         self.H = H                        # template -> frame
         self.tpl_to_board = tpl_to_board  # template -> Board space (scale + origin)
         self.canvas_size = canvas_size    # (width, height) of the rectified Board
         self.targets = targets            # Target polygons, Board-space coords
+        self.anchor = anchor              # what `track_view` registers onto
 
     @property
     def board_scale(self):
@@ -314,7 +381,9 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
 
     targets = [(_apply(_as_matrix(1.0, (-lo[0], -lo[1])), p)
                 .reshape(-1, 1, 2).astype(np.float32)) for p in placed]
-    return BoardView(H, tpl_to_board, size, targets), correlation
+    anchor = Anchor(_gray(frame), texture_region(
+        H, frame.shape[1::-1], contour_span(template_contour(template_mask))), H)
+    return BoardView(H, tpl_to_board, size, targets, anchor), correlation
 
 
 # Under half a canvas pixel is projection rounding, not a strip the canvas
@@ -365,7 +434,7 @@ def uncovered_view(view, frame_size):
                       for k, v in reach.items()}
 
 
-def track_view(frame, template_mask, reference):
+def track_view(frame, reference):
     """Re-register the reference view's Board space onto a later frame.
 
     Board space — scale, origin and canvas size — is fixed once, by the baseline
@@ -374,17 +443,28 @@ def track_view(frame, template_mask, reference):
     position from frame 1; rebuilding Board space per frame would silently move
     the origin under the history.
 
-    The previous frame's homography seeds the search, so the ~16px camera drift
-    is tracked incrementally rather than rediscovered.
+    Each frame is registered to the BASELINE frame (`reference.anchor`), not
+    the previous one, on the greyscale Board round the Target: H = W @ H0.
+    The old chain — ECC on the one Target's silhouette, seeded frame to frame —
+    had nothing past that Target to hold its perspective, and wandered p95
+    63-66 template px at 1.2 Target spans against 7-8 for this (#50). The previous
+    frame's W seeds the search, so the camera drift is tracked incrementally;
+    `reference` may be the baseline view or any view tracked from it.
+
+    ponytail: one fixed reference frame. New Bullet Holes, shadows and wind
+    change the Board against it over a long session; re-anchor to a recent
+    registered frame if lost frames climb.
 
     Returns `(None, None)` when no Target is visible, and raises `cv2.error` when
     registration fails to converge — both mean "no evidence from this frame".
     """
-    contours, frame_mask = find_targets(frame)
+    contours, _ = find_targets(frame)
     if not contours:
         return None, None
-    H, correlation = register(template_mask, frame_mask, contours[0], reference.H)
-    view = BoardView(H, reference.tpl_to_board, reference.canvas_size, [])
+    a = reference.anchor
+    W, correlation = ecc_warp(a.gray, _gray(frame), cv2.MOTION_HOMOGRAPHY,
+                              reference.H @ np.linalg.inv(a.H), a.region)
+    view = BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size, [], a)
     view.targets = [_apply(view._frame_to_board(), c.reshape(-1, 2))
                     .reshape(-1, 1, 2).astype(np.float32) for c in contours]
     return view, correlation

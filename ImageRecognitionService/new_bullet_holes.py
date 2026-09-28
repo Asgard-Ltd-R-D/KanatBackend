@@ -4,7 +4,7 @@ The runtime pipeline from bullet_hole_detection_pipeline_updated.md:
 
     frame
       -> locate Board            board.find_targets, one hue threshold
-      -> homography              board.register, ECC refinement
+      -> homography              board.register (baseline), board.track_view (#50)
       -> rectified Board         board.BoardView.rectify, at TARGET_NET_SCALE
       -> YOLO on the rectified Board
       -> Target / Miss           board.BoardView.assign
@@ -351,7 +351,7 @@ def _corroborated(point, changed_mask, radius):
     return bool(x1 > x0 and y1 > y0 and changed_mask[y0:y1, x0:x1].any())
 
 
-def _next_view(cap, template_mask, last):
+def _next_view(cap, last):
     """Read one frame and re-register Board space onto it.
 
     Returns `(frame, view)`. `view` is None when the Board was not found or ECC
@@ -368,7 +368,7 @@ def _next_view(cap, template_mask, last):
     if not ok:
         return None, None
     try:
-        current, _ = board.track_view(frame, template_mask, last)
+        current, _ = board.track_view(frame, last)
     except cv2.error:
         current = None
     return frame, current
@@ -414,9 +414,9 @@ class RegisteredFrames:
     iteration can be exercised without a video file or a model.
     """
 
-    def __init__(self, cap, model, template_mask, view, base, imgsz, conf,
+    def __init__(self, cap, model, view, base, imgsz, conf,
                  fps, start):
-        self.cap, self.model, self.template_mask = cap, model, template_mask
+        self.cap, self.model = cap, model
         # Two views, and the difference matters: `view` is the Board space
         # everything is registered ONTO, fixed by the frame at `--start`, and
         # `last` is the most recently registered frame, which is what the next
@@ -490,7 +490,7 @@ class RegisteredFrames:
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
-        loop = cls(cap, model, template_mask, view, base, imgsz, conf, fps, start)
+        loop = cls(cap, model, view, base, imgsz, conf, fps, start)
         loop.net_scale = scale
         return loop
 
@@ -511,7 +511,7 @@ class RegisteredFrames:
         try:
             while self.processed < n_frames:
                 if self.processed:
-                    frame, current = _next_view(self.cap, self.template_mask, self.last)
+                    frame, current = _next_view(self.cap, self.last)
                     if frame is None:
                         break  # the end of what the file holds
                 else:
@@ -715,7 +715,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     _report(new, start, fps, loop.last, ring_diameter_mm,
             [idx for idx, _ in per_frame])
     if out_video:
-        _render(video, start, processed, fps, loop.template_mask, loop.view,
+        _render(video, start, processed, fps, loop.view,
                 baseline, new, out_video)
     return Run(new, baseline, residuals)
 
@@ -775,7 +775,7 @@ def _report(new, start, fps, view, ring_diameter_mm, looked_at):
               f"detected in {len(seen)} frame(s){share}")
 
 
-def _render(video, start, n_frames, fps, template_mask, reference, baseline, new, out_video):
+def _render(video, start, n_frames, fps, reference, baseline, new, out_video):
     """Redraw the clip as the rectified Board. Detection is not repeated."""
     cap = cv2.VideoCapture(video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
@@ -789,7 +789,7 @@ def _render(video, start, n_frames, fps, template_mask, reference, baseline, new
             if not ok:
                 break
             try:
-                tracked, _ = board.track_view(frame, template_mask, view)
+                tracked, _ = board.track_view(frame, view)
                 if tracked is not None:
                     view = tracked
             except cv2.error:

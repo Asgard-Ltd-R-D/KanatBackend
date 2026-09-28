@@ -58,9 +58,9 @@ def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0):
     monkeypatch.setattr(nbh.board, "uncovered_view", uncovered)
     monkeypatch.setattr(nbh.board, "target_span", lambda view: 100.0)
     monkeypatch.setattr(nbh.board, "track_view",
-                        lambda frame, mask, last: (
+                        lambda frame, last: (
                             _FakeView() if registers(next(seen)) else None, 0.9))
-    return nbh.RegisteredFrames(_FakeCap(frames), _FakeModel(), None, _FakeView(),
+    return nbh.RegisteredFrames(_FakeCap(frames), _FakeModel(), _FakeView(),
                                 np.zeros((8, 8, 3), np.uint8), imgsz=64, conf=0.02,
                                 fps=25.0, start=10.0)
 

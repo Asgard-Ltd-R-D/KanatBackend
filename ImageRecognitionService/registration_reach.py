@@ -19,16 +19,17 @@ Reference marks are every mark labelled on the before photograph
 (`board.before.export.txt`) — on the Board before the recording, so stationary
 through it — placed through the baseline frame as `evaluate.py` places truth.
 
-`--registration` swaps the runtime chain for an experimental one (#50), so
-alternatives are scored by the same yardstick before any runtime change:
+`--registration` picks how each frame is registered (#50), so alternatives are
+scored by the same yardstick:
 
-- `runtime`: `board.track_view`, an 8-parameter homography fitted to the one
-  Target's green mask, seeded frame to frame. What the pipeline does.
+- `runtime`: `board.track_view` as the pipeline runs it: ECC on the greyscale
+  Board round the Target, each frame against the baseline frame (#50 B).
+  `--cut-marks` cuts the measured marks out of its region, so none of them
+  helps register itself; without it the probe sees what the runtime sees.
+- `silhouette`: the chain before #50, an 8-parameter homography fitted to the
+  one Target's green mask, seeded frame to frame.
 - `affine` (#50 A): the baseline homography's perspective is held; each frame
   is registered to the BASELINE frame's green mask by an affine only.
-- `texture` (#50 B): as `affine`, but ECC runs on the greyscale frame over a
-  Board region, so marks, sheet edges and seams far from the Target constrain
-  the fit. `--motion homography` lets it refit the perspective too.
 
 Every mode also splits each mark's error into drift (what holds for a second)
 and jitter (the rest) (#50 C): they point at re-anchoring and at smoothing.
@@ -48,9 +49,7 @@ import manifest
 PATCH = 10        # half-size of a mark's patch, frame px: a hole plus its rim
 SEARCH = 12       # how far from the predicted position to look, frame px
 MIN_NCC = 0.6     # below this the mark was not found in that frame; skipped
-ECC_SCALE = 0.5   # anchored modes run ECC at this fraction of the frame; ~4x faster
 DRIFT_FRAMES = 25  # drift is the rolling mean over this many frames (1 s at 25 fps)
-REGION_SPANS = 1.5  # texture mode: the Board within this many Target spans of the ring
 
 
 def locate(frame_gray, patch, predicted):
@@ -93,14 +92,14 @@ def _frames(video, start, end):
         cap.release()
 
 
-def _registered(video, start, end, template_mask, view):
+def _registered(video, start, end, view, track):
     """`(index, gray frame, view)` for every frame of the window, the baseline
-    first at index 0 — the runtime's `track_view` chain, seeded frame to
-    frame. A frame that fails to register comes with view None."""
+    first at index 0, each later one `track(frame, last registered view)`. A
+    frame that fails to register comes with view None."""
     last = view
     for index, frame in _frames(video, start, end):
         try:
-            current = view if index == 0 else board.track_view(frame, template_mask, last)[0]
+            current = view if index == 0 else track(frame, last)
         except cv2.error:
             current = None
         if current is not None:
@@ -108,67 +107,41 @@ def _registered(video, start, end, template_mask, view):
         yield index, cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), current
 
 
-def ecc_warp(ref, cur, motion, init, mask=None):
-    """3x3 warp taking `ref` frame coordinates onto `cur`'s, by ECC at
-    `ECC_SCALE`, seeded with `init` (same convention), over `mask`'s nonzero
-    pixels of `ref` (all when None). Raises `cv2.error` when ECC does not
-    converge."""
-    D = np.diag([ECC_SCALE, ECC_SCALE, 1.0]).astype(np.float32)
-    small = lambda im, how=cv2.INTER_AREA: cv2.resize(im, None, fx=ECC_SCALE, fy=ECC_SCALE,
-                                                      interpolation=how)
-    rows = 3 if motion == cv2.MOTION_HOMOGRAPHY else 2
-    seed = (D @ init @ np.linalg.inv(D))[:rows].astype(np.float32)
-    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
-    _, w = cv2.findTransformECC(small(ref), small(cur), seed, motion, criteria,
-                                None if mask is None else small(mask, cv2.INTER_NEAREST), 5)
-    w = w if rows == 3 else np.vstack([w, [0, 0, 1]])
-    return (np.linalg.inv(D) @ w @ D).astype(np.float32)
+def _silhouette(template_mask):
+    """The pre-#50 `track_view`: the one Target's green mask, frame to frame."""
+    def track(frame, last):
+        contours, mask = board.find_targets(frame)
+        if not contours:
+            return None
+        H, _ = board.register(template_mask, mask, contours[0], last.H)
+        return board.BoardView(H, last.tpl_to_board, last.canvas_size, [])
+    return track
 
 
-def _anchored(video, start, end, view, image, motion, mask=None):
-    """As `_registered`, but every frame is registered to the BASELINE frame
-    and the baseline homography is kept: H = W @ H0, W of `motion` found by
-    ECC between `image(baseline)` and `image(frame)` over `mask`. The previous
-    W seeds the next, but the reference never moves, so error cannot
-    accumulate.
+def _green_affine(base):
+    """#50 A: an affine on the green mask, against the baseline frame's."""
+    ref = _green(base)
 
-    ponytail: one fixed reference frame; once new Bullet Holes or lighting
-    change the Board enough, ECC against it degrades. Re-anchor to a recent
-    frame if the lost count ever climbs."""
-    W, ref = np.eye(3, dtype=np.float32), None
-    for index, frame in _frames(video, start, end):
-        if ref is None:
-            ref = image(frame)
-        else:
-            try:
-                W = ecc_warp(ref, image(frame), motion, W, mask)
-            except cv2.error:
-                yield index, None, None
-                continue
-        yield index, cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), board.BoardView(
-            W @ view.H, view.tpl_to_board, view.canvas_size, [])
+    def track(frame, last):
+        a = last.anchor
+        W, _ = board.ecc_warp(ref, _green(frame), cv2.MOTION_AFFINE,
+                              last.H @ np.linalg.inv(a.H))
+        return board.BoardView(W @ a.H, last.tpl_to_board, last.canvas_size, [], a)
+    return track
 
 
 def _green(frame):
-    """The blurred green mask the runtime registers on."""
+    """The blurred green mask the silhouette registration fits."""
     return board._blurred(board.find_targets(frame)[1])
 
 
-def _gray(frame):
-    return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
-
-
-def texture_region(view, frame_size, span, marks):
-    """ECC mask, baseline frame coords: the square within `REGION_SPANS` Target
-    spans of the ring (corners reach ~2.1 spans) — so gravel and sky, which move
-    differently from the Board, do not vote — less a hole of PATCH + SEARCH
-    around every mark being measured, so no mark helps register itself."""
-    square = board.RING_CENTRE_TPL + REGION_SPANS * span * np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])
-    region = np.zeros(frame_size[::-1], np.uint8)
-    cv2.fillConvexPoly(region, board._apply(view.H, square).astype(np.int32), 255)
-    for x, y in board._apply(view.H, marks):
+def cut_marks(anchor, marks):
+    """`anchor` with a hole of PATCH + SEARCH frame px cut round every mark,
+    so no mark being measured helps register itself."""
+    region = anchor.region.copy()
+    for x, y in board._apply(anchor.H, marks):
         cv2.circle(region, (int(round(x)), int(round(y))), PATCH + SEARCH, 0, -1)
-    return region
+    return anchor._replace(region=region)
 
 
 def split(displacement):
@@ -268,10 +241,11 @@ if __name__ == "__main__":
                         "- wander after appearance, not from the baseline. Take "
                         "them from a run's first detections; finding them from "
                         "pixels matched CamA's printed rings before the hole existed")
-    p.add_argument("--registration", choices=("runtime", "affine", "texture"), default="runtime",
-                   help="how each frame is registered; see the module docstring (#50)")
-    p.add_argument("--motion", choices=("affine", "homography"), default="affine",
-                   help="texture mode only: the correction's degrees of freedom")
+    p.add_argument("--registration", choices=("runtime", "silhouette", "affine"),
+                   default="runtime", help="how each frame is registered; see the "
+                                           "module docstring (#50)")
+    p.add_argument("--cut-marks", action="store_true",
+                   help="runtime mode: cut the measured marks out of the ECC region")
     a = p.parse_args()
     # No --final-run: this is an investigation, never the sealed measurement.
     manifest.gate(a.video, False, None, "registration_reach.py")
@@ -292,14 +266,14 @@ if __name__ == "__main__":
         from_index = [int(round((t - a.start) * fps)) for t in times]
         label = "wander after appearance (NOT baseline marks)"
 
+    if a.cut_marks:
+        view.anchor = cut_marks(view.anchor, marks)
     if a.registration == "runtime":
-        frames = _registered(a.video, a.start, a.end, template_mask, view)
-    elif a.registration == "affine":
-        frames = _anchored(a.video, a.start, a.end, view, _green, cv2.MOTION_AFFINE)
+        track = lambda frame, last: board.track_view(frame, last)[0]
+    elif a.registration == "silhouette":
+        track = _silhouette(template_mask)
     else:
-        motion = cv2.MOTION_HOMOGRAPHY if a.motion == "homography" else cv2.MOTION_AFFINE
-        frames = _anchored(a.video, a.start, a.end, view, _gray, motion,
-                           texture_region(view, base.shape[1::-1], span, marks))
-    print(f"[REACH] registration: {a.registration}"
-          + (f", {a.motion}" if a.registration == "texture" else ""))
+        track = _green_affine(base)
+    print(f"[REACH] registration: {a.registration}{', marks cut' if a.cut_marks else ''}")
+    frames = _registered(a.video, a.start, a.end, view, track)
     _report(measure(frames, marks, from_index), span, label)

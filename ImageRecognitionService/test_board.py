@@ -1,4 +1,5 @@
 """Checks for Board geometry. No model, no video, no torch."""
+import cv2
 import numpy as np
 import pytest
 
@@ -225,3 +226,51 @@ def test_view_past_the_board_planes_horizon_is_not_measured():
     view = board.BoardView(H=np.linalg.inv(H), tpl_to_board=board._as_matrix(1.0),
                            canvas_size=(100, 100), targets=[_square(0, 0, 100)])
     assert board.uncovered_view(view, frame_size=(100, 100)) is None
+
+
+# --- registration after the baseline frame (#50) ---------------------------
+
+def _scene(shift=(0.0, 0.0), size=(320, 240)):
+    """Paper with a few dark blobs, the whole scene moved by `shift` px."""
+    img = np.full(size[::-1], 200, np.float32)
+    for x, y in [(60, 50), (250, 70), (120, 180), (200, 150), (40, 200)]:
+        cv2.circle(img, (int(x * 4 + shift[0] * 4), int(y * 4 + shift[1] * 4)), 40, 40, -1,
+                   shift=2)
+    return cv2.GaussianBlur(img, (0, 0), 3)
+
+
+@pytest.mark.parametrize("motion", [cv2.MOTION_AFFINE, cv2.MOTION_HOMOGRAPHY])
+def test_the_anchoring_warp_takes_baseline_coordinates_onto_the_frame(motion):
+    W, _ = board.ecc_warp(_scene(), _scene((5.0, -3.0)), motion, np.eye(3, dtype=np.float32))
+    moved = board._apply(W, [[100, 100]])[0]
+    assert moved == pytest.approx([105, 97], abs=0.3)
+
+
+@pytest.mark.parametrize("box", [(20, 220, 20, 300),     # crop is the whole image
+                                 (40, 230, 90, 300)])    # three blobs; crop at (82, 32)
+def test_a_masked_warp_follows_the_scene_not_the_mask(box, monkeypatch):
+    """The region goes in as ECC's mask, not multiplied into both images,
+    where its fixed edge would pull the warp towards no motion; and cropping
+    to it does not move the answer."""
+    monkeypatch.setattr(board, "ECC_CROP_MARGIN", 8)
+    y0, y1, x0, x1 = box
+    mask = np.zeros((240, 320), np.uint8)
+    mask[y0:y1, x0:x1] = 255
+    W, _ = board.ecc_warp(_scene(), _scene((5.0, -3.0)), cv2.MOTION_HOMOGRAPHY,
+                          np.eye(3, dtype=np.float32), mask)
+    assert board._apply(W, [[100, 100]])[0] == pytest.approx([105, 97], abs=0.3)
+
+
+def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
+    """H = W @ H0 against the baseline frame; a tracked view seeds the next."""
+    target = _square(100, 100, 50)
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([target], None))
+    H0 = np.float32([[1, 0, 20], [0, 1, 10], [0, 0, 1]])
+    anchor = board.Anchor(_scene() / 255, np.full((240, 320), 255, np.uint8), H0)
+    reference = board.BoardView(H0, board._as_matrix(1.0), (300, 300), [], anchor)
+    colour = lambda img: cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+    first, _ = board.track_view(colour(_scene((2.0, 1.0))), reference)
+    second, _ = board.track_view(colour(_scene((5.0, -3.0))), first)
+    assert board._apply(second.H, [[80, 90]])[0] == pytest.approx([105, 97], abs=0.4)
+    assert second.anchor is anchor and len(second.targets) == 1

@@ -254,35 +254,68 @@ on the CamB close pose). Nothing on CamA lies past 0.9 spans. Finding
 appearance from pixels instead misfired — CamA's blurred rings matched a hole's
 patch up to 3.5 s before it arrived — and was dropped.
 
-**Registering on the Board's texture, against the baseline frame, holds the far
-field (#50, measured 2026-09-28).** `registration_reach.py --registration`
-scores alternatives with the same probe, and the runtime is unchanged.
+**Registration after the baseline frame is on the Board's texture, against the
+baseline frame (#50, 2026-09-28).** `board.track_view` used to fit an
+8-parameter homography to the one Target's green silhouette, seeded frame to
+frame. Nothing past that Target held its perspective terms. It now keeps the
+baseline homography H0 and registers each frame to the **baseline** frame:
+H = W · H0. W is an ECC homography on the greyscale frame, masked to a square
+within `REGION_SPANS` (1.5) Target spans of the ring, whose corners reach about
+2.1 spans. The mask goes to ECC as its mask. Multiplying it into both images
+instead leaves a fixed edge that pulls W towards no motion.
 
-**How it registers.** The anchored modes keep the baseline homography H0 and
-register each frame to the **baseline** frame, not the previous one: H = W · H0.
-`texture` (#50 B) fits W to the greyscale frame, with `--motion homography`.
-The fit uses ECC's own mask over a square within 1.5 Target spans of the ring;
-its corners reach about 2.1 spans. A hole of `PATCH + SEARCH` is cut around
-every mark being scored, so no mark helps register itself. The mask is passed
-to ECC rather than multiplied into both images, because a fixed edge in both
-images pulls W towards no motion.
-
+**What the runtime sees.** `registration_reach.py` now measures `board.track_view`
+itself (`--registration runtime`), and keeps the old chain as `silhouette`.
 p95 in template px:
 
-| Recording | Runtime | Texture homography |
-|---|---|---|
-| `_103223` ≤ 0.5 spans | 20–22 | **5–7** |
-| `_103223` 0.6–0.8 | 19–31 | **3–5** |
-| `_103223` 1.2–1.3 | 63–66 | **9.3 / 10.3** |
-| `_102450` ≤ 0.5 | 10–17 | **3–7** |
-| `_102450` 0.6–0.8 | 23–36 | **4–5** |
-| `_102250` ≤ 0.5 (#2 / #1) | 13.6 / 30.5 | **5.0 / 6.7** |
-| CamA `--appeared` 0.7–0.9 | 9–22 | **5–9** |
+| Recording | Silhouette (before #50) | Texture, marks in the fit (the runtime) | Marks cut out (`--cut-marks`) |
+|---|---|---|---|
+| `_103223` ≤ 0.5 spans | 20–22 | **5.4–7.1** | 5.0–7.3 |
+| `_103223` 0.6–0.8 | 19–31 | **3.4–4.5** | 3.3–5.3 |
+| `_103223` 1.2–1.3 | 63–66 | **7.3 / 8.3** | 9.3 / 10.3 |
+| `_102450` ≤ 0.5 | 10–17 | **3.1–6.8** | 3.4–6.8 |
+| `_102450` 0.6–0.8 | 23–36 | **3.8–4.6** | 3.7–4.7 |
+| `_102250` ≤ 0.5 (#2 / #1) | 13.6 / 30.5 | **4.9 / 6.6** | 5.0 / 6.7 |
+| CamA `--appeared` 0.7–0.9 | 9–22 | **5.1–9.2** | 5.0–9.2 |
 
-**Both of #50's probe criteria pass.** The far field is at half of
-`MATCH_TPL_PX`, and every mark on every recording improves. It also runs in
-about half the runtime chain's time, ~4 min against ~8 per CamB recording,
-because ECC runs at half resolution.
+**Both probe criteria of #50 pass, and every mark improves.** `--cut-marks` cuts
+a hole of `PATCH + SEARCH` round each scored mark, so none helps register
+itself. That is the clean yardstick. Leaving the marks in, as the runtime must,
+since it has no truth to cut them with, helps the far field by about 2 px and
+changes nothing near the Target.
+
+**Cost.** ECC works over the whole image and applies the mask afterwards, so
+both images are cropped to the region's box plus `ECC_CROP_MARGIN` first.
+Uncropped, the fit ran about 4× slower than the old chain. Cropped it costs
+about the same: 725–830 CPU-s per CamB recording against 577–662, with four
+runs sharing the machine.
+
+**Scored end to end (`evaluate.py`, same windows as #46, 2026-09-28).** TP / FP /
+FN, against #46's figures for the old runtime and its canvas-shift control:
+
+| Recording | Before #50 | Control: canvas moved 8 px | **After #50** | `[REGISTRATION]` median, tpl px: before → after |
+|---|---|---|---|---|
+| `_102450` 0–47.76s | 2/0/2 | 2/0/2 | **2/0/2** | 7.9 → **2.0** (max 20.0 → 7.6) |
+| `_102250` 0–46s | 4/1/0 | 4/2/0 | **4/1/0** | 10.1 → **2.6** (max 20 → 9.9) |
+| `_103223` 0–51.88s | 2/1/0 | 2/2/0 | **2/1/0** | 11.1 → **2.8** (max 20.0 → 14.1) |
+| CamA 13–25s | 6/1/0 (F1 0.92) | 4/2/2 (0.67); 16 px 0.80, 32 px 0.83 | **5/1/1 (0.83)** | 11.1 → **2.5** (max 19.8) |
+
+- **The three CamB scores are unchanged.** Canvas, net scale (0.87–0.91) and
+  `BOARD_MARGIN` are untouched. `_102450` truth #3 and #4 are still off the
+  canvas (#41/#46), which this issue does not address.
+- **CamA loses truth #4.** Truth #4 is one of the two #46 found coming and going
+  with the pixel grid. Its wander after appearance improved under texture, p95
+  from 8.9 to 6.9. F1 0.83 matches the 32 px control and beats the 8 and 16 px
+  ones. That puts it inside the grid noise, not outside it, so it is not
+  evidence against the change, and not evidence for it.
+- **The runtime's own residual falls about 4×.** Baseline-matched detections
+  rise (7 555 → 8 328 on `_102450`, 9 827 → 11 233 on `_103223`). On the three
+  CamB recordings the max is off the 20 px censoring ceiling, so displaced
+  pre-existing marks no longer reach the match radius there. CamA's max, 19.8,
+  still sits at it.
+- **What the change buys.** Scores on this canvas were not limited by
+  registration; the residual was the margin. Now there is room for a larger
+  canvas (#46).
 
 **The first, pre-mask run was worse.** A (`affine`: an affine fitted to the
 green mask) reached p95 21–22 at 1.2–1.3 spans, and texture 16–20. That run had
@@ -294,20 +327,19 @@ peak on the search window's edge, because a peak there is not a maximum. Under
 the first texture run, CamA #2 flipped to a neighbour exactly `SEARCH` px away,
 reading as p95 38. Such frames are counted in the new `skipped` column. That
 rule censors wander past `SEARCH`, so it favours whichever mode wanders most.
-Here that is the runtime: it skips 17 and 74 frames on `_103223` #9 and #10,
+Here that is the silhouette chain: it skips 17 and 74 frames on `_103223` #9 and #10,
 while texture skips at most 1 on any CamB mark, and 2 on CamA #2.
 
 **Drift / jitter split (#50 C).** Each row reports p95 drift (a rolling mean
 over 25 found frames, 1 s at 25 fps) and p95 jitter (the rest). Under the
-runtime, `_103223`'s far marks are 50–55 drift and 34–36 jitter. Under texture,
+silhouette chain, `_103223`'s far marks are 50–55 drift and 34–36 jitter. Under texture,
 jitter is 1.6–3.2 everywhere and drift at most 9. Smoothing would buy little
 more.
 
-**Next is the runtime change,** scored with `evaluate.py` on all four recordings
-against #46's 8/16/32 px canvas-shift control. Before that, one more check: the
-fit's baseline frame is the recording's first frame, and ECC against it
-degrades as new Bullet Holes accumulate. Nothing here shows it yet, since lost
-and skipped counts are 0–2, but these windows are under a minute.
+**Open: one fixed reference frame.** ECC against the baseline frame will
+degrade as new Bullet Holes, shadows and wind change the Board. Nothing here
+shows it yet, since lost and skipped counts are 0–2, but these windows are all
+under a minute. A long session needs re-anchoring (`ponytail:` in `track_view`).
 
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the

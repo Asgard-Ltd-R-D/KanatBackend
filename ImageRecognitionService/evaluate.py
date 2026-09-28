@@ -776,14 +776,17 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance,
     so an unpaired mark is a misplaced label or a mark the baseline missed.
 
     `off_canvas_count` counts pre-existing marks left out because they land
-    off the rectified Board, where no baseline can hold them (#41) — named,
-    so they are not read as a placement doubt.
+    off the rectified Board, where no baseline can hold them (#41). They stay
+    a doubt: the Board running past the canvas and a wrong placement throwing
+    them there look the same from here, and only the placement under test
+    puts them off the canvas at all.
     """
     if not len(pre_existing_truth):
         return (f"[WARN] placement unverified: all {off_canvas_count} "
-                f"pre-existing mark(s) are off the canvas (#41), so nothing is "
-                f"left to check it against. A wrong placement would change "
-                f"this score silently.")
+                f"pre-existing mark(s) are off the canvas, so nothing is left "
+                f"to check it against — and a wrong placement is one way to put "
+                f"them there (#41). A wrong placement would change this score "
+                f"silently.")
     pairs, missed = match(pre_existing_truth, baseline_tpl, tolerance)
     note = (f"[PLACEMENT] {len(pairs)} of {len(pre_existing_truth)} "
             f"pre-existing mark(s) in the photograph land within {tolerance:.0f} "
@@ -792,8 +795,10 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance,
         d = sorted(d for _, _, d in pairs)
         note += f", {d[0]:.0f}-{d[-1]:.0f} px: that is the placement's error"
     if off_canvas_count:
-        note += (f"; {off_canvas_count} more are off the canvas, where no baseline "
-                 f"can hold them (#41)")
+        note += (f"\n[WARN] {off_canvas_count} more pre-existing mark(s) land off "
+                 f"the canvas, where no baseline can hold them: the Board runs "
+                 f"past the canvas (#41), or the placement threw them there. "
+                 f"Not checked; scores below carry that doubt.")
     if missed:
         note += (f"\n[WARN] {len(missed)} pre-existing mark(s) land on nothing "
                  f"the baseline holds: the truth placement is off, or the "

@@ -299,14 +299,14 @@ def test_truth_not_derived_has_no_pre_existing_marks(tmp_path):
     assert pre_existing_labels(str(labels)) is None
 
 
-def test_off_canvas_pre_existing_marks_are_not_a_placement_doubt():
+def test_off_canvas_pre_existing_marks_stay_a_placement_doubt():
     """_103223: two pre-existing marks below the canvas no baseline can hold.
-    They are named as off the canvas, not warned about as misplaced (#41)."""
+    A wrong placement could have thrown them there, so the on-canvas match
+    alone is not a clean placement (#41)."""
     note = placement_note(np.float32([[0, 0]]), np.float32([[3, 4]]),
                           40.0, off_canvas_count=2)
     assert "1 of 1" in note
-    assert "2 more are off the canvas" in note
-    assert "[WARN]" not in note
+    assert "[WARN] 2 more pre-existing mark(s) land off the canvas" in note
 
 
 def test_placement_is_unverified_when_every_pre_existing_mark_is_off_canvas():

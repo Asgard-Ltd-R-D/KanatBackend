@@ -205,10 +205,13 @@ follows the canvas) but CamA fell from TP 6 / FP 1 / FN 0 to 5 / 2 / 1, F1
 canvas moves its marginal detections. So every run now prints `[WARN] N% of
 the camera's view is off the canvas`, with how many Target spans it runs past
 each edge (`board.uncovered_view`): 94% on the CamB close pose, reaching 4–5
-spans below, and 34% on CamA, to the sides. It is the camera view, not the
-Board — gravel included — because nothing detects the plywood. `[PLACEMENT]`
-now leaves off-canvas pre-existing marks out and names them, instead of
-warning that the placement is off.
+spans below, and 34% on CamA, to the sides — counted in frame pixels, which
+on these near-square-on views agrees with Board-plane area to 0.4 points. It
+is the camera view, not the Board — gravel included — because nothing detects
+the plywood. A second warning fires at the end if the camera moved the view
+further off the canvas during the run. `[PLACEMENT]` cannot match off-canvas
+pre-existing marks, but still warns on them: the Board running past the
+canvas and a wrong placement throwing them there look the same from here.
 
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the

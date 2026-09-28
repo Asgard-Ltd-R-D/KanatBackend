@@ -205,6 +205,19 @@ def test_a_one_pixel_strip_off_the_canvas_is_still_reported():
     assert reach == pytest.approx({"left": 0, "right": 0.01, "above": 0, "below": 0})
 
 
+def test_uncovered_fraction_is_of_the_frame_not_of_the_board_plane():
+    """A tilted view: the far rows fill most of the Board-space footprint, so
+    the fraction must be counted in frame pixels, not Board-space area."""
+    H = np.array([[1, 0, 0], [0, 1, 0], [0, 0.005, 1]], np.float32)
+    view = board.BoardView(H=H, tpl_to_board=board._as_matrix(1.0),
+                           canvas_size=(60, 60), targets=[_square(0, 0, 60)])
+    outside, _ = board.uncovered_view(view, frame_size=(100, 100))
+    ys, xs = np.mgrid[0:100, 0:100] + 0.5
+    placed = view.frame_to_board(np.stack([xs.ravel(), ys.ravel()], axis=1))
+    counted = np.mean((placed[:, 0] >= 60) | (placed[:, 1] >= 60))
+    assert outside == pytest.approx(counted, abs=0.01)
+
+
 def test_view_past_the_board_planes_horizon_is_not_measured():
     """A frame corner behind the plane flips the footprint; no fraction then."""
     H = np.array([[1, 0, 0], [0, 1, 0], [0, -0.02, 1]], np.float32)  # y=50 at infinity

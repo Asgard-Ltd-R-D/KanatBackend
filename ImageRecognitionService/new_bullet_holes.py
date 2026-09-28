@@ -427,6 +427,10 @@ class RegisteredFrames:
         self._base = base
         self.net_scale = None   # measured by `open`; see the warning there
         self.processed = self.lost = 0
+        # How far past each canvas edge any registered frame's view has run,
+        # in Target spans — the baseline's is only the first (#41).
+        uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
+        self.reach = self._baseline_reach = uncovered and uncovered[1]
 
     @classmethod
     def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
@@ -516,11 +520,35 @@ class RegisteredFrames:
                     yield Look(index, None, None, None)
                     continue
                 self.last = current
+                self._track_reach(current, frame)
                 canvas = current.rectify(frame)
                 yield Look(index, current, canvas,
                            _detect(self.model, canvas, self.imgsz, self.conf))
         finally:
             self.cap.release()
+            self._report_reach()
+
+    def _track_reach(self, current, frame):
+        if self.reach is None:
+            return  # the baseline's view was already unmeasurable; said so
+        uncovered = board.uncovered_view(current, (frame.shape[1], frame.shape[0]))
+        if uncovered is not None:
+            self.reach = {k: max(v, uncovered[1][k]) for k, v in self.reach.items()}
+
+    def _report_reach(self):
+        """The camera moving can uncover what the baseline's view did not: say
+        so once, at the end, rather than per frame."""
+        if self.reach is None:
+            return
+        # 0.01 span, the precision the baseline line prints at: under it is
+        # registration jitter, not a new strip.
+        grew = {k: v for k, v in self.reach.items()
+                if v > self._baseline_reach[k] + 0.01}
+        if grew:
+            where = ", ".join(f"{v:.2f} {k}" for k, v in grew.items())
+            print(f"[WARN] the view moved further off the canvas during the run, "
+                  f"up to {where} (Target spans). A Bullet Hole there when it "
+                  f"was uncovered is a miss no setting can recover (#41)")
 
 
 class Run(NamedTuple):

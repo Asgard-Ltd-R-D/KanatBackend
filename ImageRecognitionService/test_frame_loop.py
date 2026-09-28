@@ -4,6 +4,7 @@ The loop exists so the pipeline and the detector probe look at the same image.
 What is testable without a video file is the bookkeeping the probe depends on:
 which frames got a look, and which only appeared to.
 """
+import itertools
 import types
 
 import numpy as np
@@ -44,9 +45,14 @@ class _FakeModel:
         return [types.SimpleNamespace(boxes=[box])]
 
 
-def _loop(monkeypatch, registers, frames=10):
-    """A loop over `frames` frames; `registers(index)` says which ones register."""
+def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0):
+    """A loop over `frames` frames; `registers(index)` says which ones register,
+    and `below(index)` how far that frame's view runs past the canvas bottom."""
     seen = iter(range(1, frames + 1))
+    measured = itertools.count()   # the baseline in __init__, then each look
+    edges = dict.fromkeys(("left", "right", "above"), 0.0)
+    monkeypatch.setattr(nbh.board, "uncovered_view",
+                        lambda view, size: (0.0, {**edges, "below": below(next(measured))}))
     monkeypatch.setattr(nbh.board, "track_view",
                         lambda frame, mask, last: (
                             _FakeView() if registers(next(seen)) else None, 0.9))
@@ -121,3 +127,20 @@ def test_a_model_without_bullet_holes_is_refused():
 
     with pytest.raises(SystemExit):
         nbh._detect(NoHoles(), None, 64, 0.02)
+
+
+def test_a_view_moving_further_off_the_canvas_is_reported_once(monkeypatch, capsys):
+    """The baseline's view is only the first: a camera that later swings past
+    the canvas uncovers Board no run searches (#41)."""
+    loop = _loop(monkeypatch, lambda i: True, frames=4,
+                 below=lambda i: [0.0, 0.0, 0.0, 0.4, 0.2, 0.0][i])
+    list(loop.looks(5))
+    out = capsys.readouterr().out
+    assert out.count("[WARN] the view moved further off the canvas") == 1
+    assert "0.40 below" in out
+
+
+def test_a_view_that_stays_within_the_baseline_says_nothing(monkeypatch, capsys):
+    loop = _loop(monkeypatch, lambda i: True, frames=3)
+    list(loop.looks(4))
+    assert "[WARN]" not in capsys.readouterr().out

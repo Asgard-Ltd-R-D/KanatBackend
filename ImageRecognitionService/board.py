@@ -320,26 +320,31 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
 def uncovered_view(view, frame_size):
     """How much of the camera's view the canvas leaves out, and where.
 
-    Returns `(fraction, reach)`: the fraction of the frame's footprint in Board
-    space that lies outside the canvas, and how far past each canvas edge the
-    view runs, in Target spans — the unit `BOARD_MARGIN` is in. A Bullet Hole
-    out there is never looked for (#41).
+    Returns `(fraction, reach)`: the fraction of the frame's pixels whose
+    Board position lies outside the canvas, and how far past each canvas edge
+    the view runs, in Target spans — the unit `BOARD_MARGIN` is in. A Bullet
+    Hole out there is never looked for (#41). The fraction is taken in the
+    frame, not in Board space: a homography does not keep area ratios, and on
+    a steep view the far rows fill most of the Board-space footprint.
 
     This is the camera's view, not the Board: nothing detects the plywood, so
     it is an upper bound on the Board left unsearched, gravel included.
 
     Returns None when the view does not map onto the Board plane as a convex
-    quadrilateral — a frame corner past the plane's horizon — since no
-    fraction of it is then meaningful.
+    quadrilateral, or the canvas onto the frame — a corner past the other's
+    horizon — since no fraction of it is then meaningful.
     """
     w, h = frame_size
     footprint = view.frame_to_board([[0, 0], [w, 0], [w, h], [0, h]])
     if not cv2.isContourConvex(footprint.reshape(-1, 1, 2)):
         return None
     cw, ch = view.canvas_size
-    canvas = np.float32([[0, 0], [cw, 0], [cw, ch], [0, ch]])
-    inside, _ = cv2.intersectConvexConvex(footprint, canvas)
-    fraction = 1.0 - inside / max(float(cv2.contourArea(footprint)), 1e-6)
+    canvas = view.board_to_frame([[0, 0], [cw, 0], [cw, ch], [0, ch]])
+    if not cv2.isContourConvex(canvas.reshape(-1, 1, 2)):
+        return None
+    frame = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+    inside, _ = cv2.intersectConvexConvex(frame, canvas)
+    fraction = 1.0 - inside / float(w * h)
 
     span = spread(np.vstack([t.reshape(-1, 2) for t in view.targets]))
     lo, hi = footprint.min(axis=0), footprint.max(axis=0)

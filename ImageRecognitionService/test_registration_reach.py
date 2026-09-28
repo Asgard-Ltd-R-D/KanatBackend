@@ -24,6 +24,14 @@ def test_a_mark_is_found_to_a_fraction_of_a_pixel(dx, dy):
     assert found == pytest.approx([60 + dx, 60 + dy], abs=0.3)
 
 
+def test_a_peak_on_the_search_window_edge_is_not_a_find():
+    """Past SEARCH, the best score sits on the window's edge: a neighbour or
+    the truncated slope of the mark, not the mark itself."""
+    base = _spot(60, 60)
+    patch = base[60 - rr.PATCH:60 + rr.PATCH + 1, 60 - rr.PATCH:60 + rr.PATCH + 1]
+    assert rr.locate(_spot(60 + rr.SEARCH + 3, 60), patch, (60, 60))[0] is None
+
+
 def test_a_search_window_off_the_frame_finds_nothing():
     base = _spot(60, 60)
     patch = base[50:71, 50:71]

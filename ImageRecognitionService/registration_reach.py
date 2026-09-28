@@ -38,7 +38,8 @@ MIN_NCC = 0.6     # below this the mark was not found in that frame; skipped
 
 def locate(frame_gray, patch, predicted):
     """Sub-pixel raw position of `patch` near `predicted`, and its NCC, or
-    (None, score) when the search window leaves the frame."""
+    (None, score) when the search window leaves the frame or the peak is on
+    its edge."""
     x, y = int(round(predicted[0])), int(round(predicted[1]))
     r = PATCH + SEARCH
     h, w = frame_gray.shape
@@ -47,12 +48,16 @@ def locate(frame_gray, patch, predicted):
     window = frame_gray[y - r:y + r + 1, x - r:x + r + 1]
     ncc = cv2.matchTemplate(window, patch, cv2.TM_CCOEFF_NORMED)
     _, score, _, (px, py) = cv2.minMaxLoc(ncc)
+    if px in (0, ncc.shape[1] - 1) or py in (0, ncc.shape[0] - 1):
+        # The best score on the window's edge is not a maximum: a neighbour, or
+        # the slope of a mark past SEARCH. CamA #2 flipped to one at (+8, -12).
+        return None, score
 
     def refine(a, b, c):  # parabola through the peak and its neighbours
         d = a - 2 * b + c
         return 0.0 if d == 0 else 0.5 * (a - c) / d
-    dx = refine(ncc[py, px - 1], ncc[py, px], ncc[py, px + 1]) if 0 < px < ncc.shape[1] - 1 else 0.0
-    dy = refine(ncc[py - 1, px], ncc[py, px], ncc[py + 1, px]) if 0 < py < ncc.shape[0] - 1 else 0.0
+    dx = refine(ncc[py, px - 1], ncc[py, px], ncc[py, px + 1])
+    dy = refine(ncc[py - 1, px], ncc[py, px], ncc[py + 1, px])
     return np.array([x - SEARCH + px + dx, y - SEARCH + py + dy]), score
 
 

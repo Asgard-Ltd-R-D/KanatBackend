@@ -56,70 +56,93 @@ def locate(frame_gray, patch, predicted):
     return np.array([x - SEARCH + px + dx, y - SEARCH + py + dy]), score
 
 
-def measure(video, start, end, truth_dir, template_path=board.DEFAULT_TEMPLATE):
-    """Per reference mark: distance from the ring centre, and its Board-space
-    wander over the window, both in template px."""
-    _, template_mask = board.find_targets(cv2.imread(template_path), min_area=1)
-    base, view = evaluate.baseline_view(video, start, template_mask)
-    before = os.path.join(truth_dir, evaluate.RAW_NAMES["before"])
-    pre, _ = evaluate.load_truth(None, before, base, view)
-
-    gray = cv2.cvtColor(base, cv2.COLOR_BGR2GRAY)
-    raw0 = board._apply(view.H, pre)
-    patches = [gray[int(round(y)) - PATCH:int(round(y)) + PATCH + 1,
-                    int(round(x)) - PATCH:int(round(x)) + PATCH + 1] for x, y in raw0]
-    # A patch cut off by the frame edge cannot be searched for.
-    tpl0 = [t if patch.shape == (2 * PATCH + 1,) * 2 else None
-            for t, patch in zip(pre, patches)]
-
-    errors = [[] for _ in pre]
-    raw_moves = [[] for _ in pre]
-    scores = [[] for _ in pre]
+def _registered(video, start, end, template_mask, view):
+    """`(index, gray frame, view)` for every registered frame of the window,
+    the baseline first at index 0 — the runtime's `track_view` chain, seeded
+    frame to frame. Frames that fail to register are counted in `lost`."""
     cap = cv2.VideoCapture(video)
     fps = cap.get(cv2.CAP_PROP_FPS)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps) + 1)
-    last, frames, lost = view, int((end - start) * fps), 0
-    for _ in range(frames - 1):
-        ok, frame = cap.read()
-        if not ok:
-            break
-        try:
-            current, _ = board.track_view(frame, template_mask, last)
-        except cv2.error:
-            current = None
-        if current is None:
-            lost += 1
-            continue
-        last = current
-        g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        predicted = board._apply(current.H, [t if t is not None else [0, 0] for t in tpl0])
-        for i, (t, patch) in enumerate(zip(tpl0, patches)):
-            if t is None:
+    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
+    last, lost = view, [0]
+    try:
+        for index in range(int((end - start) * fps)):
+            ok, frame = cap.read()
+            if not ok:
+                break
+            try:
+                current = view if index == 0 else board.track_view(frame, template_mask, last)[0]
+            except cv2.error:
+                current = None
+            if current is None:
+                lost[0] += 1
                 continue
-            found, score = locate(g, patch, predicted[i])
+            last = current
+            yield index, cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), current
+    finally:
+        cap.release()
+        _registered.lost = lost[0]
+
+
+def _cut(gray, point):
+    x, y = int(round(point[0])), int(round(point[1]))
+    patch = gray[y - PATCH:y + PATCH + 1, x - PATCH:x + PATCH + 1]
+    return patch if patch.shape == (2 * PATCH + 1,) * 2 else None  # cut off by the frame edge
+
+
+def measure(frames, marks, from_index):
+    """Per mark: its Board-space wander, in template px, from the frame it is
+    referenced at (`from_index[i]`) to the end of the window.
+
+    The mark's patch is cut at that frame where the homography puts it, so the
+    reference is the Board point itself and its labelled placement error is
+    not counted as wander."""
+    patches = [None] * len(marks)
+    errors, raw_moves, scores = ([[] for _ in marks] for _ in range(3))
+    raw_ref = [None] * len(marks)
+    for index, gray, current in frames:
+        predicted = board._apply(current.H, marks)
+        to_template = np.linalg.inv(current.H)
+        for i, t in enumerate(marks):
+            if index < from_index[i]:
+                continue
+            if patches[i] is None:
+                if index == from_index[i]:
+                    patches[i] = _cut(gray, predicted[i])
+                    raw_ref[i] = predicted[i]
+                continue
+            found, score = locate(gray, patches[i], predicted[i])
             if found is None or score < MIN_NCC:
                 continue
-            here = board._apply(np.linalg.inv(current.H), [found])[0]
+            here = board._apply(to_template, [found])[0]
             errors[i].append(float(np.linalg.norm(here - t)))
             scores[i].append(score)
-            raw_moves[i].append(float(np.linalg.norm(found - board._apply(view.H, [t])[0])))
-    cap.release()
-
-    centre = board.RING_CENTRE_TPL
-    span = board.contour_span(board.template_contour(template_mask))
+            raw_moves[i].append(float(np.linalg.norm(found - raw_ref[i])))
     rows = []
-    for i, t in enumerate(tpl0):
-        if t is None or not errors[i]:
+    for i, t in enumerate(marks):
+        if not errors[i]:
             rows.append(dict(mark=i + 1, found=False))  # at the frame edge, or never matched
             continue
         e = np.array(errors[i])
         rows.append(dict(mark=i + 1, found=True, frames=len(e),
-                         distance=float(np.linalg.norm(t - centre)), span=span,
+                         distance=float(np.linalg.norm(t - board.RING_CENTRE_TPL)),
                          median=float(np.median(e)), p95=float(np.percentile(e, 95)),
-                         max=float(e.max()),
-                         raw_max=float(np.max(raw_moves[i])),
+                         max=float(e.max()), raw_max=float(np.max(raw_moves[i])),
                          ncc=float(np.median(scores[i]))))
-    return rows, lost
+    return rows
+
+
+def _report(rows, span, label):
+    print(f"[REACH] {label}: {_registered.lost} frame(s) failed to register and are not counted")
+    print(f"[REACH] mark  distance(tpl px)  spans  frames  median  p95  max  "
+          f"(template px; MATCH_TPL_PX {board.MATCH_TPL_PX:.0f})  raw-frame max  NCC")
+    for r in sorted(rows, key=lambda r: r.get("distance", -1)):
+        if not r["found"]:
+            print(f"   #{r['mark']:<3} at the frame edge, or never matched above MIN_NCC")
+            continue
+        print(f"   #{r['mark']:<3} {r['distance']:8.0f}  {r['distance'] / span:5.2f}  "
+              f"{r['frames']:5d}  {r['median']:6.1f} {r['p95']:5.1f} {r['max']:5.1f}"
+              f"{'  OVER' if r['p95'] > board.MATCH_TPL_PX else '      '}   "
+              f"{r['raw_max']:5.1f}  {r['ncc']:.2f}")
 
 
 if __name__ == "__main__":
@@ -127,19 +150,31 @@ if __name__ == "__main__":
     p.add_argument("video")
     p.add_argument("--start", type=float, required=True)
     p.add_argument("--end", type=float, required=True)
-    p.add_argument("--truth-labels", required=True, help="a truth directory holding board.before.export.txt")
+    p.add_argument("--truth-labels", required=True,
+                   help="a truth directory holding board.before.export.txt")
+    p.add_argument("--appeared",
+                   help="comma-separated seconds, one per NEW Bullet Hole in the "
+                        "truth: measure those instead, each from when it appeared "
+                        "- wander after appearance, not from the baseline. Take "
+                        "them from a run's first detections; finding them from "
+                        "pixels matched CamA's printed rings before the hole existed")
     a = p.parse_args()
     # No --final-run: this is an investigation, never the sealed measurement.
     manifest.gate(a.video, False, None, "registration_reach.py")
 
-    rows, lost = measure(a.video, a.start, a.end, a.truth_labels)
-    print(f"[REACH] {lost} frame(s) failed to register and are not counted")
-    print(f"[REACH] mark  distance(tpl px)  spans  frames  median  p95  max  "
-          f"(template px; MATCH_TPL_PX {board.MATCH_TPL_PX:.0f})  raw-frame max  NCC")
-    for r in sorted(rows, key=lambda r: r.get("distance", -1)):
-        if not r["found"]:
-            print(f"   #{r['mark']:<3} at the frame edge, or never matched above MIN_NCC")
-            continue
-        print(f"   #{r['mark']:<3} {r['distance']:8.0f}  {r['distance'] / r['span']:5.2f}  "
-              f"{r['frames']:5d}  {r['median']:6.1f} {r['p95']:5.1f} {r['max']:5.1f}"
-              f"{'  OVER' if r['p95'] > board.MATCH_TPL_PX else '      '}   {r['raw_max']:5.1f}  {r['ncc']:.2f}")
+    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    span = board.contour_span(board.template_contour(template_mask))
+    base, view = evaluate.baseline_view(a.video, a.start, template_mask)
+    frames = lambda: _registered(a.video, a.start, a.end, template_mask, view)
+    if a.appeared is None:
+        marks, _ = evaluate.load_truth(
+            None, os.path.join(a.truth_labels, evaluate.RAW_NAMES["before"]), base, view)
+        _report(measure(frames(), marks, [0] * len(marks)), span, "from the baseline")
+    else:
+        marks, _ = evaluate.load_truth(None, a.truth_labels, base, view)
+        times = [float(t) for t in a.appeared.split(",")]
+        if len(times) != len(marks):
+            raise SystemExit(f"--appeared has {len(times)} times for {len(marks)} new Bullet Holes")
+        fps = cv2.VideoCapture(a.video).get(cv2.CAP_PROP_FPS)
+        _report(measure(frames(), marks, [int(round((t - a.start) * fps)) for t in times]),
+                span, "wander after appearance (NOT baseline marks)")

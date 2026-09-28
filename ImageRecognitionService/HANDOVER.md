@@ -244,6 +244,16 @@ positions do not hold still. Gaps: CamA's before photograph labels no marks,
 so CamA is unmeasured; the only marks past 0.8 spans are two, both on
 `_103223`, both below the Target.
 
+**CamA, supplementary: wander after appearance** (`--appeared`, not baseline
+marks). CamA's six new Bullet Holes, each tracked from its first detection in
+the 2026-09-28 run (14.64–18.52s) to 25s, sit at 0.70–0.90 spans: median 4.5–11.5,
+p95 9–22 template px, one of six over `MATCH_TPL_PX`, NCC 0.82–0.93. Not
+comparable with the table above: it omits the drift from the baseline to each
+arrival, and CamA's pose is closer (1 frame px ≈ 2.2 template px, against ≈ 6
+on the CamB close pose). Nothing on CamA lies past 0.9 spans. Finding
+appearance from pixels instead misfired — CamA's blurred rings matched a hole's
+patch up to 3.5 s before it arrived — and was dropped.
+
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the
 pipeline** — labels thrown up to 58 000 template px off the Board — and it is

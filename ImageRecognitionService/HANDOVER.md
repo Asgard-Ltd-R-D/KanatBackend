@@ -217,6 +217,33 @@ the line says it cannot tell which. `[PLACEMENT]` cannot match off-canvas
 pre-existing marks, but still warns on them: the Board running past the
 canvas and a wrong placement throwing them there look the same from here.
 
+**Registration error grows with distance from the Target (#46, measured
+2026-09-28, `registration_reach.py`).** Every mark labelled on the before
+photograph is stationary on the Board, so its Board-space wander over the
+recording is registration error at that distance. Each is tracked in the raw
+frame by NCC (synthetic sub-pixel shifts recovered to 0.3 frame px; median NCC
+0.91–0.95 on footage), then carried through that frame's homography. Template
+px from the mark's baseline position; distance from the ring centre in Target
+spans (1072 template px):
+
+| Recording | ≤ 0.5 spans: median / p95 | 0.6–0.8 spans | 1.2–1.3 spans |
+|---|---|---|---|
+| `_102450` | 5–10 / 10–17 (4 marks) | 13–17 / 23–36 (2) | — |
+| `_102250` | 6–14 / 14–31 (2) | — | — |
+| `_103223` | 11–15 / 20–22 (5) | 10–18 / 19–31 (3) | **31–34 / 66–73** (2) |
+
+`MATCH_TPL_PX` is 20. Near the Target, p95 already sits at it on `_103223`
+(the registration defect recorded above); by 0.8 spans it is past it on both
+recordings that reach that far, and at 1.2–1.3 spans — where `_102450` truth
+#3 and #4 sit, 1.17 and 1.26 on this scale, not the ~1.7 quoted earlier —
+median error is 1.6× and p95 3.5× the match radius. `_103223` #10 moves
+7.5 frame px raw yet 73 template px in Board space, so extrapolating the
+homography accounts for it, not only sheet motion. **So far-field registration must be fixed
+before the canvas grows**; a sheet-edge canvas would search Board whose
+positions do not hold still. Gaps: CamA's before photograph labels no marks,
+so CamA is unmeasured; the only marks past 0.8 spans are two, both on
+`_103223`, both below the Target.
+
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the
 pipeline** — labels thrown up to 58 000 template px off the Board — and it is

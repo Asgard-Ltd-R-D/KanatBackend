@@ -427,6 +427,11 @@ class RegisteredFrames:
         self._base = base
         self.net_scale = None   # measured by `open`; see the warning there
         self.processed = self.lost = 0
+        # How far past each canvas edge any registered frame's view has run,
+        # in Board px — the baseline's is only the first (#41).
+        uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
+        self.reach = self._baseline_reach = uncovered and uncovered[1]
+        self.unmeasured = 0   # later frames whose view had no footprint to measure
 
     @classmethod
     def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
@@ -470,6 +475,18 @@ class RegisteredFrames:
         print(f"[BOARD] {len(view.targets)} Target(s), ECC converged at {correlation:.4f} "
               f"(convergence, not geometric accuracy)")
         print(f"[BOARD] rectified {canvas_w}x{canvas_h}, imgsz {imgsz}, net scale {scale:.2f}")
+        uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
+        if uncovered is None:
+            print("[WARN] the camera's view does not map onto the Board plane; "
+                  "how much of it is off the canvas is unknown (#41)")
+        # Any reach past the canvas warns; uncovered_view already drops rounding.
+        elif any(uncovered[1].values()):
+            outside, reach = uncovered
+            span = board.target_span(view)
+            where = ", ".join(f"{v / span:.2f} {k}" for k, v in reach.items() if v)
+            print(f"[WARN] {outside:.1%} of the camera's view is off the canvas, up to "
+                  f"{where} (Target spans). Board there, if any, is never searched: "
+                  f"a Bullet Hole on it is a miss no setting can recover (#41)")
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
@@ -505,11 +522,49 @@ class RegisteredFrames:
                     yield Look(index, None, None, None)
                     continue
                 self.last = current
+                self._track_reach(current, frame)
                 canvas = current.rectify(frame)
                 yield Look(index, current, canvas,
                            _detect(self.model, canvas, self.imgsz, self.conf))
         finally:
             self.cap.release()
+            self._report_reach()
+
+    def _track_reach(self, current, frame):
+        if self.reach is None:
+            return  # the baseline's view was already unmeasurable; said so
+        uncovered = board.uncovered_view(current, (frame.shape[1], frame.shape[0]))
+        if uncovered is None:
+            self.unmeasured += 1
+        else:
+            self.reach = {k: max(v, uncovered[1][k]) for k, v in self.reach.items()}
+
+    def _report_reach(self):
+        """The camera moving can uncover what the baseline's view did not: say
+        so once, at the end, rather than per frame.
+
+        It cannot say the camera moved. Reach is the frame corners, extrapolated
+        far from the Targets, and wanders with registration: on the still CamB
+        close pose (CamB_20260915_102450, 0-3s) the left reach ran 4.4-7.0
+        Target spans frame to frame while the uncovered fraction held at 94%.
+        """
+        if self.reach is None:
+            return
+        if self.unmeasured:
+            print(f"[WARN] {self.unmeasured} registered frame(s)' view did not map "
+                  f"onto the Board plane; how much of it was off the canvas there "
+                  f"is unknown (#41)")
+        # The same rounding floor the baseline's reach is cut at; anything past
+        # it is Board the baseline's view did not show.
+        grew = {k: v for k, v in self.reach.items()
+                if v > self._baseline_reach[k] + board.ROUNDING_PX}
+        if grew:
+            span = board.target_span(self.view)
+            where = ", ".join(f"{v / span:.2f} {k}" for k, v in grew.items())
+            print(f"[WARN] registered frames put the view further off the canvas "
+                  f"than the baseline did, up to {where} (Target spans): the "
+                  f"camera moved, or registration far from the Targets wandered. "
+                  f"A Bullet Hole there is a miss no setting can recover (#41)")
 
 
 class Run(NamedTuple):

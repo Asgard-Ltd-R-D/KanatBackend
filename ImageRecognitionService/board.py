@@ -97,6 +97,12 @@ ABSDIFF_SIGMA = 2.0        # PROVISIONAL: change-detection gate, evidence only
 # nothing detects the plywood itself. That is the real fix; this constant buys
 # time. Too small and Misses vanish; too large and imgsz grows with the canvas,
 # costing inference time for empty ground.
+#
+# It breaks on the CamB close pose (#41): Bullet Holes ~1.7 Target spans below
+# the Target are off the canvas. Growing the canvas to the whole camera view was
+# measured and rejected — CamA fell from F1 0.92 to 0.77, because any change to
+# its canvas moves its marginal detections. So the run reports what the canvas
+# leaves out instead (`uncovered_view`), and the value stays.
 BOARD_MARGIN = 0.50        # PROVISIONAL
 
 
@@ -139,6 +145,12 @@ def contour_span(contour):
     """Longest bounding-box edge — the span both scale calculations compare."""
     _, _, w, h = cv2.boundingRect(contour)
     return float(max(w, h))
+
+
+def spread(points):
+    """Longest side of the points' bounding box — the Target span
+    `BOARD_MARGIN` and `uncovered_view` both measure in."""
+    return float(np.ptp(np.asarray(points).reshape(-1, 2), axis=0).max())
 
 
 def _blurred(mask):
@@ -295,7 +307,7 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
 
     # The canvas spans every Target plus a margin, so Bullet Holes on the paper
     # around a Target — Misses — are still inside the rectified image.
-    margin = BOARD_MARGIN * float(np.ptp(allpts, axis=0).max())
+    margin = BOARD_MARGIN * spread(allpts)
     lo = allpts.min(axis=0) - margin
     tpl_to_board = _as_matrix(board_scale, (-lo[0], -lo[1]))
     size = tuple(int(v) for v in np.ceil(allpts.max(axis=0) - lo + margin))
@@ -303,6 +315,54 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     targets = [(_apply(_as_matrix(1.0, (-lo[0], -lo[1])), p)
                 .reshape(-1, 1, 2).astype(np.float32)) for p in placed]
     return BoardView(H, tpl_to_board, size, targets), correlation
+
+
+# Under half a canvas pixel is projection rounding, not a strip the canvas
+# could have held; anything more is a real gap and is reported.
+ROUNDING_PX = 0.5
+
+
+def target_span(view):
+    """The Target span of this view's Targets, in Board px — the unit
+    `BOARD_MARGIN` and the off-canvas warnings are read in. A tracked frame
+    re-detects its Targets, so take it from one fixed view, not per frame."""
+    return spread(np.vstack([t.reshape(-1, 2) for t in view.targets]))
+
+
+def uncovered_view(view, frame_size):
+    """How much of the camera's view the canvas leaves out, and where.
+
+    Returns `(fraction, reach)`: the fraction of the frame's pixels whose
+    Board position lies outside the canvas, and how far past each canvas edge
+    the view runs, in Board px, zero under `ROUNDING_PX` — Board px, not
+    Target spans, so reaches from different frames compare. A Bullet Hole out
+    there is never looked for (#41). The fraction is taken in the
+    frame, not in Board space: a homography does not keep area ratios, and on
+    a steep view the far rows fill most of the Board-space footprint.
+
+    This is the camera's view, not the Board: nothing detects the plywood, so
+    it is an upper bound on the Board left unsearched, gravel included.
+
+    Returns None when the view does not map onto the Board plane as a convex
+    quadrilateral, or the canvas onto the frame — a corner past the other's
+    horizon — since no fraction of it is then meaningful.
+    """
+    w, h = frame_size
+    footprint = view.frame_to_board([[0, 0], [w, 0], [w, h], [0, h]])
+    if not cv2.isContourConvex(footprint.reshape(-1, 1, 2)):
+        return None
+    cw, ch = view.canvas_size
+    canvas = view.board_to_frame([[0, 0], [cw, 0], [cw, ch], [0, ch]])
+    if not cv2.isContourConvex(canvas.reshape(-1, 1, 2)):
+        return None
+    frame = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+    inside, _ = cv2.intersectConvexConvex(frame, canvas)
+    fraction = 1.0 - inside / float(w * h)
+
+    lo, hi = footprint.min(axis=0), footprint.max(axis=0)
+    reach = {"left": -lo[0], "right": hi[0] - cw, "above": -lo[1], "below": hi[1] - ch}
+    return fraction, {k: float(v) if v >= ROUNDING_PX else 0.0
+                      for k, v in reach.items()}
 
 
 def track_view(frame, template_mask, reference):

@@ -7,7 +7,8 @@ import board
 from evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
                       RAW_NAMES, SOURCE_NAME, UNKNOWN,
                       attribute, load_labels, match, off_canvas,
-                      pre_existing_labels, register_photograph, score)
+                      placement_note, pre_existing_labels, register_photograph,
+                      score)
 
 
 def test_greedy_matching_is_one_to_one():
@@ -296,3 +297,21 @@ def test_truth_not_derived_has_no_pre_existing_marks(tmp_path):
     labels = tmp_path / "board.txt"
     labels.write_text("0 0.5 0.5 0.01 0.01\n")
     assert pre_existing_labels(str(labels)) is None
+
+
+def test_off_canvas_pre_existing_marks_stay_a_placement_doubt():
+    """_103223: two pre-existing marks below the canvas no baseline can hold.
+    A wrong placement could have thrown them there, so the on-canvas match
+    alone is not a clean placement (#41)."""
+    note = placement_note(np.float32([[0, 0]]), np.float32([[3, 4]]),
+                          40.0, off_canvas_count=2)
+    assert "1 of 1" in note
+    assert "[WARN] 2 more pre-existing mark(s) land off the canvas" in note
+
+
+def test_placement_is_unverified_when_every_pre_existing_mark_is_off_canvas():
+    """Nothing left to check against is not "0 of 0 land within" — say so."""
+    note = placement_note(np.zeros((0, 2), np.float32), np.float32([[3, 4]]),
+                          40.0, off_canvas_count=2)
+    assert "placement unverified" in note
+    assert "2 pre-existing mark(s)" in note

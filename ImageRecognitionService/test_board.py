@@ -166,3 +166,62 @@ def test_same_bullet_hole_measures_differently_against_different_targets():
     on_first = board.to_millimetres(point, view, ring_diameter_mm=40.0, target_index=0)
     on_second = board.to_millimetres(point, view, ring_diameter_mm=40.0, target_index=1)
     assert np.linalg.norm(on_first[0] - on_second[0]) > 50  # mm
+
+
+# --- what the camera sees that the canvas does not (#41) --------------------
+
+def test_camera_view_beyond_the_canvas_is_measured_in_board_px():
+    """A 300x100 view over a 100x100 canvas: two thirds of it unsearched,
+    all of it to the right, 200 Board px — two Target spans — out."""
+    view = board.BoardView(H=np.eye(3, dtype=np.float32),
+                           tpl_to_board=board._as_matrix(1.0),
+                           canvas_size=(100, 100),
+                           targets=[_square(0, 0, 100)])
+    outside, reach = board.uncovered_view(view, frame_size=(300, 100))
+    assert outside == pytest.approx(2 / 3, abs=1e-3)
+    assert reach == pytest.approx({"left": 0, "right": 200, "above": 0, "below": 0})
+    assert board.target_span(view) == 100
+
+
+def test_canvas_covering_the_whole_view_leaves_nothing_uncovered():
+    """CamA's canvas runs past its frame top and bottom; that is not a gap."""
+    view = board.BoardView(H=np.eye(3, dtype=np.float32),
+                           tpl_to_board=board._as_matrix(1.0, (0, 50)),
+                           canvas_size=(100, 200),
+                           targets=[_square(0, 50, 100)])
+    outside, reach = board.uncovered_view(view, frame_size=(100, 100))
+    assert outside == pytest.approx(0, abs=1e-3)
+    assert set(reach.values()) == {0}
+
+
+def test_a_one_pixel_strip_off_the_canvas_is_still_reported():
+    """A 101x100 view over a 100x100 canvas: a real strip, however thin, is a
+    Bullet Hole no run can find, so it is not rounded away."""
+    view = board.BoardView(H=np.eye(3, dtype=np.float32),
+                           tpl_to_board=board._as_matrix(1.0),
+                           canvas_size=(100, 100),
+                           targets=[_square(0, 0, 100)])
+    outside, reach = board.uncovered_view(view, frame_size=(101, 100))
+    assert outside == pytest.approx(1 / 101, abs=1e-4)
+    assert reach == pytest.approx({"left": 0, "right": 1, "above": 0, "below": 0})
+
+
+def test_uncovered_fraction_is_of_the_frame_not_of_the_board_plane():
+    """A tilted view: the far rows fill most of the Board-space footprint, so
+    the fraction must be counted in frame pixels, not Board-space area."""
+    H = np.array([[1, 0, 0], [0, 1, 0], [0, 0.005, 1]], np.float32)
+    view = board.BoardView(H=H, tpl_to_board=board._as_matrix(1.0),
+                           canvas_size=(60, 60), targets=[_square(0, 0, 60)])
+    outside, _ = board.uncovered_view(view, frame_size=(100, 100))
+    ys, xs = np.mgrid[0:100, 0:100] + 0.5
+    placed = view.frame_to_board(np.stack([xs.ravel(), ys.ravel()], axis=1))
+    counted = np.mean((placed[:, 0] >= 60) | (placed[:, 1] >= 60))
+    assert outside == pytest.approx(counted, abs=0.01)
+
+
+def test_view_past_the_board_planes_horizon_is_not_measured():
+    """A frame corner behind the plane flips the footprint; no fraction then."""
+    H = np.array([[1, 0, 0], [0, 1, 0], [0, -0.02, 1]], np.float32)  # y=50 at infinity
+    view = board.BoardView(H=np.linalg.inv(H), tpl_to_board=board._as_matrix(1.0),
+                           canvas_size=(100, 100), targets=[_square(0, 0, 100)])
+    assert board.uncovered_view(view, frame_size=(100, 100)) is None

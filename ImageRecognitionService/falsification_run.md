@@ -63,7 +63,8 @@ land at Board y 381 and 396 on a 348 px canvas, below it, where no baseline can
 hold them. `[PLACEMENT]` warns "the truth placement is off, or the baseline
 missed them" — neither; the canvas ends first (#41). The warning cannot tell
 the cases apart because it does not exclude off-canvas marks, as the scoring
-`[WARN]` does. Recorded, not changed here.
+`[WARN]` does. Recorded, not changed here; since fixed under #41, which
+leaves off-canvas marks out of `[PLACEMENT]` and names them.
 
 ### Every mark
 

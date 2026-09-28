@@ -262,21 +262,24 @@ baseline homography H0 and registers each frame to the **baseline** frame:
 H = W · H0. W is an ECC homography on the greyscale frame, masked to a square
 within `REGION_SPANS` (1.5) Target spans of the ring, whose corners reach about
 2.1 spans. The mask goes to ECC as its mask. Multiplying it into both images
-instead leaves a fixed edge that pulls W towards no motion.
+instead leaves a fixed edge that pulls W towards no motion. ECC reads that mask
+in the current frame's coordinates, so the region is carried there by the
+seed. Left in the baseline's, the background the Board slid off votes: on a
+40 px synthetic shift that cost 0.5 px and correlation 0.66 against 1.0.
 
 **What the runtime sees.** `registration_reach.py` now measures `board.track_view`
 itself (`--registration runtime`), and keeps the old chain as `silhouette`.
-p95 in template px:
+p95 in template px, rerun after the mask fix above:
 
 | Recording | Silhouette (before #50) | Texture, marks in the fit (the runtime) | Marks cut out (`--cut-marks`) |
 |---|---|---|---|
-| `_103223` ≤ 0.5 spans | 20–22 | **5.4–7.1** | 5.0–7.3 |
+| `_103223` ≤ 0.5 spans | 20–22 | **5.3–7.0** | 5.0–7.3 |
 | `_103223` 0.6–0.8 | 19–31 | **3.4–4.5** | 3.3–5.3 |
-| `_103223` 1.2–1.3 | 63–66 | **7.3 / 8.3** | 9.3 / 10.3 |
-| `_102450` ≤ 0.5 | 10–17 | **3.1–6.8** | 3.4–6.8 |
-| `_102450` 0.6–0.8 | 23–36 | **3.8–4.6** | 3.7–4.7 |
-| `_102250` ≤ 0.5 (#2 / #1) | 13.6 / 30.5 | **4.9 / 6.6** | 5.0 / 6.7 |
-| CamA `--appeared` 0.7–0.9 | 9–22 | **5.1–9.2** | 5.0–9.2 |
+| `_103223` 1.2–1.3 | 63–66 | **7.1 / 8.1** | 9.2 / 10.3 |
+| `_102450` ≤ 0.5 | 10–17 | **3.1–6.7** | 3.3–6.8 |
+| `_102450` 0.6–0.8 | 23–36 | **3.7–4.7** | 3.7–4.7 |
+| `_102250` ≤ 0.5 (#2 / #1) | 13.6 / 30.5 | **4.8 / 6.4** | 4.9 / 6.4 |
+| CamA `--appeared` 0.7–0.9 | 9–22 | **5.3–9.2** | 5.2–9.3 |
 
 **Both probe criteria of #50 pass, and every mark improves.** `--cut-marks` cuts
 a hole of `PATCH + SEARCH` round each scored mark, so none helps register
@@ -295,8 +298,8 @@ FN, against #46's figures for the old runtime and its canvas-shift control:
 
 | Recording | Before #50 | Control: canvas moved 8 px | **After #50** | `[REGISTRATION]` median, tpl px: before → after |
 |---|---|---|---|---|
-| `_102450` 0–47.76s | 2/0/2 | 2/0/2 | **2/0/2** | 7.9 → **2.0** (max 20.0 → 7.6) |
-| `_102250` 0–46s | 4/1/0 | 4/2/0 | **4/1/0** | 10.1 → **2.6** (max 20 → 9.9) |
+| `_102450` 0–47.76s | 2/0/2 | 2/0/2 | **2/0/2** | 7.9 → **1.9** (max 20.0 → 7.8) |
+| `_102250` 0–46s | 4/1/0 | 4/2/0 | **4/1/0** | 10.1 → **2.6** (max 20 → 10.0) |
 | `_103223` 0–51.88s | 2/1/0 | 2/2/0 | **2/1/0** | 11.1 → **2.8** (max 20.0 → 14.1) |
 | CamA 13–25s | 6/1/0 (F1 0.92) | 4/2/2 (0.67); 16 px 0.80, 32 px 0.83 | **5/1/1 (0.83)** | 11.1 → **2.5** (max 19.8) |
 
@@ -309,7 +312,7 @@ FN, against #46's figures for the old runtime and its canvas-shift control:
   ones. That puts it inside the grid noise, not outside it, so it is not
   evidence against the change, and not evidence for it.
 - **The runtime's own residual falls about 4×.** Baseline-matched detections
-  rise (7 555 → 8 328 on `_102450`, 9 827 → 11 233 on `_103223`). On the three
+  rise (7 555 → 8 333 on `_102450`, 9 827 → 11 249 on `_103223`). On the three
   CamB recordings the max is off the 20 px censoring ceiling, so displaced
   pre-existing marks no longer reach the match radius there. CamA's max, 19.8,
   still sits at it.
@@ -331,10 +334,11 @@ Here that is the silhouette chain: it skips 17 and 74 frames on `_103223` #9 and
 while texture skips at most 1 on any CamB mark, and 2 on CamA #2.
 
 **Drift / jitter split (#50 C).** Each row reports p95 drift (a rolling mean
-over 25 found frames, 1 s at 25 fps) and p95 jitter (the rest). Under the
-silhouette chain, `_103223`'s far marks are 50–55 drift and 34–36 jitter. Under texture,
-jitter is 1.6–3.2 everywhere and drift at most 9. Smoothing would buy little
-more.
+over 25 video frames, 1 s at 25 fps; skipped and unregistered frames are gaps,
+not closed up) and p95 jitter (the rest). Under the silhouette chain,
+`_103223`'s far marks are 50–55 drift and 34–36 jitter. Under texture, jitter
+is 1.6–2.8 everywhere and drift at most 8.3 (3.0 and 9.2 with the marks cut
+out). Smoothing would buy little more.
 
 **Open: one fixed reference frame.** ECC against the baseline frame will
 degrade as new Bullet Holes, shadows and wind change the Board. Nothing here

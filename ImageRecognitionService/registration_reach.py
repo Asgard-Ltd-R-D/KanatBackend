@@ -144,15 +144,20 @@ def cut_marks(anchor, marks):
     return anchor._replace(region=region)
 
 
-def split(displacement):
+def split(displacement, frame=None):
     """`(drift, jitter)` magnitudes of a mark's per-frame Board-space
     displacement (N x 2): drift is its rolling mean over `DRIFT_FRAMES`,
-    jitter what is left."""
+    jitter what is left. `frame` is each sample's frame index; frames with no
+    sample (skipped, or failed to register) stay gaps, so the window is always
+    `DRIFT_FRAMES` of video time and not that many samples."""
     d = np.asarray(displacement, np.float64)
+    frame = np.arange(len(d)) if frame is None else np.asarray(frame) - frame[0]
+    full = np.full((frame[-1] + 1, 2), np.nan)
+    full[frame] = d
     h = DRIFT_FRAMES // 2
-    padded = np.pad(d, ((h, h), (0, 0)), mode="edge")
-    windows = np.lib.stride_tricks.sliding_window_view(padded, DRIFT_FRAMES, axis=0)
-    drift = windows.mean(axis=2)  # a median latches onto one side of a two-valued flicker
+    padded = np.pad(full, ((h, h), (0, 0)), mode="edge")  # both ends are samples
+    windows = np.lib.stride_tricks.sliding_window_view(padded, DRIFT_FRAMES, axis=0)[frame]
+    drift = np.nanmean(windows, axis=2)  # a median latches onto one side of a two-valued flicker
     return np.linalg.norm(drift, axis=1), np.linalg.norm(d - drift, axis=1)
 
 
@@ -170,7 +175,7 @@ def measure(frames, marks, from_index):
     reference is the Board point itself and its labelled placement error is
     not counted as wander."""
     patches = [None] * len(marks)
-    errors, raw_moves, scores = ([[] for _ in marks] for _ in range(3))
+    errors, raw_moves, scores, at = ([[] for _ in marks] for _ in range(4))
     raw_ref, skipped, lost = [None] * len(marks), [0] * len(marks), 0
     for index, gray, current in frames:
         if current is None:
@@ -192,6 +197,7 @@ def measure(frames, marks, from_index):
                 continue
             here = board._apply(to_template, [found])[0]
             errors[i].append(here - t)
+            at[i].append(index)
             scores[i].append(score)
             raw_moves[i].append(float(np.linalg.norm(found - raw_ref[i])))
     rows = []
@@ -201,7 +207,7 @@ def measure(frames, marks, from_index):
             continue
         d = np.array(errors[i])
         e = np.linalg.norm(d, axis=1)
-        drift, jitter = split(d)
+        drift, jitter = split(d, at[i])
         rows.append(dict(mark=i + 1, found=True, frames=len(e), skipped=skipped[i],
                          drift=float(np.percentile(drift, 95)),
                          jitter=float(np.percentile(jitter, 95)),

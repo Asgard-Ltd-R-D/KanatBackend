@@ -48,6 +48,15 @@ def test_drift_is_what_holds_for_a_second_and_jitter_is_the_rest():
     assert drift.max() == pytest.approx(30, abs=1.5)
 
 
+def test_a_gap_in_the_samples_is_video_time_not_a_shorter_window():
+    """A mark skipped for 100 frames between two steady positions: counting
+    samples would average across the gap and call the step jitter."""
+    frame = np.r_[0:100, 200:300]
+    d = np.stack([np.where(frame < 100, 0.0, 10.0), np.zeros(200)], axis=1)
+    assert rr.split(d, frame)[1].max() == pytest.approx(0)
+    assert rr.split(d)[1].max() > 1                     # what the gap used to do
+
+
 def test_cutting_marks_leaves_a_hole_round_each_and_the_rest_of_the_region():
     anchor = rr.board.Anchor(None, np.full((200, 200), 255, np.uint8), np.eye(3, dtype=np.float32))
     region = rr.cut_marks(anchor, [[100, 100]]).region

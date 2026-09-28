@@ -470,6 +470,17 @@ class RegisteredFrames:
         print(f"[BOARD] {len(view.targets)} Target(s), ECC converged at {correlation:.4f} "
               f"(convergence, not geometric accuracy)")
         print(f"[BOARD] rectified {canvas_w}x{canvas_h}, imgsz {imgsz}, net scale {scale:.2f}")
+        uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
+        if uncovered is None:
+            print("[WARN] the camera's view does not map onto the Board plane; "
+                  "how much of it is off the canvas is unknown (#41)")
+        # 1% and 0.05 spans only keep rounding noise out of the line; not tuned.
+        elif uncovered[0] > 0.01:
+            outside, reach = uncovered
+            where = ", ".join(f"{v:.1f} {k}" for k, v in reach.items() if v > 0.05)
+            print(f"[WARN] {outside:.0%} of the camera's view is off the canvas, up to "
+                  f"{where} (Target spans). Board there, if any, is never searched: "
+                  f"a Bullet Hole on it is a miss no setting can recover (#41)")
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")

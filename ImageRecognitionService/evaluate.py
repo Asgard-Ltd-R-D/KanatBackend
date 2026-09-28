@@ -765,7 +765,8 @@ def load_truth(image_path, label_path, frame, view):
     return truth, pre
 
 
-def placement_note(pre_existing_truth, baseline_tpl, tolerance):
+def placement_note(pre_existing_truth, baseline_tpl, tolerance,
+                   off_canvas_count=0):
     """How far the photograph's pre-existing marks land from the baseline's.
 
     They are the same Bullet Holes, so the distance is the truth placement's
@@ -773,7 +774,16 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance):
     throws labels somewhere plausible-looking otherwise scores as silently as
     one that throws them 58 000 px out. The baseline is the detector's output,
     so an unpaired mark is a misplaced label or a mark the baseline missed.
+
+    `off_canvas_count` counts pre-existing marks left out because they land
+    off the rectified Board, where no baseline can hold them (#41) — named,
+    so they are not read as a placement doubt.
     """
+    if not len(pre_existing_truth):
+        return (f"[WARN] placement unverified: all {off_canvas_count} "
+                f"pre-existing mark(s) are off the canvas (#41), so nothing is "
+                f"left to check it against. A wrong placement would change "
+                f"this score silently.")
     pairs, missed = match(pre_existing_truth, baseline_tpl, tolerance)
     note = (f"[PLACEMENT] {len(pairs)} of {len(pre_existing_truth)} "
             f"pre-existing mark(s) in the photograph land within {tolerance:.0f} "
@@ -781,6 +791,9 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance):
     if pairs:
         d = sorted(d for _, _, d in pairs)
         note += f", {d[0]:.0f}-{d[-1]:.0f} px: that is the placement's error"
+    if off_canvas_count:
+        note += (f"; {off_canvas_count} more are off the canvas, where no baseline "
+                 f"can hold them (#41)")
     if missed:
         note += (f"\n[WARN] {len(missed)} pre-existing mark(s) land on nothing "
                  f"the baseline holds: the truth placement is off, or the "
@@ -839,7 +852,9 @@ if __name__ == "__main__":
     pre_existing = board._apply(
         to_template, np.asarray(run.baseline, np.float32)[:, :2])
     if pre_labels is not None and len(pre_labels):
-        print(placement_note(pre_labels, pre_existing, a.tolerance))
+        outside = off_canvas(pre_labels, view)
+        print(placement_note(np.delete(pre_labels, outside, axis=0), pre_existing,
+                             a.tolerance, off_canvas_count=len(outside)))
     else:
         print("[WARN] placement unverified: the truth names no pre-existing "
               "mark to check it against, and the registration correlation is "

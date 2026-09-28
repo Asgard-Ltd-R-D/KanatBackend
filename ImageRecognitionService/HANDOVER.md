@@ -198,6 +198,18 @@ false negatives, and two of `_103223`'s pre-existing marks, sit below the
 canvas the detector is given; a third new Bullet Hole is on its edge.
 `BOARD_MARGIN` bounds recall, and on this setup it binds.
 
+**The canvas was not widened; the run discloses the gap instead.** Making the
+canvas the whole camera view was measured: net scale held (0.90–0.91, `imgsz`
+follows the canvas) but CamA fell from TP 6 / FP 1 / FN 0 to 5 / 2 / 1, F1
+0.77 — its canvas already misses a third of its view, and any change to the
+canvas moves its marginal detections. So every run now prints `[WARN] N% of
+the camera's view is off the canvas`, with how many Target spans it runs past
+each edge (`board.uncovered_view`): 94% on the CamB close pose, reaching 4–5
+spans below, and 34% on CamA, to the sides. It is the camera view, not the
+Board — gravel included — because nothing detects the plywood. `[PLACEMENT]`
+now leaves off-canvas pre-existing marks out and names them, instead of
+warning that the placement is off.
+
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the
 pipeline** — labels thrown up to 58 000 template px off the Board — and it is
@@ -762,7 +774,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `OVERLAP_THRESHOLD` | 0.5 | `new_bullet_holes.py` | Ported; merging on *any* overlap regresses CamA |
 | `TARGET_NET_SCALE` | 0.90 | `board.py` | Inside a flat band, not a measured peak |
 | `ABSDIFF_SIGMA` | 2.0 | `board.py` | At 2.5 the evidence channel was dead |
-| `BOARD_MARGIN` | 0.50 | `board.py` | Bounds recall; see above. **Breaks** on both threshold-work recordings — #41 |
+| `BOARD_MARGIN` | 0.50 | `board.py` | Bounds recall; see above. **Breaks** on both threshold-work recordings — #41. Unchanged: the whole-view canvas regressed CamA; the run warns what the canvas leaves out |
 | `GREEN_LO` / `GREEN_HI` | — | `board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `board.py` | May reject distant Targets |
 

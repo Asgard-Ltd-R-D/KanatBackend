@@ -344,7 +344,10 @@ def uncovered_view(view, frame_size):
     span = spread(np.vstack([t.reshape(-1, 2) for t in view.targets]))
     lo, hi = footprint.min(axis=0), footprint.max(axis=0)
     reach = {"left": -lo[0], "right": hi[0] - cw, "above": -lo[1], "below": hi[1] - ch}
-    return fraction, {k: max(0.0, float(v)) / span for k, v in reach.items()}
+    # Under half a canvas pixel is projection rounding, not a strip the canvas
+    # could have held; anything more is a real gap and is reported.
+    return fraction, {k: float(v) / span if v >= 0.5 else 0.0
+                      for k, v in reach.items()}
 
 
 def track_view(frame, template_mask, reference):

@@ -474,11 +474,11 @@ class RegisteredFrames:
         if uncovered is None:
             print("[WARN] the camera's view does not map onto the Board plane; "
                   "how much of it is off the canvas is unknown (#41)")
-        # 1% and 0.05 spans only keep rounding noise out of the line; not tuned.
-        elif uncovered[0] > 0.01:
+        # Any reach past the canvas warns; uncovered_view already drops rounding.
+        elif any(uncovered[1].values()):
             outside, reach = uncovered
-            where = ", ".join(f"{v:.1f} {k}" for k, v in reach.items() if v > 0.05)
-            print(f"[WARN] {outside:.0%} of the camera's view is off the canvas, up to "
+            where = ", ".join(f"{v:.2f} {k}" for k, v in reach.items() if v)
+            print(f"[WARN] {outside:.1%} of the camera's view is off the canvas, up to "
                   f"{where} (Target spans). Board there, if any, is never searched: "
                   f"a Bullet Hole on it is a miss no setting can recover (#41)")
         if not 0.5 <= scale <= 1.2:

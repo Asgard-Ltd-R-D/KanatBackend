@@ -428,7 +428,7 @@ class RegisteredFrames:
         self.net_scale = None   # measured by `open`; see the warning there
         self.processed = self.lost = 0
         # How far past each canvas edge any registered frame's view has run,
-        # in Target spans — the baseline's is only the first (#41).
+        # in Board px — the baseline's is only the first (#41).
         uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
         self.reach = self._baseline_reach = uncovered and uncovered[1]
 
@@ -481,7 +481,8 @@ class RegisteredFrames:
         # Any reach past the canvas warns; uncovered_view already drops rounding.
         elif any(uncovered[1].values()):
             outside, reach = uncovered
-            where = ", ".join(f"{v:.2f} {k}" for k, v in reach.items() if v)
+            span = board.target_span(view)
+            where = ", ".join(f"{v / span:.2f} {k}" for k, v in reach.items() if v)
             print(f"[WARN] {outside:.1%} of the camera's view is off the canvas, up to "
                   f"{where} (Target spans). Board there, if any, is never searched: "
                   f"a Bullet Hole on it is a miss no setting can recover (#41)")
@@ -537,18 +538,26 @@ class RegisteredFrames:
 
     def _report_reach(self):
         """The camera moving can uncover what the baseline's view did not: say
-        so once, at the end, rather than per frame."""
+        so once, at the end, rather than per frame.
+
+        It cannot say the camera moved. Reach is the frame corners, extrapolated
+        far from the Targets, and wanders with registration: on the still CamB
+        close pose (CamB_20260915_102450, 0-3s) the left reach ran 4.4-7.0
+        Target spans frame to frame while the uncovered fraction held at 94%.
+        """
         if self.reach is None:
             return
-        # 0.01 span, the precision the baseline line prints at: under it is
-        # registration jitter, not a new strip.
+        # The same rounding floor the baseline's reach is cut at; anything past
+        # it is Board the baseline's view did not show.
         grew = {k: v for k, v in self.reach.items()
-                if v > self._baseline_reach[k] + 0.01}
+                if v > self._baseline_reach[k] + board.ROUNDING_PX}
         if grew:
-            where = ", ".join(f"{v:.2f} {k}" for k, v in grew.items())
-            print(f"[WARN] the view moved further off the canvas during the run, "
-                  f"up to {where} (Target spans). A Bullet Hole there when it "
-                  f"was uncovered is a miss no setting can recover (#41)")
+            span = board.target_span(self.view)
+            where = ", ".join(f"{v / span:.2f} {k}" for k, v in grew.items())
+            print(f"[WARN] registered frames put the view further off the canvas "
+                  f"than the baseline did, up to {where} (Target spans): the "
+                  f"camera moved, or registration far from the Targets wandered. "
+                  f"A Bullet Hole there is a miss no setting can recover (#41)")
 
 
 class Run(NamedTuple):

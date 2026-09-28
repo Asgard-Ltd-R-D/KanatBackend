@@ -208,8 +208,12 @@ each edge (`board.uncovered_view`): 94% on the CamB close pose, reaching 4–5
 spans below, and 34% on CamA, to the sides — counted in frame pixels, which
 on these near-square-on views agrees with Board-plane area to 0.4 points. It
 is the camera view, not the Board — gravel included — because nothing detects
-the plywood. A second warning fires at the end if the camera moved the view
-further off the canvas during the run. `[PLACEMENT]` cannot match off-canvas
+the plywood. A second warning fires at the end if any registered frame put
+the view further off the canvas than the baseline did. It fires on the still
+CamB close pose too: reach is the frame corners, extrapolated 4–5 spans from
+the one Target, and ran 4.4–7.0 spans left frame to frame over 3 s while the
+fraction held at 94%. It is registration noise there, not a moving camera, and
+the line says it cannot tell which. `[PLACEMENT]` cannot match off-canvas
 pre-existing marks, but still warns on them: the Board running past the
 canvas and a wrong placement throwing them there look the same from here.
 

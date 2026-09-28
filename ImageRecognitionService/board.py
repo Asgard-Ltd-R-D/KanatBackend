@@ -317,13 +317,26 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     return BoardView(H, tpl_to_board, size, targets), correlation
 
 
+# Under half a canvas pixel is projection rounding, not a strip the canvas
+# could have held; anything more is a real gap and is reported.
+ROUNDING_PX = 0.5
+
+
+def target_span(view):
+    """The Target span of this view's Targets, in Board px — the unit
+    `BOARD_MARGIN` and the off-canvas warnings are read in. A tracked frame
+    re-detects its Targets, so take it from one fixed view, not per frame."""
+    return spread(np.vstack([t.reshape(-1, 2) for t in view.targets]))
+
+
 def uncovered_view(view, frame_size):
     """How much of the camera's view the canvas leaves out, and where.
 
     Returns `(fraction, reach)`: the fraction of the frame's pixels whose
     Board position lies outside the canvas, and how far past each canvas edge
-    the view runs, in Target spans — the unit `BOARD_MARGIN` is in. A Bullet
-    Hole out there is never looked for (#41). The fraction is taken in the
+    the view runs, in Board px, zero under `ROUNDING_PX` — Board px, not
+    Target spans, so reaches from different frames compare. A Bullet Hole out
+    there is never looked for (#41). The fraction is taken in the
     frame, not in Board space: a homography does not keep area ratios, and on
     a steep view the far rows fill most of the Board-space footprint.
 
@@ -346,12 +359,9 @@ def uncovered_view(view, frame_size):
     inside, _ = cv2.intersectConvexConvex(frame, canvas)
     fraction = 1.0 - inside / float(w * h)
 
-    span = spread(np.vstack([t.reshape(-1, 2) for t in view.targets]))
     lo, hi = footprint.min(axis=0), footprint.max(axis=0)
     reach = {"left": -lo[0], "right": hi[0] - cw, "above": -lo[1], "below": hi[1] - ch}
-    # Under half a canvas pixel is projection rounding, not a strip the canvas
-    # could have held; anything more is a real gap and is reported.
-    return fraction, {k: float(v) / span if v >= 0.5 else 0.0
+    return fraction, {k: float(v) if v >= ROUNDING_PX else 0.0
                       for k, v in reach.items()}
 
 

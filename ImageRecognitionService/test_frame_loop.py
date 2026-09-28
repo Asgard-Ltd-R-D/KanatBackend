@@ -47,12 +47,14 @@ class _FakeModel:
 
 def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0):
     """A loop over `frames` frames; `registers(index)` says which ones register,
-    and `below(index)` how far that frame's view runs past the canvas bottom."""
+    and `below(index)` how far that frame's view runs past the canvas bottom,
+    in Board px against a 100 px Target span."""
     seen = iter(range(1, frames + 1))
     measured = itertools.count()   # the baseline in __init__, then each look
     edges = dict.fromkeys(("left", "right", "above"), 0.0)
     monkeypatch.setattr(nbh.board, "uncovered_view",
                         lambda view, size: (0.0, {**edges, "below": below(next(measured))}))
+    monkeypatch.setattr(nbh.board, "target_span", lambda view: 100.0)
     monkeypatch.setattr(nbh.board, "track_view",
                         lambda frame, mask, last: (
                             _FakeView() if registers(next(seen)) else None, 0.9))
@@ -133,10 +135,10 @@ def test_a_view_moving_further_off_the_canvas_is_reported_once(monkeypatch, caps
     """The baseline's view is only the first: a camera that later swings past
     the canvas uncovers Board no run searches (#41)."""
     loop = _loop(monkeypatch, lambda i: True, frames=4,
-                 below=lambda i: [0.0, 0.0, 0.0, 0.4, 0.2, 0.0][i])
+                 below=lambda i: [0.0, 0.0, 0.0, 40.0, 20.0, 0.0][i])
     list(loop.looks(5))
     out = capsys.readouterr().out
-    assert out.count("[WARN] the view moved further off the canvas") == 1
+    assert out.count("further off the canvas than the baseline did") == 1
     assert "0.40 below" in out
 
 
@@ -144,3 +146,12 @@ def test_a_view_that_stays_within_the_baseline_says_nothing(monkeypatch, capsys)
     loop = _loop(monkeypatch, lambda i: True, frames=3)
     list(loop.looks(4))
     assert "[WARN]" not in capsys.readouterr().out
+
+
+def test_any_growth_past_rounding_is_reported(monkeypatch, capsys):
+    """A pixel more than the baseline showed is Board no run searched, however
+    it prints; only the sub-pixel rounding floor is let through."""
+    loop = _loop(monkeypatch, lambda i: True, frames=2,
+                 below=lambda i: [30.0, 30.0, 31.0, 30.0][i])
+    list(loop.looks(3))
+    assert "further off the canvas than the baseline did" in capsys.readouterr().out

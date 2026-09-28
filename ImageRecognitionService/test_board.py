@@ -170,16 +170,17 @@ def test_same_bullet_hole_measures_differently_against_different_targets():
 
 # --- what the camera sees that the canvas does not (#41) --------------------
 
-def test_camera_view_beyond_the_canvas_is_measured_in_target_spans():
+def test_camera_view_beyond_the_canvas_is_measured_in_board_px():
     """A 300x100 view over a 100x100 canvas: two thirds of it unsearched,
-    all of it to the right, two Target-spans out."""
+    all of it to the right, 200 Board px — two Target spans — out."""
     view = board.BoardView(H=np.eye(3, dtype=np.float32),
                            tpl_to_board=board._as_matrix(1.0),
                            canvas_size=(100, 100),
                            targets=[_square(0, 0, 100)])
     outside, reach = board.uncovered_view(view, frame_size=(300, 100))
     assert outside == pytest.approx(2 / 3, abs=1e-3)
-    assert reach == pytest.approx({"left": 0, "right": 2, "above": 0, "below": 0})
+    assert reach == pytest.approx({"left": 0, "right": 200, "above": 0, "below": 0})
+    assert board.target_span(view) == 100
 
 
 def test_canvas_covering_the_whole_view_leaves_nothing_uncovered():
@@ -202,7 +203,7 @@ def test_a_one_pixel_strip_off_the_canvas_is_still_reported():
                            targets=[_square(0, 0, 100)])
     outside, reach = board.uncovered_view(view, frame_size=(101, 100))
     assert outside == pytest.approx(1 / 101, abs=1e-4)
-    assert reach == pytest.approx({"left": 0, "right": 0.01, "above": 0, "below": 0})
+    assert reach == pytest.approx({"left": 0, "right": 1, "above": 0, "below": 0})
 
 
 def test_uncovered_fraction_is_of_the_frame_not_of_the_board_plane():

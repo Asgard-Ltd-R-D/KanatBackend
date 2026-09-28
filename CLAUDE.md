@@ -42,7 +42,6 @@ Packet capture needs raw-socket rights: `sudo setcap cap_net_raw,cap_net_admin=e
 
 ## Conventions
 
-- Async methods carry the `Async` suffix; services are interface-first (`IFoo` next to `Foo`) and resolved through DI.
 - Serilog structured logging with bracketed component prefixes (`[HANDLER-SERVICE]`, `[DB-WRITER]`, `[DEVICE-SERVICE]`).
 - Dev-only endpoints get `[DevelopmentOnly]`, which also groups them under a "Development" Swagger tag.
 - `swagger.json` at the service root is served verbatim in non-Production, overriding the generated doc — regenerate/update it when API shapes change.

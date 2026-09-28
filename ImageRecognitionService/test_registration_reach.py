@@ -1,5 +1,7 @@
 """The reach probe's tracker must find a mark where it is, or its error figures
 are its own. No video."""
+from types import SimpleNamespace
+
 import cv2
 import numpy as np
 import pytest
@@ -55,6 +57,14 @@ def test_a_gap_in_the_samples_is_video_time_not_a_shorter_window():
     d = np.stack([np.where(frame < 100, 0.0, 10.0), np.zeros(200)], axis=1)
     assert rr.split(d, frame)[1].max() == pytest.approx(0)
     assert rr.split(d)[1].max() > 1                     # what the gap used to do
+
+
+def test_a_lost_appearance_frame_takes_the_patch_from_the_next_registered_one():
+    here = SimpleNamespace(H=np.eye(3))
+    img = _spot(60, 60)
+    rows, lost = rr.measure([(0, img, None), (1, img, here), (2, img, here)],
+                            np.array([[60.0, 60.0]]), [0])
+    assert lost == 1 and rows[0]["found"]
 
 
 def test_cutting_marks_leaves_a_hole_round_each_and_the_rest_of_the_region():

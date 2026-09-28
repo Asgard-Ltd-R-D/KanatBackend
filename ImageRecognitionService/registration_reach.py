@@ -171,9 +171,9 @@ def measure(frames, marks, from_index):
     """Per mark: its Board-space wander, in template px, from the frame it is
     referenced at (`from_index[i]`) to the end of the window.
 
-    The mark's patch is cut at that frame where the homography puts it, so the
-    reference is the Board point itself and its labelled placement error is
-    not counted as wander."""
+    The mark's patch is cut at the first registered frame from there, where
+    the homography puts it, so the reference is the Board point itself and its
+    labelled placement error is not counted as wander."""
     patches = [None] * len(marks)
     errors, raw_moves, scores, at = ([[] for _ in marks] for _ in range(4))
     raw_ref, skipped, lost = [None] * len(marks), [0] * len(marks), 0
@@ -187,7 +187,7 @@ def measure(frames, marks, from_index):
             if index < from_index[i]:
                 continue
             if patches[i] is None:
-                if index == from_index[i]:
+                if raw_ref[i] is None:  # the first registered frame from from_index[i]
                     patches[i] = _cut(gray, predicted[i])
                     raw_ref[i] = predicted[i]
                 continue

@@ -204,14 +204,21 @@ def ecc_warp(ref, cur, motion, init, mask=None):
     ECC does not converge.
 
     The mask goes to ECC as its mask. Multiplied into both images instead, its
-    fixed edge would pull W towards no motion.
+    fixed edge would pull W towards no motion. ECC reads its mask in `cur`'s
+    coordinates, so the region is first carried there by `init`; left in
+    `ref`'s, background at its leading edge votes as the camera moves.
 
     ECC works over the whole image and masks afterwards, so both images are
-    first cropped to the mask's box plus `ECC_CROP_MARGIN`: the region is ~12%
-    of a CamB frame, and the fit ran 4x slower than the old chain uncropped."""
+    first cropped to the box round the mask in both frames plus
+    `ECC_CROP_MARGIN`: the region is ~12% of a CamB frame, and the fit ran 4x
+    slower than the old chain uncropped."""
     T = np.eye(3, dtype=np.float32)
     if mask is not None:
-        x, y, w, h = cv2.boundingRect(mask)
+        # ponytail: carried by the seed, not the converged W; refit once if seeds jump
+        moved = cv2.warpPerspective(mask, init.astype(np.float32), mask.shape[::-1],
+                                    flags=cv2.INTER_NEAREST)
+        x, y, w, h = cv2.boundingRect(mask | moved)
+        mask = moved
         x0, y0 = max(0, x - ECC_CROP_MARGIN), max(0, y - ECC_CROP_MARGIN)
         x1 = min(ref.shape[1], x + w + ECC_CROP_MARGIN)
         y1 = min(ref.shape[0], y + h + ECC_CROP_MARGIN)

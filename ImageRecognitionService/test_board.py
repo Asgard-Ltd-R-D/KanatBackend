@@ -261,6 +261,24 @@ def test_a_masked_warp_follows_the_scene_not_the_mask(box, monkeypatch):
     assert board._apply(W, [[100, 100]])[0] == pytest.approx([105, 97], abs=0.3)
 
 
+def test_the_mask_follows_the_board_into_the_frame():
+    """ECC reads its mask in the moved frame's coordinates. Left at the
+    baseline's, the static background the Board slid off votes in the fit."""
+    rng = np.random.default_rng(0)
+    tex = lambda: cv2.GaussianBlur(rng.random((240, 400)).astype(np.float32), (0, 0), 2)
+    back, face = tex(), tex()
+    moved = back.copy()
+    moved[30:210, 190:340] = face[30:210, 150:300]      # the Board, 40 px right
+    ref = back.copy()
+    ref[30:210, 150:300] = face[30:210, 150:300]
+    mask = np.zeros((240, 400), np.uint8)
+    mask[30:210, 150:300] = 255
+    seed = np.float32([[1, 0, 40], [0, 1, 0], [0, 0, 1]])
+    W, correlation = board.ecc_warp(ref, moved, cv2.MOTION_HOMOGRAPHY, seed, mask)
+    assert board._apply(W, [[225, 120]])[0] == pytest.approx([265, 120], abs=0.05)
+    assert correlation > 0.99
+
+
 def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
     """H = W @ H0 against the baseline frame; a tracked view seeds the next."""
     target = _square(100, 100, 50)

@@ -6,11 +6,13 @@ scaling, suppression, spreadsheet write) with synthetic detections.
 
 Run: PYTHONPATH=. python tests/test_dedup.py
 """
+import os
+
 import numpy as np
 
 from detection.tagging_bullets import process_video, resolve_setting
 
-VIDEO = './data/videos/test_video.mp4'
+VIDEO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'videos', 'test_video.mp4')
 
 
 class _Arr(np.ndarray):

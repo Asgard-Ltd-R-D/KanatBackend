@@ -25,7 +25,7 @@ photograph in `board.source.txt`, so `--truth-image` can be left off:
     python -m tools.evaluate CLIP.mkv --start 13 --end 25 \\
         --truth-labels data/truth/camb-20260915-103223
 
-The clip needs a `recordings.json` entry; sealed footage needs `--final-run`
+The clip needs a `config/recordings.json` entry; sealed footage needs `--final-run`
 on top of it. See manifest.py.
 """
 import argparse

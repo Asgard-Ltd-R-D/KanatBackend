@@ -8,7 +8,7 @@ emits far more boxes than there are Bullet Holes on the Board.
     python -m tools.sweep_profile data/images/board.jpg
 
 Look at the annotated frames, compare against the Bullet Holes you can see on
-the Board, then copy the winning cell's numbers into capture_profiles.json.
+the Board, then copy the winning cell's numbers into config/capture_profiles.json.
 """
 import argparse
 import os
@@ -126,4 +126,4 @@ if __name__ == "__main__":
     print(counts.pivot(index='inference_size', columns='confidence', values='bullet_holes'))
     print(f"\n[INFO] annotated cells, contact_sheet.jpg and counts.csv → {args.output_dir}")
     print("[INFO] no setting is picked for you: compare against the Bullet Holes you can "
-          "see on the Board, then add the winning cell to capture_profiles.json")
+          "see on the Board, then add the winning cell to config/capture_profiles.json")

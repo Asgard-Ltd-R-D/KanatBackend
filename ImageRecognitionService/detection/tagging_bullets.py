@@ -20,7 +20,8 @@ IMAGE_SAVE_TEMPLATE = os.path.join(OUTPUT_DIR, 'bullet_{id}.jpg')
 # the cwd: unlike the video and output paths, this one is committed at a fixed
 # location. 25m-9mm carries the measured defaults below; the others are
 # starting points, still to be swept against footage from their own setup.
-PROFILES_PATH       = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'capture_profiles.json')
+BASE_DIR            = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
+PROFILES_PATH       = os.path.join(BASE_DIR, 'config', 'capture_profiles.json')
 TARGET_SIZE_CM      = 18
 # Class ids the model emits
 CLS_BULLET_HOLE     = 1

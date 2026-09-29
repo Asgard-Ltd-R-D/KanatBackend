@@ -11,7 +11,7 @@ its command line.
         --out-dir data/truth/camb-20260915-102250
 
 writes `board.new.txt` — the new Bullet Holes, as the after export's own lines —
-beside byte-for-byte copies of both raw exports. `evaluate.py --truth-labels`
+beside byte-for-byte copies of both raw exports. `tools.evaluate --truth-labels`
 then points at that derived file, never at the after export.
 """
 import argparse

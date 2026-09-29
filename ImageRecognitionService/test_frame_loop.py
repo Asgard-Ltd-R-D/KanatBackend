@@ -13,12 +13,37 @@ import new_bullet_holes as nbh
 
 
 class _FakeView:
-    """Board space, minus the geometry. Rectifying is the identity here."""
+    """Board space, minus the geometry. Rectifying is the identity here, and
+    the canvas never grew past the margin canvas."""
     canvas_size = (64, 64)
     match_radius = 3.0
+    grew = False
 
     def rectify(self, frame):
         return frame
+
+    def exposed_bands(self, context):
+        return []
+
+
+class _GrownView(_FakeView):
+    """A canvas grown 16 px below the margin canvas: `rectify` is the grown
+    canvas, `rectify_inner` the margin canvas, marked so the model can tell."""
+    grew = True
+    canvas_size = (64, 80)
+    inner = types.SimpleNamespace(offset=(0, 0), size=(64, 64))
+
+    def rectify(self, frame):
+        return np.full((80, 64, 3), 7, np.uint8)
+
+    def rectify_inner(self, frame):
+        return np.full((64, 64, 3), 1, np.uint8)
+
+    def exposed_bands(self, context):
+        return [nbh.board.Band((0, 64 - context, 64, 80), (0, 64, 64, 80))]
+
+    def in_inner(self, points):
+        return np.asarray(points)[:, 1] <= 64
 
 
 class _FakeCap:
@@ -166,3 +191,45 @@ def test_a_later_view_that_cannot_be_measured_is_reported(monkeypatch, capsys):
                  below=lambda i: [0.0, 0.0, None, 0.0, 0.0][i])
     list(loop.looks(4))
     assert "[WARN] 1 registered frame(s)' view did not map" in capsys.readouterr().out
+
+
+class _RecordingModel(_FakeModel):
+    """Answers per image: a box at (15, 15) on the margin canvas, one at
+    (20, 8) band px (canvas y 40) inside the band's context, and one at
+    (30, 40) band px (canvas y 72, past the margin canvas) in the band."""
+    names = {0: "bullet_hole"}
+
+    def __init__(self):
+        self.calls = []
+
+    def predict(self, image, imgsz, conf, verbose=False, classes=None):
+        self.calls.append((image.shape[:2], int(image[0, 0, 0]), imgsz))
+        if image[0, 0, 0] == 1:
+            boxes = [[10.0, 10.0, 20.0, 20.0]]
+        else:
+            boxes = [[18.0, 6.0, 22.0, 10.0], [28.0, 38.0, 32.0, 42.0]]
+        return [types.SimpleNamespace(boxes=[types.SimpleNamespace(xyxy=[b]) for b in boxes])]
+
+
+def test_a_canvas_that_did_not_grow_is_shown_to_the_detector_once(monkeypatch):
+    """No Board past the margin canvas: one inference on the canvas, as before #46."""
+    model = _RecordingModel()
+    loop = _loop(monkeypatch, lambda i: True, frames=1)
+    loop.model = model
+    looks = list(loop.looks(2))
+    assert len(model.calls) == 2 and all(imgsz == 64 for _, _, imgsz in model.calls)
+    assert looks[0].inner is looks[0].canvas
+
+
+def test_a_grown_canvas_is_searched_as_the_margin_canvas_plus_its_bands(monkeypatch):
+    """A on the margin canvas at the loop's imgsz; B on each band at its own;
+    B keeps only what lies past the margin canvas, in grown-canvas px."""
+    model = _RecordingModel()
+    loop = _loop(monkeypatch, lambda i: True, frames=0)
+    loop.view = loop.last = _GrownView()
+    loop._base = np.zeros((8, 8, 3), np.uint8)
+    loop.model, loop.bands = model, loop.view.exposed_bands(nbh.BAND_CONTEXT_PX)
+    look = next(loop.looks(1))
+    assert model.calls == [((64, 64), 1, 64), ((48, 64), 7, 64)]
+    assert look.detections[:, :2].tolist() == [[15.0, 15.0], [30.0, 72.0]]
+    assert look.inner.shape == (64, 64, 3) and look.canvas.shape == (80, 64, 3)

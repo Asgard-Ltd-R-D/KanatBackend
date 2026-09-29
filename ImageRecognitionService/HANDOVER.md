@@ -351,6 +351,120 @@ pipeline** — labels thrown up to 58 000 template px off the Board — and it i
 superseded. Both recordings share `_102250`'s Capture Setup, so this adds
 Bullet Holes and no setup.
 
+## The canvas runs to the Board's edge (#46)
+
+**`board.find_board_edges` finds where the Board the Targets are on ends**,
+at the ground or at the seam with the next Board of the stand, and
+`canvas_layout` grows the canvas past `BOARD_MARGIN` to it. The baseline
+frame is viewed square-on within 2 Target spans of the ring. Each side is
+walked outward from 0.3 spans past the Targets, which skips the Target
+print's own border. The edge is the first row or column whose signed gradient, averaged
+along the Targets' whole width, reaches `EDGE_MIN`. It is signed so that a
+straight edge adds up while ground texture and Bullet Holes cancel out. It is
+the *first* edge, not the strongest: past the seam, the next Board's print is
+the stronger line. The walk gives up where the frame's view ends.
+
+The grown extent is cut at `REGION_SPANS` (1.5) of the ring, the ECC region
+registration is fitted on. #50 measured its wander only out to 1.3 spans, so
+the 1.3–1.5 band is unmeasured; `_102450` truth #3 and #4 sit at 1.17–1.26.
+It only ever grows: an edge inside the margin, or no edge at all, leaves the
+canvas as it was.
+
+**The detector is not shown the grown canvas as one image.** Inference A is
+the `BOARD_MARGIN` canvas, warped with its own matrix exactly as before
+(`board.Inner`, `BoardView.rectify_inner`); inference B runs on each band of
+Board past it (`BoardView.exposed_bands`), each reaching `BAND_CONTEXT_PX`
+(32) back into the margin canvas for context. `merge_band_detections` keeps
+all of A, and of B only what each band detects in the region it owns — past
+the margin canvas and no other band's, so a corner mark in two crops is
+reported once — with no A detection within the match radius, in the grown
+canvas's Board px. That radius test is the one suppression added, and it does
+not merge Bullet Holes (ADR-0002): it drops B's second sighting of a mark on
+the boundary, which both inferences see through the context strip. A's detections are
+judged for change evidence on the margin canvas's own mask
+(`change_evidence`), because `changed_regions` normalises over the whole
+canvas; B's on the grown canvas's. The growth up and left is rounded to whole
+pixels so the margin canvas sits on the grown canvas's grid. With no edge
+past the margin (CamA), there are no bands and the loop is main's: one
+warp, one inference.
+
+**Why not one grown image.** Shown the grown canvas whole, the canvas-shift
+control failed (TP/FP/FN, `main` → one image at 0 px: `_102250` 4/1/0 →
+3/1/1, `_103223` 2/1/0 → 2/2/0). Diagnosed on #46 with a letterbox harness
+that reproduces the runtime's tensors and confidences exactly:
+- **Grid phase.** Growing up or left moved every existing mark on the
+  model's stride-16/32 grid; `_102250` truth #3 went from median conf 0.69 to
+  0.29 and missed its one persistence window. Pinning the phase fixed it, but:
+- **Sub-pixel phase.** On main's own canvas a pre-existing `_103223` mark
+  drops 0.70 → 0.47 for half a pixel of translation, and `_103223` truth #2
+  goes 0.26 → 0.41 → 0.72 at 0 / 0.5 / 2 px. Pinning to ≤0.8 px still
+  collapsed the first (0.70 → 0.06).
+- **Added content.** With tensor geometry held identical, the added Board
+  alone took `_103223` truth #2 from 0.19 to 0.04; filling it with plain Board
+  colour did not. The influence is spread over tiles 0.6–2.6 Target spans
+  away. The model is YOLO26n, whose `C2PSA` block attends over the whole P5
+  map.
+- **Not resize/scale, not NMS.** Main's content at the grown scale, phase
+  aligned, holds; YOLO26 is end-to-end, so the runtime has no IoU-NMS, and no
+  competing box overlaps the Bullet Hole.
+
+So only the margin canvas's own tensor preserves main's detections.
+
+**Scored** (TP/FP/FN, 2026-09-29; the control translates both canvases up-left
+by d Board px):
+
+| Recording | `main` 0 / 8 / 16 / 32 px | dual inference 0 / 8 / 16 / 32 px |
+|---|---|---|
+| `_102450` 0–47.76s | 2/0/2 at every shift | **4/0/0 at every shift** |
+| `_102250` 0–46s | 4/1/0 at every shift | identical |
+| `_103223` 0–51.88s | 2/1/0, 2/1/0, 1/2/1, 0/1/2 | identical |
+| CamA 13–25s | 5/1/1 | identical (no bands) |
+
+The shift columns were run through a scratch wrapper of the same design; the
+runtime itself was run at 0 px on all four and reproduces them. Its
+margin-canvas detections equal main's in every frame (0 of 1150 and 0 of 1297
+frames differ, positions within 2.5×10⁻⁴ tpl px). Summed over the shifts on
+CamB: 29/9/11 → 37/9/3, the eight TPs being `_102450` truth #3/#4, and no
+false positive added. Net scale: margin canvas 0.87–0.91 as on main, bands
+0.88–0.92. The baseline now holds every pre-existing mark in the photographs
+(6/6, 10/10). `[WARN]`: 2.0% of the view on `_103223` (Board to its edge),
+9.4–9.6% to the left on `_102450`/`_102250` (no edge found), 34.2% on CamA.
+
+**Cost** (CPU, sequential, 250 frames from 10s, the runtime's own loop; CamA
+from 13s). The detector goes from 17–19 to 49–50 ms/frame on CamB — four
+calls instead of one — while the whole frame loop, dominated by ECC
+registration at ~0.45–0.6 s/frame, goes from 478–618 to 511–646 ms/frame,
++5–7% wall and +6–10% CPU. CamA has no bands and is unchanged (349 ms/frame
+wall).
+
+**Known ceilings** (`ponytail:` on `find_board_edges`).
+- Board space is not aligned with the Board: the found edge lines tilt ~5°
+  across the stand in the frame, and the edge is read only along the Targets'
+  width. So a canvas side can take a sliver of ground at one end and cut a
+  sliver of Board at the other.
+- A Board edge inside the 0.3 span gap is walked past, and the next straight
+  line out is taken instead. That is CamA's panel top, where the frame ends
+  first.
+- A Target strip that leaves the frame (CamA's second Target) finds no edge
+  on the sides across it.
+- `EDGE_MIN` (20), the gap and the 2 span search were set on these four
+  baseline frames and never swept.
+- The shift control is not in the repo. It was a scratch wrapper around
+  `evaluate.py` that translated the canvas.
+- Bands see less context than one grown image would: a band is as thin as
+  the growth plus 32 px (38 px on `_103223`'s top). Nothing was lost to that
+  here; it is not validated (`ponytail:` on `exposed_bands`).
+  `BAND_CONTEXT_PX` is one stride-32 cell, not swept.
+- The margin canvas's detections are main's to the bit, but B can still
+  reach them downstream: a B sighting of a mark on the boundary, in a frame
+  where A missed it, can open or join that mark's candidate, and a B mark in
+  the baseline can suppress an A detection within the match radius. Neither
+  moved a score on these recordings.
+- `_103223` is grid-fragile on main itself (both truths lost at 32 px); the
+  margin canvas inherits that unchanged.
+- `mine_negatives.py` builds its views the same way, so CamB-pose canvases
+  grow there too. They stay far below its 4096 px `MAX_CANVAS_PX`.
+
 ## The held-out set is two recordings of one Capture Setup
 
 The six delivered files are **three** Capture Setups, and the five customer
@@ -881,9 +995,9 @@ a real new Bullet Hole next to a pre-existing one on CamB, taking recall from
 100% to 75%. Suppression stays on the template-px floor — the same trap ADR-0003
 records for the 40 px match radius.
 
-**The Board's extent is inferred from where the Targets are**, because nothing
-detects the plywood. `BOARD_MARGIN` bounds *recall*, not presentation: a Bullet
-Hole outside the canvas is never seen, not merely unscored. A Target with no
+**The Board's extent is the Targets' margin, grown to the Board's edge where
+one is found** (#46, above). The canvas still bounds *recall*, not
+presentation: a Bullet Hole outside it is never seen, not merely unscored. A Target with no
 green in its artwork — the ring-only one on the left of the sample footage — is
 not found at all.
 
@@ -909,7 +1023,11 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `OVERLAP_THRESHOLD` | 0.5 | `new_bullet_holes.py` | Ported; merging on *any* overlap regresses CamA |
 | `TARGET_NET_SCALE` | 0.90 | `board.py` | Inside a flat band, not a measured peak |
 | `ABSDIFF_SIGMA` | 2.0 | `board.py` | At 2.5 the evidence channel was dead |
-| `BOARD_MARGIN` | 0.50 | `board.py` | Bounds recall; see above. **Breaks** on both threshold-work recordings — #41. Unchanged: the whole-view canvas regressed CamA; the run warns what the canvas leaves out |
+| `BOARD_MARGIN` | 0.50 | `board.py` | Now the canvas's floor; the Board's edge grows it (#46). Unchanged: the whole-view canvas regressed CamA |
+| `EDGE_MIN` | 20.0 | `board.py` | Mean signed Sobel along a Board edge; set on four baseline frames, not swept (#46) |
+| `EDGE_GAP_SPANS` | 0.3 | `board.py` | Skips the Target print's border; CamA's panel top falls inside it, so CamA finds no edge |
+| `EDGE_SEARCH_SPANS` | 2.0 | `board.py` | How far out the edge is looked for; `_103223`'s left edge is found at 1.97, the others' not within it |
+| `BAND_CONTEXT_PX` | 32 | `new_bullet_holes.py` | Margin-canvas px each exposed-Board band carries for context; one stride-32 cell, not swept (#46) |
 | `GREEN_LO` / `GREEN_HI` | — | `board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `board.py` | May reject distant Targets |
 

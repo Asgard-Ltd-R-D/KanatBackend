@@ -96,8 +96,12 @@ ABSDIFF_SIGMA = 2.0        # PROVISIONAL: change-detection gate, evidence only
 # Target spread. Bullet Holes outside this are not merely unscored, they are
 # never seen — so this bounds recall, not just presentation.
 #
-# It is now the floor, not the whole extent: `canvas_bounds` grows the canvas
+# It is now the floor, not the whole extent: `canvas_layout` grows the canvas
 # past it to the Board's edge where one is found (#46), and never cuts inside it.
+# The detector is still shown this margin canvas exactly as before, and the
+# Board past it only as separate bands (`Inner`, `BoardView.exposed_bands`):
+# shown one grown image, borderline marks moved with sub-pixel phase and with
+# Board added far from them, and the canvas-shift control failed.
 # It broke on the CamB close pose (#41), where Bullet Holes ~1.2 Target spans
 # below the Target were off the canvas. Growing the canvas to the whole camera
 # view was measured and rejected — CamA fell from F1 0.92 to 0.77, because any
@@ -257,6 +261,34 @@ def canvas_bounds(targets, edges, ring, span):
     return lo, hi
 
 
+class Layout(NamedTuple):
+    """Where the canvas sits, and the `BOARD_MARGIN` canvas inside it (#46)."""
+    lo: np.ndarray          # canvas origin, unshifted Board px
+    size: tuple             # (width, height)
+    inner_lo: np.ndarray    # the margin canvas's origin, exactly as before #46
+    inner_size: tuple
+    offset: tuple           # whole px from the canvas origin to the margin canvas's
+
+
+def canvas_layout(targets, edges, ring, span):
+    """The margin canvas, and the canvas grown from it to the Board's edges.
+
+    The margin canvas is computed with the expressions `build_view` used
+    before #46, so what the detector is shown there is that canvas to the bit
+    (see `Inner`). The
+    growth up and left is rounded up to whole pixels, so it sits on the grown
+    canvas's pixel grid; the grown canvas therefore reaches up to a pixel past
+    `canvas_bounds`' extent, and never short of it."""
+    margin = BOARD_MARGIN * spread(targets)
+    inner_lo = targets.min(axis=0) - margin
+    inner_size = tuple(int(v) for v in np.ceil(targets.max(axis=0) - inner_lo + margin))
+    grown_lo, grown_hi = canvas_bounds(targets, edges, ring, span)
+    offset = tuple(max(0, int(np.ceil(inner_lo[a] - grown_lo[a] - 1e-6))) for a in (0, 1))
+    size = tuple(offset[a] + max(inner_size[a], int(np.ceil(grown_hi[a] - inner_lo[a] - 1e-6)))
+                 for a in (0, 1))
+    return Layout(inner_lo - np.array(offset, inner_lo.dtype), size, inner_lo, inner_size, offset)
+
+
 def _blurred(mask):
     return cv2.GaussianBlur(mask.astype(np.float32) / 255, (21, 21), 0)
 
@@ -343,6 +375,26 @@ def _gray(frame):
     return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
 
 
+class Inner(NamedTuple):
+    """The `BOARD_MARGIN` canvas inside a grown one (#46).
+
+    The detector is shown this canvas exactly as it was before #46 — its own
+    matrix and size, not a crop of the grown canvas — and only the Board the
+    edge search exposes past it goes through a second inference. Growing the
+    image the detector sees moves its borderline marks: a Bullet Hole's
+    confidence moved 0.26 -> 0.41 for half a pixel of translation, and
+    0.19 -> 0.04 for Board added a Target span away (#46)."""
+    tpl_to_board: np.ndarray   # template -> margin canvas px
+    size: tuple                # (width, height)
+    offset: tuple              # its origin in the grown canvas, whole px
+
+
+class Band(NamedTuple):
+    """A strip of Board past the margin canvas, searched on its own (#46)."""
+    crop: tuple   # (x0, y0, x1, y1) canvas px the detector is shown
+    owns: tuple   # (x0, y0, x1, y1) canvas px, half-open, whose detections it reports
+
+
 class Anchor(NamedTuple):
     """The baseline frame every later frame is registered to (#50)."""
     gray: np.ndarray     # the baseline frame, greyscale, 0-1
@@ -388,13 +440,16 @@ class BoardView:
     any other frame's view, because both live in Board space.
     """
 
-    def __init__(self, H, tpl_to_board, canvas_size, targets, anchor=None, edges=None):
+    def __init__(self, H, tpl_to_board, canvas_size, targets, anchor=None, edges=None,
+                 inner=None):
         self.H = H                        # template -> frame
         self.tpl_to_board = tpl_to_board  # template -> Board space (scale + origin)
         self.canvas_size = canvas_size    # (width, height) of the rectified Board
         self.targets = targets            # Target polygons, Board-space coords
         self.anchor = anchor              # what `track_view` registers onto
         self.edges = edges or dict.fromkeys(SIDES)  # `find_board_edges`'s edges, Board space
+        # The margin canvas inside this one; the whole canvas when nothing grew.
+        self.inner = inner or Inner(tpl_to_board, canvas_size, (0, 0))
 
     @property
     def board_scale(self):
@@ -434,6 +489,52 @@ class BoardView:
     def rectify(self, frame):
         """The Board viewed square-on, at the scale detection wants."""
         return cv2.warpPerspective(frame, self._frame_to_board(), self.canvas_size)
+
+    def rectify_inner(self, frame):
+        """The margin canvas, warped with its own matrix exactly as `rectify`
+        warps a view that never grew (#46)."""
+        return cv2.warpPerspective(frame, self.inner.tpl_to_board @ np.linalg.inv(self.H),
+                                   self.inner.size)
+
+    @property
+    def grew(self):
+        """Did the canvas grow past the margin canvas anywhere?"""
+        return self.inner.offset != (0, 0) or tuple(self.inner.size) != tuple(self.canvas_size)
+
+    def in_inner(self, points):
+        """Which Board-space points lie on the margin canvas (edges included)."""
+        p = np.asarray(points, np.float64).reshape(-1, 2)
+        (dx, dy), (w, h) = self.inner.offset, self.inner.size
+        return (p[:, 0] >= dx) & (p[:, 0] <= dx + w) & (p[:, 1] >= dy) & (p[:, 1] <= dy + h)
+
+    def exposed_bands(self, context):
+        """The Board past the margin canvas as `Band`s, one per side it grew.
+
+        Each band's crop reaches `context` px back into the margin canvas and,
+        for left and right, past its corners, so a mark near a boundary is
+        seen whole. What a band reports is only the region it owns: above and
+        below own the canvas's full width past the margin canvas, left and
+        right only the margin canvas's height. The owned regions tile the
+        canvas outside the margin canvas without overlap, so no mark is
+        reported by two bands, and none by a band that cut it off.
+
+        ponytail: a band is only as deep as the growth plus `context` (38 px
+        on `_103223`'s top), less context than one grown image; nothing was
+        lost to that on #46's recordings, and it is not validated beyond them."""
+        (dx, dy), (w, h) = self.inner.offset, self.inner.size
+        W, H = self.canvas_size
+        x1, y1 = dx + w, dy + h
+        bands = []
+        if dy > 0:
+            bands.append(Band((0, 0, W, min(H, dy + context)), (0, 0, W, dy)))
+        if H > y1:
+            bands.append(Band((0, max(0, y1 - context), W, H), (0, y1, W, H)))
+        yb0, yb1 = max(0, dy - context), min(H, y1 + context)
+        if dx > 0:
+            bands.append(Band((0, yb0, min(W, dx + context), yb1), (0, dy, dx, y1)))
+        if W > x1:
+            bands.append(Band((max(0, x1 - context), yb0, W, yb1), (x1, dy, W, y1)))
+        return bands
 
     def assign(self, point):
         """Index of the Target this Bullet Hole is on, or None for a Miss.
@@ -478,16 +579,18 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     tpl_span = contour_span(template_contour(template_mask))
     moved = lambda edges, f: {k: None if v is None else f(k, v) for k, v in edges.items()}
     edges = moved(find_board_edges(frame, H, tpl_span), lambda k, v: v * board_scale)
-    lo, hi = canvas_bounds(allpts, edges, RING_CENTRE_TPL * board_scale,
+    layout = canvas_layout(allpts, edges, RING_CENTRE_TPL * board_scale,
                            tpl_span * board_scale)
+    lo, size = layout.lo, layout.size
     tpl_to_board = _as_matrix(board_scale, (-lo[0], -lo[1]))
-    size = tuple(int(v) for v in np.ceil(hi - lo))
+    inner = Inner(_as_matrix(board_scale, (-layout.inner_lo[0], -layout.inner_lo[1])),
+                  layout.inner_size, layout.offset)
     edges = moved(edges, lambda k, v: v - lo[AXIS[k]])
 
     targets = [(_apply(_as_matrix(1.0, (-lo[0], -lo[1])), p)
                 .reshape(-1, 1, 2).astype(np.float32)) for p in placed]
     anchor = Anchor(_gray(frame), texture_region(H, frame.shape[1::-1], tpl_span), H)
-    return BoardView(H, tpl_to_board, size, targets, anchor, edges), correlation
+    return BoardView(H, tpl_to_board, size, targets, anchor, edges, inner), correlation
 
 
 # Under half a canvas pixel is projection rounding, not a strip the canvas
@@ -581,7 +684,7 @@ def track_view(frame, reference):
     W, correlation = ecc_warp(a.gray, _gray(frame), cv2.MOTION_HOMOGRAPHY,
                               reference.H @ np.linalg.inv(a.H), a.region)
     view = BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size, [], a,
-                     reference.edges)
+                     reference.edges, reference.inner)
     view.targets = [_apply(view._frame_to_board(), c.reshape(-1, 2))
                     .reshape(-1, 1, 2).astype(np.float32) for c in contours]
     return view, correlation

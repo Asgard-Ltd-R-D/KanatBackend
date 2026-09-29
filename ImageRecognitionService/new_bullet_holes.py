@@ -61,6 +61,12 @@ PERSIST_FRAMES = 50   # PROVISIONAL length, but FIXED by design: measured to the
                       # drifts further over the longer run.
 DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 
+# Canvas px of the margin canvas each exposed-Board band carries for context,
+# so a mark straddling the margin canvas's edge is seen whole (#46). One
+# stride-32 cell; measured at this value on the four spent/threshold-work
+# recordings, not swept.
+BAND_CONTEXT_PX = 32       # PROVISIONAL
+
 # How many frames the baseline is built from.
 #
 # The baseline answers "was this mark already on the Board?", and whatever it
@@ -342,6 +348,12 @@ def _round32(x):
     return max(32, int(round(x / 32)) * 32)
 
 
+def _band_imgsz(crop):
+    """A band's imgsz, by the same rule as the canvas's: its longest side."""
+    x0, y0, x1, y1 = crop
+    return _round32(max(x1 - x0, y1 - y0))
+
+
 def _corroborated(point, changed_mask, radius):
     """Did change detection also see something here? Evidence, not a gate."""
     h, w = changed_mask.shape
@@ -349,6 +361,54 @@ def _corroborated(point, changed_mask, radius):
     r = int(max(1, radius))
     x0, y0, x1, y1 = max(0, x - r), max(0, y - r), min(w, x + r + 1), min(h, y + r + 1)
     return bool(x1 > x0 and y1 > y0 and changed_mask[y0:y1, x0:x1].any())
+
+
+def merge_band_detections(inner, band_hits, match_radius):
+    """Detections on the margin canvas, plus those on the exposed Board past it.
+
+    All are (cx, cy, w, h) in grown-canvas px; `band_hits` pairs each `Band`
+    with what was detected on its crop. The margin canvas's are kept whole:
+    they are what it reported before #46. A band's are kept only inside the
+    region it owns, which lies past the margin canvas and no other band's,
+    and only if no margin-canvas detection is within `match_radius`.
+
+    That last test is the one suppression here, and it does not merge Bullet
+    Holes (ADR-0002): its crop overlaps the margin canvas by the context strip,
+    so a mark straddling the boundary is seen by both inferences, and it is the
+    margin canvas's to report. It uses the existing match radius, no new
+    threshold."""
+    inner = np.asarray(inner, np.float64).reshape(-1, 4)
+    kept = []
+    for band, found in band_hits:
+        found = np.asarray(found, np.float64).reshape(-1, 4)
+        x0, y0, x1, y1 = band.owns
+        kept.append(found[(found[:, 0] >= x0) & (found[:, 0] < x1)
+                          & (found[:, 1] >= y0) & (found[:, 1] < y1)])
+    bands = np.vstack(kept) if kept else np.zeros((0, 4))
+    if len(inner) and len(bands):
+        nearest = np.hypot(bands[:, None, 0] - inner[None, :, 0],
+                           bands[:, None, 1] - inner[None, :, 1]).min(axis=1)
+        bands = bands[nearest >= match_radius]
+    return np.vstack([inner, bands])
+
+
+def change_evidence(points, view, inner_changed, changed, radius):
+    """`_corroborated` for each point, on the canvas it was detected on.
+
+    A point on the margin canvas is judged on the margin canvas's change mask
+    at its own px, exactly as before #46 — `changed_regions` normalises over
+    the whole canvas, so the grown canvas's mask would move it. A point past
+    it is judged on the grown canvas's. The masks are callables, built only if
+    a point needs them. Points are float64 so that removing the whole-pixel
+    offset recovers the margin canvas px exactly."""
+    points = np.asarray(points, np.float64).reshape(-1, 2)
+    on_inner = view.in_inner(points)
+    dx, dy = view.inner.offset
+    inner_mask = inner_changed() if on_inner.any() else None
+    grown_mask = changed() if (~on_inner).any() else None
+    return [_corroborated((p[0] - dx, p[1] - dy), inner_mask, radius) if inside
+            else _corroborated(p, grown_mask, radius)
+            for p, inside in zip(points, on_inner)]
 
 
 def _next_view(cap, last):
@@ -377,6 +437,10 @@ def _next_view(cap, last):
 class Look(NamedTuple):
     """One frame, as the runtime saw it.
 
+    `canvas` is the whole rectified Board; `inner` is the margin canvas the
+    detector was shown as it was before #46 — the same array as `canvas` when
+    the canvas did not grow past it. Detections are in `canvas` px.
+
     `view` is None — and with it `canvas` and `detections` — when the Board was
     not found or ECC failed. That is deliberately not the same value as an empty
     `detections` array: "the Board was lost" and "looked and saw nothing" mean
@@ -388,6 +452,7 @@ class Look(NamedTuple):
     view: board.BoardView | None
     canvas: np.ndarray | None
     detections: np.ndarray | None
+    inner: np.ndarray | None = None
 
     @property
     def registered(self):
@@ -432,6 +497,8 @@ class RegisteredFrames:
         uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
         self.reach = self._baseline_reach = uncovered and uncovered[1]
         self.unmeasured = 0   # later frames whose view had no footprint to measure
+        # The Board past the margin canvas, searched by a second inference (#46).
+        self.bands = view.exposed_bands(BAND_CONTEXT_PX)
 
     @classmethod
     def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
@@ -456,12 +523,16 @@ class RegisteredFrames:
         if view is None:
             raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
         canvas_w, canvas_h = view.canvas_size
-        # ultralytics fits the LONGEST side to imgsz, so that is what must match.
-        imgsz = _round32(max(canvas_w, canvas_h))
+        # The detector is shown the margin canvas exactly as before #46, and
+        # the Board past it as bands of their own (#46); imgsz and the net scale
+        # are the margin canvas's. ultralytics fits the LONGEST side to imgsz, so
+        # that is what must match.
+        inner_w, inner_h = view.inner.size
+        imgsz = _round32(max(inner_w, inner_h))
         frame_span = board.contour_span(board.find_targets(base)[0][0])
         tpl_span = board.contour_span(board.template_contour(template_mask))
         scale = board.net_scale(view.board_scale, tpl_span, frame_span, imgsz,
-                                max(canvas_w, canvas_h))
+                                max(inner_w, inner_h))
         # Detection is zero by net scale 1.81 and flat below ~1.1, so any figure
         # taken through this loop is only comparable to another at the same
         # scale. Kept on the instance rather than only printed, so a caller can
@@ -474,7 +545,17 @@ class RegisteredFrames:
         # is the figure that bears on geometry.
         print(f"[BOARD] {len(view.targets)} Target(s), ECC converged at {correlation:.4f} "
               f"(convergence, not geometric accuracy)")
-        print(f"[BOARD] rectified {canvas_w}x{canvas_h}, imgsz {imgsz}, net scale {scale:.2f}")
+        if not view.grew:
+            print(f"[BOARD] rectified {canvas_w}x{canvas_h}, imgsz {imgsz}, net scale {scale:.2f}")
+        else:
+            bands = view.exposed_bands(BAND_CONTEXT_PX)
+            band_scales = ", ".join(
+                f"{x1 - x0}x{y1 - y0} at net scale "
+                f"{board.net_scale(view.board_scale, tpl_span, frame_span, _band_imgsz(b.crop), max(x1 - x0, y1 - y0)):.2f}"
+                for b in bands for x0, y0, x1, y1 in [b.crop])
+            print(f"[BOARD] rectified {canvas_w}x{canvas_h} to the Board's edge: the margin "
+                  f"canvas {inner_w}x{inner_h} at {view.inner.offset}, imgsz {imgsz}, net scale "
+                  f"{scale:.2f}, and {len(bands)} band(s) of Board past it: {band_scales} (#46)")
         uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
         if uncovered is None:
             print("[WARN] the camera's view does not map onto the Board plane; "
@@ -529,11 +610,29 @@ class RegisteredFrames:
                 self.last = current
                 self._track_reach(current, frame)
                 canvas = current.rectify(frame)
-                yield Look(index, current, canvas,
-                           _detect(self.model, canvas, self.imgsz, self.conf))
+                if not self.bands:
+                    yield Look(index, current, canvas,
+                               _detect(self.model, canvas, self.imgsz, self.conf), canvas)
+                    continue
+                inner = current.rectify_inner(frame)
+                yield Look(index, current, canvas, self._detect_grown(current, canvas, inner),
+                           inner)
         finally:
             self.cap.release()
             self._report_reach()
+
+    def _detect_grown(self, view, canvas, inner):
+        """Inference A on the margin canvas, B on each band, merged in canvas px."""
+        a = _detect(self.model, inner, self.imgsz, self.conf).astype(np.float64)
+        a[:, :2] += view.inner.offset
+        hits = []
+        for band in self.bands:
+            x0, y0, x1, y1 = band.crop
+            found = _detect(self.model, canvas[y0:y1, x0:x1], _band_imgsz(band.crop),
+                            self.conf).astype(np.float64)
+            found[:, :2] += (x0, y0)
+            hits.append((band, found))
+        return merge_band_detections(a, hits, view.match_radius)
 
     def _track_reach(self, current, frame):
         if self.reach is None:
@@ -631,15 +730,16 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # baseline cannot be built from a differently rectified Board than the one
     # it is subtracted from.
     baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
-    baseline_canvas, baseline_detections = None, []
+    baseline_canvas, baseline_inner, baseline_detections = None, None, []
     for look in itertools.islice(looks, baseline_frames):
         if not look.registered:
             continue
         if baseline_canvas is None:
             # Always look 0's: Board space is built from that frame, so `open`
             # has already raised if it did not register. This is the image
-            # change detection is measured against for the rest of the run.
-            baseline_canvas = look.canvas
+            # change detection is measured against for the rest of the run —
+            # on the margin canvas, and on the Board grown past it (#46).
+            baseline_canvas, baseline_inner = look.canvas, look.inner
         baseline_detections.append(look.detections)
     baseline = baseline_marks(baseline_detections, match_px)
     short = ("" if len(baseline_detections) == baseline_frames else
@@ -655,8 +755,11 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         pts, matched = strip_pre_existing(look.detections, baseline, match_px)
         residuals_per_frame.append(matched)
         if len(pts):
-            changed = board.changed_regions(baseline_canvas, look.canvas)
-            corroboration += [p for p in pts if _corroborated(p, changed, match_px / 2)]
+            evidence = change_evidence(
+                pts[:, :2], look.view,
+                lambda: board.changed_regions(baseline_inner, look.inner),
+                lambda: board.changed_regions(baseline_canvas, look.canvas), match_px / 2)
+            corroboration += [p for p, seen in zip(pts, evidence) if seen]
         per_frame.append((look.index, pts))  # empty is meaningful: looked, saw nothing
 
     processed = loop.processed

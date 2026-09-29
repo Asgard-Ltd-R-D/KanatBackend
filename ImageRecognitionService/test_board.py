@@ -363,3 +363,78 @@ def test_the_canvas_grows_to_the_board_edge_within_registration_and_never_shrink
     margin = board.BOARD_MARGIN * 100
     assert lo == pytest.approx([-80, -margin])
     assert hi == pytest.approx([100 + margin, 50 + board.REGION_SPANS * 100])
+
+
+# --- dual inference: the margin canvas inside the grown one (#46) ------------
+
+def _margin_formula(targets):
+    """The margin canvas, written as `build_view` wrote it before #46."""
+    margin = board.BOARD_MARGIN * board.spread(targets)
+    lo = targets.min(axis=0) - margin
+    return lo, tuple(int(v) for v in np.ceil(targets.max(axis=0) - lo + margin))
+
+
+def test_with_no_board_edge_the_canvas_is_the_margin_canvas_exactly():
+    targets = np.float32([[3.3, 7.7], [140.2, 96.1]])
+    layout = board.canvas_layout(targets, dict.fromkeys(board.SIDES), ring=(70, 50), span=137)
+    lo, size = _margin_formula(targets)
+    assert np.array_equal(layout.lo, lo) and layout.size == size
+    assert np.array_equal(layout.inner_lo, lo) and layout.inner_size == size
+    assert layout.offset == (0, 0)
+
+
+def test_growth_up_and_left_is_whole_pixels_so_the_margin_canvas_keeps_its_grid():
+    """The margin canvas sits at an integer offset inside the grown one, and
+    keeps its exact origin and size; the grown one covers the edges."""
+    targets = np.float32([[0, 0], [100, 100]])          # margin canvas -50..150
+    edges = {"left": -60.3, "right": None, "above": -55.0, "below": 190.0}
+    layout = board.canvas_layout(targets, edges, ring=(50, 50), span=100)
+    lo, size = _margin_formula(targets)
+    assert np.array_equal(layout.inner_lo, lo) and layout.inner_size == size
+    assert layout.offset == (11, 5)
+    assert np.allclose(layout.lo, lo - (11, 5))
+    assert layout.lo[0] <= -60.3 and layout.lo[1] <= -55.0
+    assert layout.lo[1] + layout.size[1] >= 190.0
+    assert layout.size[0] == 11 + size[0]                # nothing grew on the right
+
+
+def _dual_view(offset, inner_size, canvas_size):
+    inner_T = board._as_matrix(1.0, (-float(offset[0]), -float(offset[1])))
+    return board.BoardView(np.eye(3, dtype=np.float32), board._as_matrix(1.0), canvas_size, [],
+                           inner=board.Inner(inner_T, inner_size, offset))
+
+
+def test_exposed_bands_are_the_growth_plus_their_context():
+    view = _dual_view((11, 5), (100, 80), (130, 100))     # margin canvas x 11-111, y 5-85
+    assert [b.crop for b in view.exposed_bands(32)] == [(0, 0, 130, 37),     # above
+                                                        (0, 53, 130, 100),   # below
+                                                        (0, 0, 43, 100),     # left
+                                                        (79, 0, 130, 100)]   # right
+
+
+def test_the_bands_own_the_board_past_the_margin_canvas_once_each():
+    """A mark in a corner is in two crops, but reported by one band only."""
+    view = _dual_view((11, 5), (100, 80), (130, 100))
+    owned = np.zeros((100, 130), int)
+    for band in view.exposed_bands(32):
+        x0, y0, x1, y1 = band.owns
+        owned[y0:y1, x0:x1] += 1
+    inner = np.zeros_like(owned, bool); inner[5:85, 11:111] = True
+    assert (owned[~inner] == 1).all() and (owned[inner] == 0).all()
+
+
+def test_a_canvas_that_did_not_grow_has_no_bands():
+    assert _dual_view((0, 0), (100, 80), (100, 80)).exposed_bands(32) == []
+
+
+def test_the_inner_rectification_is_the_margin_canvas_warp_itself():
+    """A sees exactly what main saw: the margin canvas's own matrix and size,
+    not a crop of the grown canvas."""
+    rng = np.random.default_rng(2)
+    frame = (rng.random((120, 160, 3)) * 255).astype(np.uint8)
+    H = np.float32([[1.1, 0.02, 3], [-0.01, 0.95, 4], [1e-4, 0, 1]])
+    inner_T = board._as_matrix(0.8, (-2.3, -1.7))
+    view = board.BoardView(H, board._as_matrix(0.8, (8.7, 3.3)), (150, 110), [],
+                           inner=board.Inner(inner_T, (120, 90), (11, 5)))
+    alone = board.BoardView(H, inner_T, (120, 90), [])
+    assert np.array_equal(view.rectify_inner(frame), alone.rectify(frame))

@@ -1,7 +1,9 @@
 """Checks for the new-Bullet-Hole tracker. No model, no video, no torch."""
 import numpy as np
-from new_bullet_holes import (_overlap_fraction, merge_displaced_tracks,
-                              same_bullet_hole, track_new_bullet_holes)
+import board
+from new_bullet_holes import (_overlap_fraction, change_evidence, merge_band_detections,
+                              merge_displaced_tracks, same_bullet_hole,
+                              track_new_bullet_holes)
 
 MATCH = 22.0  # Board-space px; the tracker takes it from BoardView.match_radius
 
@@ -266,7 +268,43 @@ def test_persistence_cannot_exceed_one_on_out_of_order_frames():
     assert [c["persistence"] for c in got] == [1.0]
 
 
+
+# --- dual inference: merging the exposed Board's detections (#46) ------------
+
+def _grown_view(offset=(10, 5), inner=(100, 80), canvas=(130, 100)):
+    return board.BoardView(np.eye(3, dtype=np.float32), board._as_matrix(1.0), canvas, [],
+                           inner=board.Inner(board._as_matrix(1.0), inner, offset))
+
+
+def test_the_margin_canvas_keeps_its_detections_and_each_band_adds_only_what_it_owns():
+    view = _grown_view()                                    # margin canvas x 10-110, y 5-85
+    bands = view.exposed_bands(32)
+    right = next(b for b in bands if b.owns == (110, 5, 130, 85))
+    below = next(b for b in bands if b.owns == (0, 85, 130, 100))
+    a = np.array([[50.0, 50.0, 4, 4], [108.0, 40.0, 4, 4]])  # canvas px, already offset
+    on_right = np.array([[100.0, 50.0, 4, 4],               # on the margin canvas: A's to call
+                         [111.0, 40.0, 4, 4],               # past the edge, but on A's mark
+                         [120.0, 60.0, 4, 4],               # past the edge: kept
+                         [120.0, 95.0, 4, 4]])              # the below band's corner, not this one's
+    on_below = np.array([[120.0, 95.0, 4, 4],               # its own corner: kept once
+                         [60.0, 95.0, 4, 4]])               # kept
+    merged = merge_band_detections(a, [(right, on_right), (below, on_below)], match_radius=5.0)
+    assert merged.tolist() == [[50.0, 50.0, 4, 4], [108.0, 40.0, 4, 4],
+                               [120.0, 60.0, 4, 4], [120.0, 95.0, 4, 4], [60.0, 95.0, 4, 4]]
+
+
+def test_a_detection_on_the_margin_canvas_is_judged_on_its_own_change_mask():
+    """A's detections keep main's change evidence: its mask, at its own px;
+    only the exposed Board's are judged on the grown canvas's."""
+    view = _grown_view()
+    inner_mask = np.zeros((80, 100), np.uint8); inner_mask[40, 40] = 255   # margin px (40, 40)
+    grown_mask = np.zeros((100, 130), np.uint8); grown_mask[60, 120] = 255
+    pts = np.array([[50.0, 45.0], [120.0, 60.0], [60.0, 95.0]])
+    got = change_evidence(pts, view, lambda: inner_mask, lambda: grown_mask, radius=1.0)
+    assert got == [True, True, False]
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
             fn(); print(f"ok  {name}")
+

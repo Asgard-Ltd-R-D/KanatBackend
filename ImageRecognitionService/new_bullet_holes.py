@@ -483,10 +483,15 @@ class RegisteredFrames:
         elif any(uncovered[1].values()):
             outside, reach = uncovered
             span = board.target_span(view)
-            where = ", ".join(f"{v / span:.2f} {k}" for k, v in reach.items() if v)
-            print(f"[WARN] {outside:.1%} of the camera's view is off the canvas, up to "
-                  f"{where} (Target spans). Board there, if any, is never searched: "
-                  f"a Bullet Hole on it is a miss no setting can recover (#41)")
+            # Past a found edge the reach is Board; elsewhere it is the view (#46).
+            found = lambda k: ("Board, to its edge" if view.edges[k] is not None
+                               else "view, no edge found")
+            where = ", ".join(f"{v / span:.2f} {k} ({found(k)})"
+                              for k, v in reach.items() if v)
+            print(f"[WARN] {outside:.1%} of the camera's view is off the canvas short of "
+                  f"any Board edge found, up to {where} (Target spans). Board there is "
+                  f"never searched: a Bullet Hole on it is a miss no setting can recover "
+                  f"(#41, #46)")
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")

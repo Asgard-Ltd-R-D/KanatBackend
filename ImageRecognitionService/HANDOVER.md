@@ -351,6 +351,83 @@ pipeline** — labels thrown up to 58 000 template px off the Board — and it i
 superseded. Both recordings share `_102250`'s Capture Setup, so this adds
 Bullet Holes and no setup.
 
+## The canvas runs to the Board's edge (#46)
+
+**`board.find_board_edges` finds where the Board the Targets are on ends**,
+at the ground or at the seam with the next Board of the stand, and
+`canvas_bounds` grows the canvas past `BOARD_MARGIN` to it. The baseline
+frame is viewed square-on within 2 Target spans of the ring. Each side is
+walked outward from 0.3 spans past the Targets, which skips the Target
+print's own border. The edge is the first row or column whose signed gradient, averaged
+along the Targets' whole width, reaches `EDGE_MIN`. It is signed so that a
+straight edge adds up while ground texture and Bullet Holes cancel out. It is
+the *first* edge, not the strongest: past the seam, the next Board's print is
+the stronger line. The walk gives up where the frame's view ends.
+
+The canvas is also cut at `REGION_SPANS` (1.5) of the ring, the ECC region
+registration is fitted on. #50 measured its wander only out to 1.3 spans, so
+the 1.3–1.5 band is unmeasured; `_102450` truth #3 and #4 sit at 1.17–1.26. It only ever grows: an edge inside the
+margin, or no edge at all, leaves the margin canvas as it was.
+
+- **CamB close pose.** Edges are found above (1.2 spans), right (1.44–1.56)
+  and below (1.41–1.61). On `_103223` the left edge is found too (1.97, cut to
+  1.5). The canvas grows from 315–364 px to 381–492 px, at net scale
+  0.88–0.91. `[WARN]` falls from 94% of the view to 2–10%. What remains is
+  the left side, where no edge lies within 2 spans, plus Board past the 1.5
+  span cut.
+- **CamA.** No edge is found. The panel's top lies within the 0.3 span gap,
+  and the frame ends before the rest. So its canvas is byte-identical
+  (1282×1636) and it scores 5/1/1, as on `main`.
+
+**Scored against the canvas-shift control** (canvas translated up-left by
+d Board px on both axes; TP/FP/FN, 2026-09-29):
+
+| Recording | canvas | 0 px | 8 px | 16 px | 32 px |
+|---|---|---|---|---|---|
+| `_102450` 0–47.76s | `main` | 2/0/2 | 2/0/2 | 2/0/2 | 2/0/2 |
+| | sheet | **4/0/0** | **4/0/0** | **4/0/0** | **4/0/0** |
+| `_102250` 0–46s | `main` | 4/1/0 | 4/1/0 | 4/1/0 | 4/1/0 |
+| | sheet | 3/1/1 | 4/1/0 | 4/1/0 | 4/1/0 |
+| `_103223` 0–51.88s | `main` | 2/1/0 | 2/1/0 | 1/2/1 | 0/1/2 |
+| | sheet | 2/2/0 | 2/2/0 | 0/0/2 | 0/0/2 |
+| CamA 13–25s | both | 5/1/1 | canvas unchanged | | |
+
+Summed over the four shifts on CamB, `main` scores 29/9/11 and the sheet
+canvas 35/8/5.
+
+- **`_102450` truth #3 and #4 are found at every shift.** That is not grid
+  noise.
+- **`_102250` loses truth #3 at 0 px only.** Its own 8/16/32 px shifts all
+  score 4/1/0, so this is the new canvas's grid, not lost coverage. Truth #3
+  lies well inside both canvases.
+- **`_103223` is grid-fragile on either canvas.** Both truth marks vanish at
+  16/32 px on the sheet canvas, and at 32 px on `main`. The extra false
+  positive at 0 and 8 px (25.00s, 296 tpl px from any mark) also appears on
+  `main` moved 16 px, so it is not the new Board.
+- **No false positive came from the added Board area.** Every FP falls 253–518
+  tpl px from a pre-existing mark, and each one has a counterpart on a
+  shifted `main` canvas.
+
+**Strictly, the single 0 px score does not beat the control on `_102250`**
+(0.75 against 0.89). Read with its own shifts, it is inside the noise.
+
+**Known ceilings** (`ponytail:` on `find_board_edges`).
+- Board space is not aligned with the Board: the found edge lines tilt ~5°
+  across the stand in the frame, and the edge is read only along the Targets'
+  width. So a canvas side can take a sliver of ground at one end and cut a
+  sliver of Board at the other.
+- A Board edge inside the 0.3 span gap is walked past, and the next straight
+  line out is taken instead. That is CamA's panel top, where the frame ends
+  first.
+- A Target strip that leaves the frame (CamA's second Target) finds no edge
+  on the sides across it.
+- `EDGE_MIN` (20), the gap and the 2 span search were set on these four
+  baseline frames and never swept.
+- The shift control is not in the repo. It was a scratch wrapper around
+  `evaluate.py` that translated `canvas_bounds`' result.
+- `mine_negatives.py` builds its views the same way, so CamB-pose canvases
+  grow there too. They stay far below its 4096 px `MAX_CANVAS_PX`.
+
 ## The held-out set is two recordings of one Capture Setup
 
 The six delivered files are **three** Capture Setups, and the five customer
@@ -881,9 +958,9 @@ a real new Bullet Hole next to a pre-existing one on CamB, taking recall from
 100% to 75%. Suppression stays on the template-px floor — the same trap ADR-0003
 records for the 40 px match radius.
 
-**The Board's extent is inferred from where the Targets are**, because nothing
-detects the plywood. `BOARD_MARGIN` bounds *recall*, not presentation: a Bullet
-Hole outside the canvas is never seen, not merely unscored. A Target with no
+**The Board's extent is the Targets' margin, grown to the Board's edge where
+one is found** (#46, above). The canvas still bounds *recall*, not
+presentation: a Bullet Hole outside it is never seen, not merely unscored. A Target with no
 green in its artwork — the ring-only one on the left of the sample footage — is
 not found at all.
 
@@ -909,7 +986,10 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `OVERLAP_THRESHOLD` | 0.5 | `new_bullet_holes.py` | Ported; merging on *any* overlap regresses CamA |
 | `TARGET_NET_SCALE` | 0.90 | `board.py` | Inside a flat band, not a measured peak |
 | `ABSDIFF_SIGMA` | 2.0 | `board.py` | At 2.5 the evidence channel was dead |
-| `BOARD_MARGIN` | 0.50 | `board.py` | Bounds recall; see above. **Breaks** on both threshold-work recordings — #41. Unchanged: the whole-view canvas regressed CamA; the run warns what the canvas leaves out |
+| `BOARD_MARGIN` | 0.50 | `board.py` | Now the canvas's floor; the Board's edge grows it (#46). Unchanged: the whole-view canvas regressed CamA |
+| `EDGE_MIN` | 20.0 | `board.py` | Mean signed Sobel along a Board edge; set on four baseline frames, not swept (#46) |
+| `EDGE_GAP_SPANS` | 0.3 | `board.py` | Skips the Target print's border; CamA's panel top falls inside it, so CamA finds no edge |
+| `EDGE_SEARCH_SPANS` | 2.0 | `board.py` | How far out the edge is looked for; `_103223`'s left edge is found at 1.97, the others' not within it |
 | `GREEN_LO` / `GREEN_HI` | — | `board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `board.py` | May reject distant Targets |
 

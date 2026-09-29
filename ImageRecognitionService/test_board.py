@@ -220,6 +220,21 @@ def test_uncovered_fraction_is_of_the_frame_not_of_the_board_plane():
     assert outside == pytest.approx(counted, abs=0.01)
 
 
+def test_once_the_boards_edge_is_known_only_the_board_counts():
+    """A 300x100 view over a 100x100 canvas, the Board ending 50 px past it
+    on the right: the view beyond the edge is ground, not unsearched Board.
+    A side with no edge found still counts the camera's view (#46)."""
+    view = board.BoardView(H=np.eye(3, dtype=np.float32),
+                           tpl_to_board=board._as_matrix(1.0, (0, 50)),
+                           canvas_size=(100, 100), targets=[_square(0, 50, 100)],
+                           edges={"left": None, "right": 150.0, "above": None,
+                                  "below": None})
+    outside, reach = board.uncovered_view(view, frame_size=(300, 200))
+    # the view to x=150 is Board (150x200 frame px), the canvas holds 100x50 of it
+    assert outside == pytest.approx((150 * 200 - 100 * 50) / (300 * 200), abs=1e-3)
+    assert reach == pytest.approx({"left": 0, "right": 50, "above": 0, "below": 150})
+
+
 def test_view_past_the_board_planes_horizon_is_not_measured():
     """A frame corner behind the plane flips the footprint; no fraction then."""
     H = np.array([[1, 0, 0], [0, 1, 0], [0, -0.02, 1]], np.float32)  # y=50 at infinity
@@ -292,3 +307,59 @@ def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
     second, _ = board.track_view(colour(_scene((5.0, -3.0))), first)
     assert board._apply(second.H, [[80, 90]])[0] == pytest.approx([105, 97], abs=0.4)
     assert second.anchor is anchor and len(second.targets) == 1
+
+
+# --- the Board's edge (#46) ------------------------------------------------
+
+SPAN = 1000.0   # template px a Target span, in these scenes
+
+
+def _board_scene(edges, frame_size=(800, 600)):
+    """A frame 100 px a Target span, ring at (400, 300): textured ground, a
+    white Board ending `edges` = (left, right, above, below) spans from the ring,
+    the Target print's white border on it and a green Target on that. Returns (frame, H)."""
+    rng = np.random.default_rng(1)
+    w, h = frame_size
+    grey = cv2.GaussianBlur(rng.uniform(40, 140, (h, w)).astype(np.float32), (0, 0), 1.5)
+    frame = cv2.cvtColor(grey.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+    box = lambda l, r, a, b: ((400 - int(l * 100), 300 - int(a * 100)),
+                              (400 + int(r * 100), 300 + int(b * 100)))
+    cv2.rectangle(frame, *box(*edges), (215, 215, 215), -1)
+    cv2.rectangle(frame, *box(.45, .45, .45, .45), (240, 240, 240), -1)  # the print's border
+    cv2.rectangle(frame, *box(.35, .35, .35, .35), (60, 160, 40), -1)    # the Target
+    H = board._as_matrix(0.1, np.array([400, 300]) - 0.1 * board.RING_CENTRE_TPL)
+    return cv2.GaussianBlur(frame, (0, 0), 1), H
+
+
+def test_the_board_ends_at_its_first_straight_edge_past_the_targets_print():
+    frame, H = _board_scene((1.2, 0.9, 0.8, 1.3))
+    edges = board.find_board_edges(frame, H, SPAN)
+    ring = board.RING_CENTRE_TPL
+    assert edges["left"] == pytest.approx(ring[0] - 1.2 * SPAN, abs=15)
+    assert edges["right"] == pytest.approx(ring[0] + 0.9 * SPAN, abs=15)
+    assert edges["above"] == pytest.approx(ring[1] - 0.8 * SPAN, abs=15)
+    assert edges["below"] == pytest.approx(ring[1] + 1.3 * SPAN, abs=15)
+
+
+def test_a_board_running_out_of_view_has_no_edge_that_side():
+    """The frame's own border is not the Board's edge."""
+    frame, H = _board_scene((1.2, 0.9, 0.8, 2.5), frame_size=(800, 420))
+    assert board.find_board_edges(frame, H, SPAN)["below"] is None
+
+
+def test_a_board_past_the_search_has_no_edge_that_side():
+    frame, H = _board_scene((1.2, 0.9, 0.8, 2.5), frame_size=(800, 600))
+    assert board.find_board_edges(frame, H, SPAN)["below"] is None
+
+
+def test_the_canvas_grows_to_the_board_edge_within_registration_and_never_shrinks():
+    """Past the margin canvas to the Board's edge, cut at `REGION_SPANS` of
+    the ring where registration holds; an edge inside the margin, or none,
+    leaves the margin canvas as it was."""
+    targets = np.float32([[0, 0], [100, 100]])          # ring at (50, 50), span 100
+    edges = {"left": -80.0, "right": 120.0, "above": None,
+             "below": 50 + 2 * board.REGION_SPANS * 100}   # past the cut
+    lo, hi = board.canvas_bounds(targets, edges, ring=(50, 50), span=100)
+    margin = board.BOARD_MARGIN * 100
+    assert lo == pytest.approx([-80, -margin])
+    assert hi == pytest.approx([100 + margin, 50 + board.REGION_SPANS * 100])

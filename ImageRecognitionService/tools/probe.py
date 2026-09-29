@@ -20,8 +20,8 @@ Frames come from `new_bullet_holes.RegisteredFrames`, never a loop of this
 file's own — see the warning there. `--model` takes several checkpoints and
 runs each over the same footage against the same ground truth.
 
-    python probe.py CLIP.mkv --start 13 --end 25 \\
-        --truth-labels truth/cama-20260914-141546 \\
+    python -m tools.probe CLIP.mkv --start 13 --end 25 \\
+        --truth-labels data/truth/cama-20260914-141546 \\
         --model a/best.pt b/best.pt
 
 The denominator is every registered frame from `--start`, so a Bullet Hole
@@ -40,10 +40,9 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
-import board
-import evaluate
-import manifest
-import new_bullet_holes as nbh
+from detection import board
+from detection import new_bullet_holes as nbh
+from tools import evaluate, manifest
 
 # Low enough that no operating threshold is part of the answer: the pipeline
 # runs at 0.40, and the CamB finding was a mark absent even at this floor.

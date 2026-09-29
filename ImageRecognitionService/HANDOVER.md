@@ -33,8 +33,8 @@ Two clips now carry operator-labelled ground truth.
 
 | Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
 |---|---|---|---|---|---|---|---|---|---|
-| `CamA_20260914_141546.mkv` (`truth/cama-20260914-141546`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 | detector, 827 tpl px out |
-| `CamB_20260915_102250.mkv` (`truth/camb-20260915-102250`) | 0–46s | 4 | 4 | 1 | 0 | 80% | 100% | 0.89 | detector, 855 tpl px out |
+| `CamA_20260914_141546.mkv` (`data/truth/cama-20260914-141546`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 | detector, 827 tpl px out |
+| `CamB_20260915_102250.mkv` (`data/truth/camb-20260915-102250`) | 0–46s | 4 | 4 | 1 | 0 | 80% | 100% | 0.89 | detector, 855 tpl px out |
 
 Bullet Holes placed within 2–28 template px — under one hole's width. Both
 surviving false positives attribute to the detector: CamA's at 827 template px
@@ -103,7 +103,7 @@ photograph pair.
 ## Photograph-derived ground truth for the customer recordings
 
 Six recordings now carry ground truth derived from a before/after photograph
-pair, in `truth/{cam}-{date}-{time}/`. `board.new.txt` is the derived new
+pair, in `data/truth/{cam}-{date}-{time}/`. `board.new.txt` is the derived new
 Bullet Holes, `board.{before,after}.export.txt` are the raw exports byte for
 byte, and `board.source.txt` names the photographs the coordinates belong to —
 the photographs themselves are not version-controlled, like the recordings.
@@ -180,7 +180,7 @@ optimal on exactly this sample and that says very little about the next one. SOW
 ## The threshold-work recordings: what held, what broke
 
 Run end to end on 2026-09-27 at `7ef2ffe`, after #34 and #40, at current
-constants — [`falsification_run.md`](falsification_run.md) has the counts, the
+constants — [`falsification_run.md`](docs/falsification_run.md) has the counts, the
 probe, the residuals and a verdict per constant. No constant moved.
 
 | Recording | Window | New | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
@@ -469,8 +469,8 @@ wall).
 
 The six delivered files are **three** Capture Setups, and the five customer
 recordings are **two** — not the one ADR-0005 allowed they might collapse to.
-Which recording carries which role is `recordings.json`, and the grounds are
-[`capture_setups.md`](capture_setups.md); neither is restated here, so that
+Which recording carries which role is `config/recordings.json`, and the grounds are
+[`capture_setups.md`](docs/capture_setups.md); neither is restated here, so that
 changing an allocation is one edit and not three.
 
 **The split came out three threshold-work / two sealed, not the other way
@@ -502,11 +502,13 @@ corrects the earlier "21 seconds" figure.
 
 ## Running it
 
-Everything runs from `ImageRecognitionService/` with its `.venv`.
+Everything runs from `ImageRecognitionService/` with its `.venv`. The pipeline
+lives in `detection/`, the scoring and truth tooling in `tools/`, so each runs
+as a module (`python -m detection.new_bullet_holes`), not as a file path.
 
 ```bash
 # Detect new Bullet Holes, optionally rendering the rectified Board
-.venv/bin/python new_bullet_holes.py CLIP.mkv --start 13 --end 25 --out out.mp4
+.venv/bin/python -m detection.new_bullet_holes CLIP.mkv --start 13 --end 25 --out out.mp4
 
 # The baseline spans --baseline-frames frames from --start (default 5, ~200 ms).
 # A Hit landing inside that window is absorbed into the baseline and never
@@ -514,18 +516,18 @@ Everything runs from `ImageRecognitionService/` with its `.venv`.
 
 # Derive the new Bullet Holes from a before/after photograph pair. --truth-labels
 # then points at the board.new.txt this writes, never at the after export.
-.venv/bin/python derive_truth.py \
+.venv/bin/python -m tools.derive_truth \
     --before-image photos/CamB.before.jpeg --before-labels export/before.txt \
     --after-image  photos/CamB.after.jpeg  --after-labels  export/after.txt \
-    --out-dir truth/camb-20260915-102250
+    --out-dir data/truth/camb-20260915-102250
 
 # Score a run against labelled ground truth — use this before believing any change
-.venv/bin/python evaluate.py CLIP.mkv --start 13 --end 25 \
-    --truth-labels truth/cama-20260914-141546
+.venv/bin/python -m tools.evaluate CLIP.mkv --start 13 --end 25 \
+    --truth-labels data/truth/cama-20260914-141546
 # Derived truth names its own photograph in board.source.txt; --truth-image
 # is then optional, and one that disagrees is warned about by name
-.venv/bin/python evaluate.py videos/CamB_20260915_102250.mkv --start 0 --end 46 \
-    --truth-labels truth/camb-20260915-102250
+.venv/bin/python -m tools.evaluate data/videos/CamB_20260915_102250.mkv --start 0 --end 46 \
+    --truth-labels data/truth/camb-20260915-102250
 
 .venv/bin/python -m pytest -q
 ```
@@ -566,7 +568,7 @@ copy: in a derived truth directory `board.after.export.txt` is the export's
 bytes unchanged, and `board.new.txt` is the file the evaluation reads.
 
 **Every recording needs a manifest entry before any tool will open it.**
-`recordings.json` maps sha256 to Capture Setup, role (`sealed`,
+`config/recordings.json` maps sha256 to Capture Setup, role (`sealed`,
 `threshold-work` or `spent`), frame rate and analysis window, plus a
 `window_basis` line saying whether that window was verified against labelled
 ground truth or is a provisional whole-clip stand-in. No tool reads
@@ -574,15 +576,15 @@ ground truth or is a provisional whole-clip stand-in. No tool reads
 established. A file in no entry is refused, and so is an entry whose role is none of those three —
 an unallocated recording has no role, and guessing one is how the held-out set
 gets spent. All six delivered recordings now carry one, grouped and allocated
-in [`capture_setups.md`](capture_setups.md). A recording arriving later needs
+in [`capture_setups.md`](docs/capture_setups.md). A recording arriving later needs
 its hash taking first:
 
 ```bash
-.venv/bin/python -c "import manifest; print(manifest.content_hash('CLIP.mkv'))"
+.venv/bin/python -c "from tools import manifest; print(manifest.content_hash('CLIP.mkv'))"
 ```
 
 A recording whose role is `sealed` is refused unless `--final-run` is passed,
-and that run is appended to `sealed_runs.log` — which is committed, not
+and that run is appended to `data/sealed_runs.log` — which is committed, not
 ignored — with the date, model and commit. Lookup is by content hash, so
 renaming a file cannot move it across the split boundary. See `manifest.py` and
 ADR-0005.
@@ -595,13 +597,15 @@ extraction is what keeps sealed pixels out of it.
 
 | File | Holds |
 |---|---|
-| `board.py` | Board geometry: find, register, rectify, Target/Miss, scoring, mm |
-| `new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
-| `evaluate.py` | Scoring a run against labelled ground truth |
-| `manifest.py`, `recordings.json` | Split membership by content hash, the sealed guard, the run log |
-| `targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
-| `truth/<recording>/` | Ground truth, one directory per recording |
-| `tagging_bullets.py`, `sweep_profile.py` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
+| `detection/board.py` | Board geometry: find, register, rectify, Target/Miss, scoring, mm |
+| `detection/new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
+| `tools/evaluate.py`, `tools/derive_truth.py` | Scoring a run against labelled ground truth; deriving that truth from a photograph pair |
+| `tools/probe.py`, `tools/registration_reach.py` | Per-mark detection and registration measurements over a clip |
+| `tools/mine_negatives.py` | Background negatives from unsealed footage, into `data/negatives/` |
+| `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
+| `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
+| `data/truth/<recording>/` | Ground truth, one directory per recording |
+| `detection/tagging_bullets.py`, `tools/sweep_profile.py`, `config/capture_profiles.json` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
 
 ---
 
@@ -677,7 +681,7 @@ was attributed to it and is not the same defect — see mode 2.
 **Verified on the full 0–46s clip after the fix.** The baseline now holds 4
 pre-existing marks over 5 frames where one frame found 2, **no report is made at
 0.04s**, and the run completes 1150 frames at exit 0. Scored over the whole
-clip against `truth/camb-20260915-102250` it reads TP 4 / FP 1 / FN 0 (see
+clip against `data/truth/camb-20260915-102250` it reads TP 4 / FP 1 / FN 0 (see
 the results table), so the specific defect is gone. The earliest report is now t=1.64s, a different mark
 that first appears mid-clip and is then detected in 98% of the frames after it —
 consistent with a real Hit, and unlabelled, so not claimed as one.
@@ -1013,23 +1017,23 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 
 | Constant | Value | Where | Basis |
 |---|---|---|---|
-| `PERSIST` | 0.50 | `new_bullet_holes.py` | Swept against ground truth; 0.70 lost most of the group. Counts distinct FRAMES since 2026-09-17 — see below |
-| `PERSIST_FRAMES` | 50 | `new_bullet_holes.py` | Length provisional; *fixed* window is by design |
-| `DEFAULT_CONFIDENCE` | 0.40 | `new_bullet_holes.py` | Swept; flat nearby |
-| `BASELINE_FRAMES` | 5 | `new_bullet_holes.py` | Chosen as ~200 ms, not swept. Fixes the 0.04s defect at 5 and at 2; upper bound is the absorption risk, not a measurement |
-| `REQUIRE_CHANGE_EVIDENCE` | True | `new_bullet_holes.py` | Swept; FP 7 → 1 at no measured recall cost |
-| `MATCH_TPL_PX` | 20.0 | `board.py` | Swept; 40 discarded a real Bullet Hole |
-| `DUP_CENTER_FACTOR` | 0.5 | `new_bullet_holes.py` | Ported from `tagging_bullets.py`; 0.6+ regresses CamA to F1 0.83 |
-| `OVERLAP_THRESHOLD` | 0.5 | `new_bullet_holes.py` | Ported; merging on *any* overlap regresses CamA |
-| `TARGET_NET_SCALE` | 0.90 | `board.py` | Inside a flat band, not a measured peak |
-| `ABSDIFF_SIGMA` | 2.0 | `board.py` | At 2.5 the evidence channel was dead |
-| `BOARD_MARGIN` | 0.50 | `board.py` | Now the canvas's floor; the Board's edge grows it (#46). Unchanged: the whole-view canvas regressed CamA |
-| `EDGE_MIN` | 20.0 | `board.py` | Mean signed Sobel along a Board edge; set on four baseline frames, not swept (#46) |
-| `EDGE_GAP_SPANS` | 0.3 | `board.py` | Skips the Target print's border; CamA's panel top falls inside it, so CamA finds no edge |
-| `EDGE_SEARCH_SPANS` | 2.0 | `board.py` | How far out the edge is looked for; `_103223`'s left edge is found at 1.97, the others' not within it |
-| `BAND_CONTEXT_PX` | 32 | `new_bullet_holes.py` | Margin-canvas px each exposed-Board band carries for context; one stride-32 cell, not swept (#46) |
-| `GREEN_LO` / `GREEN_HI` | — | `board.py` | One artwork, one lighting condition |
-| `MIN_TARGET_AREA_PX` | 5000 | `board.py` | May reject distant Targets |
+| `PERSIST` | 0.50 | `detection/new_bullet_holes.py` | Swept against ground truth; 0.70 lost most of the group. Counts distinct FRAMES since 2026-09-17 — see below |
+| `PERSIST_FRAMES` | 50 | `detection/new_bullet_holes.py` | Length provisional; *fixed* window is by design |
+| `DEFAULT_CONFIDENCE` | 0.40 | `detection/new_bullet_holes.py` | Swept; flat nearby |
+| `BASELINE_FRAMES` | 5 | `detection/new_bullet_holes.py` | Chosen as ~200 ms, not swept. Fixes the 0.04s defect at 5 and at 2; upper bound is the absorption risk, not a measurement |
+| `REQUIRE_CHANGE_EVIDENCE` | True | `detection/new_bullet_holes.py` | Swept; FP 7 → 1 at no measured recall cost |
+| `MATCH_TPL_PX` | 20.0 | `detection/board.py` | Swept; 40 discarded a real Bullet Hole |
+| `DUP_CENTER_FACTOR` | 0.5 | `detection/new_bullet_holes.py` | Ported from `tagging_bullets.py`; 0.6+ regresses CamA to F1 0.83 |
+| `OVERLAP_THRESHOLD` | 0.5 | `detection/new_bullet_holes.py` | Ported; merging on *any* overlap regresses CamA |
+| `TARGET_NET_SCALE` | 0.90 | `detection/board.py` | Inside a flat band, not a measured peak |
+| `ABSDIFF_SIGMA` | 2.0 | `detection/board.py` | At 2.5 the evidence channel was dead |
+| `BOARD_MARGIN` | 0.50 | `detection/board.py` | Now the canvas's floor; the Board's edge grows it (#46). Unchanged: the whole-view canvas regressed CamA |
+| `EDGE_MIN` | 20.0 | `detection/board.py` | Mean signed Sobel along a Board edge; set on four baseline frames, not swept (#46) |
+| `EDGE_GAP_SPANS` | 0.3 | `detection/board.py` | Skips the Target print's border; CamA's panel top falls inside it, so CamA finds no edge |
+| `EDGE_SEARCH_SPANS` | 2.0 | `detection/board.py` | How far out the edge is looked for; `_103223`'s left edge is found at 1.97, the others' not within it |
+| `BAND_CONTEXT_PX` | 32 | `detection/new_bullet_holes.py` | Margin-canvas px each exposed-Board band carries for context; one stride-32 cell, not swept (#46) |
+| `GREEN_LO` / `GREEN_HI` | — | `detection/board.py` | One artwork, one lighting condition |
+| `MIN_TARGET_AREA_PX` | 5000 | `detection/board.py` | May reject distant Targets |
 
 `MATCH_TOLERANCE_TPL` (40 px, `evaluate.py`) is provisional too — it is the
 *scoring* tolerance, not a pipeline threshold. Matches land at 2–28 template
@@ -1039,7 +1043,7 @@ lands near 40. Encouraging, and not validation across a dataset.
 
 Measured artwork landmarks — `RING_CENTRE_TPL`, `RING_DIAMETER_TPL`,
 `RING_OFFSET_TPL`, `RING_RADII_TPL` — are *not* tunables. They are readings off
-`targets/kanat_silhouette_a4.png` and only change if the artwork does.
+`data/targets/kanat_silhouette_a4.png` and only change if the artwork does.
 
 ---
 
@@ -1058,7 +1062,7 @@ the rings: an empty label file on the Board would be a lie, because the Board
 carries Bullet Holes. On 2026-09-23, over every recording the manifest does
 not seal, it yields **15** negatives, all `cama-20260914`: 5 from `_141546`,
 4 from `_144747`, 3 from `_150248`, and 1 each from `_141646`, `_141846` and
-`_145047` (`negatives/sources.csv` is the record). Near-duplicates are dropped
+`_145047` (`data/negatives/sources.csv` is the record). Near-duplicates are dropped
 across the whole Capture Setup, so its seventh file, `_141446`, adds nothing new. Nothing comes from the CamB close trio,
 whose canvas is all Board, or from the legacy clips, which carry no green Target.
 A static camera gives only a few distinct gravel tiles per clip, so more

@@ -4,13 +4,15 @@ Runs without the model weights or a torch install: `process_video` takes an
 injected detector, so these drive the real pipeline (video decode, target
 scaling, suppression, spreadsheet write) with synthetic detections.
 
-Run: python test_dedup.py
+Run: PYTHONPATH=. python tests/test_dedup.py
 """
+import os
+
 import numpy as np
 
-from tagging_bullets import process_video, resolve_setting
+from detection.tagging_bullets import process_video, resolve_setting
 
-VIDEO = './videos/test_video.mp4'
+VIDEO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'videos', 'test_video.mp4')
 
 
 class _Arr(np.ndarray):

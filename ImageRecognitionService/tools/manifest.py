@@ -37,9 +37,9 @@ import os
 import subprocess
 from datetime import datetime, timezone
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MANIFEST_PATH = os.path.join(BASE_DIR, "recordings.json")
-RUN_LOG_PATH = os.path.join(BASE_DIR, "sealed_runs.log")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
+MANIFEST_PATH = os.path.join(BASE_DIR, "config", "recordings.json")
+RUN_LOG_PATH = os.path.join(BASE_DIR, "data", "sealed_runs.log")
 
 SEALED = "sealed"                  # held out; no pixels, see ADR-0005
 THRESHOLD_WORK = "threshold-work"  # may falsify a constant, may not retune one

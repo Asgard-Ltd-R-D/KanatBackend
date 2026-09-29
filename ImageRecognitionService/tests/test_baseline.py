@@ -9,7 +9,7 @@ one frame.
 """
 import numpy as np
 import pytest
-from new_bullet_holes import baseline_marks, strip_pre_existing
+from detection.new_bullet_holes import baseline_marks, strip_pre_existing
 
 MATCH = 2.96  # CamB's BoardView.match_radius, Board-space px
 

@@ -42,9 +42,8 @@ import os
 import cv2
 import numpy as np
 
-import board
-import evaluate
-import manifest
+from detection import board
+from tools import evaluate, manifest
 
 PATCH = 10        # half-size of a mark's patch, frame px: a hole plus its rim
 SEARCH = 12       # how far from the predicted position to look, frame px

@@ -16,16 +16,16 @@ run's detections are placed with — so both sides share one frame of reference:
 
 Usage:
 
-    python evaluate.py CLIP.mkv --start 13 --end 25 \\
-        --truth-image truth/board.jpeg --truth-labels truth/board.txt
+    python -m tools.evaluate CLIP.mkv --start 13 --end 25 \\
+        --truth-image data/truth/board.jpeg --truth-labels data/truth/board.txt
 
 Truth derived from a photograph pair (derive_truth.py) names its own
 photograph in `board.source.txt`, so `--truth-image` can be left off:
 
-    python evaluate.py CLIP.mkv --start 13 --end 25 \\
-        --truth-labels truth/camb-20260915-103223
+    python -m tools.evaluate CLIP.mkv --start 13 --end 25 \\
+        --truth-labels data/truth/camb-20260915-103223
 
-The clip needs a `recordings.json` entry; sealed footage needs `--final-run`
+The clip needs a `config/recordings.json` entry; sealed footage needs `--final-run`
 on top of it. See manifest.py.
 """
 import argparse
@@ -38,9 +38,9 @@ import cv2
 import networkx
 import numpy as np
 
-import board
-import manifest
-import new_bullet_holes as nbh
+from detection import board
+from detection import new_bullet_holes as nbh
+from tools import manifest
 
 # A Bullet Hole is roughly 25 template px across, so this is about one hole's
 # width of slack between a detection and the label it is credited to. It is also

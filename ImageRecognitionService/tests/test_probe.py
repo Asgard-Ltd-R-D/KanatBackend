@@ -6,8 +6,8 @@ frame that got a look, and what counts as a detection of THIS Bullet Hole.
 """
 import numpy as np
 
-import new_bullet_holes as nbh
-import probe
+from detection import new_bullet_holes as nbh
+from tools import probe
 
 HOLE = (100.0, 100.0)
 RADIUS = 5.0

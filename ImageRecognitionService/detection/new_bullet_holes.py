@@ -35,10 +35,10 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
-import board
-import manifest
+from detection import board
+from tools import manifest
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
 
 # Single-class yolo26n, trained on Bullet Holes only. Replaces
 # kanat_model10_v.2.0 (3-class, board/bullet_hole/target), which scored below its

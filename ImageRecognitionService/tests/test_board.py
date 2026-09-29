@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import pytest
 
-import board
+from detection import board
 
 
 def _square(x0, y0, side):

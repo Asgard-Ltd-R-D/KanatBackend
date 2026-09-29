@@ -90,7 +90,7 @@ detection the model already made.
 
 The first values — a 70% persistence bar and a 40 template-px match radius — were
 set by intuition. Scored against the photograph-derived truth of the same
-Board (`truth/cama-20260914-141546`, six Hits), they give **2 true positives,
+Board (`ImageRecognitionService/data/truth/cama-20260914-141546`, six Hits), they give **2 true positives,
 5 false and 4 missed**. (First measured on an earlier annotation of this
 recording, since superseded as unreliable; every figure in this section is
 re-measured on the canonical truth, and the conclusions are unchanged.)

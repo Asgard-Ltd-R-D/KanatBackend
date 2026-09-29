@@ -9,7 +9,7 @@ import types
 
 import numpy as np
 
-import new_bullet_holes as nbh
+from detection import new_bullet_holes as nbh
 
 
 class _FakeView:

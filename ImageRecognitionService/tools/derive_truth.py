@@ -5,20 +5,20 @@ after — and the new Bullet Holes are the set difference. The derivation itself
 lives in `evaluate.py`, beside the matching and the scoring it shares; this is
 its command line.
 
-    python derive_truth.py \\
+    python -m tools.derive_truth \\
         --before-image  photos/CamB.before.jpeg --before-labels export/before.txt \\
         --after-image   photos/CamB.after.jpeg  --after-labels  export/after.txt \\
-        --out-dir truth/camb-20260915-102250
+        --out-dir data/truth/camb-20260915-102250
 
 writes `board.new.txt` — the new Bullet Holes, as the after export's own lines —
-beside byte-for-byte copies of both raw exports. `evaluate.py --truth-labels`
+beside byte-for-byte copies of both raw exports. `tools.evaluate --truth-labels`
 then points at that derived file, never at the after export.
 """
 import argparse
 import os
 
-import board
-import evaluate
+from detection import board
+from tools import evaluate
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(

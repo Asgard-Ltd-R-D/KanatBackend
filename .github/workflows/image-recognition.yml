@@ -32,4 +32,4 @@ jobs:
         run: pip install numpy pandas openpyxl opencv-python-headless
 
       - name: 🎯 Run de-duplication tests
-        run: python test_dedup.py
+        run: PYTHONPATH=. python tests/test_dedup.py

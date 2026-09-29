@@ -135,8 +135,8 @@ its own constants.
 ## What the delivery turned out to be
 
 Measured 2026-09-22 on the six delivered files; grounds and figures in
-[`../../ImageRecognitionService/capture_setups.md`](../../ImageRecognitionService/capture_setups.md),
-roles in `recordings.json`.
+[`../../ImageRecognitionService/docs/capture_setups.md`](../../ImageRecognitionService/docs/capture_setups.md),
+roles in `ImageRecognitionService/config/recordings.json`.
 
 **Three Capture Setups across the delivery, two across the five customer
 recordings.** Not the one this ADR allowed they might collapse to, and not five.

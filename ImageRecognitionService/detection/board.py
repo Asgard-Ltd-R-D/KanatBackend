@@ -25,8 +25,8 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_TEMPLATE = os.path.join(BASE_DIR, "targets", "kanat_silhouette_a4.png")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
+DEFAULT_TEMPLATE = os.path.join(BASE_DIR, "data", "targets", "kanat_silhouette_a4.png")
 
 # --- Target artwork landmarks, measured on the source PNG -------------------
 # Exact readings off the artwork, not tuning knobs.
@@ -79,7 +79,7 @@ TARGET_NET_SCALE = 0.90    # PROVISIONAL
 # frame-pixel value. 227 template px is the 10-ring diameter, so this converts to
 # millimetres the moment `to_millimetres` is unblocked.
 #
-# Swept against truth/cama-20260914-141546 (6 Bullet Holes): 40 scores
+# Swept against data/truth/cama-20260914-141546 (6 Bullet Holes): 40 scores
 # 5 true / 1 false / 1 missed, 20 scores 6 / 1 / 0. The radius also gates
 # which detections count as "already in the baseline", so an over-wide value
 # discards real Bullet Holes near a pre-existing one — which is how 40 lost a

@@ -5,7 +5,7 @@ No model, no video, no torch.
 import numpy as np
 import pytest
 
-import evaluate
+from tools import evaluate
 
 TOL = 40.0
 

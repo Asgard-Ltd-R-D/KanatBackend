@@ -218,7 +218,7 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
             if reference is None:
                 view, correlation = board.build_view(frame, template_mask)
             else:
-                view, correlation = board.track_view(frame, template_mask, last)
+                view, correlation = board.track_view(frame, last)
         except cv2.error:
             failed += sampled   # registration did not converge; counted, not folded in
             continue

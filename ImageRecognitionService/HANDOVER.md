@@ -33,17 +33,25 @@ Two clips now carry operator-labelled ground truth.
 
 | Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
 |---|---|---|---|---|---|---|---|---|---|
-| `CamA_20260914_141546.mkv` (`data/truth/cama-20260914-141546`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 | detector, 827 tpl px out |
-| `CamB_20260915_102250.mkv` (`data/truth/camb-20260915-102250`) | 0–46s | 4 | 4 | 1 | 0 | 80% | 100% | 0.89 | detector, 855 tpl px out |
+| `CamA_20260914_141546.mkv` (`data/truth/cama-20260914-141546`) | 13–25s | 6 | 5 | 1 | 1 | 83% | 83% | 0.83 | detector, 830 tpl px out |
+| `CamB_20260915_102250.mkv` (`data/truth/camb-20260915-102250`) | 0–46s | 4 | 4 | 1 | 0 | 80% | 100% | 0.89 | detector, 520 tpl px out |
 
-Bullet Holes placed within 2–28 template px — under one hole's width. Both
-surviving false positives attribute to the detector: CamA's at 827 template px
-from anything pre-existing, CamB's a 62%-persistent report at 38.56s, 855 px
-out. The registration-displacement case ADR-0006 was built on — a 25.60s
-report in CamB's old 25–36s window — does not arise over the whole clip,
-because the mark it was a displaced sighting of is reported at 1.64s, when it
-arrived. Measured 2026-09-27; figures below that do not say otherwise date from
-the 2026-09-17 re-verification.
+Bullet Holes placed within 2–11 template px — under one Bullet Hole's width.
+Both surviving false positives attribute to the detector: CamA's at 830
+template px from anything pre-existing, CamB's at 520 template px. CamB's is
+found #4 at 30.60s, detected in 51% of frames after it and last at 39.00s; it
+arrives in the same frame and on the same ring (8) as found #3, which scores
+truth #4. On 2026-09-27 the false positive was a different report, at 38.56s;
+when that changed has not been bisected. CamA's miss, truth #4, dates from #50
+(`dd50c8d`; its parent scores 6/1/0): the mark comes and goes with the pixel
+grid, and 0.83 sits inside #46's canvas-shift control — see the #50 section.
+Table and paragraph re-measured on `main` after #49, 2026-09-29 (#54).
+
+The registration-displacement case ADR-0006 was built on — a 25.60s report in
+CamB's old 25–36s window — does not arise over the whole clip, because the
+mark it was a displaced Detection of is reported at 1.64s, when it arrived.
+Measured 2026-09-27; figures below that do not say otherwise date from the
+2026-09-17 re-verification.
 
 **Since #40 (2026-09-27) the truth photograph is registered to the baseline
 video frame**, over the whole picture, and reaches template space through
@@ -970,9 +978,9 @@ next.**
 
 **One false positive survives** the change filter on CamA, and it is genuine —
 it sits inside the ground-truth photo's coverage, so it is not an unlabelled hole
-outside the frame. `[ATTRIBUTION]` puts it on the detector, 827 template px from
-anything that was already on the Board, so it is not registration displacement
-wearing a detector's clothes.
+outside the frame. `[ATTRIBUTION]` puts it on the detector, 830 template px from
+anything that was already on the Board (2026-09-29), so it is not registration
+displacement wearing a detector's clothes.
 
 **The merge gate does not actually separate the two cases it is asked to.**
 `same_bullet_hole` merges two detections whose centres fall within
@@ -984,8 +992,8 @@ wearing a detector's clothes.
 - CamA's closest genuinely distinct pair sits at **0.74x** diagonal.
 
 A per-frame merge of CamB's pair therefore needs 0.59, but anything at or above
-0.6 regresses CamA from F1 0.92 to 0.83 — merging shifts which candidate absorbs
-which, and so changes persistence bookkeeping, not merely counts. **The two
+0.6 regressed CamA from F1 0.92 to 0.83 before #50 — merging shifts which
+candidate absorbs which, and so changes persistence bookkeeping, not merely counts. **The two
 windows do not overlap on the data that exists.**
 
 CamB does report that mark as one Bullet Hole, and scores 1.00 — but by the
@@ -1023,7 +1031,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `BASELINE_FRAMES` | 5 | `detection/new_bullet_holes.py` | Chosen as ~200 ms, not swept. Fixes the 0.04s defect at 5 and at 2; upper bound is the absorption risk, not a measurement |
 | `REQUIRE_CHANGE_EVIDENCE` | True | `detection/new_bullet_holes.py` | Swept; FP 7 → 1 at no measured recall cost |
 | `MATCH_TPL_PX` | 20.0 | `detection/board.py` | Swept; 40 discarded a real Bullet Hole |
-| `DUP_CENTER_FACTOR` | 0.5 | `detection/new_bullet_holes.py` | Ported from `tagging_bullets.py`; 0.6+ regresses CamA to F1 0.83 |
+| `DUP_CENTER_FACTOR` | 0.5 | `detection/new_bullet_holes.py` | Ported from `tagging_bullets.py`; 0.6+ regressed CamA 0.92 → 0.83 before #50; not re-measured since |
 | `OVERLAP_THRESHOLD` | 0.5 | `detection/new_bullet_holes.py` | Ported; merging on *any* overlap regresses CamA |
 | `TARGET_NET_SCALE` | 0.90 | `detection/board.py` | Inside a flat band, not a measured peak |
 | `ABSDIFF_SIGMA` | 2.0 | `detection/board.py` | At 2.5 the evidence channel was dead |
@@ -1036,9 +1044,9 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `MIN_TARGET_AREA_PX` | 5000 | `detection/board.py` | May reject distant Targets |
 
 `MATCH_TOLERANCE_TPL` (40 px, `evaluate.py`) is provisional too — it is the
-*scoring* tolerance, not a pipeline threshold. Matches land at 2–28 template
-px against it on the fitted clips and 5–23 on the threshold-work pair, whose
-one false positive is 255 px out — supported there, weakly, because nothing
+*scoring* tolerance, not a pipeline threshold. Matches land at 2–11 template
+px against it on the fitted clips (2026-09-29) and 5–23 on the threshold-work
+pair, whose one false positive is 255 px out — supported there, weakly, because nothing
 lands near 40. Encouraging, and not validation across a dataset.
 
 Measured artwork landmarks — `RING_CENTRE_TPL`, `RING_DIAMETER_TPL`,

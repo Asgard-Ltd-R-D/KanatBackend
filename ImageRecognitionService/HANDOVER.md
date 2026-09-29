@@ -33,17 +33,22 @@ Two clips now carry operator-labelled ground truth.
 
 | Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
 |---|---|---|---|---|---|---|---|---|---|
-| `CamA_20260914_141546.mkv` (`data/truth/cama-20260914-141546`) | 13–25s | 6 | 6 | 1 | 0 | 86% | 100% | 0.92 | detector, 827 tpl px out |
-| `CamB_20260915_102250.mkv` (`data/truth/camb-20260915-102250`) | 0–46s | 4 | 4 | 1 | 0 | 80% | 100% | 0.89 | detector, 855 tpl px out |
+| `CamA_20260914_141546.mkv` (`data/truth/cama-20260914-141546`) | 13–25s | 6 | 5 | 1 | 1 | 83% | 83% | 0.83 | detector, 830 tpl px out |
+| `CamB_20260915_102250.mkv` (`data/truth/camb-20260915-102250`) | 0–46s | 4 | 4 | 1 | 0 | 80% | 100% | 0.89 | detector, 520 tpl px out |
 
-Bullet Holes placed within 2–28 template px — under one hole's width. Both
-surviving false positives attribute to the detector: CamA's at 827 template px
-from anything pre-existing, CamB's a 62%-persistent report at 38.56s, 855 px
-out. The registration-displacement case ADR-0006 was built on — a 25.60s
-report in CamB's old 25–36s window — does not arise over the whole clip,
-because the mark it was a displaced sighting of is reported at 1.64s, when it
-arrived. Measured 2026-09-27; figures below that do not say otherwise date from
-the 2026-09-17 re-verification.
+Bullet Holes placed within 2–11 template px — under one hole's width. Both
+surviving false positives attribute to the detector: CamA's at 830 template px
+from anything pre-existing, CamB's a 100%-persistent report at 30.60s, 520 px
+out. CamA's miss, truth #4, dates from #50 (dd50c8d; its parent scores
+6/1/0): the mark comes and goes with the pixel grid, and 0.83 sits inside
+#46's canvas-shift control — see the #50 section. Table and paragraph
+re-measured on `main` after #49, 2026-09-29 (#54).
+
+The registration-displacement case ADR-0006 was built on — a 25.60s report in
+CamB's old 25–36s window — does not arise over the whole clip, because the
+mark it was a displaced sighting of is reported at 1.64s, when it arrived.
+Measured 2026-09-27; figures below that do not say otherwise date from the
+2026-09-17 re-verification.
 
 **Since #40 (2026-09-27) the truth photograph is registered to the baseline
 video frame**, over the whole picture, and reaches template space through

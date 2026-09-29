@@ -3,7 +3,7 @@
 **Measured 2026-09-27 at `7ef2ffe`** (after #34 and #40), `kanat_yolo26n_v1`,
 `opencv-python==4.10.0.84`, every constant at its current value. Issue #29. The
 two recordings are `CamB_20260915_102450` and `CamB_20260915_103223`, the
-threshold-work pair `recordings.json` allocates, each run over its manifest
+threshold-work pair `config/recordings.json` allocates, each run over its manifest
 window. No sealed recording was opened and no `--final-run` was passed, so no
 sealed run was logged.
 
@@ -30,11 +30,11 @@ on one arrangement, and that is said below per constant.
 ## Headline
 
 ```bash
-.venv/bin/python evaluate.py videos/CamB_20260915_102450.mkv --start 0 --end 47.76 \
-    --truth-labels truth/camb-20260915-102450
-.venv/bin/python evaluate.py videos/CamB_20260915_103223.mkv --start 0 --end 51.88 \
-    --truth-labels truth/camb-20260915-103223
-# probe.py with the same arguments. --truth-image comes from board.source.txt (#34).
+.venv/bin/python -m tools.evaluate data/videos/CamB_20260915_102450.mkv --start 0 --end 47.76 \
+    --truth-labels data/truth/camb-20260915-102450
+.venv/bin/python -m tools.evaluate data/videos/CamB_20260915_103223.mkv --start 0 --end 51.88 \
+    --truth-labels data/truth/camb-20260915-103223
+# tools.probe with the same arguments. --truth-image comes from board.source.txt (#34).
 ```
 
 Truth is placed through the baseline video frame (#40): photograph → frame at

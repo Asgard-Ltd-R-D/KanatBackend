@@ -1,16 +1,16 @@
 # The delivered recordings, grouped by Capture Setup
 
 **Measured 2026-09-22.** Six `.mkv` files arrived: one CamA and the five CamB
-customer recordings ADR-0005 allocates. They now live in `videos/` beside the two
+customer recordings ADR-0005 allocates. They now live in `data/videos/` beside the two
 legacy clips, and they are not version-controlled — they run to 1.9 GB and
-`.gitignore` reserves `ImageRecognitionService/videos/*.mkv`. The sha256 in
-`recordings.json` is the link between a file on disk and its role, and this
+`.gitignore` reserves `ImageRecognitionService/data/videos/*.mkv`. The sha256 in
+`config/recordings.json` is the link between a file on disk and its role, and this
 document is the grounds for the role. The hashes were re-verified after the move
 from the delivery folder: a recording's role travels with its bytes, not its
 path.
 
 The before/after photographs the ground truth is derived from stayed in the
-delivery folder; `truth/*/board.source.txt` still names them.
+delivery folder; `data/truth/*/board.source.txt` still names them.
 
 ## The count
 
@@ -220,9 +220,9 @@ itself — ADR-0005 asks for grouping by camera pose, Board, lighting and
 distance, and none of those can be established without seeing one frame. No
 constant was moved on it, no model saw it, and nothing beyond frame 0 was read.
 
-Every later run is gated: `recordings.json` now carries all six files, both
+Every later run is gated: `config/recordings.json` now carries all six files, both
 sealed recordings are refused without `--final-run`, and a permitted run appends
-its date, model and commit to `sealed_runs.log`.
+its date, model and commit to `data/sealed_runs.log`.
 
 ## Nine CamA files from the afternoon — two setups, both sealed
 

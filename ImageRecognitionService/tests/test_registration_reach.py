@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-import registration_reach as rr
+from tools import registration_reach as rr
 
 
 def _spot(cx, cy, size=120):

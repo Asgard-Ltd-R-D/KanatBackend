@@ -1,7 +1,7 @@
 """Checks for the new-Bullet-Hole tracker. No model, no video, no torch."""
 import numpy as np
-import board
-from new_bullet_holes import (_overlap_fraction, change_evidence, merge_band_detections,
+from detection import board
+from detection.new_bullet_holes import (_overlap_fraction, change_evidence, merge_band_detections,
                               merge_displaced_tracks, same_bullet_hole,
                               track_new_bullet_holes)
 
@@ -205,7 +205,7 @@ def test_displacement_too_large_for_its_distance_is_not_merged():
 
 def test_merge_is_off_unless_asked_for():
     """It is a candidate mitigation, not production behaviour."""
-    import new_bullet_holes
+    from detection import new_bullet_holes
     assert new_bullet_holes.NON_COOCCURRENCE_MERGE is False
 
 def test_a_truncated_run_does_not_confirm_on_frames_it_never_read():

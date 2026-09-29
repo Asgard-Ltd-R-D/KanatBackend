@@ -5,7 +5,7 @@ each candidate setting finds; it does not pick one. Auto-selecting by highest
 count optimises straight into false positives — at low confidence the model
 emits far more boxes than there are Bullet Holes on the Board.
 
-    python sweep_profile.py images/board.jpg
+    python -m tools.sweep_profile data/images/board.jpg
 
 Look at the annotated frames, compare against the Bullet Holes you can see on
 the Board, then copy the winning cell's numbers into capture_profiles.json.
@@ -17,13 +17,13 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from tagging_bullets import (CLS_BULLET_HOLE, CLS_TARGET, MODEL_PATH,
+from detection.tagging_bullets import (CLS_BULLET_HOLE, CLS_TARGET, MODEL_PATH,
                              OUTER_RADIUS, OUTER_THICK, RECT_THICK,
                              get_center, is_duplicate_bullet)
 
 CONFIDENCES     = [0.30, 0.40, 0.50, 0.60]
 INFERENCE_SIZES = [1280, 1600, 1920]
-OUTPUT_DIR      = './sweep_output'
+OUTPUT_DIR      = './data/sweep_output'
 CONTACT_WIDTH   = 800  # per cell in the contact sheet; the full-res cells carry the detail
 
 

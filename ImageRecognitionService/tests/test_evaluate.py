@@ -3,8 +3,8 @@ import cv2
 import numpy as np
 import pytest
 
-import board
-from evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
+from detection import board
+from tools.evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
                       RAW_NAMES, SOURCE_NAME, UNKNOWN,
                       attribute, load_labels, match, off_canvas,
                       placement_note, pre_existing_labels, register_photograph,

@@ -26,7 +26,7 @@ sources ADR-0005 allows — and makes them safely:
 The manifest's analysis `window` is not used. It bounds what is scored, and a
 negative is scored against nothing: gravel is gravel anywhere in the clip.
 
-    python mine_negatives.py videos/CamA_20260914_141446.mkv ... --out negatives/
+    python -m tools.mine_negatives data/videos/CamA_20260914_141446.mkv ... --out data/negatives/
 
 A recording whose canvas holds no ground contributes nothing, and says so —
 the CamB close-up is one: its canvas is all Board, so the runtime never shows
@@ -39,8 +39,8 @@ import os
 import cv2
 import numpy as np
 
-import board
-import manifest
+from detection import board
+from tools import manifest
 
 TILE_PX = 960      # kanat_yolo26n_v1 trained at imgsz 960; match the checkpoint
 STEP_S = 1.0       # PROVISIONAL: one candidate frame per second

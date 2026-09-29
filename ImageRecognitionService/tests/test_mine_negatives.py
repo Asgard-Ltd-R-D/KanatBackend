@@ -9,8 +9,8 @@ import cv2
 import numpy as np
 import pytest
 
-from manifest import NotInManifest, SEALED, SPENT, THRESHOLD_WORK
-from mine_negatives import (ground_mask, near_duplicate, pad_to_tile, pick_tiles,
+from tools.manifest import NotInManifest, SEALED, SPENT, THRESHOLD_WORK
+from tools.mine_negatives import (ground_mask, near_duplicate, pad_to_tile, pick_tiles,
                             refuse_sealed, sample_step, thumbnail,
                             to_negative, usable_fit)
 

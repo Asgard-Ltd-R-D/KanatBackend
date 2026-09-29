@@ -1,7 +1,7 @@
 # A single measured de-duplication gate
 
 De-duplication — "is this candidate box the same Bullet Hole I already have?" —
-is answered by one gate in `ImageRecognitionService/tagging_bullets.py`
+is answered by one gate in `ImageRecognitionService/detection/tagging_bullets.py`
 (`is_duplicate_bullet`). Two boxes are the same Bullet Hole if their centres lie
 within **0.5x the mean box diagonal**, or they overlap by more than **50% of the
 smaller box's area**. Nothing else in the pipeline merges Bullet Holes.

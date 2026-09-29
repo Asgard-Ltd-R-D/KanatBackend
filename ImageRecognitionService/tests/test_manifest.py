@@ -9,8 +9,8 @@ anything heavy being available.
 """
 import pytest
 
-import manifest
-from manifest import (ManifestError, NotInManifest, SEALED, SPENT, THRESHOLD_WORK, Sealed,
+from tools import manifest
+from tools.manifest import (ManifestError, NotInManifest, SEALED, SPENT, THRESHOLD_WORK, Sealed,
                       authorise, check_allowed, content_hash, log_final_run, role_for)
 
 MANIFEST = {

@@ -485,7 +485,7 @@ class RegisteredFrames:
         # Two views, and the difference matters: `view` is the Board space
         # everything is registered ONTO, fixed by the frame at `--start`, and
         # `last` is the most recently registered frame, which is what the next
-        # ECC fit starts from and what Target assignment reads at the end.
+        # ECC fit starts from. Both carry the baseline's Targets (#33).
         self.view = self.last = view
         self.imgsz, self.conf = imgsz, conf
         self.fps, self.start = fps, start
@@ -782,21 +782,6 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     residuals = (np.concatenate(residuals_per_frame)
                  if any(len(r) for r in residuals_per_frame) else np.zeros(0))
     print(registration_note(residuals, match_px))
-
-    # Target assignment reads ONE frame — the last that registered — and Target
-    # identity is that frame's contour order, largest first. So a Bullet Hole on
-    # a Target that frame happened to lose is reported as a Miss, and its
-    # "Target 2" need not be the baseline's Target 2. Not fixed here: it changes
-    # Target/Miss assignment, which is a measured output, and no labelled
-    # footage is available to measure the change against. Said out loud instead,
-    # so a run cannot hide it — this project has twice sent work to the wrong
-    # place by diagnosing a symptom it could not see.
-    if len(loop.last.targets) != len(loop.view.targets):
-        print(f"[WARN] the frame Targets are assigned from sees "
-              f"{len(loop.last.targets)} Target(s) where the baseline saw "
-              f"{len(loop.view.targets)}: Target numbers below need not match the "
-              f"baseline's, and a Bullet Hole on a Target this frame lost is "
-              f"reported as a Miss")
 
     new = track_new_bullet_holes(per_frame, processed, match_px)
     for hole in new:

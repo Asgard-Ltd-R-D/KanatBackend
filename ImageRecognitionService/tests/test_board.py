@@ -306,7 +306,49 @@ def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
     first, _ = board.track_view(colour(_scene((2.0, 1.0))), reference)
     second, _ = board.track_view(colour(_scene((5.0, -3.0))), first)
     assert board._apply(second.H, [[80, 90]])[0] == pytest.approx([105, 97], abs=0.4)
-    assert second.anchor is anchor and len(second.targets) == 1
+    assert second.anchor is anchor and second.targets is reference.targets
+
+
+def _tracked(monkeypatch, reference, seen):
+    """`reference` tracked onto a frame whose hue threshold finds `seen`.
+    Sets `reference.anchor` to an identity registration."""
+    monkeypatch.setattr(board, "find_targets", lambda frame: (seen, None))
+    monkeypatch.setattr(board, "ecc_warp", lambda *a: (np.eye(3, dtype=np.float32), 1.0))
+    reference.anchor = board.Anchor(None, None, reference.H)
+    return board.track_view(np.zeros((10, 10, 3), np.uint8), reference)[0]
+
+
+def test_a_bullet_hole_on_a_target_the_frame_lost_is_still_on_that_target(monkeypatch):
+    """#33: a shadow hiding Target 2 from the last frame is not a Miss."""
+    baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
+    tracked = _tracked(monkeypatch, baseline, [_square(0, 0, 100)])
+    assert tracked.assign((550, 550)) == 1
+
+
+def test_target_numbers_are_the_baselines_when_target_1_drops_out(monkeypatch):
+    """#33: losing Target 1 does not renumber Target 2 as Target 1."""
+    baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
+    tracked = _tracked(monkeypatch, baseline, [_square(500, 500, 90)])
+    assert tracked.assign((550, 550)) == 1 and tracked.assign((50, 50)) == 0
+
+
+def test_target_numbers_are_the_baselines_when_two_swap_area_order(monkeypatch):
+    """#33: drift that makes Target 2 look the larger does not renumber them."""
+    baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
+    tracked = _tracked(monkeypatch, baseline, [_square(500, 500, 110), _square(0, 0, 100)])
+    assert tracked.assign((50, 50)) == 0 and tracked.assign((550, 550)) == 1
+    assert tracked.ring_centre(1) == pytest.approx(baseline.ring_centre(1))
+
+
+def test_a_bullet_hole_on_no_target_is_still_a_miss_on_a_tracked_view(monkeypatch):
+    """#33 keeps Misses Misses: the baseline's polygons are not widened."""
+    baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
+    assert _tracked(monkeypatch, baseline, [_square(0, 0, 100)]).assign((300, 300)) is None
+
+
+def test_a_frame_with_no_target_visible_is_still_lost(monkeypatch):
+    """The frame's own contours still gate it: none seen, no evidence from it."""
+    assert _tracked(monkeypatch, _view([_square(0, 0, 100)]), []) is None
 
 
 # --- the Board's edge (#46) ------------------------------------------------

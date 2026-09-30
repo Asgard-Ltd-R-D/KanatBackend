@@ -45,7 +45,12 @@ truth #4. On 2026-09-27 the false positive was a different report, at 38.56s;
 when that changed has not been bisected. CamA's miss, truth #4, dates from #50
 (`dd50c8d`; its parent scores 6/1/0): the mark comes and goes with the pixel
 grid, and 0.83 sits inside #46's canvas-shift control — see the #50 section.
-Table and paragraph re-measured on `main` after #49, 2026-09-29 (#54).
+Table and paragraph re-measured on `main` after #49, 2026-09-29 (#54), and
+confirmed byte-identical on 2026-09-30 after #33 moved Target assignment onto
+the baseline's Targets. Neither clip's last registered frame had lost a
+Target (#32's count warning never fired); a reorder could not show, CamB
+having one Target and CamA's reports all being Misses. Millimetres stay
+blocked, so a sub-ring shift in a ring centre would not show either.
 
 The registration-displacement case ADR-0006 was built on — a 25.60s report in
 CamB's old 25–36s window — does not arise over the whole clip, because the

@@ -600,8 +600,8 @@ ROUNDING_PX = 0.5
 
 def target_span(view):
     """The Target span of this view's Targets, in Board px — the unit
-    `BOARD_MARGIN` and the off-canvas warnings are read in. A tracked frame
-    re-detects its Targets, so take it from one fixed view, not per frame."""
+    `BOARD_MARGIN` and the off-canvas warnings are read in. A tracked view
+    carries the baseline's Targets (#33), so any view gives the same span."""
     return spread(np.vstack([t.reshape(-1, 2) for t in view.targets]))
 
 
@@ -656,11 +656,14 @@ def uncovered_view(view, frame_size):
 def track_view(frame, reference):
     """Re-register the reference view's Board space onto a later frame.
 
-    Board space — scale, origin and canvas size — is fixed once, by the baseline
-    view, and every subsequent frame reuses it. Only the homography is
-    re-estimated. This is what makes a position from frame 300 comparable with a
-    position from frame 1; rebuilding Board space per frame would silently move
-    the origin under the history.
+    Board space — scale, origin, canvas size and the Targets in it — is fixed
+    once, by the baseline view, and every subsequent frame reuses it. Only the
+    homography is re-estimated. The Targets are the baseline's polygons in the
+    baseline's order, not this frame's contours: a Target lost to a shadow here
+    would turn its Bullet Holes into Misses, and re-sorting by area would
+    renumber the rest (#33). This is what makes a position from frame 300
+    comparable with a position from frame 1; rebuilding Board space per frame
+    would silently move the origin under the history.
 
     Each frame is registered to the BASELINE frame (`reference.anchor`), not
     the previous one, on the greyscale Board round the Target: H = W @ H0.
@@ -677,17 +680,13 @@ def track_view(frame, reference):
     Returns `(None, None)` when no Target is visible, and raises `cv2.error` when
     registration fails to converge — both mean "no evidence from this frame".
     """
-    contours, _ = find_targets(frame)
-    if not contours:
+    if not find_targets(frame)[0]:
         return None, None
     a = reference.anchor
     W, correlation = ecc_warp(a.gray, _gray(frame), cv2.MOTION_HOMOGRAPHY,
                               reference.H @ np.linalg.inv(a.H), a.region)
-    view = BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size, [], a,
-                     reference.edges, reference.inner)
-    view.targets = [_apply(view._frame_to_board(), c.reshape(-1, 2))
-                    .reshape(-1, 1, 2).astype(np.float32) for c in contours]
-    return view, correlation
+    return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
+                     reference.targets, a, reference.edges, reference.inner), correlation
 
 
 def residuals(frame, template_mask, view):

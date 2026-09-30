@@ -14,20 +14,21 @@ comparison that could choose a model is the sealed set, and it has not been run.
 
 Read from each checkpoint's own `train_args`. **Every run is a fresh training run
 from the COCO-pretrained weights of its size. None continues from the shipped
-checkpoint.** All train at image size 960 on the same dataset, `pibh`. Its copy
-is now local (6557 train / 1605 val / 96 test images, one class,
-`bullet_hole`), so the recipe can be re-run. It is no longer only a path on
-Kaggle.
+checkpoint.** All train at image size 960 on the same dataset, `pibh`. A copy
+supplied as the original training set is now local (6557 train / 1605 val / 96
+test images, one class, `bullet_hole`), so the recipe can be re-run. Nothing
+checks that copy against Kaggle's, because no hash of it was ever recorded.
 
 | Checkpoint | Local path (`trained_models/`, not committed) | sha256 | Started from | imgsz | Epochs (best) | Batch | Where, ultralytics |
 |---|---|---|---|---:|---:|---:|---|
 | n, shipped | `kanat_yolo26n_v1/weights/best.pt` | `f7e407c6…` | `yolo26n.pt`, fresh | 960 | 100 (100) | 8 | Kaggle, 8.4.130 |
 | s | `kanat_yolo26s_v1/weights/best.pt` | `511ca5c4…` | `yolo26s.pt`, fresh | 960 | 100 (99) | 8 | Kaggle, 8.4.158 |
-| m (the "in-flight" run) | `kanat_yolo26m_v1/weights/best.pt` | `1a6a5a86…` | `yolo26m.pt`, fresh | 960 | **200** (198) | **4** | the Linux GPU box, 8.4.165 |
-| n + negatives | *pending* | | `yolo26n.pt`, fresh | 960 | 100 | 8 | the Linux GPU box |
+| m (the run #30 found in flight) | `kanat_yolo26m_v1/weights/best.pt` | `1a6a5a86…` | `yolo26m.pt`, fresh | 960 | **200** (198) | **4** | `asgard` Linux GPU box, 8.4.165 |
+| n + negatives | *pending* | | `yolo26n.pt`, fresh | 960 | 100 | 8 | `asgard` Linux GPU box |
 
 Seed 0, patience 20, `close_mosaic` 10, default augmentation and `optimizer=auto`
-on all of them.
+on all of them. "`asgard`" is the machine m's `train_args` name, under
+`/home/asgard/`.
 
 **m is not only a capacity step.** It trained twice as many epochs at half the
 batch, so m against n confounds capacity with schedule. **s is the like-for-like
@@ -64,9 +65,10 @@ Capture Setups, each recording run over its manifest window.
 
 `probe.py`: conf 0.02, radius 40 template px. No frame was lost to registration
 on any run, so every checkpoint's rate has the same denominator on a given
-recording and the rates compare directly. **Since arrival** is hits over the
-frames from the earliest first detection any of the three checkpoints made,
-taken from the printed rate (±1 point of rounding).
+recording and the rates compare directly. **Since arrival** is the share of
+frames holding a Detection, counted from the earliest first Detection any of
+the three checkpoints made and taken from the printed rate (±1 point of
+rounding). The one exception is `_102450` truth #2, below.
 
 **CamA 13–25s** (300 frames, net scale 0.90):
 
@@ -88,10 +90,10 @@ clip. The only differences:
 |---|---|---:|---:|---:|---:|---|
 | `_102250` | truth #1 | 31.16s | ~100% | ~100% | ~100% | |
 | | truth #2 | 29.00s | 100% | 100% | 100% | |
-| | truth #3 | 1.64s | ~100% | **89%** | ~100% | s's last sighting is 45.72s |
+| | truth #3 | 1.64s | ~100% | **89%** | ~100% | s's last Detection is 45.72s |
 | | truth #4 | 30.60s | ~100% | ~100% | ~100% | |
 | `_102450` | truth #1 | 32.92s | ~100% | ~100% | ~100% | |
-| | truth #2 | 32.40s | ~100% | ~100% | ~100% | n also fires near it on and off from 8.60s to 15.48s, before the bullet: the ring-numeral flicker `falsification_run.md` records. s and m do not |
+| | truth #2 | 32.40s | —* | ~100% | ~100% | *n also fires near it on and off from 8.60s to 15.48s, before the Hit: the ring-numeral flicker `falsification_run.md` records. s and m do not. Arrival is taken from s and m, and n's rate mixes the flicker in, so its share after 32.40s cannot be read from it. The pipeline puts n at 384 of 384 frames from 32.40s at conf 0.40 |
 | | truth #3 | 31.28s | ~100% | ~100% | ~100% | n first at 31.28s, s and m at 31.48s |
 | | truth #4 | 31.60s | ~100% | ~100% | ~100% | |
 | `_103223` | truth #1 | 11.20s | ~100% | ~100% | ~100% | |
@@ -117,7 +119,7 @@ today.
 | `_103223` 0–51.88s | 2/1/0 | 2/1/0 | 2/1/0 |
 | **pooled, 16** | **15/3/1**, F1 0.88 | 12/1/4, F1 0.83 | 14/2/2, F1 0.88 |
 
-Each Bullet Hole, ✓ found and ✗ missed:
+Each Bullet Hole, ✓ found and ✗ not found:
 
 | Recording | truth | n | s | m |
 |---|---|:-:|:-:|:-:|
@@ -132,12 +134,13 @@ Each Bullet Hole, ✓ found and ✗ missed:
 | `_102450` | #1–#4 | ✓ | ✓ | ✓ |
 | `_103223` | #1–#2 | ✓ | ✓ | ✓ |
 
-**The misses are the detector, not the change filter.** Rerun with
-`--no-change-filter`, CamA gives the same misses for every checkpoint: s never
-confirms #1, #2 or #4 at conf 0.40, and m never confirms #2 or #6. Each is a
-mark the probe shows fading for that checkpoint. s's `_102250` truth #3 is not
-confirmed without the filter either, and it is the one miss the conf-0.02
-probe does not explain: s sees it in 89% of frames there. Probed again at the
+**The false negatives are the detector, not the change filter.** Rerun with
+`--no-change-filter`, CamA loses the same Bullet Holes for every checkpoint: s
+never confirms #1, #2 or #4 at conf 0.40, and m never confirms #2 or #6. The
+probe puts each of them at 64% of frames or less since arrival: s at 59, 47 and
+64%, m at 30 and 64%. n's own false negative, #4, sits at 62%. s's `_102250`
+truth #3 is not confirmed without the filter either, and it is the one false
+negative the conf-0.02 probe does not explain: s sees it in 89% of frames there. Probed again at the
 operating 0.40, s sees it in ~16% of the frames after 1.64s, against n's ~91%.
 So s finds the mark but scores it below the threshold that was fitted to n.
 That confidence failure is exactly what the probe's low floor keeps separate
@@ -150,9 +153,12 @@ from a detection failure.
   after it. s has none.
 - `_102250`: n's is found #4 at 30.60s on ring 8, `detector` at 520 px, which
   HANDOVER records. **Neither s nor m produces it.**
-- `_103223`: all three report the insect or debris that lands at ~19.8s. It is
-  a real object, which persistence and change evidence pass by construction
-  (`falsification_run.md`).
+- `_103223`: n and m report the insect or debris that lands at 19.76–19.84s,
+  `detector` at 259–261 px. It is a real object, which persistence and change
+  evidence pass by construction (`falsification_run.md`). s's false positive
+  arrives at 19.88s but is `detector` at **639** px. Its baseline holds all ten
+  photographed marks, like the others', so it sits somewhere else on the Board.
+  Whether it is the same object is not established.
 
 **What the change filter is covering for.** False positives the pipeline
 confirms *before* change evidence: read directly from `--no-change-filter` runs
@@ -168,7 +174,9 @@ true positives.
 | **pooled** | **8** | **13** | **2** |
 
 On CamA they sit almost all on Target 1's printed rings (`[model only]`, no
-change against the baseline). The filter removes all but the six false
+change against the baseline). Attributed there (ADR-0006), n's 5 are all
+`detector`, s's 10 are 7 `detector`, 1 `displacement` and 2 `unknown`, and
+m's 1 is `detector`. The filter removes all but the six false
 positives in the pipeline table, so the headline counts barely move. m leans on the filter least by a wide margin. Its two are the CamA
 14.36s mark and the `_103223` insect, both real changes that the filter passes
 anyway.
@@ -202,15 +210,16 @@ anyway.
 ## yolo26n with background negatives — pending
 
 The training-data experiment, kept apart from capacity: the shipped n recipe
-with the #28 negatives added and nothing else changed.
+with the #28 negatives added.
 
 - **Fresh from `yolo26n.pt`, imgsz 960, 100 epochs, batch 8, seed 0, patience
-  20**, on the Linux GPU box that trained m. This re-runs the recipe with data
-  added; it does not fine-tune the shipped checkpoint. On this Mac's MPS the
-  recipe measured ~1.4 s an iteration, about 33 h.
+  20**, on the `asgard` box that trained m. This re-runs the recipe with data
+  added; it does not fine-tune the shipped checkpoint. Locally the
+  recipe measured ~1.4 s an iteration on an M1 Pro's MPS, about 33 h.
 - **Data:** [`config/pibh_negatives.yaml`](../config/pibh_negatives.yaml),
   placed in the `pibh` root with `data/negatives` copied in beside it as
-  `negatives/`:
+  `negatives/`. The images are not committed; on a fresh clone,
+  `tools/mine_negatives.py` regenerates them first:
 
   ```bash
   yolo train model=yolo26n.pt data=pibh_negatives.yaml imgsz=960 epochs=100 batch=8 \
@@ -224,6 +233,11 @@ with the #28 negatives added and nothing else changed.
 - **Dose.** 15 negatives in 6572 images is 0.23%. A null result would say that
   these 15 at that weight changed nothing. It would not say that background
   negatives cannot work.
+- **Not the only change.** This trains on the `asgard` box, whose ultralytics
+  was 8.4.165 when m trained, and the shipped n trained on Kaggle with 8.4.130. So against the
+  shipped n it confounds the negatives with platform and version. The same
+  command with `pibh`'s own `data.yaml` on the same box is the control that
+  separates them.
 - **Where they come from.** All 15 are `cama-20260914`, 5 of them from
   `CamA_20260914_141546` itself (`data/negatives/sources.csv`). So CamA's
   gravel is in-sample for this checkpoint. The CamB close trio contributed

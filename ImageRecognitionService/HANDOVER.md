@@ -505,20 +505,17 @@ windows*. That is **not** enough to close `yolo26n` vs `yolo26m`: two recordings
 is not the held-out test set, and model selection still waits on it (blocked
 item 2).
 
-**`yolo26s` and `yolo26m` are now benched beside n on the four unsealed
-recordings** (#30, [`model_bench.md`](docs/model_bench.md)). All three are fresh
-training runs at imgsz 960. None is promoted. Capacity buys no recall the probe
-can see: CamB is saturated for all three, and on CamA each larger model loses
-marks n holds. Pooled pipeline scores are n 15/3/1, s 12/1/4, m 14/2/2.
-Before the change filter, m confirms 2 false positives against n's 8 and s's
-13, and none of m's is on the printed rings, where most of the other two's
-are. The yolo26n run with background negatives is pending.
-
 It is also not the whole story about recall. Outside the labelled window, on the
 full 0–46s CamB clip, the detector loses a mark that is still plainly visible.
 It finds it only on and off from 4.0s, not at all from 12.40s onward, while the
 operator still sees it at 25.0s — see "Three failure modes" below, which also
 corrects the earlier "21 seconds" figure.
+
+**`yolo26s` and `yolo26m` are benched beside n** (#30, 2026-09-30 at `542abd3`,
+[`model_bench.md`](docs/model_bench.md)), on the four unsealed recordings that
+carry photograph truth. None is promoted. Capacity buys no recall the probe can
+see, and pooled pipeline scores are n 15/3/1, s 12/1/4, m 14/2/2. The yolo26n
+run with background negatives is pending.
 
 ---
 

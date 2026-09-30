@@ -1,0 +1,15 @@
+# #30: the dataset the shipped yolo26n recipe trained on, plus the #28 background
+# negatives, in train only. kanat_yolo26n_v1 recorded /kaggle/working/pibh/data.yaml;
+# this is that dataset's layout (train/ val/ test/, each images/ + labels/, one
+# class) with data/negatives copied in beside them as negatives/.
+#
+# There is no `path:` key, so ultralytics resolves every entry against this file's
+# own directory: copy it into the dataset root. The recipe and the command are in
+# docs/model_bench.md.
+train:
+  - train/images
+  - negatives/images   # 15 gravel tiles, empty label files, spent footage only (sources.csv)
+val: val/images
+test: test/images
+names:
+  0: bullet_hole

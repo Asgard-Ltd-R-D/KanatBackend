@@ -505,6 +505,15 @@ windows*. That is **not** enough to close `yolo26n` vs `yolo26m`: two recordings
 is not the held-out test set, and model selection still waits on it (blocked
 item 2).
 
+**`yolo26s` and `yolo26m` are now benched beside n on the four unsealed
+recordings** (#30, [`model_bench.md`](docs/model_bench.md)). All three are fresh
+training runs at imgsz 960. None is promoted. Capacity buys no recall the probe
+can see: CamB is saturated for all three, and on CamA each larger model loses
+marks n holds. Pooled pipeline scores are n 15/3/1, s 12/1/4, m 14/2/2.
+Before the change filter, m confirms 2 false positives against n's 8 and s's
+13, and none of m's is on the printed rings, where most of the other two's
+are. The yolo26n run with background negatives is pending.
+
 It is also not the whole story about recall. Outside the labelled window, on the
 full 0–46s CamB clip, the detector loses a mark that is still plainly visible.
 It finds it only on and off from 4.0s, not at all from 12.40s onward, while the
@@ -616,6 +625,7 @@ extraction is what keeps sealed pixels out of it.
 | `tools/probe.py`, `tools/registration_reach.py` | Per-mark detection and registration measurements over a clip |
 | `tools/mine_negatives.py` | Background negatives from unsealed footage, into `data/negatives/` |
 | `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
+| `docs/model_bench.md`, `config/pibh_negatives.yaml` | Every checkpoint's training record and bench; the negatives run's dataset (#30) |
 | `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `data/truth/<recording>/` | Ground truth, one directory per recording |
 | `detection/tagging_bullets.py`, `tools/sweep_profile.py`, `config/capture_profiles.json` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
@@ -959,7 +969,8 @@ waiting on. **Do not move any constant further on CamA and CamB alone.**
 2. Genuinely close Bullet Holes, and how near two real marks actually get.
 3. Persistence: `PERSIST` 0.50 and the fixed 50-frame window.
 4. Baseline suppression, which bounds recall directly.
-5. `yolo26n` vs `yolo26m` vs P2.
+5. `yolo26n` vs `yolo26m` vs P2. The unsealed footage has been measured and
+   settles nothing (#30, `docs/model_bench.md`).
 6. The matching tolerances — `MATCH_TPL_PX`, `DUP_CENTER_FACTOR`,
    `OVERLAP_THRESHOLD` and `evaluate.MATCH_TOLERANCE_TPL`.
 

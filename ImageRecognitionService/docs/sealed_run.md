@@ -1,13 +1,14 @@
 # The sealed run
 
-**Run once, 2026-10-01, at `54a49a8`.** Issue #31. This is the one evaluation
+**Measured once, 2026-10-01, at `54a49a8`.** Issue #31. This is the one evaluation
 of the frozen system on footage nothing was tuned or chosen on (ADR-0005). The
 model, the constants and the commit were written down in #31 before any sealed
 recording was opened:
 
-- **Model:** `kanat_yolo26n_v1`, sha256 `f7e407c6…b23e3e`.
+- **Model:** `kanat_yolo26n_v1`, sha256 `f7e407c67226062d7ddb0a02e4868a06b3c27d56002255f56786036b43b23e3e`.
+- **Commit:** `54a49a8d60f1d28bc52dbf805346e85f7684262c`.
 - **Constants:** every constant at its value at `54a49a8`, with no CLI overrides.
-- **Environment:** opencv-python 4.10.0.84, ultralytics 8.4.126, torch 2.13.0.
+- **Environment:** `opencv-python==4.10.0.84`, ultralytics 8.4.126, torch 2.13.0.
 
 **Nothing here moves a constant or a model, and neither recording is run
 again.** The result is reported as it came out.
@@ -19,7 +20,8 @@ It is the first, and only, reading on a camera pose nothing was fitted to.
 ## Scope
 
 At `54a49a8`, `config/recordings.json` seals 14 recordings in four Capture
-Setups. Only the `camb-20260915-wide-two-boards` pair has photograph truth, so
+Setups. ADR-0005 counts `-wide-tight` and `-wide` as one scene at two framings,
+so that is three independent scenes. Only the `camb-20260915-wide-two-boards` pair has photograph truth, so
 only that pair was run. The other 12 are all CamA: 2 `-wide-tight`, 7 `-wide`
 and 3 `-close-cross`. They have no truth, they were **not opened**, and they
 stay sealed. The probe was not run: #31 does not require it, and it would have
@@ -33,7 +35,7 @@ been a second pass over the same recordings.
 ```
 
 The windows are the manifest's provisional whole-clip windows, fixed before the
-run. The run checks added to `data/sealed_runs.log` are the two entries in it.
+run. `data/sealed_runs.log` holds two entries, one per run.
 The second entry reads `54a49a8-dirty`. That was predicted in #31 before the run:
 the first run created the log, which is a tracked path. `git status` confirmed
 the log was the only change before the second run started.
@@ -56,9 +58,12 @@ is shown as "—" here.)
 | `_101450` | 14 759 | 4.2 | 20.0 |
 | `_101550` | 1 073 | 11.7 | 20.0 |
 
-On both recordings the max sits on the ceiling. The fitted clips show the same
-thing (HANDOVER). `_101550`'s median is just above the 7.9–11.1 recorded on every
-unsealed clip (HANDOVER, `falsification_run.md`). `_101450`'s is below that range.
+On both recordings the max sits on the ceiling. The frozen system does not do
+that on unsealed footage. Since #50, the unsealed clips read medians of 1.9–2.8
+template px, with maxes of 7.8–19.8, all below the ceiling (HANDOVER's #50
+table). Both sealed medians sit above that range: `_101450` at 4.2, about 1.5x
+its top, and `_101550` at 11.7, about 4x. (`falsification_run.md`'s 7.9–11.1
+predates #50 and is not the frozen system's.)
 
 ## What each run disclosed
 
@@ -75,9 +80,10 @@ no pre-existing mark, so placement is unverified.
 
 **`_101550`.** 2 Targets. ECC converged at only **0.641**. "The camera's view
 does not map onto the Board plane", so how much of the view is off the canvas
-is unknown. The baseline held 3 pre-existing marks. The one reported Bullet
-Hole was first detected at 0.84 s and seen in 18% of frames after that. It is a
-Miss, attributed to **displacement**: it is 32 template px from a mark the
+is unknown. The baseline held 3 pre-existing marks. The one reported
+detection was first detected at 0.84 s and seen in 18% of frames after that.
+The tool classed it `MISS` (off every Target). It is a false positive,
+attributed to **displacement**: it is 32 template px from a mark the
 baseline already held. **Placement is doubtful:** the photograph's one
 pre-existing mark lands on nothing the baseline holds (0 of 1 within 40 px).
 Either the truth placement is off or the baseline missed that mark, and the

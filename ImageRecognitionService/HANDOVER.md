@@ -501,9 +501,10 @@ four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had
 only unit tests behind them.
 
 Recall is 100% on both fitted clips with the `yolo26n` weights, *within the labelled
-windows*. That is **not** enough to close `yolo26n` vs `yolo26m`: two recordings
-is not the held-out test set, and model selection still waits on it (blocked
-item 2).
+windows*. That is **not** enough to close `yolo26n` vs `yolo26m`. Nor will the
+held-out set close it: the model is chosen and frozen before the sealed run,
+which then evaluates that one choice once and does not choose between
+checkpoints (#31).
 
 It is also not the whole story about recall. Outside the labelled window, on the
 full 0–46s CamB clip, the detector loses a mark that is still plainly visible.
@@ -960,12 +961,14 @@ close-up ground-truth photo is cropped inside the sheet.
 now.
 
 **2. The held-out test set.** Whole recordings held out, never frames — adjacent
-video frames are near-identical and splitting by frame is leakage. Until it
-exists, every threshold below is tuned on ten Bullet Holes across two clips, and
-`yolo26n` vs `yolo26m` vs P2 cannot be compared meaningfully.
+video frames are near-identical and splitting by frame is leakage. Every
+threshold below is tuned on ten Bullet Holes across two clips, and `yolo26n` vs
+`yolo26m` vs P2 cannot be compared meaningfully on them.
 
-This is the next step, and it is what the following six open questions are
-waiting on. **Do not move any constant further on CamA and CamB alone.**
+The sealed set does not answer the six open questions below either. #31 fixes
+the model, the constants and the commit before the sealed run, and the run
+evaluates that frozen choice once. **Do not move any constant further on CamA
+and CamB alone.**
 
 1. Duplicate / split behaviour — the 0.59x vs 0.74x collision above.
 2. Genuinely close Bullet Holes, and how near two real marks actually get.
@@ -1096,5 +1099,6 @@ A static camera gives only a few distinct gravel tiles per clip, so more
 negatives means more Capture Setups, not a smaller `--step`.
 
 `yolo26.yaml` and `yolo26-p2.yaml` are both present in the installed ultralytics
-(8.4.126), so `m` and the P2 experiment are available whenever the test set makes
-them measurable.
+(8.4.126), so `m` and the P2 experiment can be trained. `m` is benched on the
+unsealed footage (#30, `docs/model_bench.md`). Any choice between them is made
+and frozen before the sealed run, which evaluates only that choice (#31).

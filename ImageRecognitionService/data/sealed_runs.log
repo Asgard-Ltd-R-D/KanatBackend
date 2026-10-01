@@ -1,0 +1,2 @@
+2026-10-01T11:52:23Z  7b725aa8441610e4f8d6bc35cac02849ba22d2e638fee270536ed67f6164b528  model=/Users/ronen.sasgardsys.co.il/Projects/Kanat/KanatBackend/ImageRecognitionService/trained_models/kanat_yolo26n_v1/weights/best.pt  commit=54a49a8  tool=evaluate.py
+2026-10-01T12:01:57Z  6bedeefddbe23dc245329c2f7ef0bdc6bc9e28cf68d363667d382a5922cd2b5b  model=/Users/ronen.sasgardsys.co.il/Projects/Kanat/KanatBackend/ImageRecognitionService/trained_models/kanat_yolo26n_v1/weights/best.pt  commit=54a49a8-dirty  tool=evaluate.py

@@ -58,10 +58,11 @@ is shown as "—" here.)
 | `_101450` | 14 759 | 4.2 | 20.0 |
 | `_101550` | 1 073 | 11.7 | 20.0 |
 
-On both recordings the max sits on the ceiling. The frozen system does not do
-that on unsealed footage. Since #50, the unsealed clips read medians of 1.9–2.8
-template px, with maxes of 7.8–19.8, all below the ceiling (HANDOVER's #50
-table). Both sealed medians sit above that range: `_101450` at 4.2, about 1.5x
+On both recordings the max sits on the ceiling. On unsealed footage the frozen
+system is mixed: the three CamB close recordings stay off the ceiling (maxes
+7.8–14.1), and CamA's max of 19.8 still sits at it. So reaching the ceiling is
+not unique to the sealed pair (HANDOVER's #50 table and the notes under it).
+Since #50, the unsealed medians are 1.9–2.8 template px. Both sealed medians sit above that range: `_101450` at 4.2, about 1.5x
 its top, and `_101550` at 11.7, about 4x. (`falsification_run.md`'s 7.9–11.1
 predates #50 and is not the frozen system's.)
 

@@ -500,9 +500,11 @@ contains.
 four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had
 only unit tests behind them.
 
-Recall is 100% on both fitted clips with the `yolo26n` weights, *within the labelled
-windows*. That is **not** enough to close `yolo26n` vs `yolo26m`. Nor will the
-held-out set close it: the model is chosen and frozen before the sealed run,
+Recall with the `yolo26n` weights, *within the labelled windows*, is 4 of 4 on
+`CamB_20260915_102250` and 5 of 6 on CamA: CamA truth #4 has been lost since
+#50 (the scored table above, and [`model_bench.md`](docs/model_bench.md)). It
+was 100% on both fitted clips before #50. That is **not** enough to close
+`yolo26n` vs `yolo26m`. Nor will the held-out set close it: the model is chosen and frozen before the sealed run,
 which then evaluates that one choice once and does not choose between
 checkpoints (#31).
 

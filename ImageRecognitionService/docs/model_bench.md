@@ -90,8 +90,17 @@ Capture Setups, each recording run over its manifest window.
 on any run, so every checkpoint's rate has the same denominator on a given
 recording and the rates compare directly. **Since arrival** is the share of
 frames holding a Detection, counted from the earliest first Detection any of
-the three checkpoints made and taken from the printed rate (±1 point of
-rounding). The one exception is `_102450` truth #2, below.
+the three checkpoints made. `probe.py` does not print it: its `rate` divides by
+every registered frame from `--start`. Each cell is converted from that printed
+rate as `rate × looked / (looked − a)`, with `a` the frame index of that earliest
+`first` (25 fps). No checkpoint detects the mark before `a`, so every Detection
+the rate counts falls after it. For CamA truth #1, n prints `rate 0.76 of 300
+frames` and the earliest `first` is 15.88s, so `a` is 72 and 0.76 × 300 / 228
+is 100%. The rate's two decimals are worth ±0.005 × looked frames: under 1
+point on CamA, up to 2 on CamB, hence CamB's ~100%. The one exception is
+`_102450` truth #2, below. Rerun on 2026-10-01 at `0730cf4`, with no change to
+`detection/` or `tools/` since `542abd3`, the CamA command reproduces every
+CamA cell.
 
 **CamA 13–25s** (300 frames, net scale 0.90):
 

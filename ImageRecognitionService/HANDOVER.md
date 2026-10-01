@@ -511,11 +511,14 @@ It finds it only on and off from 4.0s, not at all from 12.40s onward, while the
 operator still sees it at 25.0s — see "Three failure modes" below, which also
 corrects the earlier "21 seconds" figure.
 
-**`yolo26s` and `yolo26m` are benched beside n** (#30, 2026-09-30 at `542abd3`,
-[`model_bench.md`](docs/model_bench.md)), on the four unsealed recordings that
-carry photograph truth. None is promoted. Capacity buys no recall the probe can
-see, and pooled pipeline scores are n 15/3/1, s 12/1/4, m 14/2/2. The yolo26n
-run with background negatives is pending.
+**`yolo26s`, `yolo26m` and a yolo26n with background negatives are benched
+beside n** (#30, 2026-09-30 and 2026-10-01, [`model_bench.md`](docs/model_bench.md)),
+on the four unsealed recordings that carry photograph truth. None is promoted.
+Capacity buys no recall the probe can see. Pooled pipeline scores are n 15/3/1,
+s 12/1/4, m 14/2/2 and n + negatives 14/0/2. The last loses CamA #3 to
+confidence, and none of the three false positives it drops is gravel. By their
+batch counts, every checkpoint trained on a scene re-split of the Kaggle data,
+not on its shipped split.
 
 ---
 
@@ -622,7 +625,7 @@ extraction is what keeps sealed pixels out of it.
 | `tools/probe.py`, `tools/registration_reach.py` | Per-mark detection and registration measurements over a clip |
 | `tools/mine_negatives.py` | Background negatives from unsealed footage, into `data/negatives/` |
 | `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
-| `docs/model_bench.md`, `config/pibh_negatives.yaml` | Every checkpoint's training record and bench; the negatives run's dataset (#30) |
+| `docs/model_bench.md` | Every checkpoint's training record, the dataset each one trained on, and its bench (#30) |
 | `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `data/truth/<recording>/` | Ground truth, one directory per recording |
 | `detection/tagging_bullets.py`, `tools/sweep_profile.py`, `config/capture_profiles.json` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |

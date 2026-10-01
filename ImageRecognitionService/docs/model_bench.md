@@ -1,8 +1,9 @@
 # Model bench: yolo26n, s and m, and yolo26n with background negatives
 
-**Measured 2026-09-30 at `542abd3`**, issue #30. `opencv-python==4.10.0.84`,
-`ultralytics==8.4.126`, inference on CPU (the runtime's default device), every
-constant at its current value. No sealed recording was opened and no
+**Measured 2026-09-30 at `542abd3`**, issue #30, and the negatives run on
+2026-10-01 (its own section). `opencv-python==4.10.0.84`, `ultralytics==8.4.126`,
+inference on CPU (the runtime's default device), every constant at its current
+value. No sealed recording was opened and no
 `--final-run` was passed; `data/sealed_runs.log` still does not exist.
 
 **Nothing is promoted.** `DEFAULT_MODEL` is still `kanat_yolo26n_v1`. The four
@@ -14,17 +15,31 @@ comparison that could choose a model is the sealed set, and it has not been run.
 
 Read from each checkpoint's own `train_args`. **Every run is a fresh training run
 from the COCO-pretrained weights of its size. None continues from the shipped
-checkpoint.** All train at image size 960 on the same dataset, `pibh`. A copy
-supplied as the original training set is now local (6557 train / 1605 val / 96
-test images, one class, `bullet_hole`), so the recipe can be re-run. Nothing
-checks that copy against Kaggle's, because no hash of it was ever recorded.
+checkpoint.** All train at image size 960 on `pibh`, one class, `bullet_hole`.
+
+**`pibh` is not a downloaded split.** The training notebook builds it in
+`/kaggle/working/pibh` from Kaggle's `qiyan527/target-paper-images-with-bullet-holes`
+(6557 train / 1605 val / 96 test images; a local copy exists, unhashed). It drops
+the 96 test images, whose one box is the whole target paper, and the 3 train
+images that have no label file. Then it re-splits the remaining 8159 frames by
+scene into **5941 train / 1475 val / 743 test**. A scene is a 16-bit dHash bucket,
+86 of them. s's notebook was saved with its output, which prints those counts
+and `5941 images, 0 backgrounds`. n's and m's notebooks are not on hand.
+
+Each run's learning rate at the end of its first warmup epoch fixes its batches
+per epoch, and so its train size. n and s fit 743 batches of 8 and m fits
+1485–1486 of 4: 5937–5944 images each, never the Kaggle copy's 6557. The negatives
+run fits 745 batches, 5953–5960 images, which is 5941 + 3 + 15 = 5959 (below). The
+split is deterministic. So if n and m ran the same code over the same Kaggle
+files, every run trained and validated on the same frames. The notebooks are not
+committed.
 
 | Checkpoint | Local path (`trained_models/`, not committed) | sha256 | Started from | imgsz | Epochs (best) | Batch | Where, ultralytics |
 |---|---|---|---|---:|---:|---:|---|
 | n, shipped | `kanat_yolo26n_v1/weights/best.pt` | `f7e407c6…` | `yolo26n.pt`, fresh | 960 | 100 (100) | 8 | Kaggle, 8.4.130 |
 | s | `kanat_yolo26s_v1/weights/best.pt` | `511ca5c4…` | `yolo26s.pt`, fresh | 960 | 100 (99) | 8 | Kaggle, 8.4.158 |
 | m (the run #30 found in flight) | `kanat_yolo26m_v1/weights/best.pt` | `1a6a5a86…` | `yolo26m.pt`, fresh | 960 | **200** (198) | **4** | `asgard` Linux GPU box, 8.4.165 |
-| n + negatives | *pending* | | `yolo26n.pt`, fresh | 960 | 100 | 8 | `asgard` Linux GPU box |
+| n + negatives | `kanat_yolo26n_neg_v1/weights/best.pt` | `6729d93d…` | `yolo26n.pt`, fresh | 960 | 100 (100) | 8 | Kaggle, 8.4.167 |
 
 Seed 0, patience 20, `close_mosaic` 10, default augmentation and `optimizer=auto`
 on all of them. "`asgard`" is the machine m's `train_args` name, under
@@ -34,10 +49,11 @@ on all of them. "`asgard`" is the machine m's `train_args` name, under
 batch, so m against n confounds capacity with schedule. **s is the like-for-like
 capacity step**: same recipe, same platform, only the size changes.
 
-Validation mAP50-95 (0.870 / 0.885 / 0.904) is on `pibh`'s own val split.
-Nobody has audited that split for the frame leakage `dataset_audit.md` found
-in the Roboflow export it did audit (3830 train images, not `pibh`'s 6557). It
-is listed for identity, not for comparison.
+Validation mAP50-95 (n 0.870 / s 0.885 / m 0.904 / n + negatives 0.855) is on
+that 1475-frame scene split. The re-split exists to stop the frame leakage
+`dataset_audit.md` found in the Roboflow export it audited, but nobody has checked
+that 16-bit scene buckets stop it on `pibh`. Those are also `pibh`'s frames, not
+this footage. The figures are listed for identity, not for comparison.
 
 ## Footage and ground truth
 
@@ -207,45 +223,127 @@ anyway.
   comparison `HANDOVER.md` blocks model selection on (open question 5) is
   still the sealed set's to answer.
 
-## yolo26n with background negatives — pending
+## yolo26n with background negatives
 
-The training-data experiment, kept apart from capacity: the shipped n recipe
-with the #28 negatives added.
+**Measured 2026-10-01 at `3baf632`.** Same code (only docs have changed since
+`542abd3`), same libraries, device and constants, same commands with
+`--model trained_models/kanat_yolo26n_neg_v1/weights/best.pt`. As a drift check,
+the shipped n still scores 5/1/1 on CamA there, with the same 830 px false
+positive. **Not promoted.**
+
+This is the training-data experiment, kept apart from capacity: the shipped n
+recipe with background images added.
+
+### The run
 
 - **Fresh from `yolo26n.pt`, imgsz 960, 100 epochs, batch 8, seed 0, patience
-  20**, on the `asgard` box that trained m. This re-runs the recipe with data
-  added; it does not fine-tune the shipped checkpoint. Locally the
-  recipe measured ~1.4 s an iteration on an M1 Pro's MPS, about 33 h.
-- **Data:** [`config/pibh_negatives.yaml`](../config/pibh_negatives.yaml),
-  placed in the `pibh` root with `data/negatives` copied in beside it as
-  `negatives/`. The images are not committed; on a fresh clone,
-  `tools/mine_negatives.py` regenerates them first:
-
-  ```bash
-  yolo train model=yolo26n.pt data=pibh_negatives.yaml imgsz=960 epochs=100 batch=8 \
-      seed=0 patience=20 close_mosaic=10 workers=2 device=0 name=bullet_hole_negatives
-  ```
-
-  The train scan should read `6572 images, 18 backgrounds`. That is the 15
-  negatives plus 3 `pibh` train images that ship without a label file. If
-  Kaggle's copy matched, the shipped n trained on those 3 as well. Before this
-  run, `pibh` held no intentional background at all.
-- **Dose.** 15 negatives in 6572 images is 0.23%. A null result would say that
-  these 15 at that weight changed nothing. It would not say that background
-  negatives cannot work.
-- **Not the only change.** This trains on the `asgard` box, whose ultralytics
-  was 8.4.165 when m trained, and the shipped n trained on Kaggle with 8.4.130. So against the
-  shipped n it confounds the negatives with platform and version. The same
-  command with `pibh`'s own `data.yaml` on the same box is the control that
-  separates them.
+  20**, on Kaggle with ultralytics 8.4.167. This re-runs the recipe with data
+  added; it does not fine-tune the shipped checkpoint. The best epoch is the
+  last.
+- **Data: the notebook that builds `pibh` (above), with two steps added after
+  the split**, both into train only. One restores the 3 unlabelled Kaggle train
+  images (`175`, `257`, `271`, clean unshot targets) with empty label files. The
+  other adds the 15 #28 negatives, uploaded into the Kaggle dataset as
+  `negatives/`. The run saved no output, so its train scan is not on record;
+  its 745 batches fit the 5959 images this makes. Nothing checks the uploaded 15
+  against `data/negatives` by hash. All 15 local label files are empty.
+- **So it adds 18 backgrounds, not 15.** n, s and m trained on none: the
+  notebook drops images without a label file, and s's scan reads `0
+  backgrounds`. 18 in 5959 is 0.30%. A null result would say that these 18 at
+  that weight changed nothing. It would not say that background negatives
+  cannot work.
+- **Not the only change.** The platform is the same as the shipped n's, but
+  ultralytics went from 8.4.130 to 8.4.167, and the GPU may differ: n's 100
+  epochs took 6.6 h, these took 5.0 h. No run measures how far a second run of
+  one recipe moves these scores. The same notebook without the two steps, on
+  8.4.167, is the control for both.
 - **Where they come from.** All 15 are `cama-20260914`, 5 of them from
-  `CamA_20260914_141546` itself (`data/negatives/sources.csv`). So CamA's
-  gravel is in-sample for this checkpoint. The CamB close trio contributed
-  none, and its canvas is all Board.
-- **What can show the effect.** The probe measures recall only, so it shows
-  whether the negatives cost any. The target failure, gravel, is not what any
-  false positive above is made of, so the pipeline score has little room to
-  show a gain on these clips either.
+  `CamA_20260914_141546` itself (`data/negatives/sources.csv`). So CamA's gravel
+  is in-sample for this checkpoint. The CamB close trio contributed none, and
+  its canvas is all Board.
 
-When the checkpoint arrives it goes to `trained_models/kanat_yolo26n_neg_v1/`
-and runs through the same two commands on the same four recordings.
+### Detector probe
+
+Same settings. Arrival is the one in the tables above, taken from n, s and m.
+
+**CamA 13–25s:**
+
+| Bullet Hole | arrives | n | n + negatives | Note |
+|---|---:|---:|---:|---|
+| truth #1 | 15.88s | 100% | 100% | |
+| truth #2 | 14.64s | 53% | **~100%** | |
+| truth #3 | 16.48s | 96% | 97% | at conf 0.40: n ~92%, n + negatives ~24% |
+| truth #4 | 17.08s | 62% | **20%** | first at 17.44s, none after 22.88s |
+| truth #5 | 14.00s | 85% | **50%** | blind 20.64–22.32s, none after 23.52s |
+| truth #6 | 15.24s | 100% | ~100% | |
+| mean | | **83%** | 78% | |
+
+**CamB: saturated, as for the other three.** All ten new Bullet Holes are seen
+in every frame from arrival to the end of the clip, or all but a handful.
+`_102450` truth #3 is first seen at 31.44s. **There is no numeral flicker
+either**: the first Detection near `_102450` truth #2 is the Hit at 32.40s, as
+for s and m.
+
+### Pipeline
+
+| Recording | n TP/FP/FN | n + negatives |
+|---|---|---|
+| CamA 13–25s | 5/1/1 | 4/0/2 |
+| `_102250` 0–46s | 4/1/0 | 4/0/0 |
+| `_102450` 0–47.76s | 4/0/0 | 4/0/0 |
+| `_103223` 0–51.88s | 2/1/0 | 2/0/0 |
+| **pooled, 16** | 15/3/1, F1 0.88 | **14/0/2**, F1 0.93 |
+
+Per Bullet Hole, it finds what n finds, except that it also misses CamA truth
+#3. Like n, it misses CamA #4.
+
+- **The false negatives are the detector.** `--no-change-filter` loses the same
+  two. #4 is at 20% since arrival. #3 is the confidence failure s showed on
+  `_102250` #3: seen in 97% of frames since arrival at conf 0.02, but ~24% at
+  0.40, against n's ~92%. Over the CamA clip at 0.40, this checkpoint also
+  matches a detection to a pre-existing mark 205 times, against n's 725, and it
+  holds a different set of them (below).
+- **No false positive survives, and none of n's three appears.** It does not
+  produce the CamA 830 px mark or `_102250`'s ring 8. Nor does it confirm
+  `_103223`'s insect at 19.76s, even without the change filter. None of those
+  three is gravel, which is what the 15 negatives are, so nothing here ties the
+  gain to them rather than to the confounds above.
+- **Before the change filter it is no cleaner.** Its counts are all read
+  directly from `--no-change-filter` runs; n's are from the table above, and
+  CamA's is re-read the same way:
+
+  | Recording | n | n + negatives |
+  |---|---:|---:|
+  | CamA | 5 | 7 |
+  | `_102250` | 2 | 0 |
+  | `_102450` | 0 | 0 |
+  | `_103223` | 1 | 2 |
+  | **pooled** | 8 | **9** |
+
+  All 9 are `[model only]` and `detector`, and the filter removes every one. On
+  CamA, 3 sit on Target 1's printed rings, against n's 4. The other 4 are a
+  kind n does not produce: on the backing paper, off any Target. **This
+  checkpoint's CamA baseline is not n's.** It misses the four dark marks on the
+  backing paper below Target 2 that n's baseline holds, and holds three on
+  Target 2 that n's does not. One of those four comes back as a new false
+  positive. The other three sit on spots n neither holds nor reports. That was
+  checked on both rendered runs (`new_bullet_holes --no-change-filter --out`).
+  None is on the gravel. `_103223`'s two arrive at 7.12s and 7.36s, before the
+  Hit.
+
+### What this says, and what it does not
+
+- **This run costs some recall on CamA and none on CamB.** CamB is
+  saturated. On CamA the mean falls from 83% to 78%: #2 gains, #4 and #5 lose,
+  and the pipeline loses #3 to confidence.
+- **The precision gain comes through the filter.** There are 0 false positives
+  after it, against n's 3, but 9 before it, against n's 8. None of the 9 carries
+  change evidence; n's 3 survivors do. None of them is gravel. On CamA its baseline holds a different set of old
+  marks, and one that it misses comes back as new.
+- **The target failure is not on these clips.** Neither n nor this checkpoint
+  confirms anything on CamA's gravel, in-sample or not. Whether the negatives
+  fix gravel is still the sealed set's to show.
+- **The differences are the size of CamA's grid noise** (above), and these are
+  the fitted clips, with every constant fitted to n. Pooled, F1 0.93 against
+  0.88 is one Bullet Hole lost and three false positives gone, over 16 Bullet
+  Holes and 2 Capture Setups.

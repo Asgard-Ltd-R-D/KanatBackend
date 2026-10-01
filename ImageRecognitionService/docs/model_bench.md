@@ -50,8 +50,11 @@ on all of them. "`asgard`" is the machine m's `train_args` name, under
 `/home/asgard/`.
 
 **m is not only a capacity step.** It trained twice as many epochs at half the
-batch, so m against n confounds capacity with schedule. **s is the like-for-like
-capacity step**: same recipe, same platform, only the size changes.
+batch, so m against n confounds capacity with schedule. **s is the nearest
+capacity step, not a clean one**: same recipe and platform, but ultralytics went
+from 8.4.130 to 8.4.158 with the size, so s against n confounds capacity with
+the library version. No run measures how far a version change alone moves
+these scores.
 
 Validation mAP50-95 (n 0.870 / s 0.885 / m 0.904 / n + negatives 0.855 /
 m + negatives 0.877) is on that 1475-frame val split. The re-split exists to stop
@@ -206,7 +209,8 @@ anyway.
 - **Capacity does not buy recall on this footage.** On CamB the detector is
   saturated for all three. On CamA, s and m each hold some marks better than n
   (m: #4 and #5; s: #5) and lose others (m: #2 after 18s, #3 and #6; s: #1). The
-  mean detection rate falls from n to s to m.
+  mean detection rate falls from n to s to m. Neither comparison isolates size:
+  s also changes the ultralytics version, m the schedule, platform and version.
 - **m may buy precision on the printed Target.** Before the change filter, m
   confirms 2 false positives over the four recordings, against n's 8 and s's
   13. Neither of m's is on the printed Target. At detector level, s and m also

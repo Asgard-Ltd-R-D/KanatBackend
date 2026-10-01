@@ -515,14 +515,16 @@ corrects the earlier "21 seconds" figure.
 **`yolo26s`, `yolo26m` and a yolo26n with background negatives are benched
 beside n** (#30, 2026-09-30 and 2026-10-01, [`model_bench.md`](docs/model_bench.md)),
 on the four unsealed recordings that carry photograph truth. None is promoted.
-Capacity buys no net recall the probe can see: CamB is saturated, and on CamA
+Neither larger checkpoint buys net recall the probe can see: CamB is saturated, and on CamA
 s and m gain some marks and lose others. Pooled pipeline scores are n 15/3/1,
 s 12/1/4, m 14/2/2 and n + negatives 14/0/2. The last loses CamA #3 to
 confidence, and none of the three false positives it drops is gravel. An
 exploratory m + negatives, trained at batch 1, is blind on CamA and scores
 9/4/7; it changes capacity and data at once, answers neither, and is not part of
-#30's acceptance. By their batch counts, every checkpoint trained on a re-split
-of the Kaggle data, grouped by image hash, not on its shipped split.
+#30's acceptance. n's, s's and m's batch counts fit the grouped re-split's 5941
+train images, not the shipped split's 6557. Only s's saved notebook output
+confirms the image-hash re-split; n's and m's notebooks are not on hand, so for
+them the same split and its leakage control are inferred, not verified.
 
 ---
 

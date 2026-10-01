@@ -305,7 +305,7 @@ def score(truth, found, tolerance=MATCH_TOLERANCE_TPL):
 # Nothing here refuses a run or marks one unscoreable. The headline counts come
 # from `score` and this reads them; it cannot change them. See
 # docs/adr/0006-every-false-positive-is-attributed.md.
-UNKNOWN_FACTOR = 2.0   # PROVISIONAL: a judgement, widened by the held-out set
+UNKNOWN_FACTOR = 2.0   # PROVISIONAL: a judgement, fixed before the sealed run (ADR-0006)
 
 DISPLACEMENT = "displacement"
 DETECTOR = "detector"

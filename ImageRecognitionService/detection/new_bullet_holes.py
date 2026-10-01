@@ -47,9 +47,9 @@ BULLET_HOLE_CLASS = "bullet_hole"   # by name: its id differs between checkpoint
 DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26n_v1", "weights", "best.pt")
 
 # --- Provisional working values --------------------------------------------
-# Not validated. Hand-set against a single clip, to be tuned against the
-# held-out customer test set. See board.py for the same warning about the
-# geometry constants.
+# Not validated. Hand-set against a single clip, and fixed before the sealed
+# run, which evaluates them and is never tuned on (ADR-0005). See board.py for
+# the same warning about the geometry constants.
 # Measured against operator ground truth on CamA_20260914_141546 (6 Hits, all in
 # one group): at 0.70 only 1 of the group survived; at 0.50 all 4 the model found
 # survived. The four that 0.70 discarded had persistences of 0.50-0.62 — real

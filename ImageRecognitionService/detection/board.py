@@ -50,8 +50,9 @@ OUTSIDE_RINGS = 0          # on the Target, beyond the 6-ring
 
 # --- Provisional working values --------------------------------------------
 # NONE of these are validated. They were set by hand against a single clip
-# (CamA_20260914_141546) and exist to be tuned against the held-out customer test
-# set, which does not yet exist. Every number below is a starting point, not a
+# (CamA_20260914_141546). Any tuning happens on footage that is not sealed; they
+# are fixed before the sealed run, which evaluates them once and changes none of
+# them (ADR-0005, #31). Every number below is a starting point, not a
 # requirement. See docs/adr/0003-a-bullet-hole-is-new-when-it-persists.md.
 
 GREEN_LO = (35, 40, 30)    # PROVISIONAL: hue gate for the printed Target
@@ -70,8 +71,9 @@ MIN_TARGET_AREA_PX = 5000  # PROVISIONAL: rejects specks, may reject distant Tar
 # is defensible on the evidence available, and the difference between them is
 # within single-frame noise.
 #
-# So this value is inside a flat band, not on a measured peak. Settling it needs
-# the held-out test set, not another sweep of one clip.
+# So this value is inside a flat band, not on a measured peak. Another sweep of
+# one clip will not settle it, and the sealed run only tests the value fixed
+# before it (ADR-0005).
 TARGET_NET_SCALE = 0.90    # PROVISIONAL
 
 # Two detections are the same Bullet Hole within this many template px. Expressed

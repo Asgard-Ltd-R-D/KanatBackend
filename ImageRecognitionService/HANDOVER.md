@@ -516,7 +516,9 @@ beside n** (#30, 2026-09-30 and 2026-10-01, [`model_bench.md`](docs/model_bench.
 on the four unsealed recordings that carry photograph truth. None is promoted.
 Capacity buys no recall the probe can see. Pooled pipeline scores are n 15/3/1,
 s 12/1/4, m 14/2/2 and n + negatives 14/0/2. The last loses CamA #3 to
-confidence, and none of the three false positives it drops is gravel. By their
+confidence, and none of the three false positives it drops is gravel. An
+exploratory m + negatives, trained at batch 1, is blind on CamA and scores
+9/4/7; it changes capacity and data at once and answers neither. By their
 batch counts, every checkpoint trained on a scene re-split of the Kaggle data,
 not on its shipped split.
 
@@ -970,7 +972,8 @@ waiting on. **Do not move any constant further on CamA and CamB alone.**
 3. Persistence: `PERSIST` 0.50 and the fixed 50-frame window.
 4. Baseline suppression, which bounds recall directly.
 5. `yolo26n` vs `yolo26m` vs P2. The unsealed footage has been measured and
-   settles nothing (#30, `docs/model_bench.md`).
+   settles nothing (#30, `docs/model_bench.md`). The choice is frozen before
+   the sealed run, which evaluates it once rather than choosing (#31).
 6. The matching tolerances — `MATCH_TPL_PX`, `DUP_CENTER_FACTOR`,
    `OVERLAP_THRESHOLD` and `evaluate.MATCH_TOLERANCE_TPL`.
 

@@ -1,15 +1,17 @@
 # Model bench: yolo26n, s and m, and yolo26n with background negatives
 
-**Measured 2026-09-30 at `542abd3`**, issue #30, and the negatives run on
-2026-10-01 (its own section). `opencv-python==4.10.0.84`, `ultralytics==8.4.126`,
+**Measured 2026-09-30 at `542abd3`**, issue #30, and the two negatives runs on
+2026-10-01 (their own sections). `opencv-python==4.10.0.84`, `ultralytics==8.4.126`,
 inference on CPU (the runtime's default device), every constant at its current
 value. No sealed recording was opened and no
 `--final-run` was passed; `data/sealed_runs.log` still does not exist.
 
 **Nothing is promoted.** `DEFAULT_MODEL` is still `kanat_yolo26n_v1`. The four
 recordings below are the fitted clips and the threshold-work pair. The standing
-order is not to move anything on them, and a model is not an exception. The
-comparison that could choose a model is the sealed set, and it has not been run.
+order is not to move anything on them, and a model is not an exception. Nor
+does the sealed set choose one: #31 requires the model, the constants and the
+commit to be chosen and written down before the sealed run, which then evaluates
+that one frozen choice. It has not been run.
 
 ## The checkpoints
 
@@ -40,6 +42,7 @@ committed.
 | s | `kanat_yolo26s_v1/weights/best.pt` | `511ca5c4…` | `yolo26s.pt`, fresh | 960 | 100 (99) | 8 | Kaggle, 8.4.158 |
 | m (the run #30 found in flight) | `kanat_yolo26m_v1/weights/best.pt` | `1a6a5a86…` | `yolo26m.pt`, fresh | 960 | **200** (198) | **4** | `asgard` Linux GPU box, 8.4.165 |
 | n + negatives | `kanat_yolo26n_neg_v1/weights/best.pt` | `6729d93d…` | `yolo26n.pt`, fresh | 960 | 100 (100) | 8 | Kaggle, 8.4.167 |
+| m + negatives, exploratory | `kanat_yolo26m_neg_v1/weights/best.pt` | `7fac5ce4…` | `yolo26m.pt`, fresh | 960 | 200, stopped at 137 (117) | **1** | `asgard` Linux GPU box, 8.4.165 |
 
 Seed 0, patience 20, `close_mosaic` 10, default augmentation and `optimizer=auto`
 on all of them. "`asgard`" is the machine m's `train_args` name, under
@@ -49,7 +52,8 @@ on all of them. "`asgard`" is the machine m's `train_args` name, under
 batch, so m against n confounds capacity with schedule. **s is the like-for-like
 capacity step**: same recipe, same platform, only the size changes.
 
-Validation mAP50-95 (n 0.870 / s 0.885 / m 0.904 / n + negatives 0.855) is on
+Validation mAP50-95 (n 0.870 / s 0.885 / m 0.904 / n + negatives 0.855 /
+m + negatives 0.877) is on
 that 1475-frame scene split. The re-split exists to stop the frame leakage
 `dataset_audit.md` found in the Roboflow export it audited, but nobody has checked
 that 16-bit scene buckets stop it on `pibh`. Those are also `pibh`'s frames, not
@@ -219,9 +223,10 @@ anyway.
   the canvas 8–32 px and nothing else. A mark or two gained or lost there is
   not, on its own, a property of the model.
 - **These are the fitted clips.** CamA and `_102250` are what every constant
-  was set on, with n. Two Capture Setups and 16 Bullet Holes. The held-out
-  comparison `HANDOVER.md` blocks model selection on (open question 5) is
-  still the sealed set's to answer.
+  was set on, with n. Two Capture Setups and 16 Bullet Holes. This is evidence
+  for the choice #31 needs frozen before the sealed run, not the choice itself.
+  The sealed run evaluates whichever model is frozen; it does not compare
+  these.
 
 ## yolo26n with background negatives
 
@@ -338,12 +343,126 @@ Per Bullet Hole, it finds what n finds, except that it also misses CamA truth
   and the pipeline loses #3 to confidence.
 - **The precision gain comes through the filter.** There are 0 false positives
   after it, against n's 3, but 9 before it, against n's 8. None of the 9 carries
-  change evidence; n's 3 survivors do. None of them is gravel. On CamA its baseline holds a different set of old
-  marks, and one that it misses comes back as new.
+  change evidence; n's 3 survivors do. None of them is gravel. On CamA its
+  baseline holds a different set of old marks, and one that it misses comes
+  back as new.
 - **The target failure is not on these clips.** Neither n nor this checkpoint
   confirms anything on CamA's gravel, in-sample or not. Whether the negatives
-  fix gravel is still the sealed set's to show.
+  fix gravel is not measured here. The sealed run can show it only for the
+  model frozen before it.
 - **The differences are the size of CamA's grid noise** (above), and these are
   the fitted clips, with every constant fitted to n. Pooled, F1 0.93 against
   0.88 is one Bullet Hole lost and three false positives gone, over 16 Bullet
   Holes and 2 Capture Setups.
+
+## Exploratory: yolo26m with background negatives
+
+**Measured 2026-10-01 at `ce16cab`**, with the same code, libraries, device,
+constants, footage, truth and commands as the negatives run above, and
+`--model trained_models/kanat_yolo26m_neg_v1/weights/best.pt`. **Not promoted.
+Not part of #30's acceptance criteria.**
+
+**It changes both capacity and training data, so it isolates neither.** Against
+the shipped n it changes both at once, along with batch, epochs and platform.
+Against m, the nearest capacity match, it adds the negatives, but it also drops
+the batch from 4 to 1 and stopped at 137 epochs instead of 200. Against n +
+negatives, the nearest data match, it changes capacity, batch, epochs and
+platform. No comparison here varies one thing.
+
+### The run
+
+Read from the checkpoint's `train_args` and its run directory (`args.yaml`,
+`results.csv`):
+
+| | |
+|---|---|
+| Started from | `yolo26m.pt`, fresh (COCO-pretrained, `resume` false). Not a fine-tune of m or of the shipped n |
+| imgsz | 960 |
+| Epochs | 200 asked; **early-stopped at 137** (patience 20), best epoch 117 |
+| Batch | **1.** `args.yaml` asks for `batch=-1`, AutoBatch, and the checkpoint records the 1 it ran at. The warmup learning rate agrees. Gradient accumulation still makes the nominal batch 64, as for every run here, but BatchNorm sees one image at a time. m's own `args.yaml` asks for 8 and its checkpoint records 4. The likely cause is ultralytics halving the batch after a first-epoch out-of-memory error |
+| Seed | 0, `deterministic` true |
+| Where, ultralytics | `asgard` Linux GPU box, **8.4.165**, the same box and version as m; 12.1 h |
+| Data | `working/pibh_negatives/data.yaml` on that box |
+| Backgrounds | **18** (the 3 unlabelled frames restored and the 15 #28 negatives, train only), **as stated by the run's owner.** The train scan went to the box's stdout and is not on record. At batch 1 the warmup learning rate fits 5935–5970 train images: that rules out the Kaggle copy's 6572, but cannot tell 18 backgrounds from none |
+| sha256 | `7fac5ce4…`; local path `kanat_yolo26m_neg_v1/weights/best.pt` (not committed) |
+| Val mAP50-95 | 0.877, listed for identity only (see the checkpoints section) |
+
+### Detector probe, per Bullet Hole
+
+Same settings. Arrival is the one in the tables above. n and m are repeated from
+those tables.
+
+| Recording | Bullet Hole | arrives | n | m | m + negatives | Note |
+|---|---|---:|---:|---:|---:|---|
+| CamA | truth #1 | 15.88s | 100% | 96% | **0%** | |
+| | truth #2 | 14.64s | 53% | 30% | **0%** | |
+| | truth #3 | 16.48s | 96% | 80% | **0%** | |
+| | truth #4 | 17.08s | 62% | 85% | **0%** | |
+| | truth #5 | 14.00s | 85% | 98% | **<1%** | one frame, 15.12s |
+| | truth #6 | 15.24s | 100% | 64% | **0%** | |
+| | mean | | **83%** | 76% | **0%** | |
+| `_102250` | truth #1 | 31.16s | ~100% | ~100% | ~100% | |
+| | truth #2 | 29.00s | 100% | 100% | 100% | |
+| | truth #3 | 1.64s | ~100% | ~100% | ~100% | |
+| | truth #4 | 30.60s | ~100% | ~100% | ~100% | |
+| `_102450` | truth #1 | 32.92s | ~100% | ~100% | ~100% | |
+| | truth #2 | 32.40s | —* | ~100% | ~100% | *see above. No numeral flicker: its first Detection is the Hit |
+| | truth #3 | 31.28s | ~100% | ~100% | ~98% | first at 31.60s, 8 frames after n |
+| | truth #4 | 31.60s | ~100% | ~100% | ~100% | first at 31.68s |
+| `_103223` | truth #1 | 11.20s | ~100% | ~100% | ~100% | |
+| | truth #2 | 11.20s | ~100% | ~100% | ~100% | |
+
+**On CamA it is blind.** Over 300 registered frames at conf 0.02 there is one
+Detection near any of the six, and none near the 7 pre-existing marks: its
+baseline is empty. **The file is not broken.** On four `pibh` val images it
+returns as many boxes above conf 0.40 as m does, within one, at imgsz 960, 1280
+and 1632. On the CamA canvas at 21.0s, at conf 0.02, it returns no box at the
+pipeline's imgsz 1632, where m returns 8. At 960 it returns 7, where m returns
+7. That second check is a diagnostic outside the pipeline, not a changed
+constant. The cause is not established. CamA is the one recording here whose
+canvas runs at imgsz 1632. CamB's margin canvases run at 320–352, plus their
+bands.
+
+### Pipeline, per Bullet Hole
+
+At every current constant:
+
+| Recording | n TP/FP/FN | m | m + negatives |
+|---|---|---|---|
+| CamA 13–25s | 5/1/1 | 4/1/2 | **0/0/6** |
+| `_102250` 0–46s | 4/1/0 | 4/0/0 | 4/0/0 |
+| `_102450` 0–47.76s | 4/0/0 | 4/0/0 | 4/0/0 |
+| `_103223` 0–51.88s | 2/1/0 | 2/1/0 | **1/4/1** |
+| **pooled, 16** | 15/3/1, F1 0.88 | 14/2/2, F1 0.88 | **9/4/7**, F1 0.62 |
+
+It finds no CamA Bullet Hole and misses `_103223` truth #1. It finds the other
+nine: `_102250` #1–#4, `_102450` #1–#4 and `_103223` #2.
+
+- **`_103223` truth #1 is a confidence failure.** The probe sees it in ~100%
+  of frames from 11.20s at conf 0.02, but in ~28% at the operating 0.40, and
+  never after 43.52s. `--no-change-filter` misses it too. It is not baseline
+  suppression: the nearest mark this checkpoint's baseline holds is 498
+  template px away, against n + negatives' 500.
+- **The four `_103223` false positives** all arrive at 19.76–19.84s, when the
+  insect or debris lands, and all carry change evidence, so the filter passes
+  them (`falsification_run.md`). They are `detector` at 183, 264, 367 and
+  642 px. Two of those distances match earlier false positives: n's and m's at
+  259–261 px and s's at 639 px. Whether any of them is the same object is not
+  established.
+- **Before the change filter: 5**, against n's 8 and m's 2. That is 0 on
+  CamA, 1 on `_102250`, 0 on `_102450` and the same 4 on `_103223`, all read
+  from `--no-change-filter` runs. The `_102250` one is `[model only]`, a
+  `displacement` 23 px from a mark the baseline holds, and the filter removes
+  it.
+
+### What this says, and what it does not
+
+- **On CamA this checkpoint does not work** at the pipeline's input, for a
+  reason not established. Everything else it scores follows from that.
+- **On CamB it is saturated like every other checkpoint.** It has no numeral
+  flicker, as with s, m and n + negatives. On `_103223` it reports four false
+  positives at the insect's arrival where n and m report one, and it loses
+  truth #1 to confidence.
+- **Nothing here is attributable to capacity, to the negatives or to batch 1.**
+  Every comparison above changes at least two of them at once, on the fitted
+  clips. It is recorded because it was trained, not because it answers #30.

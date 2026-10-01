@@ -22,11 +22,12 @@ checkpoint.** All train at image size 960 on `pibh`, one class, `bullet_hole`.
 **`pibh` is not a downloaded split.** The training notebook builds it in
 `/kaggle/working/pibh` from Kaggle's `qiyan527/target-paper-images-with-bullet-holes`
 (6557 train / 1605 val / 96 test images; a local copy exists, unhashed). It drops
-the 96 test images, whose one box is the whole target paper, and the 3 train
-images that have no label file. Then it re-splits the remaining 8159 frames by
-scene into **5941 train / 1475 val / 743 test**. A scene is a 16-bit dHash bucket,
-86 of them. s's notebook was saved with its output, which prints those counts
-and `5941 images, 0 backgrounds`. n's and m's notebooks are not on hand.
+the 96 test images, whose one box covers the whole printed target, and the 3
+train images that have no label file. Then it re-splits the remaining 8159
+frames into **5941 train / 1475 val / 743 test**, keeping each image-hash group
+on one side. A group is a 16-bit dHash bucket, 86 of them. s's notebook was
+saved with its output, which prints those counts and `5941 images, 0
+backgrounds`. n's and m's notebooks are not on hand.
 
 Each run's learning rate at the end of its first warmup epoch fixes its batches
 per epoch, and so its train size. n and s fit 743 batches of 8 and m fits
@@ -53,11 +54,10 @@ batch, so m against n confounds capacity with schedule. **s is the like-for-like
 capacity step**: same recipe, same platform, only the size changes.
 
 Validation mAP50-95 (n 0.870 / s 0.885 / m 0.904 / n + negatives 0.855 /
-m + negatives 0.877) is on
-that 1475-frame scene split. The re-split exists to stop the frame leakage
-`dataset_audit.md` found in the Roboflow export it audited, but nobody has checked
-that 16-bit scene buckets stop it on `pibh`. Those are also `pibh`'s frames, not
-this footage. The figures are listed for identity, not for comparison.
+m + negatives 0.877) is on that 1475-frame val split. The re-split exists to stop
+the frame leakage `dataset_audit.md` found in the Roboflow export it audited, but
+nobody has checked that 16-bit hash groups stop it on `pibh`. Those are also
+`pibh`'s frames, not this footage. The figures are listed for identity, not for comparison.
 
 ## Footage and ground truth
 
@@ -205,7 +205,7 @@ anyway.
 
 - **Capacity does not buy recall on this footage.** On CamB the detector is
   saturated for all three. On CamA, s and m each hold some marks better than n
-  (m: #4 and #5; s: #5) and lose others (m: #2 after 18s and #6; s: #1). The
+  (m: #4 and #5; s: #5) and lose others (m: #2 after 18s, #3 and #6; s: #1). The
   mean detection rate falls from n to s to m.
 - **m may buy precision on the printed Target.** Before the change filter, m
   confirms 2 false positives over the four recordings, against n's 8 and s's
@@ -286,8 +286,8 @@ Same settings. Arrival is the one in the tables above, taken from n, s and m.
 **CamB: saturated, as for the other three.** All ten new Bullet Holes are seen
 in every frame from arrival to the end of the clip, or all but a handful.
 `_102450` truth #3 is first seen at 31.44s. **There is no numeral flicker
-either**: the first Detection near `_102450` truth #2 is the Hit at 32.40s, as
-for s and m.
+either**: the first Detection near `_102450` truth #2 comes with the Hit at
+32.40s, as for s and m.
 
 ### Pipeline
 
@@ -299,15 +299,25 @@ for s and m.
 | `_103223` 0–51.88s | 2/1/0 | 2/0/0 |
 | **pooled, 16** | 15/3/1, F1 0.88 | **14/0/2**, F1 0.93 |
 
-Per Bullet Hole, it finds what n finds, except that it also misses CamA truth
-#3. Like n, it misses CamA #4.
+Each Bullet Hole, ✓ found and ✗ not found:
+
+| Recording | truth | n | n + negatives |
+|---|---|:-:|:-:|
+| CamA | #1–#2 | ✓ | ✓ |
+| | #3 | ✓ | ✗ |
+| | #4 | ✗ | ✗ |
+| | #5–#6 | ✓ | ✓ |
+| `_102250` | #1–#4 | ✓ | ✓ |
+| `_102450` | #1–#4 | ✓ | ✓ |
+| `_103223` | #1–#2 | ✓ | ✓ |
 
 - **The false negatives are the detector.** `--no-change-filter` loses the same
   two. #4 is at 20% since arrival. #3 is the confidence failure s showed on
   `_102250` #3: seen in 97% of frames since arrival at conf 0.02, but ~24% at
   0.40, against n's ~92%. Over the CamA clip at 0.40, this checkpoint also
-  matches a detection to a pre-existing mark 205 times, against n's 725, and it
-  holds a different set of them (below).
+  matches a Detection to a pre-existing mark 205 times, against n's 725 (the
+  `[REGISTRATION]` line of each run), and it holds a different set of them
+  (below).
 - **No false positive survives, and none of n's three appears.** It does not
   produce the CamA 830 px mark or `_102250`'s ring 8. Nor does it confirm
   `_103223`'s insect at 19.76s, even without the change filter. None of those
@@ -327,9 +337,9 @@ Per Bullet Hole, it finds what n finds, except that it also misses CamA truth
 
   All 9 are `[model only]` and `detector`, and the filter removes every one. On
   CamA, 3 sit on Target 1's printed rings, against n's 4. The other 4 are a
-  kind n does not produce: on the backing paper, off any Target. **This
-  checkpoint's CamA baseline is not n's.** It misses the four dark marks on the
-  backing paper below Target 2 that n's baseline holds, and holds three on
+  kind n does not produce: on the Board, off any Target. **This checkpoint's
+  CamA baseline is not n's.** It does not hold the four dark marks on the Board
+  below Target 2 that n's baseline holds, and holds three on
   Target 2 that n's does not. One of those four comes back as a new false
   positive. The other three sit on spots n neither holds nor reports. That was
   checked on both rendered runs (`new_bullet_holes --no-change-filter --out`).
@@ -344,8 +354,8 @@ Per Bullet Hole, it finds what n finds, except that it also misses CamA truth
 - **The precision gain comes through the filter.** There are 0 false positives
   after it, against n's 3, but 9 before it, against n's 8. None of the 9 carries
   change evidence; n's 3 survivors do. None of them is gravel. On CamA its
-  baseline holds a different set of old marks, and one that it misses comes
-  back as new.
+  baseline holds a different set of old marks, and one that it leaves out
+  comes back as new.
 - **The target failure is not on these clips.** Neither n nor this checkpoint
   confirms anything on CamA's gravel, in-sample or not. Whether the negatives
   fix gravel is not measured here. The sealed run can show it only for the
@@ -379,11 +389,11 @@ Read from the checkpoint's `train_args` and its run directory (`args.yaml`,
 | Started from | `yolo26m.pt`, fresh (COCO-pretrained, `resume` false). Not a fine-tune of m or of the shipped n |
 | imgsz | 960 |
 | Epochs | 200 asked; **early-stopped at 137** (patience 20), best epoch 117 |
-| Batch | **1.** `args.yaml` asks for `batch=-1`, AutoBatch, and the checkpoint records the 1 it ran at. The warmup learning rate agrees. Gradient accumulation still makes the nominal batch 64, as for every run here, but BatchNorm sees one image at a time. m's own `args.yaml` asks for 8 and its checkpoint records 4. The likely cause is ultralytics halving the batch after a first-epoch out-of-memory error |
+| Batch | **1.** `args.yaml` asks for `batch=-1`, AutoBatch, and the checkpoint records the 1 it ran at. The warmup learning rate agrees. Gradient accumulation still makes the nominal batch 64, as for every run here, but BatchNorm sees one image at a time. m's own `args.yaml` asks for 8 and its checkpoint records 4. The likely cause is ultralytics halving the batch after a first-epoch out-of-memory error; its trainer does that, up to three times |
 | Seed | 0, `deterministic` true |
 | Where, ultralytics | `asgard` Linux GPU box, **8.4.165**, the same box and version as m; 12.1 h |
 | Data | `working/pibh_negatives/data.yaml` on that box |
-| Backgrounds | **18** (the 3 unlabelled frames restored and the 15 #28 negatives, train only), **as stated by the run's owner.** The train scan went to the box's stdout and is not on record. At batch 1 the warmup learning rate fits 5935–5970 train images: that rules out the Kaggle copy's 6572, but cannot tell 18 backgrounds from none |
+| Backgrounds | **18** (the 3 unlabelled frames restored and the 15 #28 negatives, train only), **as stated by the run's owner.** The train scan went to the box's stdout and is not on record. At batch 1 the warmup learning rate fits 5935–5970 train images: that rules out the 6572 that the raw Kaggle split plus the 15 negatives would give, but cannot tell 18 backgrounds from none |
 | sha256 | `7fac5ce4…`; local path `kanat_yolo26m_neg_v1/weights/best.pt` (not committed) |
 | Val mAP50-95 | 0.877, listed for identity only (see the checkpoints section) |
 
@@ -406,7 +416,7 @@ those tables.
 | | truth #3 | 1.64s | ~100% | ~100% | ~100% | |
 | | truth #4 | 30.60s | ~100% | ~100% | ~100% | |
 | `_102450` | truth #1 | 32.92s | ~100% | ~100% | ~100% | |
-| | truth #2 | 32.40s | —* | ~100% | ~100% | *see above. No numeral flicker: its first Detection is the Hit |
+| | truth #2 | 32.40s | —* | ~100% | ~100% | *see above. No numeral flicker: its first Detection comes with the Hit |
 | | truth #3 | 31.28s | ~100% | ~100% | ~98% | first at 31.60s, 8 frames after n |
 | | truth #4 | 31.60s | ~100% | ~100% | ~100% | first at 31.68s |
 | `_103223` | truth #1 | 11.20s | ~100% | ~100% | ~100% | |
@@ -421,7 +431,7 @@ pipeline's imgsz 1632, where m returns 8. At 960 it returns 7, where m returns
 7. That second check is a diagnostic outside the pipeline, not a changed
 constant. The cause is not established. CamA is the one recording here whose
 canvas runs at imgsz 1632. CamB's margin canvases run at 320–352, plus their
-bands.
+bands (each run's `[BOARD]` line).
 
 ### Pipeline, per Bullet Hole
 
@@ -435,13 +445,25 @@ At every current constant:
 | `_103223` 0–51.88s | 2/1/0 | 2/1/0 | **1/4/1** |
 | **pooled, 16** | 15/3/1, F1 0.88 | 14/2/2, F1 0.88 | **9/4/7**, F1 0.62 |
 
-It finds no CamA Bullet Hole and misses `_103223` truth #1. It finds the other
-nine: `_102250` #1–#4, `_102450` #1–#4 and `_103223` #2.
+Each Bullet Hole, ✓ found and ✗ not found:
+
+| Recording | truth | n | m | m + negatives |
+|---|---|:-:|:-:|:-:|
+| CamA | #1 | ✓ | ✓ | ✗ |
+| | #2 | ✓ | ✗ | ✗ |
+| | #3 | ✓ | ✓ | ✗ |
+| | #4 | ✗ | ✓ | ✗ |
+| | #5 | ✓ | ✓ | ✗ |
+| | #6 | ✓ | ✗ | ✗ |
+| `_102250` | #1–#4 | ✓ | ✓ | ✓ |
+| `_102450` | #1–#4 | ✓ | ✓ | ✓ |
+| `_103223` | #1 | ✓ | ✓ | ✗ |
+| | #2 | ✓ | ✓ | ✓ |
 
 - **`_103223` truth #1 is a confidence failure.** The probe sees it in ~100%
   of frames from 11.20s at conf 0.02, but in ~28% at the operating 0.40, and
-  never after 43.52s. `--no-change-filter` misses it too. It is not baseline
-  suppression: the nearest mark this checkpoint's baseline holds is 498
+  never after 43.52s. `--no-change-filter` does not find it either. It is not
+  baseline suppression: the nearest mark this checkpoint's baseline holds is 498
   template px away, against n + negatives' 500.
 - **The four `_103223` false positives** all arrive at 19.76–19.84s, when the
   insect or debris lands, and all carry change evidence, so the filter passes

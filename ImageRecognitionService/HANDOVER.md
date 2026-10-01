@@ -515,13 +515,14 @@ corrects the earlier "21 seconds" figure.
 **`yolo26s`, `yolo26m` and a yolo26n with background negatives are benched
 beside n** (#30, 2026-09-30 and 2026-10-01, [`model_bench.md`](docs/model_bench.md)),
 on the four unsealed recordings that carry photograph truth. None is promoted.
-Capacity buys no recall the probe can see. Pooled pipeline scores are n 15/3/1,
+Capacity buys no net recall the probe can see: CamB is saturated, and on CamA
+s and m gain some marks and lose others. Pooled pipeline scores are n 15/3/1,
 s 12/1/4, m 14/2/2 and n + negatives 14/0/2. The last loses CamA #3 to
 confidence, and none of the three false positives it drops is gravel. An
 exploratory m + negatives, trained at batch 1, is blind on CamA and scores
-9/4/7; it changes capacity and data at once and answers neither. By their
-batch counts, every checkpoint trained on a scene re-split of the Kaggle data,
-not on its shipped split.
+9/4/7; it changes capacity and data at once, answers neither, and is not part of
+#30's acceptance. By their batch counts, every checkpoint trained on a re-split
+of the Kaggle data, grouped by image hash, not on its shipped split.
 
 ---
 
@@ -965,18 +966,18 @@ video frames are near-identical and splitting by frame is leakage. Every
 threshold below is tuned on ten Bullet Holes across two clips, and `yolo26n` vs
 `yolo26m` vs P2 cannot be compared meaningfully on them.
 
-The sealed set does not answer the six open questions below either. #31 fixes
-the model, the constants and the commit before the sealed run, and the run
-evaluates that frozen choice once. **Do not move any constant further on CamA
-and CamB alone.**
+This is the next step, and it is what the following open questions are
+waiting on, all but the model (5): that is frozen before the sealed run, which
+evaluates it once and does not choose between checkpoints (#31). **Do not move
+any constant further on CamA and CamB alone.**
 
 1. Duplicate / split behaviour — the 0.59x vs 0.74x collision above.
 2. Genuinely close Bullet Holes, and how near two real marks actually get.
 3. Persistence: `PERSIST` 0.50 and the fixed 50-frame window.
 4. Baseline suppression, which bounds recall directly.
 5. `yolo26n` vs `yolo26m` vs P2. The unsealed footage has been measured and
-   settles nothing (#30, `docs/model_bench.md`). The choice is frozen before
-   the sealed run, which evaluates it once rather than choosing (#31).
+   settles nothing (#30, `docs/model_bench.md`). See above: the held-out set
+   does not choose it (#31).
 6. The matching tolerances — `MATCH_TPL_PX`, `DUP_CENTER_FACTOR`,
    `OVERLAP_THRESHOLD` and `evaluate.MATCH_TOLERANCE_TPL`.
 

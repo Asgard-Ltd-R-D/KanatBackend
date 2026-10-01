@@ -29,6 +29,11 @@ for why the detection design is what it is.
 
 ## Where it stands
 
+**On held-out footage the frozen system scored 0 of 2** (#31, 2026-10-01,
+[`sealed_run.md`](docs/sealed_run.md)). That is one Capture Setup and two
+Bullet Holes, which is not a statistically meaningful validation. The table
+below is not held-out footage. See "The held-out set, and its one run" below.
+
 Two clips now carry operator-labelled ground truth.
 
 | Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
@@ -478,7 +483,7 @@ wall).
 - `mine_negatives.py` builds its views the same way, so CamB-pose canvases
   grow there too. They stay far below its 4096 px `MAX_CANVAS_PX`.
 
-## The held-out set is two recordings of one Capture Setup
+## The held-out set, and its one run
 
 The six delivered files are **three** Capture Setups, and the five customer
 recordings are **two** — not the one ADR-0005 allowed they might collapse to.
@@ -496,6 +501,32 @@ nothing has been fitted to, so the wide pair is what is sealed. Two recordings,
 roughly two Bullet Holes: a thin held-out set, and the only one the delivery
 contains.
 
+**The sealed run has been made, once, and scored 0 of 2** (#31, 2026-10-01,
+[`sealed_run.md`](docs/sealed_run.md), logged in `data/sealed_runs.log`). The
+frozen system was `kanat_yolo26n_v1`, every constant unchanged, commit
+`54a49a8`. It was written down in #31 before the run opened anything sealed.
+The setups sealed on 2026-09-23 carried no truth
+([`capture_setups.md`](docs/capture_setups.md)), so the run covered the CamB
+wide pair alone. The pooled score is TP 0 / FP 1 / FN 2, and the one false
+positive is attributed to `displacement`. The record also carries the
+registration residual, which reached the ceiling on both recordings, and a
+placement doubt on `_101550`. One Capture Setup and two Bullet Holes: **not a
+statistically meaningful validation.** The run opened no other sealed
+recording. Which recordings stay sealed is `config/recordings.json`. Spending
+any of them needs truth first and a new human decision.
+
+**Nothing is tuned on that result, and it is not diagnosed on the sealed
+recordings** (ADR-0005). A follow-up may reproduce a mechanism the run
+disclosed, but only on footage that is not sealed, whether unsealed or newly
+collected. Any change has to stand on that footage alone. The CamB wide pair
+cannot test a changed system, because its one look has been taken.
+_This refines ADR-0005, which says no model or constant is changed afterwards
+on what the run reveals. The run may point at a mechanism, but it never
+justifies a change. That is the human decision on #31 and #60, and the ADR does
+not record it yet._ The manifest still gives both CamB wide recordings the
+`sealed` role. So every tool that opens a recording still refuses them by
+default, and any `--final-run` look would be logged as a second one.
+
 **CamB is the first footage where a bullet landed on a Target** — two of its
 four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had
 only unit tests behind them.
@@ -504,9 +535,9 @@ Recall with the `yolo26n` weights, *within the labelled windows*, is 4 of 4 on
 `CamB_20260915_102250` and 5 of 6 on CamA: CamA truth #4 has been lost since
 #50 (the scored table above, and [`model_bench.md`](docs/model_bench.md)). It
 was 100% on both fitted clips before #50. That is **not** enough to close
-`yolo26n` vs `yolo26m`. Nor will the held-out set close it: the model is chosen and frozen before the sealed run,
-which then evaluates that one choice once and does not choose between
-checkpoints (#31).
+`yolo26n` vs `yolo26m`. Nor did the held-out set close it: the model was frozen
+before the sealed run, which evaluated that one choice once and chose between
+no checkpoints (#31).
 
 It is also not the whole story about recall. Outside the labelled window, on the
 full 0–46s CamB clip, the detector loses a mark that is still plainly visible.
@@ -856,9 +887,11 @@ the scene is still. Do not implement a new registration algorithm on this window
 alone. Make the failure observable first, characterise it on the other clips
 that are not sealed, and **if registration error approaches Bullet Hole scale
 or threatens SOW 2.3.2's 5 mm, reopen the registration design and fix the cause
-rather than add further downstream defences.** The sealed run reports its
-residual (ADR-0006). A redesign made on what that residual shows leaves no
-held-out set to test the redesign (ADR-0005).
+rather than add further downstream defences.** The sealed run reported its
+residual ([`sealed_run.md`](docs/sealed_run.md), ADR-0006). A redesign made on
+what that residual shows would leave no held-out set to test the redesign
+(ADR-0005), so the case for a redesign has to be made on footage that is not
+sealed.
 
 `MAX_DISPLACEMENT_FRACTION` is scaled by distance on the strength of the
 distance ordering, which CamB's three marks support (0.019x / 0.039x / 0.036x of
@@ -967,25 +1000,26 @@ close-up ground-truth photo is cropped inside the sheet.
 *Scoring does **not** need this* — a score is a ratio inside one image. It works
 now.
 
-**2. The held-out test set.** Whole recordings held out, never frames — adjacent
-video frames are near-identical and splitting by frame is leakage. Every
-threshold below is tuned on ten Bullet Holes across two clips, and `yolo26n` vs
-`yolo26m` vs P2 cannot be compared meaningfully on them.
+**2. A held-out sample big enough to support a claim.** Whole recordings held
+out, never frames — adjacent video frames are near-identical and splitting by
+frame is leakage. Every threshold below is tuned on ten Bullet Holes across two
+clips, and `yolo26n` vs `yolo26m` vs P2 cannot be compared meaningfully on them.
 
-This is the next step, and it answers none of the open questions below. Each
-is settled, or left provisional, on footage that is not sealed. Then the model,
-every constant and the commit are frozen and written down, and the sealed run
-evaluates that one system once. Nothing is changed afterwards on what it
-reveals (#31, ADR-0005). **Do not move any constant further on CamA and CamB
-alone.**
+The one sealed run has been made, and its sample is too small to support a
+claim (#31, [`sealed_run.md`](docs/sealed_run.md)). It measured the frozen
+system once and answers none of the open questions below. The statistically
+meaningful sample SOW 2.3.6 asks for still does not exist. Each question is
+settled, or left provisional, on footage that is not sealed. Nothing is changed
+on what the sealed run revealed (ADR-0005). **Do not move any constant further
+on CamA and CamB alone.**
 
 1. Duplicate / split behaviour — the 0.59x vs 0.74x collision above.
 2. Genuinely close Bullet Holes, and how near two real marks actually get.
 3. Persistence: `PERSIST` 0.50 and the fixed 50-frame window.
 4. Baseline suppression, which bounds recall directly.
 5. `yolo26n` vs `yolo26m` vs P2. The unsealed footage has been measured and
-   settles nothing (#30, `docs/model_bench.md`). See above: the held-out set
-   does not choose it (#31).
+   settles nothing (#30, `docs/model_bench.md`). The sealed run did not
+   choose it (#31).
 6. The matching tolerances — `MATCH_TPL_PX`, `DUP_CENTER_FACTOR`,
    `OVERLAP_THRESHOLD` and `evaluate.MATCH_TOLERANCE_TPL`.
 
@@ -1031,7 +1065,7 @@ CamB does report that mark as one Bullet Hole, and scores 1.00 — but by the
 candidate's running mean drifting into range over 275 frames, not because the
 gate fires. That is luck, and `test_camb_split_is_not_merged_by_the_gate_alone`
 pins it so nobody mistakes it for a property. Settling it needs new footage
-that is not sealed, not a nudged constant. The sealed run only tests the gate
+that is not sealed, not a nudged constant. The sealed run tested only the gate
 as it was fixed before the run (ADR-0005).
 
 **The box arms must not gate baseline suppression.** Applied there they swallowed
@@ -1110,5 +1144,5 @@ negatives means more Capture Setups, not a smaller `--step`.
 
 `yolo26.yaml` and `yolo26-p2.yaml` are both present in the installed ultralytics
 (8.4.126), so `m` and the P2 experiment can be trained. `m` is benched on the
-unsealed footage (#30, `docs/model_bench.md`). Any choice between them is made
-and frozen before the sealed run, which evaluates only that choice (#31).
+unsealed footage (#30, `docs/model_bench.md`). `n` was the choice frozen
+before the sealed run, which evaluated only that model (#31).

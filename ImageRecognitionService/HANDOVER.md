@@ -500,16 +500,33 @@ contains.
 four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had
 only unit tests behind them.
 
-Recall is 100% on both fitted clips with the `yolo26n` weights, *within the labelled
-windows*. That is **not** enough to close `yolo26n` vs `yolo26m`: two recordings
-is not the held-out test set, and model selection still waits on it (blocked
-item 2).
+Recall with the `yolo26n` weights, *within the labelled windows*, is 4 of 4 on
+`CamB_20260915_102250` and 5 of 6 on CamA: CamA truth #4 has been lost since
+#50 (the scored table above, and [`model_bench.md`](docs/model_bench.md)). It
+was 100% on both fitted clips before #50. That is **not** enough to close
+`yolo26n` vs `yolo26m`. Nor will the held-out set close it: the model is chosen and frozen before the sealed run,
+which then evaluates that one choice once and does not choose between
+checkpoints (#31).
 
 It is also not the whole story about recall. Outside the labelled window, on the
 full 0–46s CamB clip, the detector loses a mark that is still plainly visible.
 It finds it only on and off from 4.0s, not at all from 12.40s onward, while the
 operator still sees it at 25.0s — see "Three failure modes" below, which also
 corrects the earlier "21 seconds" figure.
+
+**`yolo26s`, `yolo26m` and a yolo26n with background negatives are benched
+beside n** (#30, 2026-09-30 and 2026-10-01, [`model_bench.md`](docs/model_bench.md)),
+on the four unsealed recordings that carry photograph truth. None is promoted.
+Neither larger checkpoint buys net recall the probe can see: CamB is saturated, and on CamA
+s and m gain some marks and lose others. Pooled pipeline scores are n 15/3/1,
+s 12/1/4, m 14/2/2 and n + negatives 14/0/2. The last loses CamA #3 to
+confidence, and none of the three false positives it drops is gravel. An
+exploratory m + negatives, trained at batch 1, is blind on CamA and scores
+9/4/7; it changes capacity and data at once, answers neither, and is not part of
+#30's acceptance. n's, s's and m's batch counts fit the grouped re-split's 5941
+train images, not the shipped split's 6557. Only s's saved notebook output
+confirms the image-hash re-split; n's and m's notebooks are not on hand, so for
+them the same split and its leakage control are inferred, not verified.
 
 ---
 
@@ -616,6 +633,7 @@ extraction is what keeps sealed pixels out of it.
 | `tools/probe.py`, `tools/registration_reach.py` | Per-mark detection and registration measurements over a clip |
 | `tools/mine_negatives.py` | Background negatives from unsealed footage, into `data/negatives/` |
 | `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
+| `docs/model_bench.md` | Every checkpoint's training record, the dataset each one trained on, and its bench (#30) |
 | `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `data/truth/<recording>/` | Ground truth, one directory per recording |
 | `detection/tagging_bullets.py`, `tools/sweep_profile.py`, `config/capture_profiles.json` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
@@ -948,18 +966,22 @@ close-up ground-truth photo is cropped inside the sheet.
 now.
 
 **2. The held-out test set.** Whole recordings held out, never frames — adjacent
-video frames are near-identical and splitting by frame is leakage. Until it
-exists, every threshold below is tuned on ten Bullet Holes across two clips, and
-`yolo26n` vs `yolo26m` vs P2 cannot be compared meaningfully.
+video frames are near-identical and splitting by frame is leakage. Every
+threshold below is tuned on ten Bullet Holes across two clips, and `yolo26n` vs
+`yolo26m` vs P2 cannot be compared meaningfully on them.
 
-This is the next step, and it is what the following six open questions are
-waiting on. **Do not move any constant further on CamA and CamB alone.**
+This is the next step, and it is what the following open questions are
+waiting on, all but the model (5): that is frozen before the sealed run, which
+evaluates it once and does not choose between checkpoints (#31). **Do not move
+any constant further on CamA and CamB alone.**
 
 1. Duplicate / split behaviour — the 0.59x vs 0.74x collision above.
 2. Genuinely close Bullet Holes, and how near two real marks actually get.
 3. Persistence: `PERSIST` 0.50 and the fixed 50-frame window.
 4. Baseline suppression, which bounds recall directly.
-5. `yolo26n` vs `yolo26m` vs P2.
+5. `yolo26n` vs `yolo26m` vs P2. The unsealed footage has been measured and
+   settles nothing (#30, `docs/model_bench.md`). See above: the held-out set
+   does not choose it (#31).
 6. The matching tolerances — `MATCH_TPL_PX`, `DUP_CENTER_FACTOR`,
    `OVERLAP_THRESHOLD` and `evaluate.MATCH_TOLERANCE_TPL`.
 
@@ -1082,5 +1104,6 @@ A static camera gives only a few distinct gravel tiles per clip, so more
 negatives means more Capture Setups, not a smaller `--step`.
 
 `yolo26.yaml` and `yolo26-p2.yaml` are both present in the installed ultralytics
-(8.4.126), so `m` and the P2 experiment are available whenever the test set makes
-them measurable.
+(8.4.126), so `m` and the P2 experiment can be trained. `m` is benched on the
+unsealed footage (#30, `docs/model_bench.md`). Any choice between them is made
+and frozen before the sealed run, which evaluates only that choice (#31).

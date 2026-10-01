@@ -853,10 +853,12 @@ above is 45 frames of one clip and does not overturn CamA's anchor-2 reading of
 36.3 px at 38 px out, nor does it prove the mechanism is mask instability rather
 than something downstream of it — only that the error enters with the warp while
 the scene is still. Do not implement a new registration algorithm on this window
-alone. Make the failure observable first, characterise it on the other clips and
-the held-out recordings, and **if registration error approaches Bullet Hole scale
+alone. Make the failure observable first, characterise it on the other clips
+that are not sealed, and **if registration error approaches Bullet Hole scale
 or threatens SOW 2.3.2's 5 mm, reopen the registration design and fix the cause
-rather than add further downstream defences.**
+rather than add further downstream defences.** The sealed run reports its
+residual (ADR-0006). A redesign made on what that residual shows leaves no
+held-out set to test the redesign (ADR-0005).
 
 `MAX_DISPLACEMENT_FRACTION` is scaled by distance on the strength of the
 distance ordering, which CamB's three marks support (0.019x / 0.039x / 0.036x of
@@ -970,10 +972,12 @@ video frames are near-identical and splitting by frame is leakage. Every
 threshold below is tuned on ten Bullet Holes across two clips, and `yolo26n` vs
 `yolo26m` vs P2 cannot be compared meaningfully on them.
 
-This is the next step, and it is what the following open questions are
-waiting on, all but the model (5): that is frozen before the sealed run, which
-evaluates it once and does not choose between checkpoints (#31). **Do not move
-any constant further on CamA and CamB alone.**
+This is the next step, and it answers none of the open questions below. Each
+is settled, or left provisional, on footage that is not sealed. Then the model,
+every constant and the commit are frozen and written down, and the sealed run
+evaluates that one system once. Nothing is changed afterwards on what it
+reveals (#31, ADR-0005). **Do not move any constant further on CamA and CamB
+alone.**
 
 1. Duplicate / split behaviour — the 0.59x vs 0.74x collision above.
 2. Genuinely close Bullet Holes, and how near two real marks actually get.
@@ -1026,8 +1030,9 @@ windows do not overlap on the data that exists.**
 CamB does report that mark as one Bullet Hole, and scores 1.00 — but by the
 candidate's running mean drifting into range over 275 frames, not because the
 gate fires. That is luck, and `test_camb_split_is_not_merged_by_the_gate_alone`
-pins it so nobody mistakes it for a property. Settling it needs the held-out test
-set, not a nudged constant.
+pins it so nobody mistakes it for a property. Settling it needs new footage
+that is not sealed, not a nudged constant. The sealed run only tests the gate
+as it was fixed before the run (ADR-0005).
 
 **The box arms must not gate baseline suppression.** Applied there they swallowed
 a real new Bullet Hole next to a pre-existing one on CamB, taking recall from

@@ -121,8 +121,10 @@ A sweep over confidence, persistence, match radius and the change filter
 confirms these four values are jointly optimal on this ground truth. That is
 reassurance about the sweep, not about the values:
 **they are tuned on six Bullet Holes in one clip and will overfit to it.**
-They are better than intuition, not validated. The held-out test set remains the
-only thing that settles them.
+They are better than intuition, not validated. The held-out test set is the
+only thing that can test them, and it tests them as they stand: they are fixed
+before the sealed run, which evaluates them once and does not re-set them
+([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)).
 
 ## Consequences
 
@@ -138,7 +140,8 @@ Both thresholds are working values, not measured ones. `MATCH_PX` (22) and the
 70% fraction were set by hand against a single clip. Unlike the de-duplication
 gate in [ADR-0002](0002-single-de-duplication-gate.md) — whose 0.5x sits in a
 measured gap between two populations — these have no such justification yet, and
-the held-out test set needed to earn them does not exist.
+the sealed run cannot supply one. It evaluates the values fixed before it, and
+tuning them on what it reveals would spend it ([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)).
 
 Recall on the only window with ground truth is **5 of 6**. That is the number to
 beat, and it is far from SOW 2.3.6.

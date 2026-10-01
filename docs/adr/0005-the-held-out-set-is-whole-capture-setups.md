@@ -14,8 +14,9 @@ Setup, is the part of this decision that held, and it is the part that matters.
 
 [ADR-0003](0003-a-bullet-hole-is-new-when-it-persists.md) records that every
 threshold in the pipeline is tuned on six Bullet Holes in one clip and "will
-overfit to it", and names the held-out test set as the only thing that settles
-them. This is that test set, and what it may and may not be used for.
+overfit to it", and names the held-out test set as the only thing that can test
+them. This is that test set, and what it may and may not be used for. It
+evaluates one frozen system. It does not choose a model or set a constant.
 
 ## Why none of it is trained on
 
@@ -100,6 +101,13 @@ log with date, model and commit. "We only looked once" becomes a record rather
 than a claim — which is what an acceptance conversation about SOW 2.3.6 will
 want. The rule this protects is one that gets broken by accident, months later,
 during a long sweep, by someone who was not party to the decision.
+
+**The sealed run evaluates one frozen system.** The model, every constant and
+the commit are chosen on footage that is not sealed, and written down before the
+run (#31). The run then measures that one system once. Its result is reported.
+It does not choose between checkpoints, and no model or constant is changed
+afterwards on what it reveals. A sealed result that feeds a choice is a fitted
+result, and the set it came from is spent.
 
 **The two threshold-work recordings may falsify a constant, not optimise one.**
 They raise the evidence from two Capture Setups and ten Bullet Holes by at most

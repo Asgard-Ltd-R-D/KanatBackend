@@ -18,9 +18,10 @@ failure mode.
 That failure is invisible in a score. It arrives as one more FP, indistinguishable
 from a detector error, and a precision drop on new footage therefore reads as a
 model problem. `HANDOVER.md` records two of three investigated failures as having
-been mis-diagnosed exactly that way. With five customer recordings about to be
-spent on model comparisons ([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)),
-an unattributed FP is a model comparison confounded by how far registration
+been mis-diagnosed exactly that way. Model comparisons run on the customer
+recordings that are not sealed, and the sealed run then measures the one system
+they chose ([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)). On
+either, an unattributed FP is a score confounded by how far registration
 displaced marks that day.
 
 Measured on the two labelled clips, they fail differently and it shows:
@@ -114,8 +115,10 @@ attributed. It is printed beside the score and used by a reader, not by the rule
 - A model comparison can be read per cause, so a registration-heavy day cannot
   be mistaken for a worse detector.
 - `unknown` will appear, and it is not a defect to be tuned away. Narrowing it
-  needs footage that bounds displacement, which is what the held-out recordings
-  are for — not another sweep of the two clips that produced the band.
+  needs footage that bounds displacement — not another sweep of the two clips
+  that produced the band. The sealed run does not narrow it either: it reports
+  its `unknown`s, and the bands are fixed with every other constant before it
+  runs ([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)).
 - `new_bullet_holes.process` returns its baseline marks and residual with its
   Bullet Holes, because nothing downstream can attribute anything without the
   marks that were already on the Board.

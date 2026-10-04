@@ -109,13 +109,14 @@ It does not choose between checkpoints, and no model or constant is changed
 afterwards on what it reveals. A sealed result that feeds a choice is a fitted
 result, and the set it came from is spent.
 
-**After its final measurement a recording stays sealed, for good.** It is not
-spent, because spent footage is the negative-mining source. It is not
-threshold-work, because that footage may falsify a constant. It is never opened
-again, never rerun, and never diagnosed on (#63). The `sealed` role carries it
-before and after the measurement. `data/sealed_runs.log` records whether its one
-look has been taken, and a second `--final-run` on a logged recording is
-refused, not logged again (#64).
+**After its final measurement a recording stays sealed, for good** (#63). Its
+look is spent, but the recording does not take the `spent` role, which marks the
+negative-mining source, nor `threshold-work`, which may falsify a constant. It
+is never opened again, never rerun, and never diagnosed on (#31, #60). The
+`sealed` role carries it before and after the measurement, and
+`data/sealed_runs.log` records whether its one look has been taken. A second
+`--final-run` on a logged recording is to be refused, not logged again; #64
+enforces it.
 
 **The run may point at a mechanism, but it never justifies a change.** This
 sharpens "no model or constant is changed afterwards". A failure the run

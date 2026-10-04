@@ -165,6 +165,20 @@ def test_a_second_final_run_on_a_measured_recording_is_refused(tmp_path, monkeyp
     assert "--final-run or not" in str(why.value)
 
 
+def test_a_measured_recording_relabelled_unsealed_is_still_refused(tmp_path):
+    """A measured recording stays sealed for good (ADR-0005, #63). Editing its
+    role in the manifest must not reopen it; the log is checked regardless."""
+    video = tmp_path / "measured.mkv"
+    video.write_bytes(b"frames")
+    sha = content_hash(str(video))
+    log = tmp_path / "sealed_runs.log"
+    log.write_text(f"2026-10-01T11:52:23Z  {sha}  model=x  commit=abc1234  tool=evaluate.py\n")
+
+    for role in (SPENT, THRESHOLD_WORK):
+        with pytest.raises(Sealed):
+            authorise(str(video), entries={sha: {"role": role}}, log_path=str(log))
+    assert log.read_text().count(sha) == 1
+
 def test_a_malformed_log_line_refuses_rather_than_permits(tmp_path):
     """An unreadable record of past looks cannot be read as "no past looks"."""
     video = tmp_path / "sealed.mkv"

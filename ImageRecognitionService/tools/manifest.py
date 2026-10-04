@@ -21,8 +21,9 @@ here rather than written down:
 - **Every permitted final run appends** its date, model and commit to the log,
   so "we only looked once" is a record rather than a claim — which is what an
   acceptance conversation about SOW 2.3.6 will want.
-- **A recording already in the log is refused**, `--final-run` or not. The
-  look has been taken; the `sealed` role carries it before and after (#63).
+- **A recording already in the log is refused**, `--final-run` or not, and
+  whatever role the manifest now gives it. The look has been taken; the
+  `sealed` role carries it before and after (#63).
 
 The guard sits on the recording, because that is the only place provenance
 exists. A frame already extracted to disk cannot be traced back to the footage
@@ -169,13 +170,16 @@ def authorise(video, final_run=False, model=None, tool=None,
     """
     sha = content_hash(video)
     entries = load() if entries is None else entries
-    # The log before the flag: a measured recording must not be told to pass it.
-    earlier = role_for(entries, sha) == SEALED and previous_look(sha, log_path)
+    role_for(entries, sha)  # unallocated or mistyped: refused before anything else
+    # The log before the flag, and whatever the role now says: a measured
+    # recording stays sealed for good, so relabelling it must not reopen it.
+    earlier = previous_look(sha, log_path)
     if earlier:
         raise Sealed(
             f"sha256 {sha} was measured on {earlier[0]} at commit {earlier[1]} "
-            f"({os.path.basename(log_path)}). A sealed recording gets one "
-            "look and is never opened again (ADR-0005), --final-run or not.")
+            f"({os.path.basename(log_path)}). A measured recording gets no "
+            "second look and stays sealed whatever its manifest role "
+            "(ADR-0005), --final-run or not.")
     entry = check_allowed(entries, sha, final_run)
     if entry["role"] == SEALED:
         log_final_run(sha, model, git_commit(), tool, log_path)

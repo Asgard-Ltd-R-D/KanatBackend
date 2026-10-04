@@ -5,7 +5,7 @@ each candidate setting finds; it does not pick one. Auto-selecting by highest
 count optimises straight into false positives — at low confidence the model
 emits far more boxes than there are Bullet Holes on the Board.
 
-    python -m tools.sweep_profile data/images/board.jpg
+    python -m tools.sweep_profile path/to/board_frame.jpg
 
 Look at the annotated frames, compare against the Bullet Holes you can see on
 the Board, then copy the winning cell's numbers into config/capture_profiles.json.

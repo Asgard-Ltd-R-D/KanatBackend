@@ -76,7 +76,9 @@ because fit margins depend on the app and its settings.
 - **What was reported about the Boards.** They were printed A4 *Scale to Fit* on
   the same printer as the earlier test print. That favours 41.1, but this print
   shows "same printer" does not fix the scale. So the app or settings the Targets
-  on the Boards went through decide between 40.0 and 41.1.
+  on the Boards went through decide between 40.0 and 41.1. As of 2026-10-04 they
+  are not known. A surviving Board sheet, measured directly, would settle it.
+  Until then no value is chosen for the footage (#69).
 - **What the footage shows.** The spent CamA Board (`141546`) carries this
   artwork's 10-ring, not the lookalike's.
 
@@ -87,10 +89,10 @@ larger. Three things follow:
   correcting the constant changes the value to pass.
 - **The CLI tells people otherwise.** The `--ring-mm` help and the `NotCalibrated`
   message ask for the ring's ruler reading. Here that is 37.9–39.1 mm, which
-  under-scales every millimetre figure. Fixing that is a code change, out of
-  #62's scope.
+  under-scales every millimetre figure. Fixing that is #69.
 - **Scoring uses the same reading.** `RING_RADII_TPL[0]` (113.5 = 227 / 2) is
   `score()`'s 10/9 boundary, so it sits 1–3 px outside the printed disk.
+  Correcting it, with the constant, is #70.
 
 The printed disk also reads 1.6–2.4% under the artwork's, which is consistent
 with ink spread. The scale therefore comes from the outline, which is what

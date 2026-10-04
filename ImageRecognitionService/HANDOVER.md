@@ -998,8 +998,9 @@ SOW 2.3.2 entirely.
 because fit margins depend on the app. The values and readings are in
 [`ring_measurement.md`](docs/ring_measurement.md). So is why the ring's ruler
 reading, which the `--ring-mm` help asks for, is the wrong thing to pass. **What
-is still open is which print path the Targets on the Boards came from.** Confirm
-it, then wire the value in (a separate ticket).
+is still open is which print path the Targets on the Boards came from.** As of
+2026-10-04 nobody knows the app or settings used. Measuring a surviving Board
+sheet directly would settle it. Then wire the value in (#69).
 
 It cannot be recovered from the imagery: no page edge in the video, and the
 close-up ground-truth photo is cropped inside the sheet.
@@ -1127,7 +1128,7 @@ Measured artwork landmarks — `RING_CENTRE_TPL`, `RING_DIAMETER_TPL`,
 `data/targets/kanat_silhouette_a4.png` and only change if the artwork does.
 `RING_DIAMETER_TPL` is the exception. It is larger than the PNG's white 10-ring,
 and its half is `RING_RADII_TPL[0]`, the 10-ring's scoring boundary (#62,
-[`ring_measurement.md`](docs/ring_measurement.md)).
+[`ring_measurement.md`](docs/ring_measurement.md)). Correcting both is #70.
 
 ---
 

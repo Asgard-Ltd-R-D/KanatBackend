@@ -29,9 +29,12 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageR
 DEFAULT_TEMPLATE = os.path.join(BASE_DIR, "data", "targets", "kanat_silhouette_a4.png")
 
 # --- Target artwork landmarks, measured on the source PNG -------------------
-# Exact readings off the artwork, not tuning knobs.
+# Readings off the artwork, not tuning knobs.
 RING_CENTRE_TPL = np.array([695.4, 639.2])  # white 10-ring centre, template px
-RING_DIAMETER_TPL = 227.0                   # white 10-ring diameter, template px
+# White 10-ring diameter, template px: twice the median radius of its edge, at
+# half level, over 720 rays (`tools/ring_landmarks.py`, #70). The disk is ~2%
+# taller than wide (221.1 x 224.6). 227 until #70, which was 1-3 px outside it.
+RING_DIAMETER_TPL = 223.0
 
 # Ring centre relative to the silhouette's centroid. Every Target on a Board is
 # the same artwork, but only the reference Target is registered against the
@@ -40,11 +43,14 @@ RING_DIAMETER_TPL = 227.0                   # white 10-ring diameter, template p
 # relative to one another — consistent with the single-plane Board.
 RING_OFFSET_TPL = RING_CENTRE_TPL - np.array([696.8, 648.9])
 
-# Outer radius of each scoring ring, template px, measured off the artwork by
-# tracing rays out from the ring centre and recording where the printed white
-# lines fall. Spacing is ~101 px and the values repeat within 3 px across 280
-# rays, which is the width of the printed line itself.
-RING_RADII_TPL = (113.5, 219.0, 318.0, 420.0, 522.0)
+# Outer radius of each scoring ring, template px. The 10-ring ends at the white
+# disk's edge. Each ring after it ends at the centre of the white line, the
+# median over 720 rays from the ring centre (`tools/ring_landmarks.py`, #70).
+# The rings are ~2% taller than wide, so one radius is off by up to ±1.4 px at
+# the 10-ring and ±5 px at the 7-ring.
+# ponytail: circular rings, well under the 7-8 px registration error (#50);
+# score an ellipse (one y/x aspect, ~1.022) if registration gets that good.
+RING_RADII_TPL = (RING_DIAMETER_TPL / 2, 220.5, 322.4, 425.1, 528.2)
 RING_SCORES = (10, 9, 8, 7, 6)
 OUTSIDE_RINGS = 0          # on the Target, beyond the 6-ring
 
@@ -78,7 +84,7 @@ TARGET_NET_SCALE = 0.90    # PROVISIONAL
 
 # Two detections are the same Bullet Hole within this many template px. Expressed
 # in template px precisely so it survives a change of camera distance, unlike a
-# frame-pixel value. 227 template px is the 10-ring diameter, so this converts to
+# frame-pixel value. 223 template px is the 10-ring diameter, so this converts to
 # millimetres the moment `to_millimetres` is unblocked.
 #
 # Swept against data/truth/cama-20260914-141546 (6 Bullet Holes): 40 scores

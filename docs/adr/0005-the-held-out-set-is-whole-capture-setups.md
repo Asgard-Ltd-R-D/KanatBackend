@@ -109,6 +109,22 @@ It does not choose between checkpoints, and no model or constant is changed
 afterwards on what it reveals. A sealed result that feeds a choice is a fitted
 result, and the set it came from is spent.
 
+**After its final measurement a recording stays sealed, for good.** It is not
+spent, because spent footage is the negative-mining source. It is not
+threshold-work, because that footage may falsify a constant. It is never opened
+again, never rerun, and never diagnosed on (#63). The `sealed` role carries it
+before and after the measurement. `data/sealed_runs.log` records whether its one
+look has been taken, and a second `--final-run` on a logged recording is
+refused, not logged again (#64).
+
+**The run may point at a mechanism, but it never justifies a change.** This
+sharpens "no model or constant is changed afterwards". A failure the run
+discloses may be followed up only by reproducing the mechanism on footage that
+is not sealed, whether unsealed or newly collected. Any change has to stand on
+that footage alone. The sealed recordings cannot test the changed system,
+because their one look has been taken. Decided on #31 and #60, and recorded
+here by #63.
+
 **The two threshold-work recordings may falsify a constant, not optimise one.**
 They raise the evidence from two Capture Setups and ten Bullet Holes by at most
 two setups and eight Bullet Holes. A joint sweep over eighteen produces a number that looks

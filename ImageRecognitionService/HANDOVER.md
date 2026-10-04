@@ -520,12 +520,12 @@ recordings** (ADR-0005). A follow-up may reproduce a mechanism the run
 disclosed, but only on footage that is not sealed, whether unsealed or newly
 collected. Any change has to stand on that footage alone. The CamB wide pair
 cannot test a changed system, because its one look has been taken.
-_This refines ADR-0005, which says no model or constant is changed afterwards
-on what the run reveals. The run may point at a mechanism, but it never
-justifies a change. That is the human decision on #31 and #60, and the ADR does
-not record it yet._ The manifest still gives both CamB wide recordings the
-`sealed` role. So every tool that opens a recording still refuses them by
-default, and any `--final-run` look would be logged as a second one.
+The run may point at a mechanism, but it never justifies a change. ADR-0005
+records that rule, and also that a measured recording stays sealed for good
+(#63). Both CamB wide recordings keep the `sealed` role, so every tool that
+opens a recording refuses them by default. Until #64 lands, a `--final-run`
+look would still be let through and logged as a second one. After #64 it is
+refused.
 
 **CamB is the first footage where a bullet landed on a Target** — two of its
 four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had

@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from detection import board
+from tools import ring_landmarks
 
 
 def _square(x0, y0, side):
@@ -105,6 +106,19 @@ def test_each_ring_scores_its_own_value():
     centre = view.ring_centre(0)
     just_inside = [centre + [r - 1, 0] for r in board.RING_RADII_TPL]
     assert board.score(just_inside, view, 0) == list(board.RING_SCORES)
+
+
+def test_just_outside_the_white_disk_scores_9():
+    """112.5 px is past the disk's 111.5 edge; the old 113.5 boundary scored it 10 (#70)."""
+    view = _view([_square(0, 0, 100)])
+    assert board.score([view.ring_centre(0) + [112.5, 0]], view, 0) == [9]
+
+
+def test_ring_landmarks_match_the_artwork():
+    """The constants are readings off the PNG; re-reading it must agree."""
+    edge, line_radii = ring_landmarks.measure()
+    assert 2 * edge == pytest.approx(board.RING_DIAMETER_TPL, abs=0.1)
+    assert line_radii == pytest.approx(board.RING_RADII_TPL[1:], abs=0.1)
 
 
 def test_beyond_the_outer_ring_scores_outside():

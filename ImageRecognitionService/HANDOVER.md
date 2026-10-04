@@ -661,6 +661,7 @@ extraction is what keeps sealed pixels out of it.
 | `detection/new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
 | `tools/evaluate.py`, `tools/derive_truth.py` | Scoring a run against labelled ground truth; deriving that truth from a photograph pair |
 | `tools/probe.py`, `tools/registration_reach.py` | Per-mark detection and registration measurements over a clip |
+| `tools/ring_landmarks.py` | Re-reads the 10-ring diameter and scoring-ring radii off the artwork (#70) |
 | `tools/mine_negatives.py` | Background negatives from unsealed footage, into `data/negatives/` |
 | `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
 | `docs/model_bench.md` | Every checkpoint's training record, the dataset each one trained on, and its bench (#30) |
@@ -1126,9 +1127,11 @@ lands near 40. Encouraging, and not validation across a dataset.
 Measured artwork landmarks — `RING_CENTRE_TPL`, `RING_DIAMETER_TPL`,
 `RING_OFFSET_TPL`, `RING_RADII_TPL` — are *not* tunables. They are readings off
 `data/targets/kanat_silhouette_a4.png` and only change if the artwork does.
-`RING_DIAMETER_TPL` is the exception. It is larger than the PNG's white 10-ring,
-and its half is `RING_RADII_TPL[0]`, the 10-ring's scoring boundary (#62,
-[`ring_measurement.md`](docs/ring_measurement.md)). Correcting both is #70.
+`tools/ring_landmarks.py` re-reads the diameter and ring radii, and a test holds
+the constants to it. #70 corrected both: the old ones had moved every scoring
+boundary ([`ring_measurement.md`](docs/ring_measurement.md), item 2). The scores
+above survive it, since CamB `_102250`'s on-Target reports sit 20+ template px from
+any boundary, old or new.
 
 ---
 

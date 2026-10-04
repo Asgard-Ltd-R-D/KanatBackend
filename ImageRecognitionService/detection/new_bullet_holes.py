@@ -711,7 +711,7 @@ def registration_note(residual, radius, unit="Board px"):
 
 
 def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
-            out_video=None, ring_diameter_mm=None, template_path=board.DEFAULT_TEMPLATE,
+            out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
             baseline_frames=BASELINE_FRAMES):
@@ -805,7 +805,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         if not merged:
             print("[MERGE] no displaced sightings found")
 
-    _report(new, start, fps, loop.last, ring_diameter_mm,
+    _report(new, start, fps, loop.last, mm_per_tpl_px,
             [idx for idx, _ in per_frame])
     if out_video:
         _render(video, start, processed, fps, loop.view,
@@ -813,7 +813,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     return Run(new, baseline, residuals)
 
 
-def _report(new, start, fps, view, ring_diameter_mm, looked_at):
+def _report(new, start, fps, view, mm_per_tpl_px, looked_at):
     misses = sum(1 for h in new if h["target"] is None)
     print(f"[INFO] {len(new)} new Bullet Holes ({len(new) - misses} on a Target, {misses} Miss)")
 
@@ -825,7 +825,7 @@ def _report(new, start, fps, view, ring_diameter_mm, looked_at):
         if hole["target"] is None:
             continue
         try:
-            hole["mm"] = board.to_millimetres([hole["pos"]], view, ring_diameter_mm,
+            hole["mm"] = board.to_millimetres([hole["pos"]], view, mm_per_tpl_px,
                                               hole["target"])[0]
         except board.NotCalibrated as why:
             if hole is new[0]:
@@ -847,7 +847,7 @@ def _report(new, start, fps, view, ring_diameter_mm, looked_at):
                 f"persistence {hole['persistence']:.0%}  [{evidence}]{scored}")
         if hole["mm"] is not None:
             line += f"  X {hole['mm'][0]:+7.1f} mm  Y {hole['mm'][1]:+7.1f} mm"
-        elif hole["target"] is not None and ring_diameter_mm is not None:
+        elif hole["target"] is not None and mm_per_tpl_px is not None:
             line += "  (mm unavailable)"
         print(line)
 
@@ -928,11 +928,14 @@ if __name__ == "__main__":
     p.add_argument("--template", default=board.DEFAULT_TEMPLATE,
                    help="printed Target artwork used to register the Board")
     p.add_argument("--confidence", type=float, default=DEFAULT_CONFIDENCE)
-    p.add_argument("--ring-mm", type=float, default=None,
-                   help="measured diameter of the printed white 10-ring, in mm. "
-                        "Without it, positions stay in Board pixels: every "
-                        "millimetre figure scales linearly with this, so it is "
-                        "not guessed.")
+    p.add_argument("--mm-per-px", type=board.checked_scale, default=None,
+                   help="print scale: millimetres per template px on the printed "
+                        "Target, measured off its outline (docs/ring_measurement.md), "
+                        "not a ruler reading of any ring. Overrides "
+                        "config/print_scale.json for this recording's Capture "
+                        "Setup. Without either, positions stay in Board pixels: "
+                        "every millimetre figure scales linearly with this, so "
+                        "it is not guessed.")
     p.add_argument("--no-change-filter", action="store_true",
                    help="keep confirmed Bullet Holes that change detection did "
                         "not corroborate. Raises recall, lowers precision.")
@@ -954,7 +957,16 @@ if __name__ == "__main__":
 
     # Split membership before anything is opened: a sealed recording is refused
     # unless this run says it is the final one. See manifest.py and ADR-0005.
-    manifest.gate(a.video, a.final_run, a.model, "new_bullet_holes.py")
+    # The print scales are checked before the gate too: a malformed one found
+    # after it would spend a sealed recording on a run that reports nothing.
+    scales = board.print_scales()
+    entry = manifest.gate(a.video, a.final_run, a.model, "new_bullet_holes.py")
+    scale = a.mm_per_px
+    if scale is None:
+        scale = scales.get(entry["capture_setup"])
+        if scale is not None:
+            print(f"[INFO] print scale {scale} mm per template px, configured for "
+                  f"{entry['capture_setup']} in config/print_scale.json")
 
-    process(a.video, a.start, a.end, a.model, a.confidence, a.out, a.ring_mm,
+    process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
             a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames)

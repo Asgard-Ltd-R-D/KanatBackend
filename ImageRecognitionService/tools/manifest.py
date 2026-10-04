@@ -21,6 +21,9 @@ here rather than written down:
 - **Every permitted final run appends** its date, model and commit to the log,
   so "we only looked once" is a record rather than a claim — which is what an
   acceptance conversation about SOW 2.3.6 will want.
+- **A recording already in the log is refused**, `--final-run` or not, and
+  whatever role the manifest now gives it. The look has been taken; the
+  `sealed` role carries it before and after (#63).
 
 The guard sits on the recording, because that is the only place provenance
 exists. A frame already extracted to disk cannot be traced back to the footage
@@ -120,8 +123,34 @@ def git_commit():
         return "unknown"
 
 
+def previous_look(sha, log_path=RUN_LOG_PATH):
+    """(date, commit) of an earlier look at `sha`, or None.
+
+    A missing log means nothing has been measured. A line that does not parse
+    is an error, not a skip: an unreadable record of past looks must not read
+    as "no past looks".
+    """
+    if not os.path.isfile(log_path):
+        return None
+    with open(log_path) as f:
+        for n, line in enumerate(f, 1):
+            fields = line.split()
+            if not fields:
+                continue
+            commit = [x[len("commit="):] for x in fields if x.startswith("commit=")]
+            if (len(fields) < 2 or len(fields[1]) != 64
+                    or set(fields[1]) - set("0123456789abcdef")
+                    or not fields[0].endswith("Z") or not commit or not commit[0]):
+                raise ManifestError(
+                    f"{os.path.basename(log_path)} line {n} does not parse: "
+                    f"{line.strip()!r}. Fix it before any final run.")
+            if fields[1] == sha:
+                return fields[0], commit[0]
+    return None
+
+
 def log_final_run(sha, model, commit, tool, log_path=RUN_LOG_PATH):
-    """Append one line. Append-only: two final runs leave two entries."""
+    """Append one line. Append-only: nothing earlier is ever rewritten."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with open(log_path, "a") as f:
         f.write(f"{stamp}  {sha}  model={model}  commit={commit}  tool={tool}\n")
@@ -140,7 +169,18 @@ def authorise(video, final_run=False, model=None, tool=None,
     Recording a look that achieved nothing is the safe error here.
     """
     sha = content_hash(video)
-    entry = check_allowed(load() if entries is None else entries, sha, final_run)
+    entries = load() if entries is None else entries
+    role_for(entries, sha)  # unallocated or mistyped: refused before anything else
+    # The log before the flag, and whatever the role now says: a measured
+    # recording stays sealed for good, so relabelling it must not reopen it.
+    earlier = previous_look(sha, log_path)
+    if earlier:
+        raise Sealed(
+            f"sha256 {sha} was measured on {earlier[0]} at commit {earlier[1]} "
+            f"({os.path.basename(log_path)}). A measured recording gets no "
+            "second look and stays sealed whatever its manifest role "
+            "(ADR-0005), --final-run or not.")
+    entry = check_allowed(entries, sha, final_run)
     if entry["role"] == SEALED:
         log_final_run(sha, model, git_commit(), tool, log_path)
     return entry
@@ -153,7 +193,8 @@ def add_flag(parser):
                              "held-out footage (ADR-0005). Without it a sealed "
                              "recording is refused; with it, the run is "
                              "appended to sealed_runs.log with the date, model "
-                             "and commit.")
+                             "and commit. A recording already in that log is "
+                             "refused either way.")
 
 
 def gate(video, final_run, model, tool):

@@ -141,6 +141,66 @@ def test_a_permitted_final_run_is_logged(tmp_path, monkeypatch):
     assert sha in log.read_text() and "commit=abc1234" in log.read_text()
 
 
+def test_a_second_final_run_on_a_measured_recording_is_refused(tmp_path, monkeypatch):
+    """A sealed recording gets one look (ADR-0005, #63). The flag a second time
+    is the same flag, so the log has to be what refuses it."""
+    monkeypatch.setattr(manifest, "git_commit", lambda: "abc1234")
+    video = tmp_path / "sealed.mkv"
+    video.write_bytes(b"frames")
+    entries = {content_hash(str(video)): {"role": SEALED}}
+    log = tmp_path / "sealed_runs.log"
+    authorise(str(video), final_run=True, model="yolo26n", tool="evaluate.py",
+              entries=entries, log_path=str(log))
+    before = log.read_text()
+
+    with pytest.raises(Sealed) as why:
+        authorise(str(video), final_run=True, model="yolo26m", tool="evaluate.py",
+                  entries=entries, log_path=str(log))
+    assert log.read_text() == before
+    assert "abc1234" in str(why.value) and "ADR-0005" in str(why.value)
+    assert before.split()[0] in str(why.value)  # names the earlier look's date
+
+    with pytest.raises(Sealed) as why:  # without the flag: says measured, not "pass it"
+        authorise(str(video), entries=entries, log_path=str(log))
+    assert "--final-run or not" in str(why.value)
+
+
+def test_a_measured_recording_relabelled_unsealed_is_still_refused(tmp_path):
+    """A measured recording stays sealed for good (ADR-0005, #63). Editing its
+    role in the manifest must not reopen it; the log is checked regardless."""
+    video = tmp_path / "measured.mkv"
+    video.write_bytes(b"frames")
+    sha = content_hash(str(video))
+    log = tmp_path / "sealed_runs.log"
+    log.write_text(f"2026-10-01T11:52:23Z  {sha}  model=x  commit=abc1234  tool=evaluate.py\n")
+
+    for role in (SPENT, THRESHOLD_WORK):
+        with pytest.raises(Sealed):
+            authorise(str(video), entries={sha: {"role": role}}, log_path=str(log))
+    assert log.read_text().count(sha) == 1
+
+def test_a_malformed_log_line_refuses_rather_than_permits(tmp_path):
+    """An unreadable record of past looks cannot be read as "no past looks"."""
+    video = tmp_path / "sealed.mkv"
+    video.write_bytes(b"frames")
+    log = tmp_path / "sealed_runs.log"
+    sha = content_hash(str(video))
+    for bad in ("2026-10-01T11:52:23Z  truncat\n",
+                f"2026-10-01T11:52:23Z  {sha}  model=x\n",  # cut before the commit
+                f"2026-10-01T11:52:23Z  {sha}  model=x  commit=\n",
+                f"2026-10-01T11:52:23Z  {sha.upper()}  model=x  commit=abc\n"):
+        log.write_text(bad)
+        with pytest.raises(ManifestError):
+            authorise(str(video), final_run=True, model="yolo26n", tool="evaluate.py",
+                      entries={sha: {"role": SEALED}}, log_path=str(log))
+        assert log.read_text() == bad
+
+
+def test_the_shipped_log_parses():
+    """Every committed line must read, or every sealed final run is refused."""
+    manifest.previous_look("0" * 64)
+
+
 # The allocation. The invariant is a pure function over entries, like everything
 # above it; only the last two tests read `recordings.json`, because the property
 # ADR-0005 turns on is one of the real allocation and nothing else checks it.

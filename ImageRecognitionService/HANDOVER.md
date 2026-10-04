@@ -522,7 +522,7 @@ disclosed, but only on footage that is not sealed, whether unsealed or newly
 collected. Any change has to stand on that footage alone. The CamB wide pair
 cannot test a changed system, because its one look has been taken.
 ADR-0005 records this rule, and that a measured recording keeps the `sealed`
-role for good (#63). Refusing a second `--final-run` on it is #64.
+role for good (#63), and `manifest.py` refuses a second `--final-run` on it (#64).
 
 **CamB is the first footage where a bullet landed on a Target** — two of its
 four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had
@@ -643,7 +643,9 @@ its hash taking first:
 
 A recording whose role is `sealed` is refused unless `--final-run` is passed,
 and that run is appended to `data/sealed_runs.log` — which is committed, not
-ignored — with the date, model and commit. Lookup is by content hash, so
+ignored — with the date, model and commit. A recording already in that log is
+refused even with `--final-run`, and the refusal names the earlier entry: one
+look, never a second. Lookup is by content hash, so
 renaming a file cannot move it across the split boundary. See `manifest.py` and
 ADR-0005.
 

@@ -1,5 +1,4 @@
 """Checks for Board geometry. No model, no video, no torch."""
-import json
 
 import cv2
 import numpy as np
@@ -99,21 +98,27 @@ def test_millimetres_refuses_to_guess_the_print_scale():
 def test_a_configured_print_scale_is_read_for_its_capture_setup(tmp_path):
     path = tmp_path / "print_scale.json"
     path.write_text('{"camb": {"mm_per_tpl_px": 0.1763, "source": "#62 fresh print"}}')
-    assert board.print_scale("camb", path) == 0.1763
-    assert board.print_scale("cama", path) is None
+    assert board.print_scales(path) == {"camb": 0.1763}
 
 
 def test_a_print_scale_without_a_source_is_refused(tmp_path):
     path = tmp_path / "print_scale.json"
     path.write_text('{"camb": {"mm_per_tpl_px": 0.1763}}')
     with pytest.raises(ValueError, match="no source"):
-        board.print_scale("camb", path)
+        board.print_scales(path)
 
 
-def test_every_shipped_print_scale_records_its_source():
-    with open(board.PRINT_SCALE_PATH) as f:
-        for capture_setup in json.load(f):
-            board.print_scale(capture_setup)
+@pytest.mark.parametrize("bad", ["0", "-0.1763", '"nan"', '"inf"'])
+def test_a_print_scale_that_is_not_a_length_is_refused(tmp_path, bad):
+    """Zero puts every Bullet Hole on the centre, a negative mirrors them."""
+    path = tmp_path / "print_scale.json"
+    path.write_text(f'{{"camb": {{"mm_per_tpl_px": {bad}, "source": "typo"}}}}')
+    with pytest.raises(ValueError, match="not a finite length"):
+        board.print_scales(path)
+
+
+def test_every_shipped_print_scale_is_valid():
+    board.print_scales()
 
 
 def test_scoring_needs_no_calibration():

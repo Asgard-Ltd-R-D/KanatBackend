@@ -19,6 +19,7 @@ measure what it costs if SOW 2.3.2's 5mm proves unreachable. The alternative is
 one homography per Target, which absorbs curl a Board-level fit cannot.
 """
 import json
+import math
 import os
 from typing import NamedTuple
 
@@ -748,23 +749,43 @@ def changed_regions(baseline_canvas, current_canvas, sigma=ABSDIFF_SIGMA):
     return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
 
-def print_scale(capture_setup, path=PRINT_SCALE_PATH):
-    """The Capture Setup's print scale, mm per template px, or None if unknown.
+def print_scales(path=PRINT_SCALE_PATH):
+    """Each Capture Setup's print scale, mm per template px.
 
     Each entry in `path` is `{"mm_per_tpl_px": ..., "source": ...}`, keyed by
     Capture Setup: the Boards of different setups may come from different
     prints. `source` says which print and how it was measured
     (docs/ring_measurement.md); an entry without one is refused, because a
     scale nobody can trace is a guess.
+
+    The whole file is checked, not just one setup's entry, so a caller can read
+    it before the sealed-run gate: a malformed entry found after the gate has
+    logged the look would spend the held-out recording for nothing.
     """
+    name = os.path.basename(path)
     with open(path) as f:
-        entry = json.load(f).get(capture_setup)
-    if entry is None:
-        return None
-    if not entry.get("source"):
-        raise ValueError(f"{os.path.basename(path)}: {capture_setup!r} has no "
-                         "source. Record which print and how it was measured.")
-    return float(entry["mm_per_tpl_px"])
+        entries = json.load(f)
+    scales = {}
+    for capture_setup, entry in entries.items():
+        where = f"{name}: {capture_setup!r}"
+        if not entry.get("source"):
+            raise ValueError(f"{where} has no source. Record which print and "
+                             "how it was measured.")
+        scales[capture_setup] = checked_scale(entry["mm_per_tpl_px"], where)
+    return scales
+
+
+def checked_scale(value, where="print scale"):
+    """A print scale as a float, refused unless finite and above zero.
+
+    It is a physical length ratio applied to every Shot Distance: zero would
+    put every Bullet Hole on the centre, a negative one would mirror them.
+    """
+    scale = float(value)
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError(f"{where}: mm_per_tpl_px {value!r} is not a finite "
+                         "length above zero")
+    return scale
 
 
 def to_millimetres(board_points, view, mm_per_tpl_px=None, target_index=None):

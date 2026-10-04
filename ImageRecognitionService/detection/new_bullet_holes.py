@@ -928,7 +928,7 @@ if __name__ == "__main__":
     p.add_argument("--template", default=board.DEFAULT_TEMPLATE,
                    help="printed Target artwork used to register the Board")
     p.add_argument("--confidence", type=float, default=DEFAULT_CONFIDENCE)
-    p.add_argument("--mm-per-px", type=float, default=None,
+    p.add_argument("--mm-per-px", type=board.checked_scale, default=None,
                    help="print scale: millimetres per template px on the printed "
                         "Target, measured off its outline (docs/ring_measurement.md), "
                         "not a ruler reading of any ring. Overrides "
@@ -957,10 +957,13 @@ if __name__ == "__main__":
 
     # Split membership before anything is opened: a sealed recording is refused
     # unless this run says it is the final one. See manifest.py and ADR-0005.
+    # The print scales are checked before the gate too: a malformed one found
+    # after it would spend a sealed recording on a run that reports nothing.
+    scales = board.print_scales()
     entry = manifest.gate(a.video, a.final_run, a.model, "new_bullet_holes.py")
     scale = a.mm_per_px
     if scale is None:
-        scale = board.print_scale(entry["capture_setup"])
+        scale = scales.get(entry["capture_setup"])
         if scale is not None:
             print(f"[INFO] print scale {scale} mm per template px, configured for "
                   f"{entry['capture_setup']} in config/print_scale.json")

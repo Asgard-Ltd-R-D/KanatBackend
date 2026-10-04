@@ -512,20 +512,17 @@ positive is attributed to `displacement`. The record also carries the
 registration residual, which reached the ceiling on both recordings, and a
 placement doubt on `_101550`. One Capture Setup and two Bullet Holes: **not a
 statistically meaningful validation.** The run opened no other sealed
-recording. Which recordings stay sealed is `config/recordings.json`. Spending
-any of them needs truth first and a new human decision.
+recording. Which recordings stay sealed is `config/recordings.json`. Measuring
+any not yet in `data/sealed_runs.log` needs truth first and a new human
+decision. A measured one is never opened again.
 
 **Nothing is tuned on that result, and it is not diagnosed on the sealed
 recordings** (ADR-0005). A follow-up may reproduce a mechanism the run
 disclosed, but only on footage that is not sealed, whether unsealed or newly
 collected. Any change has to stand on that footage alone. The CamB wide pair
 cannot test a changed system, because its one look has been taken.
-_This refines ADR-0005, which says no model or constant is changed afterwards
-on what the run reveals. The run may point at a mechanism, but it never
-justifies a change. That is the human decision on #31 and #60, and the ADR does
-not record it yet._ The manifest still gives both CamB wide recordings the
-`sealed` role. So every tool that opens a recording still refuses them by
-default, and any `--final-run` look would be logged as a second one.
+ADR-0005 records this rule, and that a measured recording keeps the `sealed`
+role for good (#63). Refusing a second `--final-run` on it is #64.
 
 **CamB is the first footage where a bullet landed on a Target** — two of its
 four, scoring 7 and 8. Until it arrived, Target assignment and ring scoring had

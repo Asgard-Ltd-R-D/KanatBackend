@@ -73,6 +73,8 @@ _Avoid_: drift, registration error, misregistration
 
 **Sealed**:
 A recording held out from every kind of tuning. No pixels of it are used for
-anything — not thresholds, not labels, not unlabelled background crops — until
-the once-only final measurement, which is logged. See ADR-0005.
+anything — not thresholds, not labels, not unlabelled background crops — except
+its one logged final measurement. It stays Sealed after it: it is never opened
+again, and its result may point at a mechanism but never justifies a change.
+See ADR-0005.
 _Avoid_: held back, reserved, test split

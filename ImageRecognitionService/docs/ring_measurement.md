@@ -21,15 +21,15 @@ model were not recorded.
 | Print scale, mm per template px | 0.1758 | 0.1768 |
 | Printed white 10-ring | 37.9 mm | 39.1 mm |
 
-The printed white 10-ring is the second row. The value `--ring-mm` needs is a
-different number. `to_millimetres` divides it by `RING_DIAMETER_TPL` (223 since
-#70, 227 before), so it must be 223 × the print scale, not the ring's ruler
-reading:
+The printed white 10-ring is the second row. Millimetre output takes the first:
+the print scale, passed as `--mm-per-px` or configured per Capture Setup in
+`config/print_scale.json` with its source (#69). The ring's ruler reading is not
+it.
 
-| Print | Scale, mm per template px | `--ring-mm` |
-|---|---|---|
-| This one | 0.1763, the mean of both axes | **39.3** |
-| The earlier test print, under item 1 | 0.1810 | **40.4** |
+| Print | `--mm-per-px`, mm per template px |
+|---|---|
+| This one | **0.1763**, the mean of both axes |
+| The earlier test print, under item 1 | **0.1810** |
 
 Which of the two the footage needs is still open. See item 1.
 
@@ -75,9 +75,9 @@ because fit margins depend on the app and its settings.
 - **Same printer, probably.** Both prints sit about 4.5 mm off-centre in the same
   direction, which points to one printer with two fit settings.
 - **What was reported about the Boards.** They were printed A4 *Scale to Fit* on
-  the same printer as the earlier test print. That favours 40.4, but this print
+  the same printer as the earlier test print. That favours 0.1810, but this print
   shows "same printer" does not fix the scale. So the app or settings the Targets
-  on the Boards went through decide between 39.3 and 40.4. As of 2026-10-04 they
+  on the Boards went through decide between 0.1763 and 0.1810. As of 2026-10-04 they
   are not known. A surviving Board sheet, measured directly, would settle it.
   Until then no value is chosen for the footage (#69).
 - **What the footage shows.** The spent CamA Board (`141546`) carries this
@@ -87,11 +87,12 @@ because fit margins depend on the app and its settings.
 side to side and 224.6 px head to feet, at half-level edges. The constant was
 227, 1.1–2.7% larger; #70 set it to 223.0, twice the disk's median radius
 (`tools/ring_landmarks.py`). Three things follow:
-- **`--ring-mm` is tied to the constant.** It is the constant × the scale, so
-  correcting the constant changed the value to pass: 40.0 and 41.1 with 227.
-- **The CLI tells people otherwise.** The `--ring-mm` help and the `NotCalibrated`
-  message ask for the ring's ruler reading. Here that is 37.9–39.1 mm, which
-  under-scales every millimetre figure. Fixing that is #69.
+- **The millimetre value was tied to the constant.** It was `--ring-mm`, the
+  constant × the scale: 40.0 and 41.1 with 227. #69 replaced it with the scale
+  itself, `--mm-per-px`, so the constant no longer reaches millimetres.
+- **The CLI told people otherwise.** The `--ring-mm` help and the `NotCalibrated`
+  message asked for the ring's ruler reading. Here that is 37.9–39.1 mm, which
+  under-scales every millimetre figure. #69 fixed both.
 - **Scoring uses the same reading.** `RING_RADII_TPL[0]` is half the constant
   and `score()`'s 10/9 boundary. At 113.5 it sat 1–3 px outside the disk. #70
   moved it to the artwork's disk edge, 111.5, and the ring lines past it to

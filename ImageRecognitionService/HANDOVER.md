@@ -665,7 +665,8 @@ extraction is what keeps sealed pixels out of it.
 | `tools/mine_negatives.py` | Background negatives from unsealed footage, into `data/negatives/` |
 | `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
 | `docs/model_bench.md` | Every checkpoint's training record, the dataset each one trained on, and its bench (#30) |
-| `docs/ring_measurement.md` | The printed 10-ring in millimetres: the value for `--ring-mm`, its readings, and what it depends on (#62) |
+| `docs/ring_measurement.md` | The printed 10-ring in millimetres: the print scale for `--mm-per-px`, its readings, and what it depends on (#62) |
+| `config/print_scale.json` | The print scale per Capture Setup, each with its source; empty until a print path is known (#69) |
 | `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `data/truth/<recording>/` | Ground truth, one directory per recording |
 | `detection/tagging_bullets.py`, `tools/sweep_profile.py`, `config/capture_profiles.json` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
@@ -990,18 +991,18 @@ a version assert tells you why, earlier, for less code.
 
 ## Blocked, in priority order
 
-**1. The millimetre scale: measured, not yet applied.** Everything physical
-scales linearly with it, so it is not guessed — `to_millimetres` raises
-`NotCalibrated` until `--ring-mm` is passed. This blocks millimetre output and
-SOW 2.3.2 entirely.
+**1. The millimetre scale: measured, not yet chosen for the footage.**
+Everything physical scales linearly with it, so it is not guessed —
+`to_millimetres` raises `NotCalibrated` until a print scale is passed
+(`--mm-per-px`) or configured for the recording's Capture Setup in
+`config/print_scale.json` (#69). This blocks millimetre output and SOW 2.3.2.
 
 #62 measured it on two A4 *Scale to Fit* prints, which give two candidate values
 because fit margins depend on the app. The values and readings are in
-[`ring_measurement.md`](docs/ring_measurement.md). So is why the ring's ruler
-reading, which the `--ring-mm` help asks for, is the wrong thing to pass. **What
-is still open is which print path the Targets on the Boards came from.** As of
-2026-10-04 nobody knows the app or settings used. Measuring a surviving Board
-sheet directly would settle it. Then wire the value in (#69).
+[`ring_measurement.md`](docs/ring_measurement.md). **What is still open is which
+print path the Targets on the Boards came from.** As of 2026-10-04 nobody knows
+the app or settings used. Measuring a surviving Board sheet directly would
+settle it. Then add the value, with its source, to `config/print_scale.json`.
 
 It cannot be recovered from the imagery: no page edge in the video, and the
 close-up ground-truth photo is cropped inside the sheet.

@@ -7,9 +7,8 @@ right frame of reference:
 
 - It does not move. The camera drifts ~16px over 12s on real footage, and the
   Board itself moves in wind; Board space absorbs both.
-- It is tied to printed artwork of known physical size, so every Board-space
-  length converts to millimetres the moment one ruler reading exists — see
-  `to_millimetres`.
+- It is tied to printed artwork, so every Board-space length converts to
+  millimetres once the print scale is known — see `to_millimetres`.
 
 **One homography for the whole Board**, with Targets located inside it: the
 baseline frame's is fitted to the reference Target's silhouette, and every later
@@ -19,6 +18,7 @@ visibly curl, so the assumption is known to be imperfect; `residuals` exists to
 measure what it costs if SOW 2.3.2's 5mm proves unreachable. The alternative is
 one homography per Target, which absorbs curl a Board-level fit cannot.
 """
+import json
 import os
 from typing import NamedTuple
 
@@ -27,6 +27,7 @@ import numpy as np
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
 DEFAULT_TEMPLATE = os.path.join(BASE_DIR, "data", "targets", "kanat_silhouette_a4.png")
+PRINT_SCALE_PATH = os.path.join(BASE_DIR, "config", "print_scale.json")
 
 # --- Target artwork landmarks, measured on the source PNG -------------------
 # Readings off the artwork, not tuning knobs.
@@ -84,8 +85,8 @@ TARGET_NET_SCALE = 0.90    # PROVISIONAL
 
 # Two detections are the same Bullet Hole within this many template px. Expressed
 # in template px precisely so it survives a change of camera distance, unlike a
-# frame-pixel value. 223 template px is the 10-ring diameter, so this converts to
-# millimetres the moment `to_millimetres` is unblocked.
+# frame-pixel value. It converts to millimetres with the print scale, as
+# `to_millimetres` does.
 #
 # Swept against data/truth/cama-20260914-141546 (6 Bullet Holes): 40 scores
 # 5 true / 1 false / 1 missed, 20 scores 6 / 1 / 0. The radius also gates
@@ -747,25 +748,48 @@ def changed_regions(baseline_canvas, current_canvas, sigma=ABSDIFF_SIGMA):
     return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
 
-def to_millimetres(board_points, view, ring_diameter_mm=None, target_index=None):
+def print_scale(capture_setup, path=PRINT_SCALE_PATH):
+    """The Capture Setup's print scale, mm per template px, or None if unknown.
+
+    Each entry in `path` is `{"mm_per_tpl_px": ..., "source": ...}`, keyed by
+    Capture Setup: the Boards of different setups may come from different
+    prints. `source` says which print and how it was measured
+    (docs/ring_measurement.md); an entry without one is refused, because a
+    scale nobody can trace is a guess.
+    """
+    with open(path) as f:
+        entry = json.load(f).get(capture_setup)
+    if entry is None:
+        return None
+    if not entry.get("source"):
+        raise ValueError(f"{os.path.basename(path)}: {capture_setup!r} has no "
+                         "source. Record which print and how it was measured.")
+    return float(entry["mm_per_tpl_px"])
+
+
+def to_millimetres(board_points, view, mm_per_tpl_px=None, target_index=None):
     """Board-space positions as millimetres from a Target's centre.
+
+    `mm_per_tpl_px` is the print scale: millimetres per template px on the
+    printed Target, measured off its outline against the sheet
+    (docs/ring_measurement.md). It is not a ruler reading of any ring.
 
     `target_index` names the Target the Bullet Holes are on. A Miss has no
     Target and therefore no Shot Distance — do not call this for one.
 
-    Deliberately refuses to guess. The printed 10-ring has never been measured
-    with a ruler, and every millimetre figure scales linearly with it — an
+    Deliberately refuses to guess. Every millimetre figure scales linearly with
+    the print scale, and it depends on how the Targets were printed — an
     unchecked assumption here would silently corrupt SOW 2.3.2's 5mm budget and
     every Grouping Analytic derived from it.
-
-    One ruler reading unblocks this, and scoring with it.
     """
-    if ring_diameter_mm is None:
+    if mm_per_tpl_px is None:
         raise NotCalibrated(
-            "printed 10-ring diameter has not been measured. Measure the white "
-            "centre circle on the printed Target and pass ring_diameter_mm. "
-            "Everything downstream scales linearly with it, so it is not guessed.")
-    mm_per_board_px = ring_diameter_mm / (RING_DIAMETER_TPL * view.board_scale)
+            "no print scale (mm per template px) for this Board. Configure it "
+            "for the Capture Setup in config/print_scale.json, or pass it; "
+            "docs/ring_measurement.md has how it is measured. Not a ring's "
+            "ruler reading. Everything downstream scales linearly with it, so "
+            "it is not guessed.")
+    mm_per_board_px = mm_per_tpl_px / view.board_scale
     offset = (np.asarray(board_points, np.float32).reshape(-1, 2)
               - view.ring_centre(target_index)) * mm_per_board_px
     offset[:, 1] *= -1  # image y grows downward, physical y grows up
@@ -778,7 +802,7 @@ def score(board_points, view, target_index=None):
     **Needs no calibration.** A score is which printed ring contains the Bullet
     Hole — a ratio between two lengths in the same picture, not a physical
     measurement. The ring radii and the Bullet Hole are both in template pixels,
-    so the millimetre scale cancels and `to_millimetres`'s missing ruler reading
+    so the millimetre scale cancels and `to_millimetres`'s missing print scale
     does not block this.
 
     Returns `OUTSIDE_RINGS` for a Bullet Hole on the Target but beyond the

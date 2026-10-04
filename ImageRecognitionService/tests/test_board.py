@@ -1,4 +1,6 @@
 """Checks for Board geometry. No model, no video, no torch."""
+import json
+
 import cv2
 import numpy as np
 import pytest
@@ -88,14 +90,34 @@ def test_board_with_no_targets_assigns_nothing():
 
 # --- calibration is blocked, and says so ------------------------------------
 
-def test_millimetres_refuses_to_guess_the_ring_diameter():
+def test_millimetres_refuses_to_guess_the_print_scale():
     """Everything downstream scales linearly with it, so it must not default."""
-    with pytest.raises(board.NotCalibrated, match="has not been measured"):
+    with pytest.raises(board.NotCalibrated, match="no print scale"):
         board.to_millimetres([[0, 0]], _view([]))
 
 
+def test_a_configured_print_scale_is_read_for_its_capture_setup(tmp_path):
+    path = tmp_path / "print_scale.json"
+    path.write_text('{"camb": {"mm_per_tpl_px": 0.1763, "source": "#62 fresh print"}}')
+    assert board.print_scale("camb", path) == 0.1763
+    assert board.print_scale("cama", path) is None
+
+
+def test_a_print_scale_without_a_source_is_refused(tmp_path):
+    path = tmp_path / "print_scale.json"
+    path.write_text('{"camb": {"mm_per_tpl_px": 0.1763}}')
+    with pytest.raises(ValueError, match="no source"):
+        board.print_scale("camb", path)
+
+
+def test_every_shipped_print_scale_records_its_source():
+    with open(board.PRINT_SCALE_PATH) as f:
+        for capture_setup in json.load(f):
+            board.print_scale(capture_setup)
+
+
 def test_scoring_needs_no_calibration():
-    """A score is a ratio inside one picture, so the missing ruler cannot block it."""
+    """A score is a ratio inside one picture, so the missing print scale cannot block it."""
     view = _view([_square(0, 0, 100)])
     centre = view.ring_centre(0)
     assert board.score([centre], view, 0) == [10]
@@ -135,12 +157,12 @@ def test_score_is_unaffected_by_board_scale():
         assert board.score([point], view, 0) == [8]
 
 
-def test_millimetres_work_once_the_ring_is_measured():
-    """A Bullet Hole one ring-radius right of centre is half a diameter right."""
+def test_millimetres_work_once_the_print_scale_is_configured():
+    """100 template px right of centre, at 0.2 mm per template px, is 20 mm right."""
     view = _view([], scale=1.0)
     centre = board.RING_CENTRE_TPL
-    offset = centre + np.array([board.RING_DIAMETER_TPL / 2, 0])
-    mm = board.to_millimetres([centre, offset], view, ring_diameter_mm=40.0)
+    offset = centre + np.array([100.0, 0])
+    mm = board.to_millimetres([centre, offset], view, mm_per_tpl_px=0.2)
     assert mm[0] == pytest.approx([0.0, 0.0])
     assert mm[1] == pytest.approx([20.0, 0.0])
 
@@ -148,9 +170,9 @@ def test_millimetres_work_once_the_ring_is_measured():
 def test_millimetres_are_independent_of_board_scale():
     """Rectifying larger must not change a physical measurement."""
     centre = board.RING_CENTRE_TPL
-    offset = centre + np.array([board.RING_DIAMETER_TPL / 2, 0])
-    at_one = board.to_millimetres([offset], _view([], scale=1.0), ring_diameter_mm=40.0)
-    at_three = board.to_millimetres([offset * 3], _view([], scale=3.0), ring_diameter_mm=40.0)
+    offset = centre + np.array([100.0, 0])
+    at_one = board.to_millimetres([offset], _view([], scale=1.0), mm_per_tpl_px=0.2)
+    at_three = board.to_millimetres([offset * 3], _view([], scale=3.0), mm_per_tpl_px=0.2)
     # abs, not relative: one component is zero, and float32 leaves ~1e-5 mm of
     # noise there. A micron is five thousand times under SOW 2.3.2's budget.
     assert at_one[0] == pytest.approx(at_three[0], abs=1e-3)
@@ -159,8 +181,8 @@ def test_millimetres_are_independent_of_board_scale():
 def test_physical_y_grows_upward():
     """Image y grows down; a Bullet Hole above centre must read positive."""
     view = _view([])
-    above = board.RING_CENTRE_TPL - np.array([0, board.RING_DIAMETER_TPL / 2])
-    assert board.to_millimetres([above], view, ring_diameter_mm=40.0)[0][1] == pytest.approx(20.0)
+    above = board.RING_CENTRE_TPL - np.array([0, 100.0])
+    assert board.to_millimetres([above], view, mm_per_tpl_px=0.2)[0][1] == pytest.approx(20.0)
 
 
 def test_each_target_has_its_own_ring_centre():
@@ -178,8 +200,8 @@ def test_same_bullet_hole_measures_differently_against_different_targets():
     """The Target index is load-bearing, not cosmetic."""
     view = _view([_square(0, 0, 100), _square(500, 500, 100)])
     point = [[60.0, 60.0]]
-    on_first = board.to_millimetres(point, view, ring_diameter_mm=40.0, target_index=0)
-    on_second = board.to_millimetres(point, view, ring_diameter_mm=40.0, target_index=1)
+    on_first = board.to_millimetres(point, view, mm_per_tpl_px=0.18, target_index=0)
+    on_second = board.to_millimetres(point, view, mm_per_tpl_px=0.18, target_index=1)
     assert np.linalg.norm(on_first[0] - on_second[0]) > 50  # mm
 
 

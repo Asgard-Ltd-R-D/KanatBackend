@@ -666,7 +666,7 @@ extraction is what keeps sealed pixels out of it.
 | `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
 | `docs/model_bench.md` | Every checkpoint's training record, the dataset each one trained on, and its bench (#30) |
 | `docs/ring_measurement.md` | The printed 10-ring in millimetres: the print scale for `--mm-per-px`, its readings, and what it depends on (#62) |
-| `config/print_scale.json` | The print scale per Capture Setup, each with its source; empty until a print path is known (#69) |
+| `config/print_scale.json` | The print scale per Capture Setup, each with its source: 0.1763 for every CamA and CamB setup (#69) |
 | `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `data/truth/<recording>/` | Ground truth, one directory per recording |
 | `detection/tagging_bullets.py`, `tools/sweep_profile.py`, `config/capture_profiles.json` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
@@ -991,18 +991,18 @@ a version assert tells you why, earlier, for less code.
 
 ## Blocked, in priority order
 
-**1. The millimetre scale: measured, not yet chosen for the footage.**
+**1. The millimetre scale: unblocked, 0.1763 mm per template px.**
 Everything physical scales linearly with it, so it is not guessed —
-`to_millimetres` raises `NotCalibrated` until a print scale is passed
+`to_millimetres` raises `NotCalibrated` unless a print scale is passed
 (`--mm-per-px`) or configured for the recording's Capture Setup in
-`config/print_scale.json` (#69). This blocks millimetre output and SOW 2.3.2.
+`config/print_scale.json` (#69). Every CamA and CamB Capture Setup is
+configured; `legacy-dev` is not, its print is unknown.
 
-#62 measured it on two A4 *Scale to Fit* prints, which give two candidate values
-because fit margins depend on the app. The values and readings are in
-[`ring_measurement.md`](docs/ring_measurement.md). **What is still open is which
-print path the Targets on the Boards came from.** As of 2026-10-04 nobody knows
-the app or settings used. Measuring a surviving Board sheet directly would
-settle it. Then add the value, with its source, to `config/print_scale.json`.
+#62 measured two A4 *Scale to Fit* prints: 0.1763 for the repo artwork, 0.1810
+for the lookalike. On 2026-10-04 the user confirmed the recorded Boards' Targets
+came from the repo artwork with the same setup, so the footage takes 0.1763.
+Readings in [`ring_measurement.md`](docs/ring_measurement.md). A new print path
+needs its own measurement and its own entry.
 
 It cannot be recovered from the imagery: no page edge in the video, and the
 close-up ground-truth photo is cropped inside the sheet.

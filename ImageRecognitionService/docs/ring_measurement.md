@@ -31,7 +31,9 @@ it.
 | This one | **0.1763**, the mean of both axes |
 | The earlier test print, under item 1 | **0.1810** |
 
-Which of the two the footage needs is still open. See item 1.
+The footage takes **0.1763**: on 2026-10-04 the user confirmed the Boards' Targets
+were printed from this artwork with this A4 *Scale to Fit* setup. It is configured
+for every CamA and CamB Capture Setup in `config/print_scale.json`.
 
 ## Method
 
@@ -77,9 +79,10 @@ because fit margins depend on the app and its settings.
 - **What was reported about the Boards.** They were printed A4 *Scale to Fit* on
   the same printer as the earlier test print. That favours 0.1810, but this print
   shows "same printer" does not fix the scale. So the app or settings the Targets
-  on the Boards went through decide between 0.1763 and 0.1810. As of 2026-10-04 they
-  are not known. A surviving Board sheet, measured directly, would settle it.
-  Until then no value is chosen for the footage (#69).
+  on the Boards went through decide between 0.1763 and 0.1810.
+- **Settled 2026-10-04.** The user confirmed the Targets on the recorded Boards
+  were printed from the repo artwork with the same A4 *Scale to Fit* setup as this
+  print, so the footage takes 0.1763. 0.1810 belongs to the lookalike's print.
 - **What the footage shows.** The spent CamA Board (`141546`) carries this
   artwork's 10-ring, not the lookalike's.
 

@@ -1,1 +1,26 @@
-{}
+{
+  "cama-20260914": {
+    "mm_per_tpl_px": 0.1763,
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+  },
+  "cama-20260914-close-cross": {
+    "mm_per_tpl_px": 0.1763,
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+  },
+  "cama-20260914-wide": {
+    "mm_per_tpl_px": 0.1763,
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+  },
+  "cama-20260914-wide-tight": {
+    "mm_per_tpl_px": 0.1763,
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+  },
+  "camb-20260915-close-one-board": {
+    "mm_per_tpl_px": 0.1763,
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+  },
+  "camb-20260915-wide-two-boards": {
+    "mm_per_tpl_px": 0.1763,
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+  }
+}

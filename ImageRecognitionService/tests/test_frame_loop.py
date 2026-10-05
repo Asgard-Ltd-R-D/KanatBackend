@@ -5,6 +5,7 @@ What is testable without a video file is the bookkeeping the probe depends on:
 which frames got a look, and which only appeared to.
 """
 import itertools
+import sys
 import types
 
 import numpy as np
@@ -18,6 +19,9 @@ class _FakeView:
     canvas_size = (64, 64)
     match_radius = 3.0
     grew = False
+    targets = [None]
+    board_scale = 1.0
+    inner = types.SimpleNamespace(offset=(0, 0), size=(64, 64))
 
     def rectify(self, frame):
         return frame
@@ -59,6 +63,12 @@ class _FakeCap:
 
     def release(self):
         self.released = True
+
+    def get(self, prop):
+        return 25.0
+
+    def set(self, prop, value):
+        pass
 
 
 class _FakeModel:
@@ -233,3 +243,22 @@ def test_a_grown_canvas_is_searched_as_the_margin_canvas_plus_its_bands(monkeypa
     assert model.calls == [((64, 64), 1, 64), ((48, 64), 7, 64)]
     assert look.detections[:, :2].tolist() == [[15.0, 15.0], [30.0, 72.0]]
     assert look.inner.shape == (64, 64, 3) and look.canvas.shape == (80, 64, 3)
+
+
+def test_opening_reports_how_long_building_board_space_took(monkeypatch, capsys):
+    """Wall time from opening the source to Board space built, printed once (#79).
+    The value is the machine's, so only that it is reported is checked."""
+    monkeypatch.setitem(sys.modules, "ultralytics",
+                        types.SimpleNamespace(YOLO=lambda path: _FakeModel()))
+    monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _FakeCap(1))
+    monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
+    monkeypatch.setattr(nbh.board, "template_contour", lambda mask: None)
+    monkeypatch.setattr(nbh.board, "contour_span", lambda contour: 100.0)
+    monkeypatch.setattr(nbh.board, "net_scale", lambda *args: 1.0)
+    monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask: (_FakeView(), 0.95))
+    monkeypatch.setattr(nbh.board, "uncovered_view",
+                        lambda view, size: (0.0, dict.fromkeys(
+                            ("left", "right", "above", "below"), 0.0)))
+    nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt")
+    assert capsys.readouterr().out.count("[REGISTRATION] Board space built in ") == 1

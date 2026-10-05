@@ -52,8 +52,8 @@ _Avoid_: stray, off-target hit
 The new Bullet Holes on one Target during one Range, after the operator's
 corrections. Bullet Holes that were already on the Board when the Range
 started, and Misses, belong to no Group. Since a Group counts Bullet Holes,
-not Hits, a tight Group is under-counted and its spread reads slightly small
-(ADR-0001).
+not Hits, a tight Group can be under-counted (ADR-0001); its MPI, CEP and
+Extreme Spread carry the same caveat, with no fixed direction of error.
 _Avoid_: grouping, cluster, string
 
 **MPI** (Mean Point of Impact):

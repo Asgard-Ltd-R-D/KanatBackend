@@ -383,3 +383,15 @@ def test_render_draws_each_frame_with_the_view_detection_used(monkeypatch):
     views = {0: _Named("base"), 1: _Named("base"), 3: _Named("re-anchored")}
     nbh._render("clip.mp4", 0.0, 5, 25.0, views, [], [], "out.mp4")
     assert drawn == ["base", "base", "base", "re-anchored", "re-anchored"]
+
+
+def test_an_interval_shorter_than_a_frame_still_renders(monkeypatch):
+    """`--end` at `--start` reads no frame; `--out` gets Board space's own view
+    rather than a KeyError."""
+    loop = _loop(monkeypatch, lambda i: True)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    rendered = []
+    monkeypatch.setattr(nbh, "_render", lambda video, start, n, fps, views, *rest:
+                        rendered.append((n, views)))
+    nbh.process("clip.mp4", 10.0, 10.0, "model.pt", out_video="out.mp4")
+    assert rendered == [(0, {0: loop.view})]

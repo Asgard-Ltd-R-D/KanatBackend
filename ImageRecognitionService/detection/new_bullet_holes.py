@@ -774,7 +774,9 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # it is subtracted from.
     baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
     baseline_canvas, baseline_inner, baseline_detections = None, None, []
-    views = {}  # frame index -> the view detection used, for `_render`
+    # Frame index -> the view detection used, for `_render`. Seeded with look
+    # 0's view, Board space itself, so a run that reads no frame still has one.
+    views = {0: loop.view}
     for look in itertools.islice(looks, baseline_frames):
         if not look.registered:
             continue
@@ -919,7 +921,7 @@ def _render(video, start, n_frames, fps, views, baseline, new, out_video):
     and a lost frame is drawn with the last view before it."""
     cap = cv2.VideoCapture(video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
-    view = views[0]  # frame 0 always registers; Board space is built from it
+    view = views[0]  # Board space's own view; `process` always records it
     w, h = view.canvas_size
     vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
     for idx in range(n_frames):

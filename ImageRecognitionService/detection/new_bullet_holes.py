@@ -928,8 +928,6 @@ def _report_groups(new, mm_per_tpl_px):
               "this Capture Setup")
         return
     stats, misses = groups.groups(new)
-    if not stats:
-        return
     if misses:
         print(f"[GROUP] {misses} Miss excluded from every Group" if misses == 1 else
               f"[GROUP] {misses} Misses excluded from every Group")

@@ -87,11 +87,13 @@ def _hole(target, pos):
             "persistence": 1.0, "corroborated": True, "seen": [0]}
 
 
-def _run_report(mm_per_tpl_px, capsys):
+def _run_report(mm_per_tpl_px, capsys, misses_only=False):
     view = board.BoardView(H=np.eye(3, dtype=np.float32), tpl_to_board=board._as_matrix(1.0),
                            canvas_size=(1000, 1000),
                            targets=[_square(0, 0, 100), _square(500, 500, 100)])
     new = [_hole(0, view.ring_centre(0)), _hole(0, view.ring_centre(0) + 10), _hole(None, (900, 50))]
+    if misses_only:
+        new = [_hole(None, (900, 50)), _hole(None, (50, 900))]
     _report(new, 0.0, 25.0, view, mm_per_tpl_px, [0])
     return capsys.readouterr().out
 
@@ -108,3 +110,9 @@ def test_without_a_print_scale_the_report_prints_no_group_block(capsys):
     out = _run_report(None, capsys)
     assert "[GROUP] Target" not in out
     assert "print scale is not configured" in out
+
+
+def test_a_range_of_only_misses_still_reports_the_miss_count(capsys):
+    out = _run_report(0.2, capsys, misses_only=True)
+    assert "[GROUP] 2 Misses excluded from every Group" in out
+    assert "[GROUP] Target" not in out

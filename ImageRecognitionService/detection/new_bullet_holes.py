@@ -509,7 +509,7 @@ class RegisteredFrames:
         self.processed = self.lost = 0
         self._template_mask = template_mask   # the artwork a re-anchor seeds from
         self._lost_run = 0      # consecutive lost frames, up to this one
-        self.reanchors = []     # `(index, registered)` per re-anchor attempt (#80)
+        self.reanchors = self.reanchored = 0   # attempts, and those that registered (#80)
         # How far past each canvas edge any registered frame's view has run,
         # in Board px — the baseline's is only the first (#41).
         uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
@@ -652,17 +652,17 @@ class RegisteredFrames:
         finally:
             self.cap.release()
             self._report_reach()
-            ok = sum(registered for _, registered in self.reanchors)
-            print(f"[REGISTRATION] {len(self.reanchors)} re-anchor attempt(s): {ok} "
-                  f"registered, {len(self.reanchors) - ok} failed (#80)")
+            print(f"[REGISTRATION] {self.reanchors} re-anchor attempt(s): {self.reanchored} "
+                  f"registered, {self.reanchors - self.reanchored} failed (#80)")
 
     def _report_reanchor(self, index, registered):
-        self.reanchors.append((index, registered))
+        self.reanchors += 1
+        self.reanchored += registered
         result = ("registered" if registered else
                   f"failed, the frame stays lost; next attempt after "
                   f"{REANCHOR_AFTER_LOST} more")
         print(f"[REGISTRATION] re-anchor at t={self.start + index / self.fps:.2f}s "
-              f"(frame {index}) after {self._lost_run} lost frame(s): {result}")
+              f"(frame {index}) after {self._lost_run} lost frame(s): {result} (#80)")
 
     def _detect_grown(self, view, canvas, inner):
         """Inference A on the margin canvas, B on each band, merged in canvas px."""

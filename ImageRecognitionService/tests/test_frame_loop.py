@@ -352,3 +352,34 @@ def test_a_run_that_never_lost_the_board_reports_no_re_anchor(monkeypatch, capsy
     list(loop.looks(4))
     assert "[REGISTRATION] 0 re-anchor attempt(s)" in capsys.readouterr().out
     assert _reanchored(loop) == []
+
+
+def test_render_draws_each_frame_with_the_view_detection_used(monkeypatch):
+    """`_render` registers nothing (#80): a re-anchored view is drawn from its
+    frame on, and a lost frame keeps the last view before it."""
+    drawn = []
+
+    class _Named(_FakeView):
+        targets = []
+
+        def __init__(self, name):
+            self.name = name
+
+        def rectify(self, frame):
+            drawn.append(self.name)
+            return np.zeros((64, 64, 3), np.uint8)
+
+    class _Writer:
+        def write(self, image):
+            pass
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _FakeCap(5))
+    monkeypatch.setattr(nbh.cv2, "VideoWriter", lambda *args: _Writer())
+    monkeypatch.setattr(nbh.board, "track_view",
+                        lambda *args: (_ for _ in ()).throw(AssertionError("re-registered")))
+    views = {0: _Named("base"), 1: _Named("base"), 3: _Named("re-anchored")}
+    nbh._render("clip.mp4", 0.0, 5, 25.0, views, [], [], "out.mp4")
+    assert drawn == ["base", "base", "base", "re-anchored", "re-anchored"]

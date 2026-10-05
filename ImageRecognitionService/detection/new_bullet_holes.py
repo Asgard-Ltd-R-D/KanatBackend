@@ -431,8 +431,8 @@ def _next_view(cap, last, reanchor_on=None):
     Every caller that DETECTS goes through `RegisteredFrames.looks`, on
     purpose: a second way of reading and registering frames is a silent
     difference between what one caller measures and what the runtime sees.
-    `_render` still reads the clip itself, and may — it repeats no detection,
-    so it cannot disagree about the image the model was shown.
+    `_render` still reads the clip itself, but registers nothing: it replays the
+    views `looks` produced, re-anchors included (#80).
     """
     ok, frame = cap.read()
     if not ok:
@@ -774,9 +774,11 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # it is subtracted from.
     baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
     baseline_canvas, baseline_inner, baseline_detections = None, None, []
+    views = {}  # frame index -> the view detection used, for `_render`
     for look in itertools.islice(looks, baseline_frames):
         if not look.registered:
             continue
+        views[look.index] = look.view
         if baseline_canvas is None:
             # Always look 0's: Board space is built from that frame, so `open`
             # has already raised if it did not register. This is the image
@@ -795,6 +797,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         if not look.registered:
             lost += 1
             continue  # no evidence from this frame, either way
+        views[look.index] = look.view
         pts, matched = strip_pre_existing(look.detections, baseline, match_px)
         residuals_per_frame.append(matched)
         if len(pts):
@@ -851,8 +854,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     _report(new, start, fps, loop.last, mm_per_tpl_px,
             [idx for idx, _ in per_frame])
     if out_video:
-        _render(video, start, processed, fps, loop.view,
-                baseline, new, out_video)
+        _render(video, start, processed, fps, views, baseline, new, out_video)
     return Run(new, baseline, residuals)
 
 
@@ -911,25 +913,20 @@ def _report(new, start, fps, view, mm_per_tpl_px, looked_at):
               f"detected in {len(seen)} frame(s){share}")
 
 
-def _render(video, start, n_frames, fps, reference, baseline, new, out_video):
-    """Redraw the clip as the rectified Board. Detection is not repeated."""
+def _render(video, start, n_frames, fps, views, baseline, new, out_video):
+    """Redraw the clip as the rectified Board. Neither detection nor
+    registration is repeated: `views` is what detection used, by frame index,
+    and a lost frame is drawn with the last view before it."""
     cap = cv2.VideoCapture(video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
-    ok, base = cap.read()
-    w, h = reference.canvas_size
+    view = views[0]  # frame 0 always registers; Board space is built from it
+    w, h = view.canvas_size
     vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
-    view, idx, frame = reference, 0, base
-    while idx < n_frames:
-        if idx:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            try:
-                tracked, _ = board.track_view(frame, view)
-                if tracked is not None:
-                    view = tracked
-            except cv2.error:
-                pass
+    for idx in range(n_frames):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        view = views.get(idx, view)
         vis = view.rectify(frame)
         for t in view.targets:
             cv2.polylines(vis, [np.int32(t)], True, (0, 200, 0), 2)
@@ -952,7 +949,6 @@ def _render(video, start, n_frames, fps, reference, baseline, new, out_video):
         cv2.putText(vis, f"NEW {shown}", (16, 100),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         vw.write(vis)
-        idx += 1
     cap.release()
     vw.release()
     print(f"[INFO] -> {out_video}")

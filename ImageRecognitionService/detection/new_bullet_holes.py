@@ -941,7 +941,7 @@ def _report_groups(new, mm_per_tpl_px):
             print("      spread measures need at least two Bullet Holes")
             continue
         print(f"      CEP {g['cep']:.1f} mm (CEP50: median distance from the MPI)   "
-              f"Mean Radius {g['mean_radius']:.1f} mm   RMS radius {g['rms']:.1f} mm")
+              f"Mean Radius {g['mean_radius']:.1f} mm   RMS radius {g['rms_radius']:.1f} mm")
         print(f"      Extreme Spread {g['extreme_spread']:.1f} mm (centre to centre)")
 
 

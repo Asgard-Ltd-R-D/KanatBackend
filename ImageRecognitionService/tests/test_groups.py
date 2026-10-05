@@ -1,5 +1,5 @@
 """Checks for the Group statistics (SOW 2.1.3, #86). Hand-computable points only:
-the arithmetic is verified independently of detection quality."""
+the arithmetic is verified independently of detection quality. No model, no video, no torch."""
 import math
 
 import numpy as np
@@ -29,22 +29,23 @@ def test_a_hand_computable_group_gives_known_statistics():
     assert g["mpi"] == pytest.approx((10.0, -5.0))
     assert g["cep"] == pytest.approx(5.0)                # median of 0, 5, 5, 5, 5
     assert g["mean_radius"] == pytest.approx(4.0)        # 20 / 5
-    assert g["rms"] == pytest.approx(math.sqrt(20.0))    # sqrt(100 / 5)
+    assert g["rms_radius"] == pytest.approx(math.sqrt(20.0))  # sqrt(100 / 5)
     assert g["extreme_spread"] == pytest.approx(10.0)    # the rectangle's diagonal
 
 
-def test_a_3_4_5_triangle():
+def test_a_3_4_5_triangle_gives_known_statistics():
     g = groups([_on(0, 0, 0), _on(0, 3, 0), _on(0, 0, 4)])[0][0]
     assert g["mpi"] == pytest.approx((1.0, 4 / 3))
     assert g["cep"] == pytest.approx(math.sqrt(52) / 3)  # distances sqrt(25, 52, 73) / 3
-    assert g["rms"] == pytest.approx(5 * math.sqrt(2) / 3)
+    assert g["mean_radius"] == pytest.approx((5 + math.sqrt(52) + math.sqrt(73)) / 9)
+    assert g["rms_radius"] == pytest.approx(5 * math.sqrt(2) / 3)
     assert g["extreme_spread"] == pytest.approx(5.0)
 
 
 def test_two_bullet_holes_give_every_measure():
     g = groups([_on(0, 0, 0), _on(0, 6, 8)])[0][0]
     assert g["mpi"] == pytest.approx((3.0, 4.0))
-    assert g["cep"] == g["mean_radius"] == g["rms"] == pytest.approx(5.0)
+    assert g["cep"] == g["mean_radius"] == g["rms_radius"] == pytest.approx(5.0)
     assert g["extreme_spread"] == pytest.approx(10.0)
 
 
@@ -52,7 +53,7 @@ def test_one_bullet_hole_gives_an_mpi_and_no_spread():
     g = groups([_on(0, 2, -3)])[0][0]
     assert g["n"] == 1
     assert g["mpi"] == pytest.approx((2.0, -3.0))
-    assert g["cep"] is g["mean_radius"] is g["rms"] is g["extreme_spread"] is None
+    assert g["cep"] is g["mean_radius"] is g["rms_radius"] is g["extreme_spread"] is None
 
 
 def test_misses_are_excluded_and_counted():

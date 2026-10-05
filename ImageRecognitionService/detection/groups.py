@@ -22,7 +22,7 @@ def groups(holes):
 
     `holes` are reported Bullet Holes: dicts with "target" (an index, or None
     for a Miss) and "mm" (X, Y offset from that Target's centre, Y up). Returns
-    `({target: {"n", "mpi", "cep", "mean_radius", "rms", "extreme_spread"}},
+    `({target: {"n", "mpi", "cep", "mean_radius", "rms_radius", "extreme_spread"}},
     misses)`. A Target with no Bullet Holes has no entry; below two Bullet
     Holes every spread measure is None.
     """
@@ -37,12 +37,12 @@ def groups(holes):
 def _group(pts):
     n = len(pts)
     mpi = (sum(x for x, _ in pts) / n, sum(y for _, y in pts) / n)
-    stats = {"n": n, "mpi": mpi, "cep": None, "mean_radius": None, "rms": None,
+    stats = {"n": n, "mpi": mpi, "cep": None, "mean_radius": None, "rms_radius": None,
              "extreme_spread": None}
     if n >= 2:
         r = [math.dist(p, mpi) for p in pts]
         stats.update(cep=statistics.median(r), mean_radius=statistics.fmean(r),
-                     rms=math.sqrt(statistics.fmean(d * d for d in r)),
+                     rms_radius=math.sqrt(statistics.fmean(d * d for d in r)),
                      extreme_spread=max(math.dist(a, b)
                                         for a, b in itertools.combinations(pts, 2)))
     return stats

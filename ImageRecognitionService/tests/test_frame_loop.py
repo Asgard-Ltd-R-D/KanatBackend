@@ -80,11 +80,23 @@ class _FakeModel:
         return [types.SimpleNamespace(boxes=[box])]
 
 
-def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0):
-    """A loop over `frames` frames; `registers(index)` says which ones register,
-    and `below(index)` how far that frame's view runs past the canvas bottom,
-    in Board px against a 100 px Target span — None for an unmeasurable view."""
+def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0,
+          reanchors=lambda i: False):
+    """A loop over `frames` frames; `registers(index)` says which ones register
+    when tracked, `reanchors(index)` which when re-anchored (#80), and
+    `below(index)` how far that frame's view runs past the canvas bottom,
+    in Board px against a 100 px Target span — None for an unmeasurable view.
+
+    `loop.calls` records `(how, index, last)` for each frame read, where `how`
+    is "track" or "reanchor" and `last` is the view it was handed."""
     seen = iter(range(1, frames + 1))
+    calls = []
+    def fit(how, succeeds):
+        def call(frame, *args):
+            index, last = next(seen), args[-1]
+            calls.append((how, index, last))
+            return (_FakeView() if succeeds(index) else None), 0.9
+        return call
     measured = itertools.count()   # the baseline in __init__, then each look
     edges = dict.fromkeys(("left", "right", "above"), 0.0)
     def uncovered(view, size):
@@ -92,12 +104,13 @@ def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0):
         return None if reach is None else (0.0, {**edges, "below": reach})
     monkeypatch.setattr(nbh.board, "uncovered_view", uncovered)
     monkeypatch.setattr(nbh.board, "target_span", lambda view: 100.0)
-    monkeypatch.setattr(nbh.board, "track_view",
-                        lambda frame, last: (
-                            _FakeView() if registers(next(seen)) else None, 0.9))
-    return nbh.RegisteredFrames(_FakeCap(frames), _FakeModel(), _FakeView(),
+    monkeypatch.setattr(nbh.board, "track_view", fit("track", registers))
+    monkeypatch.setattr(nbh.board, "reanchor_view", fit("reanchor", reanchors))
+    loop = nbh.RegisteredFrames(_FakeCap(frames), _FakeModel(), _FakeView(),
                                 np.zeros((8, 8, 3), np.uint8), imgsz=64, conf=0.02,
-                                fps=25.0, start=10.0)
+                                fps=25.0, start=10.0, template_mask=np.zeros((8, 8), np.uint8))
+    loop.calls = calls
+    return loop
 
 
 def test_a_lost_frame_is_not_a_frame_that_saw_nothing(monkeypatch):
@@ -262,3 +275,80 @@ def test_opening_reports_how_long_building_board_space_took(monkeypatch, capsys)
                             ("left", "right", "above", "below"), 0.0)))
     nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt")
     assert capsys.readouterr().out.count("[REGISTRATION] Board space built in ") == 1
+
+
+# --- re-anchoring after the Board is lost (#80) ------------------------------
+
+N = nbh.REANCHOR_AFTER_LOST
+
+
+def _reanchored(loop):
+    return [index for how, index, _ in loop.calls if how == "reanchor"]
+
+
+def test_one_lost_frame_short_of_the_trigger_does_not_re_anchor(monkeypatch):
+    loop = _loop(monkeypatch, lambda i: i > N - 1, frames=N + 5)
+    list(loop.looks(N + 6))
+    assert _reanchored(loop) == []
+
+
+def test_the_frame_after_a_full_trigger_of_lost_frames_is_re_anchored(monkeypatch):
+    """Frames 1..N are lost; frame N+1 is re-anchored instead of tracked."""
+    loop = _loop(monkeypatch, lambda i: False, frames=N + 5)
+    list(loop.looks(N + 6))
+    assert _reanchored(loop) == [N + 1]
+
+
+def test_after_a_re_anchor_later_frames_track_from_the_re_anchored_view(monkeypatch):
+    loop = _loop(monkeypatch, lambda i: i > N + 1, frames=N + 4,
+                 reanchors=lambda i: True)
+    looks = list(loop.looks(N + 5))
+    recovered = looks[N + 1]
+    assert recovered.registered and recovered.index == N + 1
+    after = [last for how, index, last in loop.calls if index == N + 2]
+    assert after == [recovered.view]
+    assert all(l.registered for l in looks[N + 1:])
+
+
+def test_a_re_anchor_starts_from_the_last_registered_view(monkeypatch):
+    """Board space and the anchor come from it; nothing is rebuilt."""
+    loop = _loop(monkeypatch, lambda i: False, frames=N + 1)
+    list(loop.looks(N + 2))
+    assert [last for how, _, last in loop.calls if how == "reanchor"] == [loop.view]
+
+
+def test_a_failed_re_anchor_stays_lost_and_waits_a_full_interval(monkeypatch):
+    loop = _loop(monkeypatch, lambda i: False, frames=3 * N + 5)
+    looks = list(loop.looks(3 * N + 6))
+    assert _reanchored(loop) == [N + 1, 2 * N + 1, 3 * N + 1]
+    assert not any(l.registered for l in looks[1:])
+    assert [l.index for l in looks] == list(range(3 * N + 6))
+    assert all(l.detections is None for l in looks[1:])
+
+
+def test_a_registered_frame_resets_the_count(monkeypatch):
+    """Only consecutive lost frames trigger: N lost in two runs is not N in a row."""
+    loop = _loop(monkeypatch, lambda i: i == N // 2, frames=N + 5)
+    list(loop.looks(N + 6))
+    assert _reanchored(loop) == []
+
+
+def test_each_re_anchor_is_reported_and_counted_at_the_end(monkeypatch, capsys):
+    loop = _loop(monkeypatch, lambda i: False, frames=2 * N + 2,
+                 reanchors=lambda i: i == 2 * N + 1)
+    list(loop.looks(2 * N + 3))
+    out = capsys.readouterr().out
+    lines = [l for l in out.splitlines() if "[REGISTRATION] re-anchor at" in l]
+    assert len(lines) == 2
+    assert f"frame {N + 1}" in lines[0] and f"after {N} lost" in lines[0]
+    assert "failed" in lines[0]
+    assert f"frame {2 * N + 1}" in lines[1] and f"after {2 * N} lost" in lines[1]
+    assert "registered" in lines[1]
+    assert "[REGISTRATION] 2 re-anchor attempt(s): 1 registered, 1 failed" in out
+
+
+def test_a_run_that_never_lost_the_board_reports_no_re_anchor(monkeypatch, capsys):
+    loop = _loop(monkeypatch, lambda i: True, frames=3)
+    list(loop.looks(4))
+    assert "[REGISTRATION] 0 re-anchor attempt(s)" in capsys.readouterr().out
+    assert _reanchored(loop) == []

@@ -30,6 +30,7 @@ one Bullet Hole, and no amount of temporal evidence separates them.
 import argparse
 import itertools
 import os
+import time
 from typing import NamedTuple
 
 import cv2
@@ -512,6 +513,9 @@ class RegisteredFrames:
             raise SystemExit(f"cannot read Target artwork at {template_path}")
         _, template_mask = board.find_targets(template, min_area=1)
 
+        # How long building Board space takes is measured from opening the
+        # source, so the model load above is not in it (#79).
+        opened_at = time.perf_counter()
         cap = cv2.VideoCapture(video)
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
@@ -522,6 +526,11 @@ class RegisteredFrames:
         view, correlation = board.build_view(base, template_mask)
         if view is None:
             raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+        # A disclosure for agreeing what "fast" means with the customer, and
+        # never a gate: no bar is agreed (#77).
+        print(f"[REGISTRATION] Board space built in {time.perf_counter() - opened_at:.2f} s, "
+              f"wall time from opening the source. Not a pass/fail bar; none is "
+              f"agreed (#79)")
         canvas_w, canvas_h = view.canvas_size
         # The detector is shown the margin canvas exactly as before #46, and
         # the Board past it as bands of their own (#46); imgsz and the net scale

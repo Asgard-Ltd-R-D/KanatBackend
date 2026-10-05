@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-Four independent pieces, one git repo:
+Five independent pieces, one git repo:
 
 - `PacketProcessingService/` — the product: .NET 8 ASP.NET Core service (the only project in `kanat_server.sln`). Directory is `PacketProcessingService`, but the C# root namespace is `PacketProcessing.*` and the README still calls the folder `PacketProcessing/`.
 - `Composer_cli/` + `composer.py` + `build_artifacts.sh` — Python packaging/lifecycle CLI (`composer`) that builds the service, starts the Docker stack, and produces installers. Deployment docs: `Composer_cli/DEPLOY_README.md`.
 - `MotionSimulator/` — standalone Python TCP/UDP simulator + pcap replay, used to feed the service without real hardware.
 - `ImageRecognitionService/` — Python Bullet Hole detection (OpenCV + YOLO), not wired into the .NET service. Pipeline in `detection/`, scoring/truth tooling in `tools/`, both run as modules from the service root (`python -m tools.evaluate ...`). Start at `ImageRecognitionService/HANDOVER.md`.
-- `VideoService/` — git submodule (`KanatVideo`); empty until `git submodule update --init`.
+- `VideoService/` — the video service: MediaMTX config (`mediamtx.yml`: RTSP 8554, Control API 9997, Playback 9996, WebRTC 8889) plus GStreamer scripts (`run_record.sh` multicast ingest, `run_loopdemo.sh`). Formerly the standalone `Asgard-Ltd-R-D/KanatVideo` repo, imported with its history; it is ordinary repo content now, not a submodule. `composer up --mediamtx` runs it with `VideoService/` as the working directory, which is what the relative paths in `mediamtx.yml` and KanatFrontend's `./run_record.sh` hooks rely on. The `mediamtx` binary is not committed (git-ignored). Start at `VideoService/README.md`.
 
 ## Commands
 
@@ -30,6 +30,7 @@ dotnet test ... --filter "FullyQualifiedName~IntegrationTests"  # integration on
 
 # Composer CLI (dev/prod lifecycle + installers) — each is a separate subcommand
 python composer.py up dev -d      # environment defaults to prod if omitted
+python composer.py up dev -d --mediamtx   # also start MediaMTX from VideoService/ (binary not committed)
 python composer.py stop dev
 python composer.py kill dev
 python composer.py status

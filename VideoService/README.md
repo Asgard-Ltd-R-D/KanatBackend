@@ -1,3 +1,9 @@
+> **Part of KanatBackend.** This service was the standalone `Asgard-Ltd-R-D/KanatVideo` repository. It now lives in KanatBackend under `VideoService/`, imported with its history, and changes through ordinary KanatBackend PRs.
+>
+> - **Start/stop** from the KanatBackend root: `python composer.py up <env> --mediamtx`, then `python composer.py stop <env>`. Composer runs MediaMTX with `VideoService/` as its working directory, so the relative paths in `mediamtx.yml` (`./run_loopdemo.sh`, `./recordings/...`) and the `./run_record.sh` hooks KanatFrontend creates resolve here.
+> - **Binary**: `mediamtx` (`mediamtx.exe` on Windows) is not committed and is git-ignored. Download a release from [bluenviron/mediamtx](https://github.com/bluenviron/mediamtx/releases) and put only the binary in `VideoService/`. The release archive also contains a `mediamtx.yml`, which would overwrite this one.
+> - **Generated files**: recordings go to `VideoService/recordings/`, and newer MediaMTX releases also write a self-signed `auto.key`/`auto.crt` here. All of these are git-ignored.
+
 # Kanat Video Server — Sim Paths & Playback API
 
 > 🧩 **Stack**: MediaMTX (record + playback) • RTSP/WebRTC readers • Control API

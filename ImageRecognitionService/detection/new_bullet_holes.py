@@ -36,7 +36,7 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
-from detection import board
+from detection import board, groups
 from tools import manifest
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
@@ -916,6 +916,33 @@ def _report(new, start, fps, view, mm_per_tpl_px, looked_at):
         print(f"      first detected: {start + hole['first_frame'] / fps:.2f}s   "
               f"last detected: {start + max(seen) / fps:.2f}s   "
               f"detected in {len(seen)} frame(s){share}")
+
+    _report_groups(new, mm_per_tpl_px)
+
+
+def _report_groups(new, mm_per_tpl_px):
+    """One block per Target with new Bullet Holes. Millimetres only: with no
+    print scale there is no Group block, never a pixel-unit stand-in."""
+    if mm_per_tpl_px is None:
+        print("[GROUP] no Group statistics: the print scale is not configured for "
+              "this Capture Setup")
+        return
+    stats, misses = groups.groups(new)
+    if not stats:
+        return
+    if misses:
+        print(f"[GROUP] {misses} Miss excluded from every Group" if misses == 1 else
+              f"[GROUP] {misses} Misses excluded from every Group")
+    for target, g in stats.items():
+        print(f"[GROUP] Target {target + 1}: {g['n']} Bullet Hole{'s' if g['n'] > 1 else ''}"
+              f" (counts Bullet Holes, not Hits: a tight Group can be under-counted, ADR-0001)")
+        print(f"      MPI  X {g['mpi'][0]:+7.1f} mm  Y {g['mpi'][1]:+7.1f} mm")
+        if g["n"] < 2:
+            print("      spread measures need at least two Bullet Holes")
+            continue
+        print(f"      CEP {g['cep']:.1f} mm (CEP50: median distance from the MPI)   "
+              f"Mean Radius {g['mean_radius']:.1f} mm   RMS radius {g['rms_radius']:.1f} mm")
+        print(f"      Extreme Spread {g['extreme_spread']:.1f} mm (centre to centre)")
 
 
 def _render(video, start, n_frames, fps, views, baseline, new, out_video):

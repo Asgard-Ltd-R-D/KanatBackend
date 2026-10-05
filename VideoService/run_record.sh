@@ -64,14 +64,28 @@ if [[ -z "$RTSP_URL" ]]; then
   RTSP_URL="rtsp://127.0.0.1:${RTSP_PORT}/${MTX_PATH}"
 fi
 
-# Validate the interface on Linux
-if [[ -n "$IFACE" && ! -d "/sys/class/net/${IFACE}" ]]; then
+# Validate the interface: sysfs on Linux, ifconfig on macOS, skipped elsewhere
+iface_exists() {
+  if [[ -d /sys/class/net ]]; then
+    [[ -d "/sys/class/net/$1" ]]
+  elif command -v ifconfig >/dev/null; then
+    ifconfig "$1" >/dev/null 2>&1
+  fi
+}
+
+list_ifaces() {
+  if [[ -d /sys/class/net ]]; then
+    ls /sys/class/net
+  else
+    ifconfig -l | tr ' ' '\n'
+  fi
+}
+
+if [[ -n "$IFACE" ]] && ! iface_exists "$IFACE"; then
   echo "❌ Network interface '${IFACE}' does not exist." >&2
   echo "Available interfaces:" >&2
 
-  for iface_path in /sys/class/net/*; do
-    echo "  - ${iface_path##*/}" >&2
-  done
+  list_ifaces | sed 's/^/  - /' >&2
 
   exit 1
 fi

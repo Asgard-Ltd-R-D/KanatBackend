@@ -68,6 +68,12 @@ DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 # recordings, not swept.
 BAND_CONTEXT_PX = 32       # PROVISIONAL
 
+# Consecutive lost frames before the loop re-acquires the Board on its own
+# (#80): 1 s at 25 fps. Counted in frames the loop attempted. A failed attempt
+# is itself a lost frame, so attempts fall every this many frames while the
+# Board stays lost. Set from the SOW wording, not from footage.
+REANCHOR_AFTER_LOST = 25   # PROVISIONAL
+
 # How many frames the baseline is built from.
 #
 # The baseline answers "was this mark already on the Board?", and whatever it
@@ -412,24 +418,30 @@ def change_evidence(points, view, inner_changed, changed, radius):
             for p, inside in zip(points, on_inner)]
 
 
-def _next_view(cap, last):
+def _next_view(cap, last, reanchor_on=None):
     """Read one frame and re-register Board space onto it.
 
     Returns `(frame, view)`. `view` is None when the Board was not found or ECC
     failed — no evidence from that frame, either way — and `(None, None)` when
     the read itself failed, which is the end of what the file holds.
 
+    `reanchor_on` is the Target artwork's mask when this frame is to be
+    re-anchored (`board.reanchor_view`, #80) rather than tracked from `last`.
+
     Every caller that DETECTS goes through `RegisteredFrames.looks`, on
     purpose: a second way of reading and registering frames is a silent
     difference between what one caller measures and what the runtime sees.
-    `_render` still reads the clip itself, and may — it repeats no detection,
-    so it cannot disagree about the image the model was shown.
+    `_render` still reads the clip itself, but registers nothing: it replays the
+    views `looks` produced, re-anchors included (#80).
     """
     ok, frame = cap.read()
     if not ok:
         return None, None
     try:
-        current, _ = board.track_view(frame, last)
+        if reanchor_on is None:
+            current, _ = board.track_view(frame, last)
+        else:
+            current, _ = board.reanchor_view(frame, reanchor_on, last)
     except cv2.error:
         current = None
     return frame, current
@@ -474,14 +486,16 @@ class RegisteredFrames:
     number about a distribution the runtime never sees.
 
     Board space is fixed once, by the frame at `--start`, and every later frame
-    is registered onto it.
+    is registered onto it. After `REANCHOR_AFTER_LOST` consecutive lost frames
+    the next one is re-anchored into that same Board space (#80), here and only
+    here, so evaluation and runtime cannot differ on it.
 
     Built by `open`. The constructor takes its collaborators directly so the
     iteration can be exercised without a video file or a model.
     """
 
     def __init__(self, cap, model, view, base, imgsz, conf,
-                 fps, start):
+                 fps, start, template_mask):
         self.cap, self.model = cap, model
         # Two views, and the difference matters: `view` is the Board space
         # everything is registered ONTO, fixed by the frame at `--start`, and
@@ -493,6 +507,9 @@ class RegisteredFrames:
         self._base = base
         self.net_scale = None   # measured by `open`; see the warning there
         self.processed = self.lost = 0
+        self._template_mask = template_mask   # the artwork a re-anchor seeds from
+        self._lost_run = 0      # consecutive lost frames, up to this one
+        self.reanchors = self.reanchored = 0   # attempts, and those that registered (#80)
         # How far past each canvas edge any registered frame's view has run,
         # in Board px — the baseline's is only the first (#41).
         uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
@@ -585,7 +602,7 @@ class RegisteredFrames:
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
-        loop = cls(cap, model, view, base, imgsz, conf, fps, start)
+        loop = cls(cap, model, view, base, imgsz, conf, fps, start, template_mask)
         loop.net_scale = scale
         return loop
 
@@ -605,17 +622,23 @@ class RegisteredFrames:
         """
         try:
             while self.processed < n_frames:
+                due = self._lost_run > 0 and self._lost_run % REANCHOR_AFTER_LOST == 0
                 if self.processed:
-                    frame, current = _next_view(self.cap, self.last)
+                    frame, current = _next_view(self.cap, self.last,
+                                                self._template_mask if due else None)
                     if frame is None:
                         break  # the end of what the file holds
                 else:
                     frame, current = self._base, self.view
                 index, self.processed = self.processed, self.processed + 1
+                if due:
+                    self._report_reanchor(index, current is not None)
                 if current is None:
                     self.lost += 1
+                    self._lost_run += 1
                     yield Look(index, None, None, None)
                     continue
+                self._lost_run = 0
                 self.last = current
                 self._track_reach(current, frame)
                 canvas = current.rectify(frame)
@@ -629,6 +652,17 @@ class RegisteredFrames:
         finally:
             self.cap.release()
             self._report_reach()
+            print(f"[REGISTRATION] {self.reanchors} re-anchor attempt(s): {self.reanchored} "
+                  f"registered, {self.reanchors - self.reanchored} failed (#80)")
+
+    def _report_reanchor(self, index, registered):
+        self.reanchors += 1
+        self.reanchored += registered
+        result = ("registered" if registered else
+                  f"failed, the frame stays lost; next attempt after "
+                  f"{REANCHOR_AFTER_LOST} more")
+        print(f"[REGISTRATION] re-anchor at t={self.start + index / self.fps:.2f}s "
+              f"(frame {index}) after {self._lost_run} lost frame(s): {result} (#80)")
 
     def _detect_grown(self, view, canvas, inner):
         """Inference A on the margin canvas, B on each band, merged in canvas px."""
@@ -740,9 +774,15 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # it is subtracted from.
     baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
     baseline_canvas, baseline_inner, baseline_detections = None, None, []
+    # Frame index -> the view detection used, for `_render`. Seeded with look
+    # 0's view, Board space itself, so a run that reads no frame still has one.
+    # Kept only for `--out`: nothing else reads it, and a view a frame adds up.
+    views = {0: loop.view}
     for look in itertools.islice(looks, baseline_frames):
         if not look.registered:
             continue
+        if out_video:
+            views[look.index] = look.view
         if baseline_canvas is None:
             # Always look 0's: Board space is built from that frame, so `open`
             # has already raised if it did not register. This is the image
@@ -761,6 +801,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         if not look.registered:
             lost += 1
             continue  # no evidence from this frame, either way
+        if out_video:
+            views[look.index] = look.view
         pts, matched = strip_pre_existing(look.detections, baseline, match_px)
         residuals_per_frame.append(matched)
         if len(pts):
@@ -817,8 +859,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     _report(new, start, fps, loop.last, mm_per_tpl_px,
             [idx for idx, _ in per_frame])
     if out_video:
-        _render(video, start, processed, fps, loop.view,
-                baseline, new, out_video)
+        _render(video, start, processed, fps, views, baseline, new, out_video)
     return Run(new, baseline, residuals)
 
 
@@ -877,25 +918,20 @@ def _report(new, start, fps, view, mm_per_tpl_px, looked_at):
               f"detected in {len(seen)} frame(s){share}")
 
 
-def _render(video, start, n_frames, fps, reference, baseline, new, out_video):
-    """Redraw the clip as the rectified Board. Detection is not repeated."""
+def _render(video, start, n_frames, fps, views, baseline, new, out_video):
+    """Redraw the clip as the rectified Board. Neither detection nor
+    registration is repeated: `views` is what detection used, by frame index,
+    and a lost frame is drawn with the last view before it."""
     cap = cv2.VideoCapture(video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
-    ok, base = cap.read()
-    w, h = reference.canvas_size
+    view = views[0]  # Board space's own view; `process` always records it
+    w, h = view.canvas_size
     vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
-    view, idx, frame = reference, 0, base
-    while idx < n_frames:
-        if idx:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            try:
-                tracked, _ = board.track_view(frame, view)
-                if tracked is not None:
-                    view = tracked
-            except cv2.error:
-                pass
+    for idx in range(n_frames):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        view = views.get(idx, view)
         vis = view.rectify(frame)
         for t in view.targets:
             cv2.polylines(vis, [np.int32(t)], True, (0, 200, 0), 2)
@@ -918,7 +954,6 @@ def _render(video, start, n_frames, fps, reference, baseline, new, out_video):
         cv2.putText(vis, f"NEW {shown}", (16, 100),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         vw.write(vis)
-        idx += 1
     cap.release()
     vw.release()
     print(f"[INFO] -> {out_video}")

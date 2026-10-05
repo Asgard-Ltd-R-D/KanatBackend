@@ -140,6 +140,13 @@ REGION_SPANS = 1.5         # PROVISIONAL
 ECC_SCALE = 0.5            # PROVISIONAL: half resolution
 ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drift
 
+# A re-anchor (#80) is seeded from every Target in view and keeps the best fit,
+# and only above this. The Targets share one artwork, so a neighbour's seed can
+# converge one Target over. Measured 2026-10-05 seeding every contour against
+# the baseline, four CamA/CamB clips: the right Target 0.97-0.99, a neighbour
+# 0.55 (182 frame px off) and 0.20, or no convergence. Not swept.
+REANCHOR_MIN_CORRELATION = 0.9   # PROVISIONAL
+
 
 class NotCalibrated(RuntimeError):
     """Raised when a physical measurement is requested before calibration."""
@@ -663,7 +670,7 @@ def uncovered_view(view, frame_size):
                       for k, v in reach.items()}
 
 
-def track_view(frame, reference):
+def track_view(frame, reference, seed=None):
     """Re-register the reference view's Board space onto a later frame.
 
     Board space — scale, origin, canvas size and the Targets in it — is fixed
@@ -681,11 +688,16 @@ def track_view(frame, reference):
     had nothing past that Target to hold its perspective, and wandered p95
     63-66 template px at 1.2 Target spans against 7-8 for this (#50). The previous
     frame's W seeds the search, so the camera drift is tracked incrementally;
-    `reference` may be the baseline view or any view tracked from it.
+    `reference` may be the baseline view or any view tracked from it. `seed`
+    (template -> frame) replaces the previous frame's fit as the starting point;
+    `reanchor_view` passes one once the Board has moved out of its reach.
 
-    ponytail: one fixed reference frame. New Bullet Holes, shadows and wind
-    change the Board against it over a long session; re-anchor to a recent
-    registered frame if lost frames climb.
+    ponytail: one fixed reference frame, on purpose. A lost Board re-anchors
+    against it (`reanchor_view`, #80) rather than against a recent frame, since
+    every hop between frames adds its error to Board space. New Bullet Holes,
+    shadows and wind still change the Board against it over a long session; if
+    re-anchors start failing, the anchor itself needs refreshing, chained to
+    this one.
 
     Returns `(None, None)` when no Target is visible, and raises `cv2.error` when
     registration fails to converge — both mean "no evidence from this frame".
@@ -694,9 +706,43 @@ def track_view(frame, reference):
         return None, None
     a = reference.anchor
     W, correlation = ecc_warp(a.gray, _gray(frame), cv2.MOTION_HOMOGRAPHY,
-                              reference.H @ np.linalg.inv(a.H), a.region)
+                              (reference.H if seed is None else seed) @ np.linalg.inv(a.H),
+                              a.region)
     return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
                      reference.targets, a, reference.edges, reference.inner), correlation
+
+
+def reanchor_view(frame, template_mask, reference):
+    """Find the Board again after tracking lost it, in the same Board space (#80).
+
+    `track_view` starts each fit from the last registered frame's, which is no
+    use once the Board has moved out of ECC's reach (wind, a bumped stand). The
+    silhouette registration the baseline was built with is run on this frame
+    only as a seed; `track_view` then refines it against the same baseline
+    frame on Board texture. Board space, the Targets (#33) and the anchor are
+    `reference`'s. Rebuilding them with `build_view` instead would bring back the
+    pre-#50 far-field error, 63-66 template px, as Registration Displacement.
+
+    The Targets share one artwork, so a silhouette fit to a neighbour is a good
+    fit one Target over, and neither proximity nor size says which Target is
+    which after a jump. Every Target in view seeds a fit and the Board texture
+    decides: the best correlation against the baseline frame is kept, and only
+    above `REANCHOR_MIN_CORRELATION` — with the reference Target out of view,
+    the best is a neighbour.
+
+    Returns `(None, None)` when no Target is visible or no fit clears the floor.
+    """
+    contours, frame_mask = find_targets(frame)
+    best = None, None
+    for contour in contours:
+        try:
+            seed, _ = register(template_mask, frame_mask, contour)
+            fit = track_view(frame, reference, seed)
+        except cv2.error:
+            continue
+        if fit[1] is not None and fit[1] >= max(REANCHOR_MIN_CORRELATION, best[1] or 0):
+            best = fit
+    return best
 
 
 def residuals(frame, template_mask, view):

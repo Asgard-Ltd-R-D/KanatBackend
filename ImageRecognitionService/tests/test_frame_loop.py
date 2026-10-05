@@ -395,3 +395,14 @@ def test_an_interval_shorter_than_a_frame_still_renders(monkeypatch):
                         rendered.append((n, views)))
     nbh.process("clip.mp4", 10.0, 10.0, "model.pt", out_video="out.mp4")
     assert rendered == [(0, {0: loop.view})]
+
+
+def test_rendering_gets_the_view_of_every_frame_read(monkeypatch):
+    """Views are kept only for `--out` (#80); when they are, none is missing."""
+    loop = _loop(monkeypatch, lambda i: True)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    rendered = []
+    monkeypatch.setattr(nbh, "_render", lambda video, start, n, fps, views, *rest:
+                        rendered.append(sorted(views)))
+    nbh.process("clip.mp4", 10.0, 10.4, "model.pt", out_video="out.mp4")
+    assert rendered == [list(range(10))]

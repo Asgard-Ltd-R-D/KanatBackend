@@ -776,11 +776,13 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     baseline_canvas, baseline_inner, baseline_detections = None, None, []
     # Frame index -> the view detection used, for `_render`. Seeded with look
     # 0's view, Board space itself, so a run that reads no frame still has one.
+    # Kept only for `--out`: nothing else reads it, and a view a frame adds up.
     views = {0: loop.view}
     for look in itertools.islice(looks, baseline_frames):
         if not look.registered:
             continue
-        views[look.index] = look.view
+        if out_video:
+            views[look.index] = look.view
         if baseline_canvas is None:
             # Always look 0's: Board space is built from that frame, so `open`
             # has already raised if it did not register. This is the image
@@ -799,7 +801,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         if not look.registered:
             lost += 1
             continue  # no evidence from this frame, either way
-        views[look.index] = look.view
+        if out_video:
+            views[look.index] = look.view
         pts, matched = strip_pre_existing(look.detections, baseline, match_px)
         residuals_per_frame.append(matched)
         if len(pts):

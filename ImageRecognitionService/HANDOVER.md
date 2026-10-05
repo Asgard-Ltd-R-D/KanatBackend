@@ -1052,12 +1052,19 @@ undefined.
 
 ## Not verified by real data
 
-**No bullet has ever landed on a Target** in any footage provided — all seven
-detections in the reference clip are Misses. So Target assignment, per-Target
-ring centres and scoring are proven only by unit tests and a direct check on a
-real Board view. A clip where someone hits the silhouette would exercise all
-three at once. **This is the most valuable single piece of footage to capture
-next.**
+**Few bullets have landed on a Target.** The CamA reference clip's Hits are all
+Misses; CamB is the only footage with on-Target Bullet Holes — two of its four,
+scoring 7 and 8 (see above). That is a single Target with a two-Bullet-Hole
+Group, so per-Target ring centres across several Targets, and Group statistics
+(#86) beyond N=2, rest on unit tests. A clip with a full group on each of
+several Targets would exercise all of it at once.
+
+On `_102250` 0–46s the `[GROUP]` block (2026-10-05, #86) reports Target 1 with
+N=3, MPI −11.3/−2.5 mm, CEP 37.1, Extreme Spread 108.9 mm, 2 Misses excluded.
+N=3 holds the detector's false positive, found #4, 4.7 mm from #3: the block
+reports whatever the pipeline confirms, so a false positive on a Target moves
+the MPI and spread (here MPI from −4.5/+13.6 to −11.3/−2.5 mm). Operator
+correction (SOW 2.3.3) is what removes it.
 
 **One false positive survives** the change filter on CamA, and it is genuine —
 it sits inside the ground-truth photo's coverage, so it is not an unlabelled hole

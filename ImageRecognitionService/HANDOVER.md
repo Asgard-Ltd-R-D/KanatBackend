@@ -363,7 +363,10 @@ degrade as new Bullet Holes, shadows and wind change the Board. Nothing here
 shows it yet, since lost and skipped counts are 0–2, but these windows are all
 under a minute. Since #80 a Board lost for `REANCHOR_AFTER_LOST` (25) consecutive
 frames is re-anchored (`board.reanchor_view`): a silhouette seed refined against
-the same baseline frame, so Board space never moves. The anchor itself is still
+the same baseline frame, so Board space never moves. Every Target in view seeds
+a fit, since the Targets share one artwork, and the best correlation is kept,
+only at `REANCHOR_MIN_CORRELATION` (0.9) or above: on four clips the right
+Target scored 0.97-0.99 and a neighbour 0.55 or less. The anchor itself is still
 never refreshed (`ponytail:` in `track_view`); failing re-anchors would be the
 sign it needs to be.
 

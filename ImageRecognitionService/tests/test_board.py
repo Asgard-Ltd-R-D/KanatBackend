@@ -351,27 +351,51 @@ def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
 
 
 def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypatch):
-    """#80: the silhouette fit on the Target where the reference one was last
-    seen is only the seed; texture ECC against the baseline frame moves it onto
-    the Board, and Board space, the Targets and the anchor are the reference's."""
-    near, far = _square(80, 60, 40), _square(240, 160, 60)   # the larger one is a neighbour
-    monkeypatch.setattr(board, "find_targets", lambda frame: ([far, near], None))
+    """#80: the silhouette fit is only the seed; texture ECC against the baseline
+    frame moves it onto the Board, and Board space, the Targets and the anchor
+    are the reference's."""
+    target = _square(80, 60, 40)
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([target], None))
     H0 = np.float32([[1, 0, -600], [0, 1, -560], [0, 0, 1]])   # ring at (95, 79)
-    seeded = []
-    def register(template_mask, frame_mask, contour):
-        seeded.append(contour)
-        return H0 + np.float32([[0, 0, 10], [0, 0, -5], [0, 0, 0]]), 0.9
-    monkeypatch.setattr(board, "register", register)
+    monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
+                        (H0 + np.float32([[0, 0, 10], [0, 0, -5], [0, 0, 0]]), 0.9))
     anchor = board.Anchor(_scene() / 255, np.full((240, 320), 255, np.uint8), H0)
-    reference = board.BoardView(H0, board._as_matrix(2.0), (300, 300), [near], anchor)
+    reference = board.BoardView(H0, board._as_matrix(2.0), (300, 300), [target], anchor)
     colour = lambda img: cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
     view, _ = board.reanchor_view(colour(_scene((12.0, -7.0))), None, reference)
-    assert seeded and seeded[0] is near
     assert board._apply(view.H, [[700, 650]])[0] == pytest.approx([112, 83], abs=0.4)
     assert view.anchor is anchor and view.targets is reference.targets
     assert view.tpl_to_board is reference.tpl_to_board
     assert view.canvas_size == reference.canvas_size
+
+
+def _seeded_fits(monkeypatch, correlations):
+    """Contour i seeds a fit converging at `correlations[i]`; None fails to converge."""
+    contours = [_square(100 * i, 0, 40) for i in range(len(correlations))]
+    monkeypatch.setattr(board, "find_targets", lambda frame: (contours, None))
+    monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
+                        (contour, 0.9))
+    def track_view(frame, reference, seed):
+        corr = correlations[[c is seed for c in contours].index(True)]
+        if corr is None:
+            raise cv2.error("did not converge")
+        return seed, corr
+    monkeypatch.setattr(board, "track_view", track_view)
+    return contours
+
+
+def test_re_anchoring_keeps_the_seed_the_board_texture_agrees_with(monkeypatch):
+    """The Targets share one artwork: whichever is nearest or largest, the fit
+    that matches the baseline frame's texture best is the right one (#80)."""
+    contours = _seeded_fits(monkeypatch, [0.55, None, 0.99, 0.20])
+    assert board.reanchor_view(None, None, None) == (contours[2], 0.99)
+
+
+def test_re_anchoring_refuses_a_best_fit_below_the_floor(monkeypatch):
+    """Only neighbours in view: the best fit is one Target over, not a re-anchor."""
+    _seeded_fits(monkeypatch, [0.55, 0.20])
+    assert board.reanchor_view(None, None, None) == (None, None)
 
 
 def test_re_anchoring_with_no_target_in_view_finds_nothing(monkeypatch):

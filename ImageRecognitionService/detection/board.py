@@ -140,6 +140,13 @@ REGION_SPANS = 1.5         # PROVISIONAL
 ECC_SCALE = 0.5            # PROVISIONAL: half resolution
 ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drift
 
+# A re-anchor (#80) is seeded from every Target in view and keeps the best fit,
+# and only above this. The Targets share one artwork, so a neighbour's seed can
+# converge one Target over. Measured 2026-10-05 seeding every contour against
+# the baseline, four CamA/CamB clips: the right Target 0.97-0.99, a neighbour
+# 0.55 (182 frame px off) and 0.20, or no convergence. Not swept.
+REANCHOR_MIN_CORRELATION = 0.9   # PROVISIONAL
+
 
 class NotCalibrated(RuntimeError):
     """Raised when a physical measurement is requested before calibration."""
@@ -716,20 +723,26 @@ def reanchor_view(frame, template_mask, reference):
     `reference`'s. Rebuilding them with `build_view` instead would bring back the
     pre-#50 far-field error, 63-66 template px, as Registration Displacement.
 
-    The seed is fitted to the Target nearest where `reference` last saw the
-    reference Target, not to the largest: the Targets share one artwork, so a
-    fit to a neighbour is a good fit one Target over, which texture ECC could
-    then hold.
+    The Targets share one artwork, so a silhouette fit to a neighbour is a good
+    fit one Target over, and neither proximity nor size says which Target is
+    which after a jump. Every Target in view seeds a fit and the Board texture
+    decides: the best correlation against the baseline frame is kept, and only
+    above `REANCHOR_MIN_CORRELATION` — with the reference Target out of view,
+    the best is a neighbour.
 
-    Returns and raises as `track_view` does.
+    Returns `(None, None)` when no Target is visible or no fit clears the floor.
     """
     contours, frame_mask = find_targets(frame)
-    if not contours:
-        return None, None
-    last_seen = tuple(float(v) for v in _apply(reference.H, [RING_CENTRE_TPL])[0])
-    nearest = max(contours, key=lambda c: cv2.pointPolygonTest(c, last_seen, True))
-    seed, _ = register(template_mask, frame_mask, nearest)
-    return track_view(frame, reference, seed)
+    best = None, None
+    for contour in contours:
+        try:
+            seed, _ = register(template_mask, frame_mask, contour)
+            fit = track_view(frame, reference, seed)
+        except cv2.error:
+            continue
+        if fit[1] is not None and fit[1] >= max(REANCHOR_MIN_CORRELATION, best[1] or 0):
+            best = fit
+    return best
 
 
 def residuals(frame, template_mask, view):

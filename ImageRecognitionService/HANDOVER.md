@@ -672,7 +672,9 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 
 # --stride N (both tools, default 1) looks at every Nth frame past the baseline,
 # the baseline still being its first --baseline-frames consecutive frames; the
-# frames between are gaps for persistence (#81). Measured per stride in #82.
+# frames between are gaps for persistence (#81). Measured at 1/9/13/17/25 on the
+# spent truth recordings (#82): no stride loses a true Bullet Hole. Live default
+# 17 at 25 fps, LIVE_STRIDE; table and timings in ADR-0007.
 
 # Derive the new Bullet Holes from a before/after photograph pair. --truth-labels
 # then points at the board.new.txt this writes, never at the after export.
@@ -1225,6 +1227,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `EDGE_MIN` | 20.0 | `detection/board.py` | Mean signed Sobel along a Board edge; set on four baseline frames, not swept (#46) |
 | `EDGE_GAP_SPANS` | 0.3 | `detection/board.py` | Skips the Target print's border; CamA's panel top falls inside it, so CamA finds no edge |
 | `EDGE_SEARCH_SPANS` | 2.0 | `detection/board.py` | How far out the edge is looked for; `_103223`'s left edge is found at 1.97, the others' not within it |
+| `LIVE_STRIDE` | 17 | `detection/new_bullet_holes.py` | Live stride at 25 fps: ⌈646 ms × 25⌉, the slowest per-frame time on the dev Mac; no true Bullet Hole lost at 9–25 on the spent truth recordings (ADR-0007, #82) |
 | `BAND_CONTEXT_PX` | 32 | `detection/new_bullet_holes.py` | Margin-canvas px each exposed-Board band carries for context; one stride-32 cell, not swept (#46) |
 | `GREEN_LO` / `GREEN_HI` | — | `detection/board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `detection/board.py` | May reject distant Targets |

@@ -398,7 +398,13 @@ Misses at 2.20–3.96s, all Registration Displacement from the wrong-fit window.
 Persistence passes them (68–90%), since the lost frames after it are excluded;
 the change filter passes them, since the whole canvas changed. That run, and
 the probes, opened `_150248` past its pan before the pan was known: pixels of
-the sealed close-cross setup's view were seen. Nothing was fitted on them.
+the sealed close-cross setup's view were seen. Nothing was fitted on them,
+but the gross-fit signal below was chosen partly on them, and two negatives
+mined from them were trained into the `*_neg_v1` checkpoints (below). So
+`cama-20260914-close-cross` is no longer held out: its three hashes are in
+`data/sealed_runs.log` (`tool=exposed-by-92`), which refuses them to every tool,
+`--final-run` included. The role stays `sealed`, not `spent`, so nothing mines
+the Board and light of the sealed wide setups from it (ADR-0005).
 
 What separates a wrong fit from a right one, on this evidence: a **gross**
 failure (the camera on something else) separates on every signal, best on
@@ -571,7 +577,9 @@ placement doubt on `_101550`. One Capture Setup and two Bullet Holes: **not a
 statistically meaningful validation.** The run opened no other sealed
 recording. Which recordings stay sealed is `config/recordings.json`. Measuring
 any not yet in `data/sealed_runs.log` needs truth first and a new human
-decision. A measured one is never opened again.
+decision. A measured one is never opened again. The log also carries
+`cama-20260914-close-cross`, never measured but exposed by #92 (above), so it
+is closed the same way.
 
 **Nothing is tuned on that result, and it is not diagnosed on the sealed
 recordings** (ADR-0005). A follow-up may reproduce a mechanism the run

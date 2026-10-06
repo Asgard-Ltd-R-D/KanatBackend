@@ -200,3 +200,14 @@ are sealed as `cama-20260914-close-cross`.
 `_150248` turned out to share that aim for its first 0.72 s only: from frame 19
 it pans onto the close-cross view (#92, 2026-10-06). Its window was cut to
 0–0.72s; the role stays spent, since the file has been opened past the pan.
+
+**That spends `cama-20260914-close-cross` too** (#92 review, 2026-10-06). The
+unit is the whole Capture Setup, and its view was seen: two negatives mined
+from it reached the benched `*_neg_v1` checkpoints, and #92 chose its gross-fit
+signal partly on those frames. A score on `_150348` to `_150548` would be
+reported as generalisation it is not, so it is no longer held out. It keeps the
+`sealed` role, as a measured recording does, rather than `spent`, which would
+make it a negative-mining source on the Board and light the sealed wide setups
+hold. Its three hashes are in `data/sealed_runs.log` (`tool=exposed-by-92`), so
+every tool refuses them, `--final-run` included. The held-out set is the CamB
+wide pair, already measured, and `cama-20260914-wide-tight`/`-wide`.

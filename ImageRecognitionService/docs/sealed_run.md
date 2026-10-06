@@ -35,7 +35,9 @@ been a second pass over the same recordings.
 ```
 
 The windows are the manifest's provisional whole-clip windows, fixed before the
-run. `data/sealed_runs.log` holds two entries, one per run.
+run. `data/sealed_runs.log` holds two entries, one per run. The three
+`-close-cross` lines added on 2026-10-06 are not runs: #92 exposed that setup,
+and the log is what closes it (ADR-0005).
 The second entry reads `54a49a8-dirty`. That was predicted in #31 before the run:
 the first run created the log, which is a tracked path. `git status` confirmed
 the log was the only change before the second run started.

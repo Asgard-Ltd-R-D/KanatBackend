@@ -283,7 +283,7 @@ def strip_pre_existing(pts, baseline, match_px):
 
 
 def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
-                           window=PERSIST_FRAMES):
+                           window=PERSIST_FRAMES, lost=()):
     """Fold per-frame detections into confirmed new Bullet Holes.
 
     `per_frame` is [(frame_idx, Nx2 array of Board-space centres), ...], already
@@ -291,8 +291,11 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
     successfully appear in it**, and a registered frame with no detections must
     appear with an empty array rather than be omitted: the denominator below
     counts the frames that actually got a look, so a registration failure neither
-    counts for nor against a Bullet Hole — down to a floor: a window less than
-    `persist` registered confirms nothing (#110, ADR-0003).
+    counts for nor against a Bullet Hole — down to a floor: a window in which
+    under `persist` of the frames the loop TRIED to register did register
+    confirms nothing (#110, ADR-0003). `lost` is the indices of the frames that
+    were tried and lost, gross wrong fits included. A frame in neither list was
+    never read — a stride gap (#81) — and counts for nothing, floor included.
 
     A candidate whose window has not yet elapsed is not reported. Shortening the
     denominator instead would confirm a Bullet Hole seen in 7 of the 10 frames
@@ -302,6 +305,7 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
     Kept free of cv2 and the model so the logic is testable on plain arrays.
     """
     looked_at = sorted(idx for idx, _ in per_frame)
+    lost = sorted(lost)
 
     candidates = []  # [pos, seen_frame_idxs, first_idx]
     for idx, pts in per_frame:
@@ -319,11 +323,15 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
         if first + window > n_frames:
             continue  # window has not elapsed; unconfirmable, not rejected
         span = sum(1 for i in looked_at if first <= i < first + window)
-        if span < persist * window:
-            # Too few looks to call anything persistent: 100% of one frame is
-            # not persistence. Unconfirmable, not rejected, as above. Measured on
+        tried = span + sum(1 for i in lost if first <= i < first + window)
+        if span <= 0 or span < persist * tried:
+            # Too few looks survived registration to call anything persistent:
+            # 100% of one frame among lost ones is not persistence.
+            # Unconfirmable, not rejected, as above. Measured on
             # CamA_20260914_150248 once its pan frames were lost (#110): two
             # surviving wrong fits confirmed 9 false Bullet Holes on 1-2 looks.
+            # Against frames tried, not the window: a stride (#81) leaves ~4
+            # looks a window at 13 on purpose.
             continue
         # Distinct FRAMES, not sightings: two detections on one mark in one frame
         # both fold into this candidate, and counting each made that frame worth
@@ -858,11 +866,11 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes over "
           f"{len(baseline_detections)} frame(s) from {start}s{short}")
 
-    per_frame, corroboration, residuals_per_frame, lost = [], [], [], 0
+    per_frame, corroboration, residuals_per_frame, lost = [], [], [], []
     for look in looks:
         if not look.registered:
-            lost += 1
-            continue  # no evidence from this frame, either way
+            lost.append(look.index)
+            continue  # no evidence from this frame, but it counts towards the floor
         if out_video:
             views[look.index] = look.view
         pts, matched = strip_pre_existing(look.detections, baseline, match_px)
@@ -877,7 +885,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
 
     processed = loop.processed
     if lost:
-        print(f"[WARN] Board lost on {lost} frame(s); excluded from persistence")
+        print(f"[WARN] Board lost on {len(lost)} frame(s); excluded from persistence, "
+              f"and a window mostly lost confirms nothing (#110)")
 
     # A short read is not a crash. The interpreter is alive, the window is simply
     # shorter than asked for, and the frames never read must not lengthen the
@@ -896,7 +905,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                  if any(len(r) for r in residuals_per_frame) else np.zeros(0))
     print(registration_note(residuals, match_px))
 
-    new = track_new_bullet_holes(per_frame, processed, match_px)
+    new = track_new_bullet_holes(per_frame, processed, match_px, lost=lost)
     for hole in new:
         hole["target"] = loop.last.assign(hole["pos"])
         hole["corroborated"] = any(

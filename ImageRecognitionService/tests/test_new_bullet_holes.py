@@ -82,14 +82,45 @@ def test_a_window_mostly_lost_to_registration_confirms_nothing():
     """Seen in the only frame of its window that registered: 100% of one look
     is no persistence. Measured on CamA_20260914_150248 once #110 rejected its
     pan frames: two surviving wrong fits confirmed 9 false Bullet Holes on 1-2
-    looks each. Under PERSIST of the window registered is unconfirmable, not
-    rejected, like a window that has not elapsed. Exactly `PERSIST` registered
-    still confirms: see the lost-registration test above, 10 of 20."""
-    lone = track_new_bullet_holes(_looked([10], {10}), n_frames=40, match_px=MATCH, window=20)
+    looks each. Under PERSIST of the frames the loop tried to register is
+    unconfirmable, not rejected, like a window that has not elapsed. Exactly
+    PERSIST still confirms."""
+    lone = track_new_bullet_holes(_looked([10], {10}), n_frames=40, match_px=MATCH,
+                                  window=20, lost=range(11, 30))
     short = list(range(10, 19))           # 9 of 20 registered, all seeing it
     sparse = track_new_bullet_holes(_looked(short, set(short)), n_frames=40,
-                                    match_px=MATCH, window=20)
-    assert lone == sparse == []
+                                    match_px=MATCH, window=20, lost=range(19, 30))
+    half = list(range(10, 20))            # 10 of 20
+    edge = track_new_bullet_holes(_looked(half, set(half)), n_frames=40,
+                                  match_px=MATCH, window=20, lost=range(20, 30))
+    assert lone == sparse == [] and len(edge) == 1
+
+
+STRIDE_13 = range(13, 300, 13)   # #81: every 13th frame looked at, the rest never read
+
+
+def test_stride_gaps_are_not_lost_frames():
+    """#81/#82 look at every Nth frame on purpose: ~4 looks a 50-frame window
+    at stride 13. Frames never read are gaps, not registration failures, so
+    the #110 floor does not count them and a persistent Bullet Hole confirms."""
+    got = track_new_bullet_holes(_looked(STRIDE_13, set(STRIDE_13)), n_frames=300,
+                                 match_px=MATCH)
+    assert len(got) == 1 and got[0]["persistence"] == 1.0
+
+
+def test_stride_still_drops_a_flickering_detection():
+    seen = set(STRIDE_13[::4])            # 1 look in 4
+    assert track_new_bullet_holes(_looked(STRIDE_13, seen), n_frames=300,
+                                  match_px=MATCH) == []
+
+
+def test_a_lost_sampled_frame_counts_against_the_floor():
+    """At stride 13 a window holds frames 13..52: 4 tries. Three of them lost
+    to registration leaves 1 look of 4, under the floor."""
+    looked = [13] + list(range(65, 300, 13))
+    got = track_new_bullet_holes(_looked(looked, set(looked)), n_frames=300,
+                                 match_px=MATCH, lost=[26, 39, 52])
+    assert all(h["first_frame"] != 13 for h in got)
 
 
 def test_nearby_detections_merge_into_one_bullet_hole():

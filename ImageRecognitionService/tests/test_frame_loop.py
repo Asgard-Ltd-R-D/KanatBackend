@@ -471,3 +471,17 @@ def test_a_check_with_no_verdict_keeps_the_frame(monkeypatch, capsys):
     looks = list(loop.looks(4))
     assert all(l.registered for l in looks) and loop.lost == 0
     assert "0 of 3 converged fit(s) checked" in capsys.readouterr().out
+
+
+def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch):
+    """The #110 floor counts frames tried and lost, so `process` must say which
+    were lost; a frame it never read (a stride gap, #81) is not among them."""
+    loop = _loop(monkeypatch, lambda i: i not in (7, 8))
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    handed = {}
+    def track(per_frame, n_frames, match_px, lost=()):
+        handed["lost"] = list(lost)
+        return []
+    monkeypatch.setattr(nbh, "track_new_bullet_holes", track)
+    nbh.process("clip.mp4", 10.0, 10.4, "model.pt")
+    assert handed["lost"] == [7, 8]

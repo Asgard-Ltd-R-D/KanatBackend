@@ -440,8 +440,10 @@ Rejecting frames exposed a second fault. On `_150248` 0–17.72s two pan frames
 survived: frame 19 (corr 0.807, disagreement 6.5, moderate by design) and
 frame 48 (0.40, 29.6, a wrong fit inside the gap #92 left; its probe sampled
 every 5th frame). With the frames round them lost, persistence confirmed 9
-false Bullet Holes on 1–2 looks each. So a persistence window less than
-`PERSIST` registered now confirms nothing (ADR-0003). Results, all `main` vs
+false Bullet Holes on 1–2 looks each. So a persistence window in which under
+`PERSIST` of the frames tried registered now confirms nothing (ADR-0003). Frames
+tried, not the window's 50: a stride gap (#81, #82: ~6 looks a window at 9, 2 at
+25) is never read and counts for nothing. Results, all `main` vs
 this change:
 
 | Run | Before | After |

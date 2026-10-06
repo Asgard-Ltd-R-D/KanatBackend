@@ -816,12 +816,19 @@ def add_stride_flag(parser):
         n = int(text)
         if n < 1:
             raise argparse.ArgumentTypeError("a stride is 1 frame or more")
+        # From PERSIST_FRAMES on, a window holds one look and any single
+        # sighting confirms at 1/1: persistence would filter nothing.
+        if n >= PERSIST_FRAMES:
+            raise argparse.ArgumentTypeError(
+                f"a stride under the {PERSIST_FRAMES}-frame persistence window, so "
+                f"each window holds more than one look")
         return n
     parser.add_argument("--stride", type=stride, default=1,
                         help="look at every Nth frame past the baseline; the "
                              "rest are gaps for persistence (#81). The baseline "
                              "is still its first --baseline-frames consecutive "
-                             "frames. 1, the default, looks at every frame.")
+                             "frames. 1, the default, looks at every frame; "
+                             f"it must be under {PERSIST_FRAMES}, the persistence window.")
 
 
 def registration_note(residual, radius, unit="Board px"):

@@ -579,3 +579,17 @@ def test_the_report_states_the_stride(monkeypatch, capsys):
     """A stride-sampled result is only comparable at the same stride (#81)."""
     _strided_run(monkeypatch, 25)
     assert "[INFO] stride 13:" in capsys.readouterr().out
+
+
+def test_a_stride_leaving_one_look_a_window_is_refused():
+    """At a stride of the persistence window or more, a window holds one look,
+    and any single sighting would confirm at 1/1 (#81 review)."""
+    import argparse
+    import pytest
+    parser = argparse.ArgumentParser()
+    nbh.add_stride_flag(parser)
+    assert parser.parse_args(["--stride", str(nbh.PERSIST_FRAMES - 1)]).stride == \
+        nbh.PERSIST_FRAMES - 1
+    for refused in ("0", str(nbh.PERSIST_FRAMES)):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--stride", refused])

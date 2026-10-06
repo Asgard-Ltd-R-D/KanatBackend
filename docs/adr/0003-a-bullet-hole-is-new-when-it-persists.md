@@ -158,6 +158,13 @@ counting it as absence let a run of registration hiccups push a real Bullet Hole
 below the threshold. A registered frame with no detection does still count —
 there, the model genuinely looked and saw nothing.
 
+Excluding lost frames has a floor (#110): a window in which fewer than
+`PERSIST` of its frames registered confirms nothing, and is unconfirmable rather
+than rejected, like a window that has not elapsed. 100% of one look is not
+persistence. Measured on `CamA_20260914_150248` once its pan frames were counted
+lost: two wrong fits that survived among them confirmed 9 false Bullet Holes on
+1–2 looks each. Clips that lose no frames are unaffected.
+
 [ADR-0001](0001-report-bullet-holes-not-hits.md)'s conclusion is unchanged.
 Temporal analysis recovers Bullet Holes that appear over time; it does not
 separate two Hits through one Bullet Hole, which leaves no visual change in any

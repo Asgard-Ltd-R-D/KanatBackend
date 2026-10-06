@@ -370,9 +370,9 @@ Target scored 0.97-0.99 and a neighbour 0.55 or less. The anchor itself is still
 never refreshed (`ponytail:` in `track_view`); failing re-anchors would be the
 sign it needs to be.
 
-**A converged fit can be the wrong one, and is accepted silently (#92,
-measured 2026-10-06).** A frame is lost only when no Target is visible or ECC
-fails to converge. Over the ten unsealed CamA/CamB clips, two real wrong fits,
+**A converged fit can be the wrong one (#92, measured 2026-10-06); since #110
+only a moderately wrong one is accepted.** Before #110 a frame was lost only when
+no Target was visible or ECC failed to converge. Over the ten unsealed CamA/CamB clips, two real wrong fits,
 one real camera move that tracking followed, and #91's synthetic jump:
 
 | Recording | What happens | Fit | ECC corr | Silhouette disagreement* |
@@ -425,6 +425,37 @@ Decided: a gross failure becomes a lost frame, so it feeds the #80 re-anchor;
 moderate disagreement gets a run-level warning only; silhouette disagreement is
 the signal, but not as a per-frame check (~0.5 s a frame). Follow-up: #110.
 The probes were scratch scripts (session transcript of 2026-10-06), not committed.
+
+**#110, done 2026-10-06.** `RegisteredFrames` checks a converged fit against
+`board.silhouette_disagreement` only when it converged below
+`REANCHOR_MIN_CORRELATION` (0.9): every wrong fit #92 measured sat at 0.82 or
+less, still clips at 0.917 or more, so a still clip pays nothing. At or past
+`GROSS_DISAGREEMENT_PX` (66, PROVISIONAL: the geometric mean of #92's gap, 24
+right vs 180 wrong, on `_141846` and `_150248`) the frame is lost and feeds the
+re-anchor. From 3.1 up to that bound it is only counted, in one `[WARN]` whose
+denominator is the fits checked. A gross fit converging at 0.9 or above would
+pass unchecked; none was measured (`ponytail:` in `_grossly_wrong`).
+
+Rejecting frames exposed a second fault. On `_150248` 0–17.72s two pan frames
+survived: frame 19 (corr 0.807, disagreement 6.5, moderate by design) and
+frame 48 (0.40, 29.6, a wrong fit inside the gap #92 left; its probe sampled
+every 5th frame). With the frames round them lost, persistence confirmed 9
+false Bullet Holes on 1–2 looks each. So a persistence window less than
+`PERSIST` registered now confirms nothing (ADR-0003). Results, all `main` vs
+this change:
+
+| Run | Before | After |
+|---|---|---|
+| `_150248` 0–0.76s | 0 new | 0 new, nothing checked |
+| `_150248` 0–17.72s | 3 Misses at 2.20–3.08s, 13 re-anchors | 0 new; 17 fits lost as gross, 2 moderate; 16 re-anchors, all failed |
+| `_141846` 0–53s | 15 new | 15 new; 235 checked, 0 lost, 174 moderate |
+| `_144747` 0–48.64s | — | 4 new; 75 checked, 0 lost, 24 moderate; no frame lost, so the floor cannot bite |
+| CamA `_141546` 13–25s | 5/1/1 | 5/1/1, nothing checked |
+| CamB `_102250` 0–46s | 4/1/0 | 4/1/0, nothing checked |
+
+Runtime (`new_bullet_holes`, wall, sequential): `_141546` 13–25s 113.8 →
+111.1 s, `_102250` 0–20s 252.4 → 251.7 s (no fit checked: noise);
+`_141846`, the worst case, 599 → 824 s (+37%, ~0.96 s a check).
 
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the

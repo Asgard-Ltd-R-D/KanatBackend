@@ -81,22 +81,34 @@ class _FakeModel:
 
 
 def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0,
-          reanchors=lambda i: False):
+          reanchors=lambda i: False, correlation=lambda i: 0.9,
+          disagreement=lambda i: 0.0):
     """A loop over `frames` frames; `registers(index)` says which ones register
     when tracked, `reanchors(index)` which when re-anchored (#80), and
     `below(index)` how far that frame's view runs past the canvas bottom,
     in Board px against a 100 px Target span — None for an unmeasurable view.
+    A fit converges at `correlation(index)`, and an independent silhouette fit
+    disagrees with it by `disagreement(index)` Board px (#110).
 
     `loop.calls` records `(how, index, last)` for each frame read, where `how`
-    is "track" or "reanchor" and `last` is the view it was handed."""
+    is "track" or "reanchor" and `last` is the view it was handed;
+    `loop.silhouetted` the indices whose fit was checked against the silhouette."""
     seen = iter(range(1, frames + 1))
-    calls = []
+    calls, checked = [], []
     def fit(how, succeeds):
         def call(frame, *args):
             index, last = next(seen), args[-1]
             calls.append((how, index, last))
-            return (_FakeView() if succeeds(index) else None), 0.9
+            if not succeeds(index):
+                return None, None
+            view = _FakeView()
+            view.index = index
+            return view, correlation(index)
         return call
+    def silhouette(frame, template_mask, view):
+        checked.append(view.index)
+        return disagreement(view.index)
+    monkeypatch.setattr(nbh.board, "silhouette_disagreement", silhouette)
     measured = itertools.count()   # the baseline in __init__, then each look
     edges = dict.fromkeys(("left", "right", "above"), 0.0)
     def uncovered(view, size):
@@ -109,7 +121,7 @@ def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0,
     loop = nbh.RegisteredFrames(_FakeCap(frames), _FakeModel(), _FakeView(),
                                 np.zeros((8, 8, 3), np.uint8), imgsz=64, conf=0.02,
                                 fps=25.0, start=10.0, template_mask=np.zeros((8, 8), np.uint8))
-    loop.calls = calls
+    loop.calls, loop.silhouetted = calls, checked
     return loop
 
 
@@ -406,3 +418,54 @@ def test_rendering_gets_the_view_of_every_frame_read(monkeypatch):
                         rendered.append(sorted(views)))
     nbh.process("clip.mp4", 10.0, 10.4, "model.pt", out_video="out.mp4")
     assert rendered == [list(range(10))]
+
+
+# --- a converged fit that is grossly wrong (#110) ----------------------------
+
+GROSS = nbh.GROSS_DISAGREEMENT_PX
+
+
+def test_a_fit_converging_above_the_floor_is_not_checked(monkeypatch):
+    """The check costs ~0.5 s a frame; a fit the re-anchor floor would accept
+    is not paid for (#110)."""
+    loop = _loop(monkeypatch, lambda i: True, frames=4,
+                 correlation=lambda i: nbh.board.REANCHOR_MIN_CORRELATION,
+                 disagreement=lambda i: 10 * GROSS)
+    looks = list(loop.looks(5))
+    assert loop.silhouetted == [] and all(l.registered for l in looks)
+
+
+def test_a_grossly_wrong_fit_is_lost_and_feeds_the_re_anchor(monkeypatch):
+    """Frames 1..N converge on the wrong scene: each is lost, the count runs
+    on, and frame N+1 is re-anchored from the last right view (#110, #80)."""
+    loop = _loop(monkeypatch, lambda i: True, frames=N + 3,
+                 correlation=lambda i: 0.2, disagreement=lambda i: GROSS)
+    looks = list(loop.looks(N + 4))
+    assert not any(l.registered for l in looks[1:N + 1])
+    assert all(l.detections is None for l in looks[1:N + 1])
+    assert loop.lost == N + 3   # every frame after the baseline: none recovers
+    assert _reanchored(loop) == [N + 1]
+    assert all(last is loop.view for how, i, last in loop.calls if i <= N + 1)
+
+
+def test_a_moderate_disagreement_keeps_the_frame_and_warns_once(monkeypatch, capsys):
+    """Below the gross bound nothing is rejected; the run says how many of the
+    frames it checked disagreed, and that only those were checked (#110)."""
+    loop = _loop(monkeypatch, lambda i: True, frames=5,
+                 correlation=lambda i: 0.5 if i in (2, 3, 4) else 0.95,
+                 disagreement=lambda i: GROSS - 1 if i in (2, 3) else 0.0)
+    looks = list(loop.looks(6))
+    assert all(l.registered for l in looks) and loop.lost == 0
+    out = capsys.readouterr().out
+    lines = [l for l in out.splitlines() if "silhouette" in l and "[WARN]" in l]
+    assert len(lines) == 1
+    assert "2 of 3" in lines[0]
+
+
+def test_a_check_with_no_verdict_keeps_the_frame(monkeypatch, capsys):
+    """A silhouette fit that fails says nothing about the tracked one."""
+    loop = _loop(monkeypatch, lambda i: True, frames=3,
+                 correlation=lambda i: 0.2, disagreement=lambda i: None)
+    looks = list(loop.looks(4))
+    assert all(l.registered for l in looks) and loop.lost == 0
+    assert "0 of 3 converged fit(s) checked" in capsys.readouterr().out

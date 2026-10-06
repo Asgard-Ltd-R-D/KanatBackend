@@ -180,7 +180,7 @@
     "capture_setup": "cama-20260914",
     "role": "spent",
     "fps": 25.0,
-    "window": [0.0, 0.72],
+    "window": [0.0, 0.76],
     "window_basis": "partial: frames 0-18 only; from frame 19 the camera pans onto the view of the cama-20260914-close-cross setup, which the frame-0 allocation could not see (#92, HANDOVER)"
   },
   "f077e46dc3b219beb523ab0851a9bf3e0a996433248e5f8627486929409a1309": {

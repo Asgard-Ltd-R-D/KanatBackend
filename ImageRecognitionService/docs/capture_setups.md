@@ -331,7 +331,7 @@ them would hold out a scene the constants were fitted on — ADR-0005's named
 error — and setup integrity gives them the setup's role. They are
 negative-mining sources.
 
-**`_150248` is this setup for its first 0.72 s only (#92, 2026-10-06).** From
+**`_150248` is this setup for its first 0.76 s only (#92, 2026-10-06).** From
 frame 19 the camera pans onto the black-cross view of `cama-20260914-close-cross`,
 below, and stays there; frame 0 could not show that. The window and the
 negatives it cost are recorded in `recordings.json` and HANDOVER (#92). It

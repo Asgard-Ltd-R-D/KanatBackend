@@ -1233,7 +1233,7 @@ negatives means more Capture Setups, not a smaller `--step`.
 **Two of those were removed on 2026-10-06 (#92); 13 remain.** `_150248`'s two
 frame-50 tiles (2.00s) came from after its camera pans onto the view of the
 sealed `cama-20260914-close-cross` setup (#92, above), through the pre-#50
-silhouette chain. Its manifest window is now 0–0.72s. The
+silhouette chain. Its manifest window is now 0–0.76s (frames 0–18; the end is exclusive). The
 benched `*_neg_v1` checkpoints were trained with all 15, so neither may be
 promoted without retraining on the 13. Re-mining today keeps only frame 0: the
 post-pan frames register at correlation ≤0.29, under `MIN_CORRELATION` (mining

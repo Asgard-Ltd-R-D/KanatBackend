@@ -197,9 +197,10 @@ share the fitted close-up and join `cama-20260914` as spent; `_150348` to
 `_150548` look close up at a part of the wide Board nothing was fitted on, and
 are sealed as `cama-20260914-close-cross`.
 
-`_150248` turned out to share that aim for its first 0.72 s only: from frame 19
-it pans onto the close-cross view (#92, 2026-10-06). Its window was cut to
-0–0.72s; the role stays spent, since the file has been opened past the pan.
+`_150248` turned out to share the fitted `cama-20260914` close-up for its first
+0.76 s only (frames 0–18): from frame 19 it pans onto the close-cross view (#92,
+2026-10-06). Its window was cut to 0–0.76s, an exclusive end; the role stays
+spent, since the file has been opened past the pan.
 
 **That spends `cama-20260914-close-cross` too** (#92 review, 2026-10-06). The
 unit is the whole Capture Setup, and its view was seen: two negatives mined

@@ -745,6 +745,36 @@ def reanchor_view(frame, template_mask, reference):
     return best
 
 
+def silhouette_disagreement(frame, template_mask, view):
+    """How far an independent silhouette fit puts the reference Target's
+    centre from where `view` puts it, in Board px (#92, #110).
+
+    The silhouette registration the baseline was built with, from a box seed
+    on the frame's largest Target, knows nothing of the tracked fit, so a
+    tracked fit on the wrong part of the scene disagrees with it grossly. It
+    sees only the reference Target, so it under-reads error elsewhere on the
+    Board (#92: 21 here against 98 at another Target's centre).
+
+    ponytail: seeded from the frame's largest Target, as #92 measured it, not
+    the one nearest the tracked fit's reference: a wrong fit landing on a
+    lookalike Target would agree with a fit seeded there. A right fit on a frame
+    where a neighbour is largest reads ~one Target spacing and is lost; none was
+    on #110's six clips. Match the contour to the baseline's Target if one is.
+
+    None when no Target is visible or the silhouette fit fails: no verdict.
+    """
+    contours, frame_mask = find_targets(frame)
+    if not contours:
+        return None
+    try:
+        own_H, _ = register(template_mask, frame_mask, contours[0])
+    except cv2.error:
+        return None
+    centre = view.targets[0].reshape(-1, 2).mean(axis=0, keepdims=True)
+    own = _apply(view.tpl_to_board @ np.linalg.inv(own_H), view.board_to_frame(centre))
+    return float(np.linalg.norm(own - centre))
+
+
 def residuals(frame, template_mask, view):
     """Per-Target registration error under the Board-level homography, in Board px.
 

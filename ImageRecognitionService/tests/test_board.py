@@ -574,3 +574,28 @@ def test_the_inner_rectification_is_the_margin_canvas_warp_itself():
                            inner=board.Inner(inner_T, (120, 90), (11, 5)))
     alone = board.BoardView(H, inner_T, (120, 90), [])
     assert np.array_equal(view.rectify_inner(frame), alone.rectify(frame))
+
+
+# --- gross-failure check on a converged fit (#110) ---------------------------
+
+def test_silhouette_disagreement_is_the_reference_target_centres_offset(monkeypatch):
+    """An independent silhouette fit 10 frame px right of the tracked one puts
+    the reference Target's centre 20 Board px off at board scale 2 (#110)."""
+    target = _square(100, 100, 40)
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([target], None))
+    shifted = np.float32([[1, 0, 10], [0, 1, 0], [0, 0, 1]])
+    monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
+                        (shifted, 0.9))
+    view = _view([_square(10, 10, 40)], scale=2.0)
+    assert board.silhouette_disagreement(None, None, view) == pytest.approx(20.0)
+
+
+def test_silhouette_disagreement_is_unknown_without_a_silhouette_fit(monkeypatch):
+    """A fit that does not converge, or no Target to fit, is no verdict."""
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([_square(0, 0, 40)], None))
+    def fails(*args):
+        raise cv2.error("did not converge")
+    monkeypatch.setattr(board, "register", fails)
+    assert board.silhouette_disagreement(None, None, _view([_square(0, 0, 40)])) is None
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([], None))
+    assert board.silhouette_disagreement(None, None, _view([_square(0, 0, 40)])) is None

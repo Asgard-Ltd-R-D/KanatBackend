@@ -74,6 +74,21 @@ BAND_CONTEXT_PX = 32       # PROVISIONAL
 # Board stays lost. Set from the SOW wording, not from footage.
 REANCHOR_AFTER_LOST = 25   # PROVISIONAL
 
+# A converged fit can be on the wrong scene altogether: CamA_20260914_150248
+# pans off the Board at frame 19 and tracking converges on the Board next over
+# for ~80 frames (#92). At or past this silhouette disagreement
+# (`board.silhouette_disagreement`, Board px at the reference Target's centre)
+# the frame counts as lost, so it feeds the re-anchor above (#110). #92's gap:
+# wrong 180-1008 on `_150248`; right at most 24 on `_141846`'s re-aim, its
+# artefact burst included, and 3.1 on still clips. The bound is the gap's
+# geometric mean, ~2.7x clear of each side. Two CamA clips, at their board scale.
+GROSS_DISAGREEMENT_PX = 66.0    # PROVISIONAL
+# Below the gross bound nothing is rejected: a moderately wrong fit (`_144747`'s
+# occlusion 2-21, #91's synthetic shift 5.0-6.4) reads like one following a real
+# re-aim (`_141846`, 5-9). Past the most a still clip read, a checked fit is
+# counted and the run warns once.
+MODERATE_DISAGREEMENT_PX = 3.1  # PROVISIONAL: the most a right fit read on a still clip
+
 # How many frames the baseline is built from.
 #
 # The baseline answers "was this mark already on the Board?", and whatever it
@@ -268,7 +283,7 @@ def strip_pre_existing(pts, baseline, match_px):
 
 
 def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
-                           window=PERSIST_FRAMES):
+                           window=PERSIST_FRAMES, lost=()):
     """Fold per-frame detections into confirmed new Bullet Holes.
 
     `per_frame` is [(frame_idx, Nx2 array of Board-space centres), ...], already
@@ -276,7 +291,11 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
     successfully appear in it**, and a registered frame with no detections must
     appear with an empty array rather than be omitted: the denominator below
     counts the frames that actually got a look, so a registration failure neither
-    counts for nor against a Bullet Hole.
+    counts for nor against a Bullet Hole — down to a floor: a window in which
+    under `persist` of the frames the loop TRIED to register did register
+    confirms nothing (#110, ADR-0003). `lost` is the indices of the frames that
+    were tried and lost, gross wrong fits included. A frame in neither list was
+    never read — a stride gap (#81) — and counts for nothing, floor included.
 
     A candidate whose window has not yet elapsed is not reported. Shortening the
     denominator instead would confirm a Bullet Hole seen in 7 of the 10 frames
@@ -286,6 +305,7 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
     Kept free of cv2 and the model so the logic is testable on plain arrays.
     """
     looked_at = sorted(idx for idx, _ in per_frame)
+    lost = sorted(lost)
 
     candidates = []  # [pos, seen_frame_idxs, first_idx]
     for idx, pts in per_frame:
@@ -303,7 +323,15 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
         if first + window > n_frames:
             continue  # window has not elapsed; unconfirmable, not rejected
         span = sum(1 for i in looked_at if first <= i < first + window)
-        if span <= 0:
+        tried = span + sum(1 for i in lost if first <= i < first + window)
+        if span <= 0 or span < persist * tried:
+            # Too few looks survived registration to call anything persistent:
+            # 100% of one frame among lost ones is not persistence.
+            # Unconfirmable, not rejected, as above. Measured on
+            # CamA_20260914_150248 once its pan frames were lost (#110): two
+            # surviving wrong fits confirmed 9 false Bullet Holes on 1-2 looks.
+            # Against frames tried, not the window: a stride (#81) leaves ~4
+            # looks a window at 13 on purpose.
             continue
         # Distinct FRAMES, not sightings: two detections on one mark in one frame
         # both fold into this candidate, and counting each made that frame worth
@@ -421,9 +449,9 @@ def change_evidence(points, view, inner_changed, changed, radius):
 def _next_view(cap, last, reanchor_on=None):
     """Read one frame and re-register Board space onto it.
 
-    Returns `(frame, view)`. `view` is None when the Board was not found or ECC
-    failed — no evidence from that frame, either way — and `(None, None)` when
-    the read itself failed, which is the end of what the file holds.
+    Returns `(frame, view, correlation)`. `view` is None when the Board was not
+    found or ECC failed — no evidence from that frame, either way — and `frame`
+    is None when the read itself failed, which is the end of what the file holds.
 
     `reanchor_on` is the Target artwork's mask when this frame is to be
     re-anchored (`board.reanchor_view`, #80) rather than tracked from `last`.
@@ -436,15 +464,13 @@ def _next_view(cap, last, reanchor_on=None):
     """
     ok, frame = cap.read()
     if not ok:
-        return None, None
+        return None, None, None
     try:
         if reanchor_on is None:
-            current, _ = board.track_view(frame, last)
-        else:
-            current, _ = board.reanchor_view(frame, reanchor_on, last)
+            return (frame, *board.track_view(frame, last))
+        return (frame, *board.reanchor_view(frame, reanchor_on, last))
     except cv2.error:
-        current = None
-    return frame, current
+        return frame, None, None
 
 
 class Look(NamedTuple):
@@ -488,7 +514,8 @@ class RegisteredFrames:
     Board space is fixed once, by the frame at `--start`, and every later frame
     is registered onto it. After `REANCHOR_AFTER_LOST` consecutive lost frames
     the next one is re-anchored into that same Board space (#80), here and only
-    here, so evaluation and runtime cannot differ on it.
+    here, so evaluation and runtime cannot differ on it. A fit converged on the
+    wrong scene altogether counts as lost too (#110).
 
     Built by `open`. The constructor takes its collaborators directly so the
     iteration can be exercised without a video file or a model.
@@ -510,6 +537,8 @@ class RegisteredFrames:
         self._template_mask = template_mask   # the artwork a re-anchor seeds from
         self._lost_run = 0      # consecutive lost frames, up to this one
         self.reanchors = self.reanchored = 0   # attempts, and those that registered (#80)
+        # Converged fits after the first, those checked, and the verdicts (#110).
+        self.converged = self.checked = self.gross = self.moderate = 0
         # How far past each canvas edge any registered frame's view has run,
         # in Board px — the baseline's is only the first (#41).
         uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
@@ -624,10 +653,12 @@ class RegisteredFrames:
             while self.processed < n_frames:
                 due = self._lost_run > 0 and self._lost_run % REANCHOR_AFTER_LOST == 0
                 if self.processed:
-                    frame, current = _next_view(self.cap, self.last,
-                                                self._template_mask if due else None)
+                    frame, current, correlation = _next_view(
+                        self.cap, self.last, self._template_mask if due else None)
                     if frame is None:
                         break  # the end of what the file holds
+                    if current is not None and self._grossly_wrong(frame, current, correlation):
+                        current = None   # lost, so it feeds the re-anchor (#110)
                 else:
                     frame, current = self._base, self.view
                 index, self.processed = self.processed, self.processed + 1
@@ -654,6 +685,45 @@ class RegisteredFrames:
             self._report_reach()
             print(f"[REGISTRATION] {self.reanchors} re-anchor attempt(s): {self.reanchored} "
                   f"registered, {self.reanchors - self.reanchored} failed (#80)")
+            self._report_checks()
+
+    def _grossly_wrong(self, frame, view, correlation):
+        """Is this converged fit on the wrong scene altogether (#110)?
+
+        Only a fit converging below the re-anchor floor is checked: the check
+        costs ~0.5-1 s a 1080p frame (0.96 on `_141846`, #110), against 0.2-0.6 s
+        for `track_view` itself.
+        Every wrong fit #92 measured converged at 0.82 or less, the gross ones
+        at 0.29 or less; still clips at 0.917 or more.
+
+        ponytail: a gross fit converging at or above the floor passes unchecked;
+        #92 measured none. Check every Nth frame too if one turns up.
+        """
+        self.converged += 1
+        if correlation >= board.REANCHOR_MIN_CORRELATION:
+            return False
+        disagreement = board.silhouette_disagreement(frame, self._template_mask, view)
+        if disagreement is None:
+            return False   # no verdict: the frame keeps its fit
+        self.checked += 1
+        if disagreement >= GROSS_DISAGREEMENT_PX:
+            self.gross += 1
+            return True
+        self.moderate += disagreement > MODERATE_DISAGREEMENT_PX
+        return False
+
+    def _report_checks(self):
+        floor = board.REANCHOR_MIN_CORRELATION
+        print(f"[REGISTRATION] {self.checked} of {self.converged} converged fit(s) checked "
+              f"against an independent silhouette fit (only those converging below "
+              f"{floor}): {self.gross} grossly wrong, at or past {GROSS_DISAGREEMENT_PX:.0f} "
+              f"Board px, counted lost (#110)")
+        if self.moderate:
+            print(f"[WARN] silhouette disagreement of {MODERATE_DISAGREEMENT_PX}-"
+                  f"{GROSS_DISAGREEMENT_PX:.0f} Board px on {self.moderate} of "
+                  f"{self.checked} checked fit(s): moderately wrong, or following real "
+                  f"camera motion, which #92 could not tell apart, so none was rejected. "
+                  f"Fits converging at or above {floor} were not checked (#110)")
 
     def _report_reanchor(self, index, registered):
         self.reanchors += 1
@@ -796,11 +866,11 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes over "
           f"{len(baseline_detections)} frame(s) from {start}s{short}")
 
-    per_frame, corroboration, residuals_per_frame, lost = [], [], [], 0
+    per_frame, corroboration, residuals_per_frame, lost = [], [], [], []
     for look in looks:
         if not look.registered:
-            lost += 1
-            continue  # no evidence from this frame, either way
+            lost.append(look.index)
+            continue  # no evidence from this frame, but it counts towards the floor
         if out_video:
             views[look.index] = look.view
         pts, matched = strip_pre_existing(look.detections, baseline, match_px)
@@ -815,7 +885,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
 
     processed = loop.processed
     if lost:
-        print(f"[WARN] Board lost on {lost} frame(s); excluded from persistence")
+        print(f"[WARN] Board lost on {len(lost)} frame(s); excluded from persistence, "
+              f"and a window mostly lost confirms nothing (#110)")
 
     # A short read is not a crash. The interpreter is alive, the window is simply
     # shorter than asked for, and the frames never read must not lengthen the
@@ -834,7 +905,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                  if any(len(r) for r in residuals_per_frame) else np.zeros(0))
     print(registration_note(residuals, match_px))
 
-    new = track_new_bullet_holes(per_frame, processed, match_px)
+    new = track_new_bullet_holes(per_frame, processed, match_px, lost=lost)
     for hole in new:
         hole["target"] = loop.last.assign(hole["pos"])
         hole["corroborated"] = any(

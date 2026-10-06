@@ -60,6 +60,19 @@ services:
     volumes:
       - seq-data:/data 
 
+  webapp-backend:
+    build:
+      context: ./WebApp/backend
+    container_name: webapp-backend-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgresdb-dev:5432/pdb
+    depends_on:
+      postgresdb-dev:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   questdb_data:
   questdb_logs:

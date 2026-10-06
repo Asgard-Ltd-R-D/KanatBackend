@@ -371,8 +371,8 @@ never refreshed (`ponytail:` in `track_view`); failing re-anchors would be the
 sign it needs to be.
 
 **A converged fit can be the wrong one (#92, measured 2026-10-06); since #110
-only a moderately wrong one is accepted.** Before #110 a frame was lost only when
-no Target was visible or ECC failed to converge. Over the ten unsealed CamA/CamB clips, two real wrong fits,
+only a moderately wrong one is accepted.** Before #110 a frame was lost only
+when no Target was visible or ECC failed to converge. Over the ten unsealed CamA/CamB clips, two real wrong fits,
 one real camera move that tracking followed, and #91's synthetic jump:
 
 | Recording | What happens | Fit | ECC corr | Silhouette disagreement* |
@@ -447,9 +447,9 @@ this change:
 | Run | Before | After |
 |---|---|---|
 | `_150248` 0–0.76s | 0 new | 0 new, nothing checked |
-| `_150248` 0–17.72s | 3 Misses at 2.20–3.08s, 13 re-anchors | 0 new; 17 fits lost as gross, 2 moderate; 16 re-anchors, all failed |
+| `_150248` 0–17.72s | 3 Misses at 2.20, 2.20, 3.08s (3.96 above was #92's run), 13 re-anchors | 0 new; 17 fits lost as gross, 2 moderate; 16 re-anchors, all failed |
 | `_141846` 0–53s | 15 new | 15 new; 235 checked, 0 lost, 174 moderate |
-| `_144747` 0–48.64s | — | 4 new; 75 checked, 0 lost, 24 moderate; no frame lost, so the floor cannot bite |
+| `_144747` 0–48.64s | not re-run | 4 new; 75 checked, 0 lost, 24 moderate. No frame lost, so neither change can alter it |
 | CamA `_141546` 13–25s | 5/1/1 | 5/1/1, nothing checked |
 | CamB `_102250` 0–46s | 4/1/0 | 4/1/0, nothing checked |
 

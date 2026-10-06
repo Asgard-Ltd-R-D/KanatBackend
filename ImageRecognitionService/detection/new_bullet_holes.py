@@ -683,7 +683,8 @@ class RegisteredFrames:
         """Is this converged fit on the wrong scene altogether (#110)?
 
         Only a fit converging below the re-anchor floor is checked: the check
-        costs ~0.5 s a 1080p frame, against 0.2-0.6 s for `track_view` itself.
+        costs ~0.5-1 s a 1080p frame (0.96 on `_141846`, #110), against 0.2-0.6 s
+        for `track_view` itself.
         Every wrong fit #92 measured converged at 0.82 or less, the gross ones
         at 0.29 or less; still clips at 0.917 or more.
 

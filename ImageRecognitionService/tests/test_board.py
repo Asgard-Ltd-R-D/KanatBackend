@@ -590,7 +590,8 @@ def test_silhouette_disagreement_is_the_reference_target_centres_offset(monkeypa
     assert board.silhouette_disagreement(None, None, view) == pytest.approx(20.0)
 
 
-def test_silhouette_disagreement_is_unknown_when_the_fit_fails(monkeypatch):
+def test_silhouette_disagreement_is_unknown_without_a_silhouette_fit(monkeypatch):
+    """A fit that does not converge, or no Target to fit, is no verdict."""
     monkeypatch.setattr(board, "find_targets", lambda frame: ([_square(0, 0, 40)], None))
     def fails(*args):
         raise cv2.error("did not converge")

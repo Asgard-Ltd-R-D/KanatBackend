@@ -103,7 +103,9 @@ def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0,
                 return None, None
             view = _FakeView()
             view.index = index
-            return view, correlation(index)
+            # A re-anchor only ever returns a fit at or above its floor.
+            floor = nbh.board.REANCHOR_MIN_CORRELATION if how == "reanchor" else 0.0
+            return view, max(floor, correlation(index))
         return call
     def silhouette(frame, template_mask, view):
         checked.append(view.index)
@@ -444,7 +446,7 @@ def test_a_grossly_wrong_fit_is_lost_and_feeds_the_re_anchor(monkeypatch):
     assert not any(l.registered for l in looks[1:N + 1])
     assert all(l.detections is None for l in looks[1:N + 1])
     assert loop.lost == N + 3   # every frame after the baseline: none recovers
-    assert _reanchored(loop) == [N + 1]
+    assert _reanchored(loop) == [N + 1] and loop.reanchors == 1
     assert all(last is loop.view for how, i, last in loop.calls if i <= N + 1)
 
 

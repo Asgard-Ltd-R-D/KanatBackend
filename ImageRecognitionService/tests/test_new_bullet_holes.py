@@ -83,7 +83,8 @@ def test_a_window_mostly_lost_to_registration_confirms_nothing():
     is no persistence. Measured on CamA_20260914_150248 once #110 rejected its
     pan frames: two surviving wrong fits confirmed 9 false Bullet Holes on 1-2
     looks each. Under PERSIST of the window registered is unconfirmable, not
-    rejected, like a window that has not elapsed."""
+    rejected, like a window that has not elapsed. Exactly `PERSIST` registered
+    still confirms: see the lost-registration test above, 10 of 20."""
     lone = track_new_bullet_holes(_looked([10], {10}), n_frames=40, match_px=MATCH, window=20)
     short = list(range(10, 19))           # 9 of 20 registered, all seeing it
     sparse = track_new_bullet_holes(_looked(short, set(short)), n_frames=40,

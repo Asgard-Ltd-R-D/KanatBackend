@@ -755,6 +755,12 @@ def silhouette_disagreement(frame, template_mask, view):
     sees only the reference Target, so it under-reads error elsewhere on the
     Board (#92: 21 here against 98 at another Target's centre).
 
+    ponytail: seeded from the frame's largest Target, as #92 measured it, not
+    the one nearest the tracked fit's reference: a wrong fit landing on a
+    lookalike Target would agree with a fit seeded there. A right fit on a frame
+    where a neighbour is largest reads ~one Target spacing and is lost; none was
+    on #110's six clips. Match the contour to the baseline's Target if one is.
+
     None when no Target is visible or the silhouette fit fails: no verdict.
     """
     contours, frame_mask = find_targets(frame)

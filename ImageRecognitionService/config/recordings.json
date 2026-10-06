@@ -180,8 +180,8 @@
     "capture_setup": "cama-20260914",
     "role": "spent",
     "fps": 25.0,
-    "window": [0.0, 17.72],
-    "window_basis": "whole clip: never analysed, no ground truth; a negative-mining source (ADR-0005), which draws from anywhere in it"
+    "window": [0.0, 0.72],
+    "window_basis": "frames 0-18 only (#92): from frame 19 the camera pans off this Board onto the black-cross Board of the sealed cama-20260914-close-cross setup. Allocated from frame 0 alone; the rest of the clip is not this Capture Setup, and nothing past 0.72s may be scored or mined. mine_negatives ignores the window, so the post-pan frames are kept out only by its MIN_CORRELATION floor (they register at <= 0.29)"
   },
   "f077e46dc3b219beb523ab0851a9bf3e0a996433248e5f8627486929409a1309": {
     "file": "CamA_20260914_150348.mkv",

@@ -331,6 +331,13 @@ them would hold out a scene the constants were fitted on — ADR-0005's named
 error — and setup integrity gives them the setup's role. They are
 negative-mining sources.
 
+**`_150248` is this setup for its first 0.72 s only (#92, 2026-10-06).** From
+frame 19 the camera pans off this Board onto the black-cross Board of
+`cama-20260914-close-cross`, sealed below, and stays there. Frame 0 could not
+show that. The manifest window is now 0–0.72s and the two negatives mined from
+its frame 50 were removed; see HANDOVER, "If false positives return". The rest
+of the clip stays out of scoring and mining.
+
 ### `_150348`, `_150448`, `_150548` — `cama-20260914-close-cross`, sealed
 
 A different part of the Board: a sprayed black cross fills the frame, a

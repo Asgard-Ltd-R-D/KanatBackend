@@ -370,6 +370,47 @@ Target scored 0.97-0.99 and a neighbour 0.55 or less. The anchor itself is still
 never refreshed (`ponytail:` in `track_view`); failing re-anchors would be the
 sign it needs to be.
 
+**A converged fit can be the wrong one, and is accepted silently (#92,
+measured 2026-10-06).** A frame is lost only when no Target is visible or ECC
+fails to converge. Over the ten unsealed CamA/CamB clips, three real cases:
+
+| Recording | What happens | Fit | ECC corr | Silhouette disagreement* |
+|---|---|---|---|---|
+| `CamA_20260914_150248` | frame 19 on: the camera pans off the Board onto the close-cross Board | **wrong**, frames 19–99, then lost | 0.00–0.29 | 180–1008 |
+| `CamA_20260914_144747` 866–870 | a person crosses the ECC region; camera still | **wrong** 1–3 frames; frame 868 98 Board px off at the Targets, 1454 at the corners | 0.66–0.82 | 2–21 |
+| `CamA_20260914_141846` 1076 on | a real camera re-aim, ~100 Board px | **right** near the Target where checked (overlay, 1200 and 1323) | 0.49–0.71 | 5–9 |
+| `CamB_20260915_102250`, #91's 80×40 synthetic shift | stale seed | **wrong**, 75–124 | 0.70–0.80 | 5.0–6.4 |
+
+\* Board px at the reference Target's centre, against an independent silhouette
+fit (`board.register` from a box seed). The other six clips: no lost frames,
+disagreement ≤3.1, corr ≥0.917.
+
+The cost is real: `new_bullet_holes` on `_150248` (0–17.72s) reports three
+Misses at 2.20–3.96s, all from the wrong-fit window. Persistence passes them
+(68–90%), since the lost frames after it are excluded; the change filter passes
+them, since the whole canvas changed.
+
+What separates a wrong fit from a right one, on this evidence: a **gross**
+failure (the camera on something else) separates on every signal, best on
+silhouette disagreement (≥180 against ≤9 on `_141846`'s sustained re-aim);
+correlation's margin is thin (≤0.29 against 0.68–0.71 on the two overlay-
+checked `_141846` frames, and that clip runs down to 0.49 unchecked). Frames
+1151–1180 of `_141846` are a compression-artefact burst where neither the
+silhouette fit (up to 600 px off) nor a canvas phase correlation (no peak)
+is a usable reference. **Moderate** wrong fits overlap right
+ones on another clip on both, so no threshold separates them; the re-anchor's
+0.9 floor applied to tracking would drop ~250 right frames of `_141846`.
+Frame-to-frame warp jump fires on both edges of a transient and on real motion
+(46 Board px on a still clip), so it does not say which frame is wrong.
+Baseline-mark residuals were not measured: only the CamB trio carry before-
+photograph marks, and none of them shows a wrong fit. Case 2 of #92 (re-anchor
+one Target over) is already closed by #91's every-Target seeding and 0.9 floor.
+
+Decided: a gross failure becomes a lost frame, so it feeds the #80 re-anchor;
+moderate disagreement gets a run-level warning only; silhouette disagreement is
+the signal, but not as a per-frame check (~0.5 s a frame). Follow-up: #110.
+The probes were scratch scripts (session transcript of 2026-10-06), not committed.
+
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the
 pipeline** — labels thrown up to 58 000 template px off the Board — and it is
@@ -1171,6 +1212,17 @@ across the whole Capture Setup, so its seventh file, `_141446`, adds nothing new
 whose canvas is all Board, or from the legacy clips, which carry no green Target.
 A static camera gives only a few distinct gravel tiles per clip, so more
 negatives means more Capture Setups, not a smaller `--step`.
+
+**Two of those were removed on 2026-10-06 (#92); 13 remain.** `_150248`'s two
+frame-50 tiles (2.00s) came from after its camera pans onto the sealed
+`cama-20260914-close-cross` Board, through the pre-#50 silhouette chain. The
+clip was allocated from frame 0 alone; its manifest window is now 0–0.72s. The
+benched `*_neg_v1` checkpoints were trained with all 15, so neither may be
+promoted without retraining on the 13. Re-mining today keeps only frame 0: the
+post-pan frames register at correlation ≤0.29, under `MIN_CORRELATION` (mining
+ignores the window, so that floor is the only thing keeping them out). Copies
+outside the repo (`~/Downloads/datasets*`, `~/Downloads/kanat_negatives_30*`,
+and any Kaggle upload of them) were left for their owner.
 
 `yolo26.yaml` and `yolo26-p2.yaml` are both present in the installed ultralytics
 (8.4.126), so `m` and the P2 experiment can be trained. `m` is benched on the

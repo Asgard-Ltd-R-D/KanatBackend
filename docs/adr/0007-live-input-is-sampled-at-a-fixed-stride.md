@@ -8,7 +8,7 @@ stays 50 frames at 50%; it now holds about 3 looks instead of 50.
 
 ## Why sample at all
 
-The frame loop costs 0.3–0.5 s a look on the development Mac, against a frame
+The frame loop costs 0.3–0.65 s a look on the development Mac, against a frame
 every 40 ms. Live, it cannot look at every frame, and a queue of unlooked
 frames grows without bound. The only choices are which frames to drop and
 whether dropping them costs real Bullet Holes. A fixed stride answers the first
@@ -19,7 +19,8 @@ measured offline before anything goes live.
 
 Both spent recordings with ground truth, at their native 25 fps, through
 `tools/evaluate.py` on `main` 1d18891, 2026-10-06. No threshold moved. No
-Sealed recording was opened (ADR-0005), and neither were the threshold-work
+Sealed recording was opened
+([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)), and neither were the threshold-work
 recordings: only spent footage.
 
 | Recording | Stride | Looks a window | TP | FP | FN | Candidates before change filter |
@@ -37,11 +38,14 @@ recordings: only spent footage.
 
 **No stride loses a true Bullet Hole that stride 1 finds.** CamA's one miss at
 strides 1 and 17 is the same mark, truth #4, the one that comes and goes with the
-pixel grid since #50. Strides 9, 13 and 25 find it, on 1–3 sightings. CamB's
+pixel grid since #50. Strides 9, 13 and 25 find it, from 1–3 Detections. CamB's
 false positive is the same report at every stride: found #4, the detector, 520
 template px from anything pre-existing. CamA's at strides 1 and 13 are two
-different detector false positives, 830 and 1590 px out. Placement stays 1–13
-template px throughout.
+different detector false positives, 830 and 1590 px out. Every true positive
+matches its truth label within 1–13 template px at every stride.
+
+Lost means lost against stride 1. Of the strides that keep up (13 and above,
+below), 17 is the only one with a miss, and it is the mark stride 1 misses too.
 
 That is ten Bullet Holes on two recordings. It shows that sampling does not
 visibly break the pipeline. It does not show that sampling is free. The per-mark
@@ -93,19 +97,19 @@ separate decision, not taken here.
 
 **Persistence filters less, and the change filter does more.** Candidates
 before the change filter rise with the stride: CamA from 10 at stride 1 to 18
-at 17 and 34 at 25. With about 3 looks a window, 50% is 2 sightings, and a
-flicker that lands on 2 of 3 looks passes where it would not pass on 25 of
-50. That the false positives did not rise is the change filter's work
+at 17 and 34 at 25. With about 3 looks a window, 50% is 2 looks with a
+Detection, and a flicker that lands on 2 of 3 looks passes where it would not
+pass on 25 of 50. That the false positives did not rise is the change filter's work
 (ADR-0003: evidence, not the gate). Precision live now rests more on it than
 the recordings' stride-1 numbers suggest.
 
-**At stride 25, one sighting confirms.** With 2 looks a window, 1 of 2 is 50%.
+**At stride 25, one Detection confirms.** With 2 looks a window, 1 of 2 is 50%.
 CamA's truth #4 was confirmed that way. The stride flag already refuses 50
 or more (one look a window, which filters nothing). 25 sits on the edge of
 the same failure and is not used.
 
-**First sighting is late by up to a stride.** At 17 that is 640 ms, on top of
-the 2 s confirmation window. Reported times fall on looked-at frames: CamB's
+**The first Detection is late by up to a stride less one frame.** At 17 that
+is 16 frames, 640 ms, on top of the 2 s confirmation window. Reported times fall on looked-at frames: CamB's
 30.60 s mark reads 31.00 s at stride 25. SOW 2.3.4's 0.5 s was already out of
 reach (ADR-0003).
 

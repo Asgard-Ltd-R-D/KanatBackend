@@ -69,7 +69,8 @@ DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 BAND_CONTEXT_PX = 32       # PROVISIONAL
 
 # Consecutive lost frames before the loop re-acquires the Board on its own
-# (#80): 1 s at 25 fps. Counted in frames the loop attempted. A failed attempt
+# (#80): 1 s at 25 fps and stride 1, ~17 s at LIVE_STRIDE (ADR-0007, #84).
+# Counted in frames the loop attempted. A failed attempt
 # is itself a lost frame, so attempts fall every this many frames while the
 # Board stays lost. Set from the SOW wording, not from footage.
 REANCHOR_AFTER_LOST = 25   # PROVISIONAL

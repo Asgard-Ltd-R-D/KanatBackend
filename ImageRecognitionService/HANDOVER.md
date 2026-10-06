@@ -670,6 +670,10 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # A Hit landing inside that window is absorbed into the baseline and never
 # reported, so --start must sit before the shooting.
 
+# --stride N (both tools, default 1) looks at every Nth frame past the baseline,
+# the baseline still being its first --baseline-frames consecutive frames; the
+# frames between are gaps for persistence (#81). Measured per stride in #82.
+
 # Derive the new Bullet Holes from a before/after photograph pair. --truth-labels
 # then points at the board.new.txt this writes, never at the after export.
 .venv/bin/python -m tools.derive_truth \

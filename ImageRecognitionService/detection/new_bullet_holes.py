@@ -446,6 +446,13 @@ def change_evidence(points, view, inner_changed, changed, radius):
             for p, inside in zip(points, on_inner)]
 
 
+def _looked_at(index, stride, baseline_frames):
+    """Is this frame looked at under a stride (#81)? Every baseline frame is;
+    past them, only multiples of the stride. One rule, so that `looks` and
+    `_render` cannot disagree on which frames are gaps."""
+    return index < baseline_frames or index % stride == 0
+
+
 def _next_view(cap, last, reanchor_on=None):
     """Read one frame and re-register Board space onto it.
 
@@ -657,7 +664,7 @@ class RegisteredFrames:
         """
         try:
             while self.processed < n_frames:
-                if self.processed >= baseline_frames and self.processed % stride:
+                if not _looked_at(self.processed, stride, baseline_frames):
                     if not self.cap.grab():
                         break  # the end of what the file holds
                     self.processed += 1
@@ -969,7 +976,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     _report(new, start, fps, loop.last, mm_per_tpl_px,
             [idx for idx, _ in per_frame])
     if out_video:
-        _render(video, start, processed, fps, views, baseline, new, out_video)
+        _render(video, start, processed, fps, views, baseline, new, out_video,
+                stride, baseline_frames)
     return Run(new, baseline, residuals)
 
 
@@ -1053,16 +1061,25 @@ def _report_groups(new, mm_per_tpl_px):
         print(f"      Extreme Spread {g['extreme_spread']:.1f} mm (centre to centre)")
 
 
-def _render(video, start, n_frames, fps, views, baseline, new, out_video):
+def _render(video, start, n_frames, fps, views, baseline, new, out_video,
+            stride=1, baseline_frames=0):
     """Redraw the clip as the rectified Board. Neither detection nor
     registration is repeated: `views` is what detection used, by frame index,
-    and a lost frame is drawn with the last view before it."""
+    and a lost frame is drawn with the last view before it.
+
+    A stride's gaps are left out (#81): no fit was made on them, and the last
+    look's could be stale by up to a stride. The output then plays faster
+    than the clip; each frame's own t stays on it."""
     cap = cv2.VideoCapture(video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
     view = views[0]  # Board space's own view; `process` always records it
     w, h = view.canvas_size
     vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
     for idx in range(n_frames):
+        if not _looked_at(idx, stride, baseline_frames):
+            if not cap.grab():
+                break
+            continue
         ok, frame = cap.read()
         if not ok:
             break

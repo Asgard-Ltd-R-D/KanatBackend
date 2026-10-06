@@ -382,10 +382,11 @@ def test_a_run_that_never_lost_the_board_reports_no_re_anchor(monkeypatch, capsy
     assert _reanchored(loop) == []
 
 
-def test_render_draws_each_frame_with_the_view_detection_used(monkeypatch):
-    """`_render` registers nothing (#80): a re-anchored view is drawn from its
-    frame on, and a lost frame keeps the last view before it."""
-    drawn = []
+def _rendering(monkeypatch, frames):
+    """`_render` over a `frames`-frame clip. Returns `(named, drawn, written)`:
+    `named(name)` is a view that logs `name` to `drawn` when it rectifies, and
+    `written` counts the frames the output video got."""
+    drawn, written = [], []
 
     class _Named(_FakeView):
         targets = []
@@ -399,18 +400,35 @@ def test_render_draws_each_frame_with_the_view_detection_used(monkeypatch):
 
     class _Writer:
         def write(self, image):
-            pass
+            written.append(1)
 
         def release(self):
             pass
 
-    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _FakeCap(5))
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _FakeCap(frames))
     monkeypatch.setattr(nbh.cv2, "VideoWriter", lambda *args: _Writer())
     monkeypatch.setattr(nbh.board, "track_view",
                         lambda *args: (_ for _ in ()).throw(AssertionError("re-registered")))
-    views = {0: _Named("base"), 1: _Named("base"), 3: _Named("re-anchored")}
+    return _Named, drawn, written
+
+
+def test_render_draws_each_frame_with_the_view_detection_used(monkeypatch):
+    """`_render` registers nothing (#80): a re-anchored view is drawn from its
+    frame on, and a lost frame keeps the last view before it."""
+    named, drawn, _ = _rendering(monkeypatch, 5)
+    views = {0: named("base"), 1: named("base"), 3: named("re-anchored")}
     nbh._render("clip.mp4", 0.0, 5, 25.0, views, [], [], "out.mp4")
     assert drawn == ["base", "base", "base", "re-anchored", "re-anchored"]
+
+
+def test_render_leaves_out_the_frames_a_stride_skipped(monkeypatch):
+    """A gap has no registration of its own; drawn with the last look's, it
+    would show stale geometry (#81 review). Only looked-at frames are written."""
+    named, drawn, written = _rendering(monkeypatch, 20)
+    views = {i: named(i) for i in (0, 1, 2, 3, 4, 13)}
+    nbh._render("clip.mp4", 0.0, 20, 25.0, views, [], [], "out.mp4",
+                stride=13, baseline_frames=5)
+    assert drawn == [0, 1, 2, 3, 4, 13] and len(written) == 6
 
 
 def test_an_interval_shorter_than_a_frame_still_renders(monkeypatch):

@@ -370,6 +370,62 @@ Target scored 0.97-0.99 and a neighbour 0.55 or less. The anchor itself is still
 never refreshed (`ponytail:` in `track_view`); failing re-anchors would be the
 sign it needs to be.
 
+**A converged fit can be the wrong one, and is accepted silently (#92,
+measured 2026-10-06).** A frame is lost only when no Target is visible or ECC
+fails to converge. Over the ten unsealed CamA/CamB clips, two real wrong fits,
+one real camera move that tracking followed, and #91's synthetic jump:
+
+| Recording | What happens | Fit | ECC corr | Silhouette disagreement* |
+|---|---|---|---|---|
+| `CamA_20260914_150248` | frame 19 on: the camera pans off this view onto the black-cross part of the Board (`cama-20260914-close-cross`'s view) | **wrong**, frames 19–99, then lost | 0.00–0.29 | 180–1008 |
+| `CamA_20260914_144747` 866–870 | a person crosses the ECC region; camera still | **wrong** 1–3 frames; frame 868 off by up to 98 Board px at a Target centre, 1454 at a canvas corner | 0.66–0.82 | 2–21 |
+| `CamA_20260914_141846` 1076 on | a real camera re-aim, ~100 Board px | **right** near the Target where checked (overlay, 1200 and 1323) | 0.49–0.71 | 5–9, 24 in an artefact burst |
+| `CamB_20260915_102250`, #91's 80×40 synthetic shift | stale seed | **wrong**, 75–124 | 0.70–0.80 | 5.0–6.4 |
+
+\* Board px at the reference Target's centre, against an independent silhouette
+fit (`board.register` from a box seed). It sees only that Target, so it
+under-reads error elsewhere on the Board: frame 868 reads 21 while another
+Target's centre is 98 off. The other seven clips, `_102250` unshifted among
+them: no lost frames, disagreement ≤3.1, corr ≥0.917.
+
+**Case 1 of #92 (plain tracking after a jump) was not reproduced on real
+motion.** The one real move, `_141846`'s re-aim, was tracked right; no
+recording has a bumped stand or strong wind. The two real wrong fits are a
+pan off the view and an occlusion, which #92 did not anticipate.
+
+The cost is real: `new_bullet_holes` on `_150248` (0–17.72s) reports three
+Misses at 2.20–3.96s, all Registration Displacement from the wrong-fit window.
+Persistence passes them (68–90%), since the lost frames after it are excluded;
+the change filter passes them, since the whole canvas changed. That run, and
+the probes, opened `_150248` past its pan before the pan was known: pixels of
+the sealed close-cross setup's view were seen. Nothing was fitted on them,
+but the gross-fit signal below was chosen partly on them, and two negatives
+mined from them were trained into the `*_neg_v1` checkpoints (below). So
+`cama-20260914-close-cross` is no longer held out: its three hashes are in
+`data/sealed_runs.log` (`tool=exposed-by-92`), which refuses them to every tool,
+`--final-run` included. The role stays `sealed`, not `spent`, so nothing mines
+the Board and light of the sealed wide setups from it (ADR-0005).
+
+What separates a wrong fit from a right one, on this evidence: a **gross**
+failure (the camera on something else) separates on every signal, best on
+silhouette disagreement (≥180 against ≤24 on `_141846`, its artefact burst at
+1151–1180 included); correlation's margin is thin (≤0.29 against 0.68–0.71 on
+the two overlay-checked `_141846` frames, and that clip runs down to 0.49
+unchecked). In that burst a canvas phase correlation finds no peak for either
+fit, so which fit is right there is unknown. **Moderate** wrong fits overlap right
+ones on another clip on both, so no threshold separates them; the re-anchor's
+0.9 floor applied to tracking would drop ~250 right frames of `_141846`.
+Frame-to-frame warp jump fires on both edges of a transient and on real motion
+(46 Board px on a still clip), so it does not say which frame is wrong.
+Baseline-mark residuals were not measured: only the CamB trio carry before-
+photograph marks, and none of them shows a wrong fit. Case 2 of #92 (re-anchor
+one Target over) is already closed by #91's every-Target seeding and 0.9 floor.
+
+Decided: a gross failure becomes a lost frame, so it feeds the #80 re-anchor;
+moderate disagreement gets a run-level warning only; silhouette disagreement is
+the signal, but not as a per-frame check (~0.5 s a frame). Follow-up: #110.
+The probes were scratch scripts (session transcript of 2026-10-06), not committed.
+
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the
 pipeline** — labels thrown up to 58 000 template px off the Board — and it is
@@ -521,7 +577,9 @@ placement doubt on `_101550`. One Capture Setup and two Bullet Holes: **not a
 statistically meaningful validation.** The run opened no other sealed
 recording. Which recordings stay sealed is `config/recordings.json`. Measuring
 any not yet in `data/sealed_runs.log` needs truth first and a new human
-decision. A measured one is never opened again.
+decision. A measured one is never opened again. The log also carries
+`cama-20260914-close-cross`, never measured but exposed by #92 (above), so it
+is closed the same way.
 
 **Nothing is tuned on that result, and it is not diagnosed on the sealed
 recordings** (ADR-0005). A follow-up may reproduce a mechanism the run
@@ -1164,13 +1222,25 @@ before any architecture change.
 refuses sealed recordings outright, with no flag. It covers the gravel and not
 the rings: an empty label file on the Board would be a lie, because the Board
 carries Bullet Holes. On 2026-09-23, over every recording the manifest does
-not seal, it yields **15** negatives, all `cama-20260914`: 5 from `_141546`,
+not seal, it yields **15** negatives (13 since #92, below), all `cama-20260914`: 5 from `_141546`,
 4 from `_144747`, 3 from `_150248`, and 1 each from `_141646`, `_141846` and
 `_145047` (`data/negatives/sources.csv` is the record). Near-duplicates are dropped
 across the whole Capture Setup, so its seventh file, `_141446`, adds nothing new. Nothing comes from the CamB close trio,
 whose canvas is all Board, or from the legacy clips, which carry no green Target.
 A static camera gives only a few distinct gravel tiles per clip, so more
 negatives means more Capture Setups, not a smaller `--step`.
+
+**Two of those were removed on 2026-10-06 (#92); 13 remain.** `_150248`'s two
+frame-50 tiles (2.00s) came from after its camera pans onto the view of the
+sealed `cama-20260914-close-cross` setup (#92, above), through the pre-#50
+silhouette chain. Its manifest window is now 0–0.76s (frames 0–18; the end is exclusive). The
+benched `*_neg_v1` checkpoints were trained with all 15, so neither may be
+promoted without retraining on the 13. Re-mining today keeps only frame 0: the
+post-pan frames register at correlation ≤0.29, under `MIN_CORRELATION` (mining
+ignores the window, so that floor is the only thing keeping them out). The
+Kaggle recipe's local copies (`~/Downloads/datasets` and `kanat_negatives_30`,
+folders and zips) and any dataset uploaded from them still hold the two tiles:
+remove them and rebuild with the 13 before any retraining.
 
 `yolo26.yaml` and `yolo26-p2.yaml` are both present in the installed ultralytics
 (8.4.126), so `m` and the P2 experiment can be trained. `m` is benched on the

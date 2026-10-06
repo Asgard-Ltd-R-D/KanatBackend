@@ -31,7 +31,7 @@ same Board close up. See the last three sections.
 | `camb-20260915-close-one-board` | `CamB_20260915_102250` (spent), `_102450`, `_103223` | threshold-work |
 | `cama-20260914-wide-tight` | `CamA_20260914_153603`, `_153908` | **sealed** |
 | `cama-20260914-wide` | `CamA_20260914_154008`, `_154108`, `_161935`, `_162035`, `_162936`, `_163036`, `_163136` | **sealed** |
-| `cama-20260914-close-cross` | `CamA_20260914_150348`, `_150448`, `_150548` | **sealed** |
+| `cama-20260914-close-cross` | `CamA_20260914_150348`, `_150448`, `_150548` | **sealed**, exposed by #92: not held out |
 
 ## What was measured
 
@@ -331,6 +331,12 @@ them would hold out a scene the constants were fitted on — ADR-0005's named
 error — and setup integrity gives them the setup's role. They are
 negative-mining sources.
 
+**`_150248` is this setup for its first 0.76 s only (#92, 2026-10-06).** From
+frame 19 the camera pans onto the black-cross view of `cama-20260914-close-cross`,
+below, and stays there; frame 0 could not show that. The window and the
+negatives it cost are recorded in `recordings.json` and HANDOVER (#92). It
+also spent `cama-20260914-close-cross`, below.
+
 ### `_150348`, `_150448`, `_150548` — `cama-20260914-close-cross`, sealed
 
 A different part of the Board: a sprayed black cross fills the frame, a
@@ -347,6 +353,11 @@ close, a 12–17% span change with a 245 px re-aim, two. Sealed, because nothing
 was fitted on this aim, and spending it would train on the Board and afternoon
 light the sealed wide setups hold. Folding it into `cama-20260914` as spent was
 the alternative, and would have bought a few negatives for held-out footage.
+
+**No longer held out (#92, 2026-10-06).** `_150248` pans onto this view at
+frame 19 and was opened past it, so the setup has been seen. It stays
+`sealed`, for the reason above, and its three hashes are in
+`data/sealed_runs.log`, so no tool opens them again (ADR-0005).
 
 ### Short files
 

@@ -1,2 +1,5 @@
 2026-10-01T11:52:23Z  7b725aa8441610e4f8d6bc35cac02849ba22d2e638fee270536ed67f6164b528  model=/Users/ronen.sasgardsys.co.il/Projects/Kanat/KanatBackend/ImageRecognitionService/trained_models/kanat_yolo26n_v1/weights/best.pt  commit=54a49a8  tool=evaluate.py
 2026-10-01T12:01:57Z  6bedeefddbe23dc245329c2f7ef0bdc6bc9e28cf68d363667d382a5922cd2b5b  model=/Users/ronen.sasgardsys.co.il/Projects/Kanat/KanatBackend/ImageRecognitionService/trained_models/kanat_yolo26n_v1/weights/best.pt  commit=54a49a8-dirty  tool=evaluate.py
+2026-10-06T06:58:17Z  f077e46dc3b219beb523ab0851a9bf3e0a996433248e5f8627486929409a1309  model=none  commit=f8ff2a8  tool=exposed-by-92
+2026-10-06T06:58:17Z  b6b18551d1274594c4334ec82483618f2eec33da6a174b0616de788aed70a8cf  model=none  commit=f8ff2a8  tool=exposed-by-92
+2026-10-06T06:58:17Z  fd098c5a7d4d03d98c79cb6f545ed186448c3f0bad79720e0782630da84140d0  model=none  commit=f8ff2a8  tool=exposed-by-92

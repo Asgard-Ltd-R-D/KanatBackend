@@ -532,21 +532,22 @@ def test_a_stride_stops_at_the_end_of_the_file(monkeypatch):
     assert loop.processed == 21
 
 
-class _AppearsAt(_FakeModel):
-    """A Bullet Hole at (15, 15) on every frame from `first` on."""
-    def __init__(self, first):
-        self.first = first
+class _SeenOn(_FakeModel):
+    """A Bullet Hole at (15, 15) on the frames `on(index)` says. The frame's
+    pixels are its index (see `_FakeCap`), which is why they are int64."""
+    def __init__(self, on):
+        self.on = on
 
     def predict(self, image, imgsz, conf, verbose=False, classes=None):
-        return super().predict(image, imgsz, conf) if image[0, 0, 0] >= self.first \
+        return super().predict(image, imgsz, conf) if self.on(int(image[0, 0, 0])) \
             else [types.SimpleNamespace(boxes=[])]
 
 
-def _strided_run(monkeypatch, n_frames):
+def _strided_run(monkeypatch, n_frames, on=lambda i: i >= 6):
     """`process` at stride 13 over `n_frames`; half a frame on `--end` keeps
     `frames_until` clear of float truncation."""
     loop = _loop(monkeypatch, lambda i: True, frames=100)
-    loop.model = _AppearsAt(6)
+    loop.model = _SeenOn(on)
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.zeros((8, 8), bool))
     return nbh.process("clip.mp4", 10.0, 10.0 + (n_frames + 0.5) / 25, "model.pt",
@@ -563,10 +564,18 @@ def test_at_stride_13_a_bullet_hole_from_frame_6_is_new_and_first_seen_on_13(mon
 
 
 def test_at_stride_13_a_bullet_hole_is_withheld_until_its_window_elapses(monkeypatch):
+    """One frame short of its window, it is unconfirmable, not rejected."""
     run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES - 1)
     assert run.holes == []
 
 
+def test_at_stride_13_a_detection_on_one_sampled_frame_is_dropped(monkeypatch):
+    """Seen on 13 alone of the window's looks at 13, 26, 39, 52: a flicker."""
+    run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES, on=lambda i: i == 13)
+    assert run.holes == []
+
+
 def test_the_report_states_the_stride(monkeypatch, capsys):
+    """A stride-sampled result is only comparable at the same stride (#81)."""
     _strided_run(monkeypatch, 25)
-    assert "stride 13" in capsys.readouterr().out
+    assert "[INFO] stride 13:" in capsys.readouterr().out

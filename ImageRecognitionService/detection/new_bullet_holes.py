@@ -639,7 +639,7 @@ class RegisteredFrames:
         """How many frames lie between `--start` and `end` seconds."""
         return int((end - self.start) * self.fps)
 
-    def looks(self, n_frames, stride=1, consecutive=0):
+    def looks(self, n_frames, stride=1, baseline_frames=0):
         """Yield a `Look` per frame looked at, up to `n_frames` from `--start`.
 
         Frames that failed to register are yielded too, unregistered — see
@@ -649,7 +649,7 @@ class RegisteredFrames:
         The first frame is the one Board space was built from, so it is already
         read and already registered; it is yielded like any other.
 
-        With a `stride` (#81) the first `consecutive` frames are all looked at,
+        With a `stride` (#81) the first `baseline_frames` are all looked at,
         and past them only indices that are multiples of `stride`. The rest are
         grabbed without decoding and never registered or yielded: gaps, not
         lost frames. Indices stay positions in the clip, and `processed` counts
@@ -657,7 +657,7 @@ class RegisteredFrames:
         """
         try:
             while self.processed < n_frames:
-                if self.processed >= consecutive and self.processed % stride:
+                if self.processed >= baseline_frames and self.processed % stride:
                     if not self.cap.grab():
                         break  # the end of what the file holds
                     self.processed += 1
@@ -813,9 +813,10 @@ class Run(NamedTuple):
 def add_stride_flag(parser):
     """The `--stride` flag, identical in every tool that runs `process`."""
     def stride(text):
-        if int(text) < 1:
+        n = int(text)
+        if n < 1:
             raise argparse.ArgumentTypeError("a stride is 1 frame or more")
-        return int(text)
+        return n
     parser.add_argument("--stride", type=stride, default=1,
                         help="look at every Nth frame past the baseline; the "
                              "rest are gaps for persistence (#81). The baseline "
@@ -892,10 +893,6 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
              f" (of {baseline_frames} requested; the rest were lost or unread)")
     print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes over "
           f"{len(baseline_detections)} frame(s) from {start}s{short}")
-    first = -(-baseline_frames // stride) * stride
-    print(f"[INFO] stride {stride}: past the baseline, frames {first}, {first + stride}, "
-          f"... are looked at; the frames between are gaps, for and against no "
-          f"Bullet Hole (#81)")
 
     per_frame, corroboration, residuals_per_frame, lost = [], [], [], []
     for look in looks:
@@ -958,6 +955,10 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         if not merged:
             print("[MERGE] no displaced sightings found")
 
+    print("[INFO] stride 1: every frame looked at" if stride == 1 else
+          f"[INFO] stride {stride}: past the baseline, every {stride}th frame looked "
+          f"at; the frames between are gaps, counting neither for nor against a "
+          f"Bullet Hole (#81)")
     _report(new, start, fps, loop.last, mm_per_tpl_px,
             [idx for idx, _ in per_frame])
     if out_video:

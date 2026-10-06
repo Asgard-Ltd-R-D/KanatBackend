@@ -824,6 +824,7 @@ if __name__ == "__main__":
     p.add_argument("--baseline-frames", type=int, default=nbh.BASELINE_FRAMES,
                    help="PROVISIONAL: frames the baseline is built from, see "
                         "new_bullet_holes")
+    nbh.add_stride_flag(p)
     p.add_argument("--tolerance", type=float, default=MATCH_TOLERANCE_TPL,
                    help="how close a detection must be to claim a label, template px")
     manifest.add_flag(p)
@@ -847,7 +848,7 @@ if __name__ == "__main__":
                       template_path=a.template,
                       require_change_evidence=not a.no_change_filter,
                       merge_displaced=a.merge_displaced,
-                      baseline_frames=a.baseline_frames)
+                      baseline_frames=a.baseline_frames, stride=a.stride)
 
     to_template = np.linalg.inv(view.tpl_to_board)
     found = board._apply(to_template,

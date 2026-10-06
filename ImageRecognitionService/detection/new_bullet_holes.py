@@ -639,8 +639,8 @@ class RegisteredFrames:
         """How many frames lie between `--start` and `end` seconds."""
         return int((end - self.start) * self.fps)
 
-    def looks(self, n_frames):
-        """Yield a `Look` per frame read, up to `n_frames` from `--start`.
+    def looks(self, n_frames, stride=1, consecutive=0):
+        """Yield a `Look` per frame looked at, up to `n_frames` from `--start`.
 
         Frames that failed to register are yielded too, unregistered — see
         `Look`. Iteration stops early when the file runs out, which is why
@@ -648,9 +648,20 @@ class RegisteredFrames:
 
         The first frame is the one Board space was built from, so it is already
         read and already registered; it is yielded like any other.
+
+        With a `stride` (#81) the first `consecutive` frames are all looked at,
+        and past them only indices that are multiples of `stride`. The rest are
+        grabbed without decoding and never registered or yielded: gaps, not
+        lost frames. Indices stay positions in the clip, and `processed` counts
+        every frame passed, looked at or not.
         """
         try:
             while self.processed < n_frames:
+                if self.processed >= consecutive and self.processed % stride:
+                    if not self.cap.grab():
+                        break  # the end of what the file holds
+                    self.processed += 1
+                    continue
                 due = self._lost_run > 0 and self._lost_run % REANCHOR_AFTER_LOST == 0
                 if self.processed:
                     frame, current, correlation = _next_view(
@@ -799,6 +810,19 @@ class Run(NamedTuple):
     residual: np.ndarray   # distance from a suppressed detection to its mark
 
 
+def add_stride_flag(parser):
+    """The `--stride` flag, identical in every tool that runs `process`."""
+    def stride(text):
+        if int(text) < 1:
+            raise argparse.ArgumentTypeError("a stride is 1 frame or more")
+        return int(text)
+    parser.add_argument("--stride", type=stride, default=1,
+                        help="look at every Nth frame past the baseline; the "
+                             "rest are gaps for persistence (#81). The baseline "
+                             "is still its first --baseline-frames consecutive "
+                             "frames. 1, the default, looks at every frame.")
+
+
 def registration_note(residual, radius, unit="Board px"):
     """The one `[REGISTRATION]` sentence, in whatever units the caller measures in.
 
@@ -827,11 +851,15 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES):
+            baseline_frames=BASELINE_FRAMES, stride=1):
     loop = RegisteredFrames.open(video, start, model_path, conf, template_path)
     fps, match_px = loop.fps, loop.view.match_radius
     n_frames = loop.frames_until(end)
-    looks = loop.looks(n_frames)
+    baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
+    # The stride starts past the baseline, never inside it: built from frames
+    # 0, 13, 26... it would span seconds, and a Hit landing in them would be
+    # absorbed and never reported (#81).
+    looks = loop.looks(n_frames, stride, baseline_frames)
 
     # The baseline is built from BASELINE_FRAMES frames, not one. Everything it
     # fails to see is reported as a new Bullet Hole, and a single frame passes
@@ -842,7 +870,6 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # They come off the front of the same iterator the run continues on, so the
     # baseline cannot be built from a differently rectified Board than the one
     # it is subtracted from.
-    baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
     baseline_canvas, baseline_inner, baseline_detections = None, None, []
     # Frame index -> the view detection used, for `_render`. Seeded with look
     # 0's view, Board space itself, so a run that reads no frame still has one.
@@ -865,6 +892,10 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
              f" (of {baseline_frames} requested; the rest were lost or unread)")
     print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes over "
           f"{len(baseline_detections)} frame(s) from {start}s{short}")
+    first = -(-baseline_frames // stride) * stride
+    print(f"[INFO] stride {stride}: past the baseline, frames {first}, {first + stride}, "
+          f"... are looked at; the frames between are gaps, for and against no "
+          f"Bullet Hole (#81)")
 
     per_frame, corroboration, residuals_per_frame, lost = [], [], [], []
     for look in looks:
@@ -1091,6 +1122,7 @@ if __name__ == "__main__":
                         "as new Bullet Holes; a Hit landing inside this window is "
                         "absorbed into the baseline and never reported, so the "
                         "window must precede the shooting.")
+    add_stride_flag(p)
     p.add_argument("--out", help="write an annotated video of the rectified Board here")
     manifest.add_flag(p)
     a = p.parse_args()
@@ -1109,4 +1141,5 @@ if __name__ == "__main__":
                   f"{entry['capture_setup']} in config/print_scale.json")
 
     process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
-            a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames)
+            a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,
+            a.stride)

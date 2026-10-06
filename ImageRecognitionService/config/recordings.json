@@ -181,7 +181,7 @@
     "role": "spent",
     "fps": 25.0,
     "window": [0.0, 0.72],
-    "window_basis": "frames 0-18 only (#92): from frame 19 the camera pans off this Board onto the black-cross Board of the sealed cama-20260914-close-cross setup. Allocated from frame 0 alone; the rest of the clip is not this Capture Setup, and nothing past 0.72s may be scored or mined. mine_negatives ignores the window, so the post-pan frames are kept out only by its MIN_CORRELATION floor (they register at <= 0.29)"
+    "window_basis": "partial: frames 0-18 only; from frame 19 the camera pans onto the view of the sealed cama-20260914-close-cross setup, which the frame-0 allocation could not see (#92, HANDOVER)"
   },
   "f077e46dc3b219beb523ab0851a9bf3e0a996433248e5f8627486929409a1309": {
     "file": "CamA_20260914_150348.mkv",

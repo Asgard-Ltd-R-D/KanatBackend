@@ -679,9 +679,12 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # Live (#83): an rtsp:// URL in place of the clip, normally a VideoService path. No
 # --start/--end/--out/--merge-displaced and no manifest gate; stride LIVE_STRIDE unless given.
 # Prints [NEW] per Bullet Hole once confirmed; Ctrl-C/SIGTERM prints the report.
-# [LIVE] gives configured vs arrived fps, the frames looked at and the due
-# frames dropped late. The arrived rate reads high on a short run (~1.2 s of
-# FFmpeg buffering at open, #85), so read it over minutes. A failed read, or
+# Frames are indexed and timed by the stream's timestamps (#117): frames lost
+# upstream are gaps (the due ones count against persistence's floor), each
+# logged when found. [LIVE] gives configured fps vs the timestamps' step and
+# the rate frames were received at over the stream time they span (with no
+# usable timestamps, a [WARN] and the wall-clock arrival rate instead), the
+# frames looked at, the due frames dropped late and the gaps upstream. A failed read, or
 # one stalled past STREAM_TIMEOUT_MS, is a drop (#84): reopened
 # until back, its missed frames gaps (the due ones count against persistence's
 # floor, so a drop cannot confirm on one look), each drop and the totals logged.
@@ -696,20 +699,26 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 
 Two known limitations of the live run, neither closed by #83:
 
-- **Frames lost upstream while the baseline is built go uncounted.** From
-  opening the stream until the 5-frame baseline is built, 1.6–2.8 s through
-  MediaMTX on the development Mac (#85), nothing reads the stream past the
-  frame in hand. Any frame lost upstream in that time never arrives: MediaMTX
-  discarding for a slow reader (`VideoService/mediamtx.yml` leaves its queue
-  at the default), or a full socket buffer. It is neither counted as a late
-  drop nor indexed. Every later index shifts by the number lost, and with it
-  the stride's phase and every frame-counted window. Frames read while
-  catching up carry the time they were read, not the time they arrived. The
-  `[LIVE]` arrival rate hides a small loss, reading high on a short run
-  anyway; MediaMTX's log shows any (`reader is too slow, discarding`). This is not the
-  stream drop #84 handles, and #84 does not fix it: the stream neither drops
-  nor stalls. #85 saw it happen once; the measurements are in
-  [`live_camera.md`](docs/live_camera.md), the fix is #117.
+- **Frames lost upstream are counted, not prevented, and not all of them.**
+  From opening the stream until the baseline is built, nothing reads the
+  stream past the frame in hand, and MediaMTX discards for a reader about
+  2.6 s behind (`VideoService/mediamtx.yml` leaves its queue at the default).
+  Since #117 frames are indexed by the stream's timestamps
+  (`CAP_PROP_POS_MSEC`) within an RTSP session, so a lost frame is a gap,
+  logged when found (`[LIVE] N frame(s) lost upstream`), its due frames
+  counted against persistence's floor, and the totals reported. Frame times
+  and the `[LIVE]` rate come from the timestamps too; a stream without usable
+  timestamps is counted as read, with a `[WARN]` and the wall-clock arrival
+  rate. Indices are counted at the configured 25 fps (ADR-0007): another
+  frame rate is unsupported. Still not handled: a
+  discard smaller than a frame leaves no gap in the timestamps, only a frame
+  that decodes corrupt; frames after a gap decode corrupt up to the next
+  keyframe, and are looked at all the same; and every time runs about 1.2 s
+  late, because `open` reads frame 0 after FFmpeg has buffered that much.
+  MediaMTX's log (`reader is too slow, discarding`) and FFmpeg's
+  `error while decoding` are the evidence for those. A drop's missed frames
+  are still #84's wall-clock estimate, since timestamps restart with each
+  session. The replays are in [`live_camera.md`](docs/live_camera.md).
 - **A Sealed recording streamed over RTSP is not refused.** The manifest gate
   hashes files and cannot see a stream, so #83 skips it for streams by design.
   "Never stream a Sealed recording" (ADR-0005) is #85's acceptance rule, kept

@@ -128,6 +128,14 @@ recording is 25 fps. The AXIS Q6315-LE is therefore configured to a constant
 stride would need re-deriving. Making the windows time-based or FPS-aware is a
 separate decision, not taken here.
 
+#117 does not take it either. Live, it derives each frame's index from the
+stream's timestamps at the configured 25 fps, for gap accounting: frames lost
+upstream become gaps where a 25 fps stream would have had them, instead of
+shifting every later index. On a stream at 20, 30, 50 or 60 fps,
+timestamp × 25 would make the windows count stream time rather than frames.
+That is outside this decision, and supporting other frame rates remains a
+separate one.
+
 ## Consequences
 
 **Persistence filters less, and the change filter does more.** Candidates

@@ -1070,7 +1070,7 @@ def _coverage_warning(out):
     untimed, the first to advance after an untimed one, and the first after
     a drop; checked to account for every frame received, frame 0 included."""
     warned = re.search(r"\[WARN\] the stream's timestamps timed only (\d+) of (\d+) frame\(s\)\. "
-                       r"The rest were counted and timed as read: frame 0, (\d+) untimed, "
+                       r"The rest were not timed by a step: frame 0, (\d+) untimed, "
                        r"(\d+) the first to advance after one, and (\d+) the first after a "
                        r"drop\.", out)
     if not warned:
@@ -1112,16 +1112,23 @@ def test_a_stream_that_keeps_reconnecting_still_warns_its_timestamps_timed_none(
     # (Codex on #121).
     (lambda at: (at - (at == 10)) * 40, 10, 100),
 ])
-def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch, ms, after, lost):
+def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(
+        monkeypatch, capsys, ms, after, lost):
     """Indexing restarts from the frame after the untimed one, so the frame
     lost after it, at 20, is a gap of one, not absorbed by the one-frame
     shift; and frames lost before it, measured from the last frame a step
-    timed, are a gap too (#117)."""
+    timed, are a gap too (#117). Either way the rate is every frame received
+    over all the stream time to the last: the loss shows in it (Codex on #121)."""
     loop = _live(monkeypatch, _Losing(after=after, lost=lost, interval=0.002, ms=ms))
     end = after + lost + 20
     indices = [l.index for l in loop.looks(end, stride=1, baseline_frames=end)]
     assert indices == list(range(after + 1)) + list(range(after + lost + 1, end))
     assert loop.cap.upstream == [(lost, lost)] and loop.cap.untimed == 1
+    span = ms(loop.cap.received - 1 + lost) / 1000   # to the last frame received
+    rate = re.search(r"were received at ([\d.]+) fps over ([\d.]+) s of stream",
+                     capsys.readouterr().out)
+    assert float(rate[2]) == pytest.approx(span, abs=0.051)
+    assert float(rate[1]) == pytest.approx((loop.cap.received - 1) / span, abs=0.01)
 
 
 class _CorruptAfterTheGap(_Losing):

@@ -591,15 +591,18 @@ class _Stream:
         self.unseen = []   # due frames a drop or an upstream gap missed, in order
         self.upstream, self.untimed = [], 0   # (frames lost, due) each gap (#117)
         self.resumed = 0   # frames the first to advance after an untimed one
-        # Each timed step's rate, rounded, and the stream time they span (#117).
+        # Each timed step's rate, rounded, and the stream time the timestamps
+        # span, the frames received over it, and those received since it last
+        # grew (#117).
         self._steps, self._spanned = Counter(), 0.0
+        self._spanned_frames, self._unspanned = 0, 0
         # The frame indices count from: its timestamp, index and wall clock.
         # An RTSP session's first, or the first to advance after an untimed one;
         # None until then (#117).
         self._origin = (cap.get(cv2.CAP_PROP_POS_MSEC), 0, arrived)
         self._pos = self._origin[0]   # the last frame's timestamp, in ms
-        # The last frame a step timed this RTSP session, in the origin's form:
-        # what a frame resuming after untimed ones is placed from (#117).
+        # The last frame its timestamp timed this RTSP session, in the origin's
+        # form: what a frame resuming after untimed ones is placed from (#117).
         self._trusted = None
         self._held, self._ended = None, False
         self._taken, self._dropping, self._baseline_frames = 0, False, 1
@@ -630,7 +633,7 @@ class _Stream:
                     self._reconnect()
                     continue
                 now = time.time()
-                placed, at, step = self._place(index, now)
+                placed, at, step, span = self._place(index, now)
                 if not self._down and placed > index + 1:
                     # Counted before the decode: the frame after a gap may not
                     # decode, and the drop that starts there must not take the
@@ -651,7 +654,7 @@ class _Stream:
                         # cannot decode is the same drop, not a second.
                         self._reconnect()
                         continue
-                self._count(step)
+                self._count(step, span)
                 if self._down:
                     self._back_from_drop(now, range(index + 1, placed), stride, baseline_frames)
                 index, self.received, self.latest = placed, self.received + 1, now
@@ -692,44 +695,52 @@ class _Stream:
         """The index and time of the frame just grabbed, the one after frame
         `index`, by its timestamp (#117): counted at `LIVE_FPS` from the
         origin, and timed from the origin's wall clock. And its step from the
-        frame before, in ms, None for an origin, which `_count` counts once
-        the frame is received. A new RTSP session's first frame is the origin,
-        placed by #84's count of the frames the drop missed and timed when it
-        was read. A frame whose timestamp is not later than the one before is
+        frame before, in ms, None for an origin, and the stream time its
+        timestamp advanced on the last frame they timed, None if none, which
+        `_count` counts once the frame is received. A new RTSP session's first
+        frame is the origin, placed by #84's count of the frames the drop
+        missed and timed when it was read. A frame whose timestamp is not later than the one before is
         untrusted and counted, placed one past it and timed when it was read,
         and so is each after it until a timestamp advances again: that frame
-        is the origin, placed and timed by its advance on the last frame a
-        step timed, so frames lost upstream meanwhile are still a gap. With
+        is the origin, placed and timed by its advance on the last frame its
+        timestamp timed, so frames lost upstream meanwhile are still a gap. With
         none this session, or a timestamp behind it, it is placed one past the
         frame before. So neither a repeated nor a reset timestamp, nor zeros
         before real ones, shifts anything after it (Codex on #121)."""
         before, self._pos = self._pos, self.cap.get(cv2.CAP_PROP_POS_MSEC)
         if self._origin is None and (self._down or self._pos > before):
-            placed, at = index + 1 + self._missed(now), now
+            placed, at, span = index + 1 + self._missed(now), now, None
             if not self._down and self._trusted:
                 trusted_pos, trusted_index, trusted_at = self._trusted
-                since = self._pos - trusted_pos
-                if since > 0:
-                    placed = max(placed, trusted_index + round(since * LIVE_FPS / 1000))
-                    at = trusted_at + since / 1000
+                span = self._pos - trusted_pos
+                if span > 0:
+                    placed = max(placed, trusted_index + round(span * LIVE_FPS / 1000))
+                    at = trusted_at + span / 1000
+                    self._trusted = (self._pos, placed, at)
+                else:
+                    span = None
             self._origin = (self._pos, placed, at)
-            return placed, at, None
+            return placed, at, None, span
         step = self._pos - before
         if step <= 0:
             self._origin = None
-            return index + 1, now, step
+            return index + 1, now, step, None
         first_pos, first_index, first_at = self._origin
         since = self._pos - first_pos
         # Never onto the frame before's index: a step under half a frame
         # interval rounds onto it, on a stream faster than LIVE_FPS.
         placed = max(index + 1, first_index + round(since * LIVE_FPS / 1000))
         self._trusted = (self._pos, placed, first_at + since / 1000)
-        return placed, self._trusted[2], step
+        return placed, self._trusted[2], step, step
 
-    def _count(self, step):
-        """Count a frame received, by `_place`'s step, towards the report: a
-        frame grabbed but not decoded is none (Codex on #121). Before the drop
-        it may end is closed, so `_down` still tells an RTSP session's first."""
+    def _count(self, step, span):
+        """Count a frame received, by `_place`'s step and span, towards the
+        report: a frame grabbed but not decoded is none (Codex on #121).
+        Before the drop it may end is closed, so `_down` still tells an RTSP
+        session's first. The rate is the frames received over the stream time
+        the timestamps span: each span takes in every frame received since the
+        last, untimed ones too, so a gap found on resuming shows in it; an
+        origin no span reaches starts afresh (Codex on #121)."""
         if step is None:
             if not self._down:
                 self.resumed += 1
@@ -737,7 +748,12 @@ class _Stream:
             self.untimed += 1
         else:
             self._steps[round(1000 / step, 2)] += 1
-            self._spanned += step / 1000
+        self._unspanned += 1
+        if span is not None:
+            self._spanned_frames += self._unspanned
+            self._spanned += span / 1000
+        if span is not None or step is None:
+            self._unspanned = 0
 
     def _missed(self, now):
         """How many frames the drop the stream is back from missed, if any."""
@@ -798,19 +814,19 @@ class _Stream:
             # stream time they span fall short of it by any lost (#117).
             rate = (f"by the stream's timestamps, frames step at "
                     f"{self._steps.most_common(1)[0][0]:.2f} fps, and were received at "
-                    f"{self._steps.total() / self._spanned:.2f} fps over {self._spanned:.1f} s "
+                    f"{self._spanned_frames / self._spanned:.2f} fps over {self._spanned:.1f} s "
                     f"of stream. Frames are indexed from them at the configured {fps:g} fps "
                     f"(ADR-0007, #117): a stream at another rate is unsupported, and its "
                     f"windows would count stream time, not frames")
         else:
             if self.received > 1:   # however the frames went untimed (Codex on #121)
                 print(f"[WARN] the stream's timestamps timed only {timed} of "
-                      f"{self.received} frame(s). The rest were counted and timed as read: "
-                      f"frame 0, {self.untimed} untimed, {self.resumed} the first to advance "
-                      f"after one, and {len(self.drops)} the first after a drop. Frames lost "
-                      f"upstream before any of them were neither counted nor indexed, and "
-                      f"the rate is the wall clock's, high by FFmpeg's ~1.2 s of buffering "
-                      f"at open (#117, #85)")
+                      f"{self.received} frame(s). The rest were not timed by a step: frame 0, "
+                      f"{self.untimed} untimed, {self.resumed} the first to advance after "
+                      f"one, and {len(self.drops)} the first after a drop. Frames lost "
+                      f"upstream next to them may be neither counted nor indexed, and the "
+                      f"rate is the wall clock's, high by FFmpeg's ~1.2 s of buffering at "
+                      f"open (#117, #85)")
             # Time the stream was down is no time for frames to arrive in.
             elapsed = self.latest - self.first - down
             arrived = (f"{(self.received - 1) / elapsed:.2f} fps" if elapsed > 0

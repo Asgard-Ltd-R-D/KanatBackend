@@ -346,14 +346,18 @@ def _fold(candidates, idx, pts, match_px):
             match[1].append(idx)
 
 
-def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES):
+def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES,
+           unseen=()):
     """The confirmed Bullet Hole a candidate whose window has elapsed is, or
     None. `looked_at` and `lost` are sorted frame indices, as in
-    `track_new_bullet_holes`. Counted by bisection, so a live run's judging
-    does not slow as its history grows (#83)."""
+    `track_new_bullet_holes`; `unseen`, sorted too, is the due frames a stream
+    drop missed (#84), which count towards the floor as lost frames do.
+    Counted by bisection, so a live run's judging does not slow as its
+    history grows (#83)."""
     pos, sightings, first = candidate
     span = _count_in(looked_at, first, first + window)
-    tried = span + _count_in(lost, first, first + window)
+    tried = (span + _count_in(lost, first, first + window)
+             + _count_in(unseen, first, first + window))
     if span <= 0 or span < persist * tried:
         # Too few looks survived registration to call anything persistent:
         # 100% of one frame among lost ones is not persistence.
@@ -529,8 +533,11 @@ class _Stream:
     `STREAM_TIMEOUT_MS`. The thread reopens it with `reopen` every
     `RECONNECT_EVERY_S`, for as long as the run goes on, and the frames the
     drop missed, counted at `LIVE_FPS` from the last frame received, are gaps:
-    indices jump past them (#84). Nothing else restarts, so registration
-    resumes from the last view, in the same Board space.
+    indices jump past them (#84). Those a look was due on are `unseen`, and
+    count against persistence's floor as lost frames do: a window a drop
+    emptied confirms nothing, rather than confirm on the one look before it.
+    Nothing else restarts, so registration resumes from the last view, in
+    the same Board space.
 
     The thread grabs every frame, keeps those a look is due on (`_looked_at`),
     and holds the newest for the loop. A due frame a newer one replaces before
@@ -564,6 +571,7 @@ class _Stream:
         self.received, self.first, self.latest = 1, arrived, arrived
         self.late, self.stopped = 0, False
         self.drops, self._down = [], False   # (seconds, frames missed) each
+        self.unseen = []   # due frames a drop missed, in order
         self._held, self._ended = None, False
         self._taken, self._dropping, self._baseline_frames = 0, False, 1
         self._ready = threading.Condition()
@@ -593,16 +601,22 @@ class _Stream:
                     self._reconnect()
                     continue
                 now = time.time()
-                index += 1 + self._back_from_drop(now)
-                self.received, self.latest = self.received + 1, now
+                back = index + 1 + self._missed(now)
                 # `_looked_at`, but the baseline counted in frames offered, so
                 # that it stays consecutive frames across a drop (#84).
-                if not _looked_at(offered if offered < baseline_frames else index,
-                                  stride, baseline_frames):
-                    continue
-                ok, frame = self.cap.retrieve()
-                if not ok:
-                    self._reconnect()
+                frame = None
+                if _looked_at(offered if offered < baseline_frames else back,
+                              stride, baseline_frames):
+                    ok, frame = self.cap.retrieve()
+                    if not ok:
+                        # Not a frame received: a drop stays open until one
+                        # is in hand, so a reopened stream that grabs but
+                        # cannot decode is the same drop, not a second.
+                        self._reconnect()
+                        continue
+                self._back_from_drop(now, range(index + 1, back), stride, baseline_frames)
+                index, self.received, self.latest = back, self.received + 1, now
+                if frame is None:
                     continue
                 offered += 1
                 with self._ready:
@@ -633,17 +647,23 @@ class _Stream:
         if not self.stopped:
             self.cap = self._reopen()
 
-    def _back_from_drop(self, now):
-        """Close the drop the stream is back from, if any; the frames it missed."""
+    def _missed(self, now):
+        """How many frames the drop the stream is back from missed, if any."""
+        return max(0, round((now - self.latest) * LIVE_FPS) - 1) if self._down else 0
+
+    def _back_from_drop(self, now, gap, stride, baseline_frames):
+        """Close the drop the stream is back from, if any. `gap` is the
+        indices of the frames it missed; those a look was due on are `unseen`."""
         if not self._down:
-            return 0
+            return
         self._down = False
         seconds = now - self.latest
-        missed = max(0, round(seconds * LIVE_FPS) - 1)
-        self.drops.append((seconds, missed))
+        due = [i for i in gap if _looked_at(i, stride, baseline_frames)]
+        self.unseen += due   # one extend: the loop's thread bisects it
+        self.drops.append((seconds, len(gap)))
         print(f"[LIVE] stream back at {_clock(now)} after {seconds:.1f} s without a frame: "
-              f"{missed} frame(s) missed at {LIVE_FPS} fps, gaps for persistence (#84)")
-        return missed
+              f"{len(gap)} frame(s) missed at {LIVE_FPS} fps, {len(due)} of them due a "
+              f"look and counted against persistence's floor (#84)")
 
     def read(self):
         with self._ready:
@@ -1358,7 +1378,7 @@ class _Announcer:
                and self.candidates[self.judged][2] + PERSIST_FRAMES <= self.loop.processed):
             candidate = self.candidates[self.judged]
             self.judged += 1
-            hole = _judge(candidate, self.looked_at, self.lost)
+            hole = _judge(candidate, self.looked_at, self.lost, unseen=self.loop.cap.unseen)
             if hole is not None:
                 hole["corroborated"] = _corroborates(self.corroboration, hole["box"],
                                                      self.match_px)

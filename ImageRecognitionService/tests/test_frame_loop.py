@@ -831,6 +831,7 @@ def test_a_stream_that_drops_is_reopened_and_iteration_continues(monkeypatch, ca
     (seconds, missed), = loop.cap.drops
     assert seconds >= 0.2 and missed >= 1
     assert indices == list(range(21)) + list(range(21 + missed, 60))
+    assert loop.cap.unseen == list(range(21, 21 + missed))   # stride 1: all were due
     assert loop.lost == 0 and loop.view is view
     how, index, last = loop.calls[20]   # the first look after the drop
     assert how == "track" and index == 1 and last.index == 20
@@ -866,6 +867,53 @@ def test_a_read_cut_short_by_the_timeout_is_a_drop_from_the_frame_before_it(
     assert seconds >= 0.15
     assert indices == list(range(11)) + list(range(11 + missed, 30))
     assert loop.calls[10][1] == 1   # the reopened stream's first, not the stalled one
+
+
+class _Undecodable(_FakeStream):
+    """Grabs, but its first `failures` frames do not decode."""
+    def __init__(self, failures):
+        super().__init__(interval=0.002)
+        self.failures = failures
+
+    def retrieve(self):
+        if self.failures:
+            self.failures -= 1
+            return False, None
+        return super().retrieve()
+
+
+def test_a_reopened_stream_that_cannot_decode_is_still_the_same_drop(monkeypatch, capsys):
+    """Grabbed but not decoded is no frame received: the drop stays open
+    through it, one drop as long as the whole outage, not two (#84)."""
+    reopened = iter([_Undecodable(failures=1), _FakeStream(interval=0.002)])
+    loop = _live(monkeypatch, _FakeStream(n=20, interval=0.002), lambda: next(reopened))
+    monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
+    indices = [l.index for l in loop.looks(60, stride=1, baseline_frames=60)]
+    (seconds, missed), = loop.cap.drops
+    assert seconds >= 0.2
+    assert indices == list(range(21)) + list(range(21 + missed, 60))
+    assert capsys.readouterr().out.count("[LIVE] stream dropped") == 1
+
+
+def test_a_window_a_drop_emptied_confirms_nothing(monkeypatch, capsys):
+    """Seen on every look from frame 20, past the baseline, to a drop at 30
+    longer than its window: the looks after are past it, so it was seen in
+    100% of the few it got. The due
+    frames the drop missed count against the floor, so it is unconfirmable,
+    not a Bullet Hole announced on reconnect (#84)."""
+    monkeypatch.setattr(nbh, "LIVE_FPS", 1000)   # a 0.1 s drop misses ~100 frames
+    after = _FakeStream(interval=0.002)
+    after.at = 1000   # its pixels, which `_Watching` reads, apart from the first stream's
+    loop = _live(monkeypatch, _FakeStream(n=30, interval=0.002), lambda: after)
+    monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
+    loop.model = _Watching(lambda i: 20 <= i < 1000, stop_at=1200)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    monkeypatch.setattr(nbh.board, "changed_regions",
+                        lambda a, b: np.ones((64, 64), bool))
+    run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1)
+    (_, missed), = loop.cap.drops
+    assert missed >= nbh.PERSIST_FRAMES
+    assert "[NEW]" not in capsys.readouterr().out and run.holes == []
 
 
 def test_a_drop_during_the_baseline_leaves_it_consecutive_frames(monkeypatch):

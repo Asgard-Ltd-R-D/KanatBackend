@@ -28,6 +28,7 @@ docs/adr/0001-report-bullet-holes-not-hits.md. Two bullets through one mark are
 one Bullet Hole, and no amount of temporal evidence separates them.
 """
 import argparse
+import bisect
 import itertools
 import math
 import os
@@ -348,10 +349,11 @@ def _fold(candidates, idx, pts, match_px):
 def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES):
     """The confirmed Bullet Hole a candidate whose window has elapsed is, or
     None. `looked_at` and `lost` are sorted frame indices, as in
-    `track_new_bullet_holes`."""
+    `track_new_bullet_holes`. Counted by bisection, so a live run's judging
+    does not slow as its history grows (#83)."""
     pos, sightings, first = candidate
-    span = sum(1 for i in looked_at if first <= i < first + window)
-    tried = span + sum(1 for i in lost if first <= i < first + window)
+    span = _count_in(looked_at, first, first + window)
+    tried = span + _count_in(lost, first, first + window)
     if span <= 0 or span < persist * tried:
         # Too few looks survived registration to call anything persistent:
         # 100% of one frame among lost ones is not persistence.
@@ -379,6 +381,11 @@ def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES):
         return None
     return {"pos": pos[:2], "box": pos, "first_frame": first,
             "seen": seen, "persistence": ratio}
+
+
+def _count_in(sorted_indices, lo, hi):
+    """How many of `sorted_indices` fall in [lo, hi)."""
+    return bisect.bisect_left(sorted_indices, hi) - bisect.bisect_left(sorted_indices, lo)
 
 
 def _detect(model, image, imgsz, conf):
@@ -1139,6 +1146,10 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"{len(baseline_detections)} frame(s) from "
           f"{loop.when(0) if loop.live else f'{start}s'}{short}")
 
+    # ponytail: a live run still keeps every look's index, arrival time and
+    # residuals, and every candidate, for the end-of-run report: a few MB an
+    # hour (#83). Keep only the persistence window and running totals if a
+    # Range ever runs for days.
     per_frame, corroboration, residuals_per_frame, lost = [], [], [], []
     announce = (_Announcer(loop, match_px, lost, corroboration, require_change_evidence,
                            mm_per_tpl_px) if loop.live else None)
@@ -1160,9 +1171,10 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                 lambda: board.changed_regions(baseline_canvas, look.canvas), match_px / 2)
             corroborating = [p for p, seen in zip(pts, evidence) if seen]
             corroboration += corroborating
-        per_frame.append((look.index, pts))  # empty is meaningful: looked, saw nothing
-        if announce:
+        if announce:   # live: it folds as it goes and keeps the indices itself
             announce(look.index, pts, corroborating)
+        else:
+            per_frame.append((look.index, pts))  # empty is meaningful: looked, saw nothing
 
     processed = loop.processed
     if lost:
@@ -1218,7 +1230,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"[INFO] stride {stride}: past the baseline, every {stride}th frame looked "
           f"at; the frames between are gaps, counting neither for nor against a "
           f"Bullet Hole (#81)")
-    _report(new, loop.when, loop.last, mm_per_tpl_px, [idx for idx, _ in per_frame])
+    _report(new, loop.when, loop.last, mm_per_tpl_px,
+            announce.looked_at if announce else [idx for idx, _ in per_frame])
     if out_video:
         _render(video, start, processed, fps, views, baseline, new, out_video,
                 stride, baseline_frames)

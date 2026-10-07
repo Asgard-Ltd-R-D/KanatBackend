@@ -123,6 +123,14 @@ def test_a_lost_sampled_frame_counts_against_the_floor():
     assert all(h["first_frame"] != 13 for h in got)
 
 
+def test_the_frame_past_the_window_does_not_count():
+    """The window is [first, first + 50): seen in 25 of frames 0-49 is exactly
+    PERSIST, and a look at frame 50 must not join the denominator."""
+    frames = [(i, np.array([[100, 100]], np.float32) if i < 25 else np.zeros((0, 2), np.float32))
+              for i in range(51)]
+    assert len(track_new_bullet_holes(frames, n_frames=51, match_px=MATCH)) == 1
+
+
 def test_nearby_detections_merge_into_one_bullet_hole():
     frames = [(i, np.array([[100 + (i % 3), 100 - (i % 2)]], np.float32))
               for i in range(10, 40)]

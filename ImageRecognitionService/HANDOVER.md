@@ -680,7 +680,8 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # --start/--end/--out/--merge-displaced and no manifest gate; stride LIVE_STRIDE unless given.
 # Prints [NEW] per Bullet Hole once confirmed; Ctrl-C/SIGTERM prints the report.
 # [LIVE] gives configured vs arrived fps and the due frames dropped late. A
-# failed read ends the run until #84 reconnects.
+# failed read, or one stalled past STREAM_TIMEOUT_MS, is a drop (#84): reopened
+# every second until back, its missed frames gaps, each drop and the totals logged.
 .venv/bin/python -m detection.new_bullet_holes rtsp://MTX-HOST:8554/PATH
 ```
 

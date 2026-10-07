@@ -654,8 +654,16 @@ class _Slow(_FakeModel):
         return super().predict(*args, **kwargs)
 
 
-def _live(monkeypatch, stream):
-    return _loop(monkeypatch, lambda i: True, cap=nbh._Stream(stream, time.time()))
+def _live(monkeypatch, stream, reopen=None):
+    """A loop over `stream`, reopened by `reopen` after a drop. By default a
+    stream that runs out is down for good: its first reopen stops the run, as
+    an operator would."""
+    monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.01)
+    def stop():
+        live.stop()
+        return _FakeStream(n=0)
+    live = nbh._Stream(stream, time.time(), reopen or stop)
+    return _loop(monkeypatch, lambda i: True, cap=live)
 
 
 def test_a_stream_is_looked_at_on_the_stride_and_frames_it_is_too_late_for_are_dropped(
@@ -805,3 +813,76 @@ def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd):
     url = f"rtsp://127.0.0.1:{port}/cam"
     assert url in out and url in str(refused.value)
     assert "secret" not in shown and "operator" not in shown
+
+
+# --- recovering from a stream drop (#84) ---------------------------------------
+
+
+def test_a_stream_that_drops_is_reopened_and_iteration_continues(monkeypatch, capsys):
+    """Down after 20 frames, and the first reopen fails too. Indices count on
+    across the drop, the frames it missed are gaps, and registration resumes
+    from the last view before it, in the same Board space (#84)."""
+    reopened = iter([_FakeStream(n=0), _FakeStream(interval=0.002)])
+    loop = _live(monkeypatch, _FakeStream(n=20, interval=0.002), lambda: next(reopened))
+    monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
+    view = loop.view
+    # A baseline as long as the run: each frame waits its turn, none is late.
+    indices = [l.index for l in loop.looks(60, stride=1, baseline_frames=60)]
+    (seconds, missed), = loop.cap.drops
+    assert seconds >= 0.2 and missed >= 1
+    assert indices == list(range(21)) + list(range(21 + missed, 60))
+    assert loop.lost == 0 and loop.view is view
+    how, index, last = loop.calls[20]   # the first look after the drop
+    assert how == "track" and index == 1 and last.index == 20
+    out = capsys.readouterr().out
+    assert out.count("[LIVE] stream dropped") == 1
+    assert re.search(rf"\[LIVE\] stream back .* after {seconds:.1f} s without a frame: "
+                     rf"{missed} frame\(s\) missed", out)
+    assert re.search(rf"\[LIVE\] 1 drop\(s\), {seconds:.1f} s down in all, {missed} "
+                     rf"frame\(s\) missed", out)
+
+
+class _Stalling(_FakeStream):
+    """`n` frames, then a read that hangs `seconds` and still returns a frame,
+    as FFmpeg's does when its timeout cuts a stalled read short (measured over
+    HTTP on a spent recording, #84); later reads fail."""
+    def __init__(self, n, seconds):
+        super().__init__(n=n + 1, interval=0.002)
+        self.seconds = seconds
+
+    def grab(self):
+        if self.at == self.n - 1:
+            time.sleep(self.seconds)
+        return super().grab()
+
+
+def test_a_read_cut_short_by_the_timeout_is_a_drop_from_the_frame_before_it(
+        monkeypatch):
+    monkeypatch.setattr(nbh, "STREAM_TIMEOUT_MS", 100)
+    loop = _live(monkeypatch, _Stalling(n=10, seconds=0.15),
+                 lambda: _FakeStream(interval=0.002))
+    indices = [l.index for l in loop.looks(30, stride=1, baseline_frames=30)]
+    (seconds, missed), = loop.cap.drops
+    assert seconds >= 0.15
+    assert indices == list(range(11)) + list(range(11 + missed, 30))
+    assert loop.calls[10][1] == 1   # the reopened stream's first, not the stalled one
+
+
+def test_a_live_run_without_a_drop_reports_none(monkeypatch, capsys):
+    loop = _live(monkeypatch, _FakeStream(n=20, interval=0.001))
+    list(loop.looks(math.inf, stride=1, baseline_frames=5))
+    assert "[LIVE] 0 drop(s)" in capsys.readouterr().out
+
+
+def test_a_stream_is_opened_with_a_bounded_read_timeout(monkeypatch):
+    """So a connection that stays open but stops delivering frames fails a
+    read within it, a drop to recover from, instead of blocking for FFmpeg's
+    30 s (#84). Opening is bounded too, so reopening keeps its pace."""
+    opened = []
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda *args: opened.append(args))
+    nbh._open_stream("rtsp://mtx:8554/cam")
+    (url, api, params), = opened
+    assert url == "rtsp://mtx:8554/cam" and api == nbh.cv2.CAP_FFMPEG
+    timeouts = dict(zip(params[::2], params[1::2]))
+    assert timeouts == {nbh.cv2.CAP_PROP_OPEN_TIMEOUT_MSEC: nbh.STREAM_TIMEOUT_MS,
+                        nbh.cv2.CAP_PROP_READ_TIMEOUT_MSEC: nbh.STREAM_TIMEOUT_MS}

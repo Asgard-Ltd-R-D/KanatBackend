@@ -5,10 +5,17 @@ What is testable without a video file is the bookkeeping the probe depends on:
 which frames got a look, and which only appeared to.
 """
 import itertools
+import math
+import os
+import re
+import signal
+import socket
 import sys
+import time
 import types
 
 import numpy as np
+import pytest
 
 from detection import new_bullet_holes as nbh
 
@@ -97,7 +104,7 @@ class _FakeModel:
 
 def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0,
           reanchors=lambda i: False, correlation=lambda i: 0.9,
-          disagreement=lambda i: 0.0):
+          disagreement=lambda i: 0.0, cap=None):
     """A loop over `frames` frames; `registers(index)` says which ones register
     when tracked, `reanchors(index)` which when re-anchored (#80), and
     `below(index)` how far that frame's view runs past the canvas bottom,
@@ -134,7 +141,7 @@ def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0,
     monkeypatch.setattr(nbh.board, "target_span", lambda view: 100.0)
     monkeypatch.setattr(nbh.board, "track_view", fit("track", registers))
     monkeypatch.setattr(nbh.board, "reanchor_view", fit("reanchor", reanchors))
-    loop = nbh.RegisteredFrames(_FakeCap(frames), _FakeModel(), _FakeView(),
+    loop = nbh.RegisteredFrames(cap or _FakeCap(frames), _FakeModel(), _FakeView(),
                                 np.zeros((8, 8, 3), np.uint8), imgsz=64, conf=0.02,
                                 fps=25.0, start=10.0, template_mask=np.zeros((8, 8), np.uint8))
     loop.calls, loop.silhouetted = calls, checked
@@ -611,3 +618,174 @@ def test_a_stride_leaving_one_look_a_window_is_refused():
     for refused in ("0", str(nbh.PERSIST_FRAMES)):
         with pytest.raises(SystemExit):
             parser.parse_args(["--stride", refused])
+
+
+# --- live from an RTSP URL (#83) ---------------------------------------------
+
+
+class _FakeStream:
+    """A live source: a frame every `interval` seconds, `n` of them, or for as
+    long as it is read when `n` is None. Pixels are the frame's index, as in
+    `_FakeCap`. Read through `grab` and `retrieve`, as the reader thread does."""
+    def __init__(self, n=None, interval=0.0):
+        self.n, self.interval, self.at, self.released = n, interval, 0, False
+
+    def grab(self):
+        if self.n is not None and self.at >= self.n:
+            return False
+        time.sleep(self.interval)
+        self.at += 1
+        return True
+
+    def retrieve(self):
+        return True, np.full((8, 8, 3), self.at, np.int64)
+
+    def release(self):
+        self.released = True
+
+
+class _Slow(_FakeModel):
+    """`_FakeModel`, taking `seconds` a look."""
+    def __init__(self, seconds):
+        self.seconds = seconds
+
+    def predict(self, *args, **kwargs):
+        time.sleep(self.seconds)
+        return super().predict(*args, **kwargs)
+
+
+def _live(monkeypatch, stream):
+    return _loop(monkeypatch, lambda i: True, cap=nbh._Stream(stream, time.time()))
+
+
+def test_a_stream_is_looked_at_on_the_stride_and_frames_it_is_too_late_for_are_dropped(
+        monkeypatch):
+    """30 ms a look against a due frame every 3 ms: each look takes the newest
+    due frame, and the ones it was too late for are counted, not queued. The
+    baseline's frames are consecutive however slow their looks (#83)."""
+    loop = _live(monkeypatch, _FakeStream(n=200, interval=0.001))
+    loop.model = _Slow(0.03)
+    indices = [l.index for l in loop.looks(math.inf, stride=3, baseline_frames=5)]
+    assert indices[:5] == [0, 1, 2, 3, 4]
+    past = indices[5:]
+    assert past and past == sorted(set(past)) and all(i % 3 == 0 for i in past)
+    assert [index for _, index, _ in loop.calls] == indices[1:]   # each its own frame
+    due = [i for i in range(5, 201) if i % 3 == 0]
+    assert loop.cap.late > 0 and len(past) + loop.cap.late == len(due)
+    assert loop.lost == 0   # a dropped frame is a gap, not a lost one
+    assert loop.cap.cap.released
+
+
+class _Watching(_FakeModel):
+    """A Bullet Hole at (15, 15) on the frames `on(index)` says. Prints each
+    frame it looks at, and sends `signum` from the first look at or past
+    `stop_at`, as an operator stopping the run would."""
+    def __init__(self, on, stop_at, signum=signal.SIGINT):
+        self.on, self.stop_at, self.signum = on, stop_at, signum
+
+    def predict(self, image, imgsz, conf, verbose=False, classes=None):
+        index = int(image[0, 0, 0])
+        print(f"[LOOK] {index}")
+        if index >= self.stop_at:
+            os.kill(os.getpid(), self.signum)
+        return super().predict(image, imgsz, conf) if self.on(index) \
+            else [types.SimpleNamespace(boxes=[])]
+
+
+def _live_run(monkeypatch, model, changed=lambda index: True, stride=5):
+    """`process` on an endless stream, a frame every 2 ms; change detection
+    sees the mark on the frames `changed(index)` says."""
+    loop = _live(monkeypatch, _FakeStream(interval=0.002))
+    loop.model = model
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    monkeypatch.setattr(nbh.board, "changed_regions",
+                        lambda a, b: np.full((64, 64), changed(int(b[0, 0, 0])), bool))
+    return nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=stride)
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_a_stop_signal_ends_a_live_run_and_the_full_report_still_prints(
+        monkeypatch, capsys, signum):
+    before = signal.getsignal(signum)
+    run = _live_run(monkeypatch, _Watching(lambda i: i >= 6, stop_at=80, signum=signum))
+    out = capsys.readouterr().out
+    assert len(run.holes) == 1
+    assert "[INFO] 1 new Bullet Holes" in out and "[GROUP]" in out
+    assert signal.getsignal(signum) is before
+
+
+def _lines_after_looks(out):
+    """The output's lines, and the frames looked at, in order."""
+    lines = out.splitlines()
+    return lines, [int(l.split()[1]) for l in lines if l.startswith("[LOOK]")]
+
+
+def test_a_live_bullet_hole_is_printed_once_as_soon_as_its_window_elapses(
+        monkeypatch, capsys):
+    """Printed at the first look past its persistence window, with the wall
+    clock it was first seen at, and never again (#83)."""
+    _live_run(monkeypatch, _Watching(lambda i: i >= 6, stop_at=120))
+    lines, looked = _lines_after_looks(capsys.readouterr().out)
+    first = next(i for i in looked if i >= 6)
+    elapsed = next(i for i in looked if i + 1 >= first + nbh.PERSIST_FRAMES)
+    new = [n for n, line in enumerate(lines) if line.startswith("[NEW]")]
+    assert len(new) == 1
+    assert lines[new[0] - 1] == f"[LOOK] {elapsed}"
+    assert re.search(r"t=\d\d:\d\d:\d\d\.\d\d  MISS", lines[new[0]])
+
+
+def test_a_confirmed_live_bullet_hole_waits_for_change_evidence(monkeypatch, capsys):
+    """Confirmed at its window's end but not corroborated until frame 90:
+    printed then, once (#83)."""
+    _live_run(monkeypatch, _Watching(lambda i: i >= 6, stop_at=120),
+              changed=lambda index: index >= 90)
+    lines, looked = _lines_after_looks(capsys.readouterr().out)
+    new = [n for n, line in enumerate(lines) if line.startswith("[NEW]")]
+    assert len(new) == 1
+    assert lines[new[0] - 1] == f"[LOOK] {next(i for i in looked if i >= 90)}"
+
+
+def test_a_live_run_reports_the_configured_fps_beside_the_measured_arrival_rate(
+        monkeypatch, capsys):
+    """At the live default stride. A frame every 2 ms or more arrives at no
+    more than 500 fps, against the 25 configured (#83)."""
+    _live_run(monkeypatch, _Watching(lambda i: False, stop_at=60), stride=None)
+    out = capsys.readouterr().out
+    rate = re.search(r"\[LIVE\] configured 25 fps; frames arrived at ([\d.]+) fps", out)
+    assert rate and 0 < float(rate[1]) <= 500
+    assert f"[INFO] stride {nbh.LIVE_STRIDE}:" in out
+    _, looked = _lines_after_looks(out)
+    assert all(i % nbh.LIVE_STRIDE == 0 for i in looked[nbh.BASELINE_FRAMES:])
+
+
+def test_a_stream_bypasses_the_manifest_gate(monkeypatch):
+    monkeypatch.setattr(nbh.manifest, "authorise",
+                        lambda *args, **kwargs: pytest.fail("a stream was gated"))
+    assert nbh._gate("rtsp://mtx:8554/cam", False, "model.pt") is None
+
+
+def test_an_unregistered_file_is_still_refused(tmp_path):
+    clip = tmp_path / "clip.mkv"
+    clip.write_bytes(b"in no manifest")
+    with pytest.raises(SystemExit, match=r"\[REFUSED\]"):
+        nbh._gate(str(clip), False, "model.pt")
+
+
+def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd):
+    """Through real OpenCV, on a port nothing listens on: OpenCV's default
+    backends print a URL they cannot open, password and all (#83)."""
+    monkeypatch.setitem(sys.modules, "ultralytics",
+                        types.SimpleNamespace(YOLO=lambda path: _FakeModel()))
+    monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
+    monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    with pytest.raises(SystemExit) as refused:
+        nbh.RegisteredFrames.open(f"rtsp://operator:secret@127.0.0.1:{port}/cam",
+                                  None, "model.pt")
+    out, err = capfd.readouterr()
+    shown = out + err + str(refused.value)
+    url = f"rtsp://127.0.0.1:{port}/cam"
+    assert url in out and url in str(refused.value)
+    assert "secret" not in shown and "operator" not in shown

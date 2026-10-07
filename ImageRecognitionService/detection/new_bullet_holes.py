@@ -29,9 +29,14 @@ one Bullet Hole, and no amount of temporal evidence separates them.
 """
 import argparse
 import itertools
+import math
 import os
+import signal
+import threading
 import time
+from datetime import datetime
 from typing import NamedTuple
+from urllib.parse import urlsplit, urlunsplit
 
 import cv2
 import numpy as np
@@ -308,50 +313,72 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
     looked_at = sorted(idx for idx, _ in per_frame)
     lost = sorted(lost)
 
-    candidates = []  # [pos, seen_frame_idxs, first_idx]
+    candidates = []
     for idx, pts in per_frame:
-        for p in np.asarray(pts, np.float32):  # (cx, cy) or (cx, cy, w, h), always 2-D
-            match = next((c for c in candidates if same_bullet_hole(c[0], p, match_px)), None)
-            if match is None:
-                candidates.append([p.copy(), [idx], idx])
-            else:
-                n = len(match[1])
-                match[0] = (match[0] * n + p) / (n + 1)
-                match[1].append(idx)
+        _fold(candidates, idx, pts, match_px)
 
     confirmed = []
-    for pos, sightings, first in candidates:
-        if first + window > n_frames:
+    for candidate in candidates:
+        if candidate[2] + window > n_frames:
             continue  # window has not elapsed; unconfirmable, not rejected
-        span = sum(1 for i in looked_at if first <= i < first + window)
-        tried = span + sum(1 for i in lost if first <= i < first + window)
-        if span <= 0 or span < persist * tried:
-            # Too few looks survived registration to call anything persistent:
-            # 100% of one frame among lost ones is not persistence.
-            # Unconfirmable, not rejected, as above. Measured on
-            # CamA_20260914_150248 once its pan frames were lost (#110): two
-            # surviving wrong fits confirmed 9 false Bullet Holes on 1-2 looks.
-            # Against frames tried, not the window: a stride (#81) leaves ~4
-            # looks a window at 13 on purpose.
-            continue
-        # Distinct FRAMES, not sightings: two detections on one mark in one frame
-        # both fold into this candidate, and counting each made that frame worth
-        # double. Numerator and denominator now take the same window, so the
-        # ratio cannot exceed 1 and needs no clamp. The lower bound is not
-        # decoration — `first` is the frame the candidate was FIRST ENCOUNTERED
-        # in, so out-of-order input put sightings in the numerator that the
-        # denominator never saw. Measured at 1.5, hidden by `min(ratio, 1.0)`.
-        #
-        # Position still averages over every sighting: that running mean is what
-        # folds CamB's two halves into one Bullet Hole over 275 frames, pinned by
-        # `test_camb_split_is_not_merged_by_the_gate_alone`. Persistence asks how
-        # many frames saw the mark, position asks where it is.
-        seen = sorted(set(sightings))
-        ratio = sum(1 for i in seen if first <= i < first + window) / span
-        if ratio >= persist:
-            confirmed.append({"pos": pos[:2], "box": pos, "first_frame": first,
-                              "seen": seen, "persistence": ratio})
+        hole = _judge(candidate, looked_at, lost, persist, window)
+        if hole is not None:
+            confirmed.append(hole)
     return sorted(confirmed, key=lambda c: c["first_frame"])
+
+
+def _fold(candidates, idx, pts, match_px):
+    """One frame's Detections into the candidates, in place: the fold
+    `track_new_bullet_holes` makes over a run, and a live run makes a look at
+    a time (#83). A candidate is [pos, seen_frame_idxs, first_idx].
+
+    ponytail: each Detection is matched against every candidate so far, kept
+    or not, as the whole-run fold always was. Live that is once a look, so a
+    very long Range slows its looks; index candidates spatially if one does."""
+    for p in np.asarray(pts, np.float32):  # (cx, cy) or (cx, cy, w, h), always 2-D
+        match = next((c for c in candidates if same_bullet_hole(c[0], p, match_px)), None)
+        if match is None:
+            candidates.append([p.copy(), [idx], idx])
+        else:
+            n = len(match[1])
+            match[0] = (match[0] * n + p) / (n + 1)
+            match[1].append(idx)
+
+
+def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES):
+    """The confirmed Bullet Hole a candidate whose window has elapsed is, or
+    None. `looked_at` and `lost` are sorted frame indices, as in
+    `track_new_bullet_holes`."""
+    pos, sightings, first = candidate
+    span = sum(1 for i in looked_at if first <= i < first + window)
+    tried = span + sum(1 for i in lost if first <= i < first + window)
+    if span <= 0 or span < persist * tried:
+        # Too few looks survived registration to call anything persistent:
+        # 100% of one frame among lost ones is not persistence.
+        # Unconfirmable, not rejected, as above. Measured on
+        # CamA_20260914_150248 once its pan frames were lost (#110): two
+        # surviving wrong fits confirmed 9 false Bullet Holes on 1-2 looks.
+        # Against frames tried, not the window: a stride (#81) leaves ~4
+        # looks a window at 13 on purpose.
+        return None
+    # Distinct FRAMES, not sightings: two detections on one mark in one frame
+    # both fold into this candidate, and counting each made that frame worth
+    # double. Numerator and denominator now take the same window, so the
+    # ratio cannot exceed 1 and needs no clamp. The lower bound is not
+    # decoration — `first` is the frame the candidate was FIRST ENCOUNTERED
+    # in, so out-of-order input put sightings in the numerator that the
+    # denominator never saw. Measured at 1.5, hidden by `min(ratio, 1.0)`.
+    #
+    # Position still averages over every sighting: that running mean is what
+    # folds CamB's two halves into one Bullet Hole over 275 frames, pinned by
+    # `test_camb_split_is_not_merged_by_the_gate_alone`. Persistence asks how
+    # many frames saw the mark, position asks where it is.
+    seen = sorted(set(sightings))
+    ratio = sum(1 for i in seen if first <= i < first + window) / span
+    if ratio < persist:
+        return None
+    return {"pos": pos[:2], "box": pos, "first_frame": first,
+            "seen": seen, "persistence": ratio}
 
 
 def _detect(model, image, imgsz, conf):
@@ -447,6 +474,118 @@ def change_evidence(points, view, inner_changed, changed, radius):
             for p, inside in zip(points, on_inner)]
 
 
+def _is_stream(source):
+    """Is the source a live stream (#83), rather than a recording's path?"""
+    return urlsplit(source).scheme == "rtsp"
+
+
+def _shown(source):
+    """The source as printed: a stream URL's credentials never are (#83)."""
+    if not _is_stream(source):
+        return source
+    parts = urlsplit(source)
+    return urlunsplit(parts._replace(netloc=parts.netloc.rpartition("@")[2]))
+
+
+def _gate(source, final_run, model):
+    """The manifest entry for a recording, refused unless it may be looked at
+    (ADR-0005). A stream is no recording the manifest knows: it is not gated,
+    and has no entry (#83)."""
+    if _is_stream(source):
+        return None
+    return manifest.gate(source, final_run, model, "new_bullet_holes.py")
+
+
+class _Stream:
+    """A live source, read on a thread of its own so that frames keep arriving
+    while a look is being processed (#83).
+
+    The thread grabs every frame, keeps those a look is due on (`_looked_at`),
+    and holds the newest for the loop. A due frame a newer one replaces before
+    the loop takes it is one the loop was too late for: dropped and counted,
+    and a gap for persistence, so nothing queues. The first `baseline_frames`
+    are each held until taken instead, so the baseline is consecutive frames
+    however slow its looks, and lateness starts once it is built.
+
+    `read` answers as `cv2.VideoCapture.read` does, and `index` is then that
+    frame's position in the stream. Frame 0 is the one `open` read and built
+    Board space from, `arrived` the wall clock each frame looked at came in at.
+    """
+
+    def __init__(self, cap, arrived):
+        self.cap, self.index = cap, 0
+        self.arrived = {0: arrived}
+        self.received, self.first, self.latest = 1, arrived, arrived
+        self.late, self.stopped = 0, False
+        self._held, self._ended = None, False
+        self._ready = threading.Condition()
+        self._reader = None
+
+    def start(self, stride, baseline_frames):
+        self._reader = threading.Thread(target=self._read, args=(stride, baseline_frames),
+                                        daemon=True)
+        self._reader.start()
+
+    def stop(self, *signal_args):
+        """End iteration after the look in hand. A signal handler, so it only
+        sets a flag: taking a lock here could deadlock the thread it interrupts."""
+        self.stopped = True
+
+    def _read(self, stride, baseline_frames):
+        index = 1
+        # A failed read ends the stream here; recovering from a drop is #84.
+        while not self.stopped and self.cap.grab():
+            now = time.time()
+            self.received, self.latest = self.received + 1, now
+            if _looked_at(index, stride, baseline_frames):
+                ok, frame = self.cap.retrieve()
+                if not ok:
+                    break
+                with self._ready:
+                    # A held baseline frame is never replaced: the next due
+                    # frame waits for the loop to take it.
+                    while (self._held is not None and self._held[0] < baseline_frames
+                           and not self.stopped):
+                        self._ready.wait(0.1)
+                    if self._held is not None:
+                        self.late += 1
+                    self._held = (index, frame, now)
+                    self._ready.notify()
+            index += 1
+        with self._ready:
+            self._ended = True
+            self._ready.notify()
+
+    def read(self):
+        with self._ready:
+            # Timed, so a stop is seen while no frame comes.
+            while self._held is None and not (self._ended or self.stopped):
+                self._ready.wait(0.1)
+            if self.stopped or self._held is None:
+                return False, None
+            (self.index, frame, self.arrived[self.index]), self._held = self._held, None
+            self._ready.notify()   # a baseline frame may be waiting for its turn
+            return True, frame
+
+    def release(self):
+        self.stopped = True
+        if self._reader is not None:
+            # A stalled read returns within FFmpeg's own timeout; #84 bounds it.
+            self._reader.join()
+        self.cap.release()
+
+    def report(self, fps):
+        elapsed = self.latest - self.first
+        rate = (f"{(self.received - 1) / elapsed:.2f} fps" if elapsed > 0
+                else "a rate not measured")
+        print(f"[LIVE] configured {fps:g} fps; frames arrived at {rate}, over "
+              f"{self.received} frame(s) in {elapsed:.1f} s. Persistence, the baseline and "
+              f"the stride count frames, so a stream short of {fps:g} fps stretches "
+              f"each of them (ADR-0007)")
+        print(f"[LIVE] {self.late} due frame(s) dropped: the loop was too late for them, "
+              f"and they are gaps for persistence (#83)")
+
+
 def _looked_at(index, stride, baseline_frames):
     """Is this frame looked at under a stride (#81)? Every baseline frame is;
     past them, only multiples of the stride. One rule, so that `looks` and
@@ -459,7 +598,8 @@ def _next_view(cap, last, reanchor_on=None):
 
     Returns `(frame, view, correlation)`. `view` is None when the Board was not
     found or ECC failed — no evidence from that frame, either way — and `frame`
-    is None when the read itself failed, which is the end of what the file holds.
+    is None when the read itself failed, which is the end of what the file holds,
+    or of a stream: it ended or was stopped (#83).
 
     `reanchor_on` is the Target artwork's mask when this frame is to be
     re-anchored (`board.reanchor_view`, #80) rather than tracked from `last`.
@@ -525,6 +665,9 @@ class RegisteredFrames:
     here, so evaluation and runtime cannot differ on it. A fit converged on the
     wrong scene altogether counts as lost too (#110).
 
+    A stream (#83) goes through here too, as a `_Stream` in place of the
+    capture: read from where it is, never seeked, at `LIVE_FPS`.
+
     Built by `open`. The constructor takes its collaborators directly so the
     iteration can be exercised without a video file or a model.
     """
@@ -570,12 +713,24 @@ class RegisteredFrames:
         # How long building Board space takes is measured from opening the
         # source, so the model load above is not in it (#79).
         opened_at = time.perf_counter()
-        cap = cv2.VideoCapture(video)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
+        live = _is_stream(video)
+        if live:
+            print(f"[LIVE] {_shown(video)}: a stream, read from where it is. Board space "
+                  f"is built from the first frame read, times are the wall clock, and "
+                  f"SIGINT or SIGTERM ends the run with its report (#83)")
+            # FFmpeg by name: OpenCV's fallback backends print a URL they
+            # cannot open, credentials and all (#83).
+            cap = cv2.VideoCapture(video, cv2.CAP_FFMPEG)
+            fps = LIVE_FPS
+        else:
+            cap = cv2.VideoCapture(video)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
         ok, base = cap.read()
+        arrived = time.time()
         if not ok:
-            raise SystemExit(f"cannot read {video} at {start}s")
+            raise SystemExit(f"cannot read {_shown(video)}" if live else
+                             f"cannot read {video} at {start}s")
 
         view, correlation = board.build_view(base, template_mask)
         if view is None:
@@ -639,9 +794,21 @@ class RegisteredFrames:
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
-        loop = cls(cap, model, view, base, imgsz, conf, fps, start, template_mask)
+        loop = cls(_Stream(cap, arrived) if live else cap, model, view, base, imgsz, conf,
+                   fps, start, template_mask)
         loop.net_scale = scale
         return loop
+
+    @property
+    def live(self):
+        return isinstance(self.cap, _Stream)
+
+    def when(self, index):
+        """A looked-at frame's time as printed: seconds into the recording, or
+        on a stream the wall clock it arrived at (#83)."""
+        if not self.live:
+            return f"{self.start + index / self.fps:.2f}s"
+        return datetime.fromtimestamp(self.cap.arrived[index]).strftime("%H:%M:%S.%f")[:-4]
 
     def frames_until(self, end):
         """How many frames lie between `--start` and `end` seconds."""
@@ -662,10 +829,21 @@ class RegisteredFrames:
         grabbed without decoding and never registered or yielded: gaps, not
         lost frames. Indices stay positions in the clip, and `processed` counts
         every frame passed, looked at or not.
+
+        On a stream (#83) the `_Stream`'s thread skips the gaps, and drops the
+        due frames the loop is too late for, so indices jump past those too and
+        `processed` is one past the last frame looked at. A stream has no end
+        but a stop: SIGINT or SIGTERM ends iteration after the look in hand,
+        and callers report as at any end.
         """
+        live = self.live
+        if live:
+            handlers = {s: signal.signal(s, self.cap.stop)
+                        for s in (signal.SIGINT, signal.SIGTERM)}
+            self.cap.start(stride, baseline_frames)
         try:
             while self.processed < n_frames:
-                if not _looked_at(self.processed, stride, baseline_frames):
+                if not live and not _looked_at(self.processed, stride, baseline_frames):
                     if not self.cap.grab():
                         break  # the end of what the file holds
                     self.processed += 1
@@ -675,12 +853,13 @@ class RegisteredFrames:
                     frame, current, correlation = _next_view(
                         self.cap, self.last, self._template_mask if due else None)
                     if frame is None:
-                        break  # the end of what the file holds
+                        break  # the end of what the source holds, or a stop
                     if current is not None and self._grossly_wrong(frame, current, correlation):
                         current = None   # lost, so it feeds the re-anchor (#110)
                 else:
                     frame, current = self._base, self.view
-                index, self.processed = self.processed, self.processed + 1
+                index = self.cap.index if live else self.processed
+                self.processed = index + 1
                 if due:
                     self._report_reanchor(index, current is not None)
                 if current is None:
@@ -700,11 +879,16 @@ class RegisteredFrames:
                 yield Look(index, current, canvas, self._detect_grown(current, canvas, inner),
                            inner)
         finally:
+            if live:
+                for s, handler in handlers.items():
+                    signal.signal(s, handler)
             self.cap.release()
             self._report_reach()
             print(f"[REGISTRATION] {self.reanchors} re-anchor attempt(s): {self.reanchored} "
                   f"registered, {self.reanchors - self.reanchored} failed (#80)")
             self._report_checks()
+            if live:
+                self.cap.report(self.fps)
 
     def _grossly_wrong(self, frame, view, correlation):
         """Is this converged fit on the wrong scene altogether (#110)?
@@ -750,7 +934,7 @@ class RegisteredFrames:
         result = ("registered" if registered else
                   f"failed, the frame stays lost; next attempt after "
                   f"{REANCHOR_AFTER_LOST} more")
-        print(f"[REGISTRATION] re-anchor at t={self.start + index / self.fps:.2f}s "
+        print(f"[REGISTRATION] re-anchor at t={self.when(index)} "
               f"(frame {index}) after {self._lost_run} lost frame(s): {result} (#80)")
 
     def _detect_grown(self, view, canvas, inner):
@@ -825,6 +1009,13 @@ class Run(NamedTuple):
 # host, re-derive it from the time per look measured there.
 LIVE_STRIDE = 17           # PROVISIONAL
 
+# The frame rate a stream is taken to run at (#83): the AXIS Q6315-LE is set to
+# a constant 25 fps (#85), the rate PERSIST_FRAMES, BASELINE_FRAMES and
+# LIVE_STRIDE are counted at (ADR-0007). Not read off the stream, whose
+# reported rate is unreliable; a live run reports the rate frames arrived at
+# beside it.
+LIVE_FPS = 25
+
 
 def add_stride_flag(parser):
     """The `--stride` flag, identical in every tool that runs `process`."""
@@ -839,12 +1030,14 @@ def add_stride_flag(parser):
                 f"a stride under the {PERSIST_FRAMES}-frame persistence window, so "
                 f"each window holds more than one look")
         return n
-    parser.add_argument("--stride", type=stride, default=1,
+    parser.add_argument("--stride", type=stride, default=None,
                         help="look at every Nth frame past the baseline; the "
                              "rest are gaps for persistence (#81). The baseline "
                              "is still its first --baseline-frames consecutive "
-                             "frames. 1, the default, looks at every frame; "
-                             f"it must be under {PERSIST_FRAMES}, the persistence window.")
+                             "frames. 1, the default on a recording, looks at "
+                             f"every frame; on a stream it is {LIVE_STRIDE} "
+                             f"(ADR-0007). It must be under {PERSIST_FRAMES}, the "
+                             "persistence window.")
 
 
 def registration_note(residual, radius, unit="Board px"):
@@ -875,10 +1068,14 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES, stride=1):
+            baseline_frames=BASELINE_FRAMES, stride=None):
+    """`video` is a recording's path, or a stream's rtsp:// URL (#83), which
+    has no `start` or `end`: it runs until stopped, at `LIVE_STRIDE` unless
+    `stride` says otherwise, and prints each Bullet Hole as it is confirmed."""
     loop = RegisteredFrames.open(video, start, model_path, conf, template_path)
     fps, match_px = loop.fps, loop.view.match_radius
-    n_frames = loop.frames_until(end)
+    n_frames = math.inf if loop.live else loop.frames_until(end)
+    stride = stride or (LIVE_STRIDE if loop.live else 1)
     baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
     # The stride starts past the baseline, never inside it: built from frames
     # 0, 13, 26... it would span seconds, and a Hit landing in them would be
@@ -915,24 +1112,33 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     short = ("" if len(baseline_detections) == baseline_frames else
              f" (of {baseline_frames} requested; the rest were lost or unread)")
     print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes over "
-          f"{len(baseline_detections)} frame(s) from {start}s{short}")
+          f"{len(baseline_detections)} frame(s) from "
+          f"{loop.when(0) if loop.live else f'{start}s'}{short}")
 
     per_frame, corroboration, residuals_per_frame, lost = [], [], [], []
+    announce = (_Announcer(loop, match_px, lost, corroboration, require_change_evidence,
+                           mm_per_tpl_px) if loop.live else None)
     for look in looks:
         if not look.registered:
             lost.append(look.index)
+            if announce:
+                announce(look.index)
             continue  # no evidence from this frame, but it counts towards the floor
         if out_video:
             views[look.index] = look.view
         pts, matched = strip_pre_existing(look.detections, baseline, match_px)
         residuals_per_frame.append(matched)
+        corroborating = []
         if len(pts):
             evidence = change_evidence(
                 pts[:, :2], look.view,
                 lambda: board.changed_regions(baseline_inner, look.inner),
                 lambda: board.changed_regions(baseline_canvas, look.canvas), match_px / 2)
-            corroboration += [p for p, seen in zip(pts, evidence) if seen]
+            corroborating = [p for p, seen in zip(pts, evidence) if seen]
+            corroboration += corroborating
         per_frame.append((look.index, pts))  # empty is meaningful: looked, saw nothing
+        if announce:
+            announce(look.index, pts, corroborating)
 
     processed = loop.processed
     if lost:
@@ -942,8 +1148,9 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # A short read is not a crash. The interpreter is alive, the window is simply
     # shorter than asked for, and the frames never read must not lengthen the
     # confirmation horizon: a candidate whose window runs past where reading
-    # stopped is unconfirmable, exactly as one running past --end is.
-    if processed < n_frames:
+    # stopped is unconfirmable, exactly as one running past --end is. A stream
+    # has no end to fall short of.
+    if not loop.live and processed < n_frames:
         print(f"[WARN] truncated: processed {processed} of {n_frames} requested "
               f"frames; confirmation is measured against what was read")
 
@@ -971,8 +1178,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         new, merged = merge_displaced_tracks(new, loop.last)
         for survivor, absorbed in merged:
             print(f"[MERGE] displaced sighting at t="
-                  f"{start + absorbed['first_frame'] / fps:.2f}s folded into the Bullet Hole "
-                  f"at t={start + survivor['first_frame'] / fps:.2f}s "
+                  f"{loop.when(absorbed['first_frame'])} folded into the Bullet Hole "
+                  f"at t={loop.when(survivor['first_frame'])} "
                   f"({float(np.linalg.norm(absorbed['pos'] - survivor['pos'])):.0f} Board px, "
                   f"never co-occurring)")
         if not merged:
@@ -982,51 +1189,112 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"[INFO] stride {stride}: past the baseline, every {stride}th frame looked "
           f"at; the frames between are gaps, counting neither for nor against a "
           f"Bullet Hole (#81)")
-    _report(new, start, fps, loop.last, mm_per_tpl_px,
-            [idx for idx, _ in per_frame])
+    _report(new, loop.when, loop.last, mm_per_tpl_px, [idx for idx, _ in per_frame])
     if out_video:
         _render(video, start, processed, fps, views, baseline, new, out_video,
                 stride, baseline_frames)
     return Run(new, baseline, residuals)
 
 
-def _report(new, start, fps, view, mm_per_tpl_px, looked_at):
+class _Announcer:
+    """Prints each Bullet Hole of a live run once, as soon as it is confirmed
+    (#83), by the fold and the verdict `track_new_bullet_holes` makes at the end.
+
+    A stream's looks come in order, so a candidate's verdict is final at the
+    first look past its window: it is judged then, once. With change evidence
+    required, a confirmed Bullet Hole is printed when a corroborating Detection
+    lands on it, which may be at a later look; one already waiting is checked
+    against each look's new corroboration only. The end-of-run report is still
+    the whole run's, as on a recording.
+
+    Called after every look with its index; a registered look adds its new
+    Detections and those change evidence saw. `lost` and `corroboration` are
+    `process`'s own lists, every lost frame and corroborating Detection so far.
+    """
+
+    def __init__(self, loop, match_px, lost, corroboration, require_change_evidence,
+                 mm_per_tpl_px):
+        self.loop, self.match_px = loop, match_px
+        self.lost, self.corroboration = lost, corroboration
+        self.require, self.mm_per_tpl_px = require_change_evidence, mm_per_tpl_px
+        self.candidates, self.looked_at, self.waiting = [], [], []
+        self.judged = 0   # candidates are made in frame order, so the judged are a prefix
+
+    def __call__(self, index, pts=None, corroborating=()):
+        if pts is not None:
+            self.looked_at.append(index)
+            _fold(self.candidates, index, pts, self.match_px)
+        for hole in self.waiting:
+            hole["corroborated"] = any(same_bullet_hole(c, hole["box"], self.match_px)
+                                       for c in corroborating)
+        while (self.judged < len(self.candidates)
+               and self.candidates[self.judged][2] + PERSIST_FRAMES <= self.loop.processed):
+            hole = _judge(self.candidates[self.judged], self.looked_at, self.lost)
+            self.judged += 1
+            if hole is not None:
+                hole["corroborated"] = any(same_bullet_hole(c, hole["box"], self.match_px)
+                                           for c in self.corroboration)
+                self.waiting.append(hole)
+        still = []
+        for hole in self.waiting:
+            if self.require and not hole["corroborated"]:
+                still.append(hole)
+                continue
+            hole["target"] = self.loop.last.assign(hole["pos"])
+            _measure(hole, self.loop.last, self.mm_per_tpl_px)
+            print(f"[NEW] {_hole_line(hole, self.loop.when, self.mm_per_tpl_px)}")
+        self.waiting = still
+
+
+def _measure(hole, view, mm_per_tpl_px):
+    """Set a Bullet Hole's score and millimetres; return why there are no
+    millimetres, if calibration is the reason.
+
+    A Miss has no Target and so no Shot Distance — by definition, not by
+    omission. Measuring it against some Target's centre would be a number with
+    no meaning. See CONTEXT.md, Miss.
+    """
+    hole["mm"] = hole["score"] = None
+    if hole["target"] is None:
+        return None
+    # Scoring needs no calibration: it is a ratio inside one picture.
+    hole["score"] = board.score([hole["pos"]], view, hole["target"])[0]
+    try:
+        hole["mm"] = board.to_millimetres([hole["pos"]], view, mm_per_tpl_px,
+                                          hole["target"])[0]
+    except board.NotCalibrated as why:
+        return why
+    return None
+
+
+def _hole_line(hole, when, mm_per_tpl_px):
+    """A measured Bullet Hole, as the report lists it and a live run announces it."""
+    where = "MISS" if hole["target"] is None else f"Target {hole['target'] + 1}"
+    evidence = "changed" if hole["corroborated"] else "model only"
+    scored = "" if hole["score"] is None else (
+        "  outside rings" if hole["score"] == board.OUTSIDE_RINGS
+        else f"  scores {hole['score']}")
+    line = (f"t={when(hole['first_frame']):>6}  {where:<9} "
+            f"persistence {hole['persistence']:.0%}  [{evidence}]{scored}")
+    if hole["mm"] is not None:
+        line += f"  X {hole['mm'][0]:+7.1f} mm  Y {hole['mm'][1]:+7.1f} mm"
+    elif hole["target"] is not None and mm_per_tpl_px is not None:
+        line += "  (mm unavailable)"
+    return line
+
+
+def _report(new, when, view, mm_per_tpl_px, looked_at):
+    """`when(index)` is a looked-at frame's time as printed (`RegisteredFrames.when`)."""
     misses = sum(1 for h in new if h["target"] is None)
     print(f"[INFO] {len(new)} new Bullet Holes ({len(new) - misses} on a Target, {misses} Miss)")
 
-    # A Miss has no Target and so no Shot Distance — by definition, not by
-    # omission. Measuring it against some Target's centre would be a number with
-    # no meaning. See CONTEXT.md, Miss.
     for hole in new:
-        hole["mm"] = None
-        if hole["target"] is None:
-            continue
-        try:
-            hole["mm"] = board.to_millimetres([hole["pos"]], view, mm_per_tpl_px,
-                                              hole["target"])[0]
-        except board.NotCalibrated as why:
-            if hole is new[0]:
-                print(f"[BLOCKED] millimetres unavailable: {why}")
-
-    # Scoring needs no calibration: it is a ratio inside one picture.
-    for hole in new:
-        hole["score"] = None
-        if hole["target"] is not None:
-            hole["score"] = board.score([hole["pos"]], view, hole["target"])[0]
+        why = _measure(hole, view, mm_per_tpl_px)
+        if why is not None and hole is new[0]:
+            print(f"[BLOCKED] millimetres unavailable: {why}")
 
     for i, hole in enumerate(new, 1):
-        where = "MISS" if hole["target"] is None else f"Target {hole['target'] + 1}"
-        evidence = "changed" if hole["corroborated"] else "model only"
-        scored = "" if hole["score"] is None else (
-            "  outside rings" if hole["score"] == board.OUTSIDE_RINGS
-            else f"  scores {hole['score']}")
-        line = (f"  #{i}  t={start + hole['first_frame'] / fps:5.2f}s  {where:<9} "
-                f"persistence {hole['persistence']:.0%}  [{evidence}]{scored}")
-        if hole["mm"] is not None:
-            line += f"  X {hole['mm'][0]:+7.1f} mm  Y {hole['mm'][1]:+7.1f} mm"
-        elif hole["target"] is not None and mm_per_tpl_px is not None:
-            line += "  (mm unavailable)"
-        print(line)
+        print(f"  #{i}  {_hole_line(hole, when, mm_per_tpl_px)}")
 
         # Observation facts, not a claim about the mark. A detection ceasing is
         # not evidence that the Bullet Hole ceased: on CamB_20260915_102250 a
@@ -1040,8 +1308,8 @@ def _report(new, start, fps, view, mm_per_tpl_px, looked_at):
         seen = hole["seen"]
         span = sum(1 for i in looked_at if i >= hole["first_frame"])
         share = f", {len(seen) / span:.0%} of frames since" if span > 0 else ""
-        print(f"      first detected: {start + hole['first_frame'] / fps:.2f}s   "
-              f"last detected: {start + max(seen) / fps:.2f}s   "
+        print(f"      first detected: {when(hole['first_frame'])}   "
+              f"last detected: {when(max(seen))}   "
               f"detected in {len(seen)} frame(s){share}")
 
     _report_groups(new, mm_per_tpl_px)
@@ -1122,13 +1390,17 @@ def _render(video, start, n_frames, fps, views, baseline, new, out_video,
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser("Report Bullet Holes that are new since the baseline")
-    p.add_argument("video")
-    p.add_argument("--start", type=float, required=True, help="baseline timestamp, seconds")
-    p.add_argument("--end", type=float, required=True,
+    p.add_argument("video", help="a recording, or a stream's rtsp:// URL, normally a "
+                                 "KanatVideo path rtsp://<mtx-host>:8554/<path> (#83)")
+    p.add_argument("--start", type=float,
+                   help="baseline timestamp, seconds. A recording's only: a stream "
+                        "is read from where it is")
+    p.add_argument("--end", type=float,
                    help="end of the window, seconds. Allow at least "
                         f"{PERSIST_FRAMES} frames after the last expected Hit: a "
                         "Bullet Hole whose confirmation window runs past the end "
-                        "is not reported.")
+                        "is not reported. A recording's only: a stream runs until "
+                        "SIGINT or SIGTERM, then reports.")
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--template", default=board.DEFAULT_TEMPLATE,
                    help="printed Target artwork used to register the Board")
@@ -1138,7 +1410,8 @@ if __name__ == "__main__":
                         "Target, measured off its outline (docs/ring_measurement.md), "
                         "not a ruler reading of any ring. Overrides "
                         "config/print_scale.json for this recording's Capture "
-                        "Setup. Without either, positions stay in Board pixels: "
+                        "Setup; a stream has no Capture Setup on record and takes "
+                        "it from here only. Without either, positions stay in Board pixels: "
                         "every millimetre figure scales linearly with this, so "
                         "it is not guessed.")
     p.add_argument("--no-change-filter", action="store_true",
@@ -1157,18 +1430,25 @@ if __name__ == "__main__":
                         "absorbed into the baseline and never reported, so the "
                         "window must precede the shooting.")
     add_stride_flag(p)
-    p.add_argument("--out", help="write an annotated video of the rectified Board here")
+    p.add_argument("--out", help="write an annotated video of the rectified Board here. "
+                                 "A recording's only: it replays the source")
     manifest.add_flag(p)
     a = p.parse_args()
+    if _is_stream(a.video):
+        if a.start is not None or a.end is not None or a.out:
+            p.error("a stream takes no --start, --end or --out: it can be neither "
+                    "seeked nor replayed (#83)")
+    elif a.start is None or a.end is None:
+        p.error("a recording needs --start and --end")
 
     # Split membership before anything is opened: a sealed recording is refused
     # unless this run says it is the final one. See manifest.py and ADR-0005.
     # The print scales are checked before the gate too: a malformed one found
     # after it would spend a sealed recording on a run that reports nothing.
     scales = board.print_scales()
-    entry = manifest.gate(a.video, a.final_run, a.model, "new_bullet_holes.py")
+    entry = _gate(a.video, a.final_run, a.model)
     scale = a.mm_per_px
-    if scale is None:
+    if scale is None and entry is not None:
         scale = scales.get(entry["capture_setup"])
         if scale is not None:
             print(f"[INFO] print scale {scale} mm per template px, configured for "

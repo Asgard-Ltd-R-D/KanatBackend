@@ -676,6 +676,13 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # spent truth recordings (#82): no stride loses a true Bullet Hole. Live default
 # 17 at 25 fps, LIVE_STRIDE; table and timings in ADR-0007.
 
+# Live (#83): an rtsp:// URL in place of the clip, normally a KanatVideo path. No
+# --start/--end/--out and no manifest gate; stride LIVE_STRIDE unless given.
+# Prints [NEW] per Bullet Hole once confirmed; Ctrl-C/SIGTERM prints the report.
+# [LIVE] gives configured vs arrived fps and the due frames dropped late. A
+# failed read ends the run until #84 reconnects. Never stream a Sealed recording.
+.venv/bin/python -m detection.new_bullet_holes rtsp://MTX-HOST:8554/PATH
+
 # Derive the new Bullet Holes from a before/after photograph pair. --truth-labels
 # then points at the board.new.txt this writes, never at the after export.
 .venv/bin/python -m tools.derive_truth \

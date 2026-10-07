@@ -652,6 +652,7 @@ class _Stream:
                         # Not a frame received: a drop stays open until one
                         # is in hand, so a reopened stream that grabs but
                         # cannot decode is the same drop, not a second.
+                        self._count(step, span, received=False)
                         self._reconnect()
                         continue
                 self._count(step, span)
@@ -733,22 +734,24 @@ class _Stream:
         self._trusted = (self._pos, placed, first_at + since / 1000)
         return placed, self._trusted[2], step, step
 
-    def _count(self, step, span):
-        """Count a frame received, by `_place`'s step and span, towards the
-        report: a frame grabbed but not decoded is none (Codex on #121).
-        Before the drop it may end is closed, so `_down` still tells an RTSP
-        session's first. The rate is the frames received over the stream time
-        the timestamps span: each span takes in every frame received since the
-        last, untimed ones too, so a gap found on resuming shows in it; an
+    def _count(self, step, span, received=True):
+        """Count a frame, by `_place`'s step and span, towards the report: a
+        frame grabbed but not decoded is not received, so only its span
+        counts (Codex on #121). Before the drop it may end is closed, so
+        `_down` still tells an RTSP session's first. The rate is the frames
+        received over the stream time the timestamps span: each span takes in
+        every frame received since the last, untimed ones too, so a gap found
+        on resuming, or before a frame that does not decode, shows in it; an
         origin no span reaches starts afresh (Codex on #121)."""
-        if step is None:
-            if not self._down:
-                self.resumed += 1
-        elif step <= 0:
-            self.untimed += 1
-        else:
-            self._steps[round(1000 / step, 2)] += 1
-        self._unspanned += 1
+        if received:
+            if step is None:
+                if not self._down:
+                    self.resumed += 1
+            elif step <= 0:
+                self.untimed += 1
+            else:
+                self._steps[round(1000 / step, 2)] += 1
+            self._unspanned += 1
         if span is not None:
             self._spanned_frames += self._unspanned
             self._spanned += span / 1000

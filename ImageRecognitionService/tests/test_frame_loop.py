@@ -1125,10 +1125,15 @@ def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(
     assert indices == list(range(after + 1)) + list(range(after + lost + 1, end))
     assert loop.cap.upstream == [(lost, lost)] and loop.cap.untimed == 1
     span = ms(loop.cap.received - 1 + lost) / 1000   # to the last frame received
-    rate = re.search(r"were received at ([\d.]+) fps over ([\d.]+) s of stream",
-                     capsys.readouterr().out)
+    _assert_received_rate(capsys.readouterr().out, loop.cap.received - 1, span)
+
+
+def _assert_received_rate(out, frames, span):
+    """The report's rate by the stream's timestamps is `frames` received over
+    `span` s of stream, to its rounding."""
+    rate = re.search(r"were received at ([\d.]+) fps over ([\d.]+) s of stream", out)
     assert float(rate[2]) == pytest.approx(span, abs=0.051)
-    assert float(rate[1]) == pytest.approx((loop.cap.received - 1) / span, abs=0.01)
+    assert float(rate[1]) == pytest.approx(frames / span, abs=0.01)
 
 
 class _CorruptAfterTheGap(_Losing):
@@ -1145,12 +1150,13 @@ class _CorruptAfterTheGap(_Losing):
         return super().retrieve()
 
 
-def test_a_gap_upstream_is_kept_when_the_frame_after_it_does_not_decode(monkeypatch):
+def test_a_gap_upstream_is_kept_when_the_frame_after_it_does_not_decode(
+        monkeypatch, capsys):
     """100 frames lost after frame 10, and frame 111 grabbed but not decoded:
     a drop from it, but the 100 are still a gap upstream, and indices after
     the drop are past them. The drop runs from frame 111, a frame after the
-    last lost one: the stall before it is the gap's, not counted twice
-    (Codex on #121)."""
+    last lost one: the stall before it is the gap's, not counted twice. And
+    the rate spans the gap too, frame 111 not received (Codex on #121)."""
     loop = _live(monkeypatch, _CorruptAfterTheGap(after=10, lost=100, interval=0.002),
                  lambda: _FakeStream(interval=0.002))
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
@@ -1160,6 +1166,10 @@ def test_a_gap_upstream_is_kept_when_the_frame_after_it_does_not_decode(monkeypa
     back = 111 + missed   # the drop missed frame 111 onwards
     assert indices == list(range(11)) + list(range(back, 200))
     assert loop.cap.upstream == [(100, 100)] and loop.cap.unseen == list(range(11, back))
+    # Frames 1-10 and 111 span 4.44 s; the new session's frames after its first
+    # (frame 0 and it are origins) 40 ms each.
+    received = loop.cap.received
+    _assert_received_rate(capsys.readouterr().out, received - 2, (received + 99) * 0.04)
 
 
 def test_the_baseline_is_its_first_frames_read_across_a_gap_upstream(monkeypatch):

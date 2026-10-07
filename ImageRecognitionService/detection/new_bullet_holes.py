@@ -69,7 +69,8 @@ DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 BAND_CONTEXT_PX = 32       # PROVISIONAL
 
 # Consecutive lost frames before the loop re-acquires the Board on its own
-# (#80): 1 s at 25 fps. Counted in frames the loop attempted. A failed attempt
+# (#80): 1 s at 25 fps and stride 1, ~17 s at LIVE_STRIDE (ADR-0007, #84).
+# Counted in frames the loop attempted. A failed attempt
 # is itself a lost frame, so attempts fall every this many frames while the
 # Board stays lost. Set from the SOW wording, not from footage.
 REANCHOR_AFTER_LOST = 25   # PROVISIONAL
@@ -815,6 +816,14 @@ class Run(NamedTuple):
     holes: list
     baseline: np.ndarray   # pre-existing marks, (cx, cy, w, h)
     residual: np.ndarray   # distance from a suppressed detection to its mark
+
+
+# The stride a live 25 fps stream is looked at with (ADR-0007, #82): the
+# slowest per-frame time on record on the development Mac, 646 ms on CamB,
+# times 25, rounded up. Measured to lose no true Bullet Hole on the spent truth
+# recordings. A count of frames, so it holds only at 25 fps; on another live
+# host, re-derive it from the time per look measured there.
+LIVE_STRIDE = 17           # PROVISIONAL
 
 
 def add_stride_flag(parser):

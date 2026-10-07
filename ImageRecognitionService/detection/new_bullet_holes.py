@@ -553,16 +553,18 @@ class _Stream:
 
     Known limitation, a follow-up and not #84's: from `open` reading frame 0
     until the baseline is built, nothing reads the stream past the frame in
-    hand, about 3-5 s on the development Mac. Frames lost upstream meanwhile
-    (MediaMTX discarding for a slow reader, whose queue VideoService's
-    mediamtx.yml leaves at its default; a full socket buffer) never arrive,
-    so nothing counts or indexes them. Every later index shifts by however
+    hand, 1.6-2.3 s through MediaMTX on the development Mac (#85). Frames
+    lost upstream meanwhile (MediaMTX discarding for a slow reader, whose
+    queue VideoService's mediamtx.yml leaves at its default; a full socket
+    buffer) never arrive, so nothing counts or indexes them. Every later index shifts by however
     many were lost, and with it the stride's phase and every frame-counted
     window, and the frames read while catching up carry the time they were
     read, not the time they arrived. #84 recovers a stream that drops or
-    stalls; this stream does neither. Only a slightly low arrival rate
-    in the `[LIVE]` line hints at it. The stream's own timestamps
-    (`cv2.CAP_PROP_POS_MSEC`) could index and time frames instead.
+    stalls; this stream does neither. The `[LIVE]` arrival rate cannot show
+    it, reading high on a short run anyway; MediaMTX's log can ("reader is
+    too slow, discarding"). Seen in #85 once Board space took 3.99 s. The
+    stream's own timestamps (`cv2.CAP_PROP_POS_MSEC`) could index and time
+    frames instead (#117).
     """
 
     def __init__(self, cap, arrived, reopen):
@@ -697,8 +699,10 @@ class _Stream:
               f"{self.received} frame(s) in {elapsed:.1f} s up. Persistence, the baseline "
               f"and the stride count frames, so a stream short of {fps:g} fps stretches "
               f"each of them (ADR-0007)")
-        print(f"[LIVE] {self.late} due frame(s) dropped: the loop was too late for them, "
-              f"and they are gaps for persistence (#83)")
+        # Frame 0 is looked at too, read by `open` rather than taken here.
+        print(f"[LIVE] {self._taken + 1} frame(s) looked at; {self.late} due frame(s) "
+              f"dropped: the loop was too late for them, and they are gaps for "
+              f"persistence (#83)")
         drops, still = len(self.drops), ""
         if self._down:
             drops, down = drops + 1, down + time.time() - self.latest

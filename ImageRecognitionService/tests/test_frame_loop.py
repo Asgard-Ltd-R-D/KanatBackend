@@ -778,6 +778,8 @@ def test_a_live_run_reports_the_configured_fps_beside_the_measured_arrival_rate(
     assert f"[INFO] stride {nbh.LIVE_STRIDE}:" in out
     _, looked = _lines_after_looks(out)
     assert all(i % nbh.LIVE_STRIDE == 0 for i in looked[nbh.BASELINE_FRAMES:])
+    # #85's report to #78 asks for the frames looked at, baseline included.
+    assert f"[LIVE] {len(looked)} frame(s) looked at;" in out
 
 
 def test_a_stream_bypasses_the_manifest_gate(monkeypatch):

@@ -626,9 +626,12 @@ def test_a_stride_leaving_one_look_a_window_is_refused():
 class _FakeStream:
     """A live source: a frame every `interval` seconds, `n` of them, or for as
     long as it is read when `n` is None. Pixels are the frame's index, as in
-    `_FakeCap`. Read through `grab` and `retrieve`, as the reader thread does."""
-    def __init__(self, n=None, interval=0.0):
+    `_FakeCap`. Read through `grab` and `retrieve`, as the reader thread does,
+    and each frame's timestamp through `get`: `ms(index)`, by default one
+    frame interval at `LIVE_FPS` a frame (#117)."""
+    def __init__(self, n=None, interval=0.0, ms=None):
         self.n, self.interval, self.at, self.released = n, interval, 0, False
+        self.ms = ms or (lambda at: at * 1000 / nbh.LIVE_FPS)
 
     def grab(self):
         if self.n is not None and self.at >= self.n:
@@ -640,8 +643,26 @@ class _FakeStream:
     def retrieve(self):
         return True, np.full((8, 8, 3), self.at, np.int64)
 
+    def get(self, prop):
+        assert prop == nbh.cv2.CAP_PROP_POS_MSEC
+        return self.ms(self.at)
+
     def release(self):
         self.released = True
+
+
+class _Losing(_FakeStream):
+    """`_FakeStream`, losing `lost` frames upstream after frame `after`: they
+    never arrive, and the next frame's index and timestamp are past them, as
+    MediaMTX discarding for a slow reader leaves them (#85)."""
+    def __init__(self, after, lost, **kwargs):
+        super().__init__(**kwargs)
+        self.after, self.lost = after, lost
+
+    def grab(self):
+        if self.at == self.after:
+            self.at += self.lost
+        return super().grab()
 
 
 class _Slow(_FakeModel):
@@ -767,15 +788,16 @@ def test_a_confirmed_live_bullet_hole_waits_for_change_evidence(monkeypatch, cap
     assert lines[new[0] - 1] == f"[LOOK] {next(i for i in looked if i >= 90)}"
 
 
-def test_a_live_run_reports_its_arrival_rate_and_the_frames_it_looked_at(
-        monkeypatch, capsys):
-    """At the live default stride. A frame every 2 ms or more arrives at no
-    more than 500 fps, against the 25 configured (#83); #85's report to #78
-    asks for the frames looked at, baseline included."""
+def test_a_live_run_reports_its_rate_and_the_frames_it_looked_at(monkeypatch, capsys):
+    """At the live default stride. Frames read every 2 ms, a backlog's pace,
+    but 40 ms apart by the stream's timestamps: the rate is theirs, 25 fps,
+    not the reads' (#117); #85's report to #78 asks for the frames looked at,
+    baseline included."""
     _live_run(monkeypatch, _Watching(lambda i: False, stop_at=60), stride=None)
     out = capsys.readouterr().out
-    rate = re.search(r"\[LIVE\] configured 25 fps; frames arrived at ([\d.]+) fps", out)
-    assert rate and 0 < float(rate[1]) <= 500
+    assert re.search(r"\[LIVE\] configured 25 fps; by the stream's timestamps, frames "
+                     r"step at 25\.00 fps, and were received at 25\.00 fps over [\d.]+ s "
+                     r"of stream\.", out)
     assert f"[INFO] stride {nbh.LIVE_STRIDE}:" in out
     _, looked = _lines_after_looks(out)
     assert all(i % nbh.LIVE_STRIDE == 0 for i in looked[nbh.BASELINE_FRAMES:])
@@ -952,3 +974,122 @@ def test_a_stream_is_opened_with_a_bounded_read_timeout(monkeypatch):
     timeouts = dict(zip(params[::2], params[1::2]))
     assert timeouts == {nbh.cv2.CAP_PROP_OPEN_TIMEOUT_MSEC: nbh.STREAM_TIMEOUT_MS,
                         nbh.cv2.CAP_PROP_READ_TIMEOUT_MSEC: nbh.STREAM_TIMEOUT_MS}
+
+
+# --- indexing by the stream's timestamps (#117) --------------------------------
+
+
+def test_frames_lost_upstream_leave_a_gap_in_the_indices(monkeypatch):
+    """100 frames lost after frame 10 make an index gap of 100, not a shift:
+    every look after it is the frame its index names (#117)."""
+    loop = _live(monkeypatch, _Losing(after=10, lost=100, interval=0.002))
+    indices = [l.index for l in loop.looks(150, stride=1, baseline_frames=150)]
+    assert indices == list(range(11)) + list(range(111, 150))
+    assert [index for _, index, _ in loop.calls] == indices[1:]   # pixels: the frame read
+
+
+def test_a_window_emptied_upstream_confirms_nothing(monkeypatch, capsys):
+    """Seen on every look from frame 20, past the baseline, to a gap of 100
+    frames lost upstream after frame 30: seen on every look after it too,
+    which once filled its window with the shifted indices. The due frames
+    lost count against the floor, so it is unconfirmable (#117)."""
+    loop = _live(monkeypatch, _Losing(after=30, lost=100, interval=0.002))
+    loop.model = _Watching(lambda i: i >= 20, stop_at=200)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    monkeypatch.setattr(nbh.board, "changed_regions",
+                        lambda a, b: np.ones((64, 64), bool))
+    run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1)
+    assert loop.cap.unseen == list(range(31, 131))   # stride 1: all were due
+    assert "[NEW]" not in capsys.readouterr().out and run.holes == []
+
+
+def test_a_gap_upstream_is_logged_when_found_and_in_the_totals(monkeypatch, capsys):
+    """100 frames lost after frame 10, at stride 3: 33 of them due a look,
+    12 to 108. Logged when found, with the stream time it covers, and in the
+    end-of-run totals (#117)."""
+    loop = _live(monkeypatch, _Losing(after=10, lost=100, n=150, interval=0.002))
+    list(loop.looks(math.inf, stride=3, baseline_frames=5))
+    out = capsys.readouterr().out
+    assert re.search(r"\[LIVE\] 100 frame\(s\) lost upstream, 4\.0 s of stream before "
+                     r"\d\d:\d\d:\d\d\.\d\d: 33 of them due a look, counted against "
+                     r"persistence's floor\. Frames up to the next keyframe may decode "
+                     r"corrupt \(#117\)", out)
+    assert re.search(r"\[LIVE\] 1 gap\(s\) upstream, 100 frame\(s\) lost, 33 of them due "
+                     r"a look; 0 frame\(s\) untimed", out)
+    # 50 frames after frame 0 came, over the 6 s (150 frames) of stream they span.
+    assert "frames step at 25.00 fps, and were received at 8.33 fps over 6.0 s" in out
+
+
+# Frame 10 an extra one, stamped with frame 9's timestamp, as are the rest one
+# frame behind.
+_REPEATED = lambda at: (at - (at >= 10)) * 40
+
+
+@pytest.mark.parametrize("ms, untimed, rate", [
+    (_REPEATED, 1, "frames step at 25.00 fps"),
+    (lambda at: 0.0, 30,   # a backend with no timestamps at all
+     "no rate: they never advanced, so frames were counted as read"),
+])
+def test_a_timestamp_not_later_than_the_one_before_is_placed_one_past_it(
+        monkeypatch, capsys, ms, untimed, rate):
+    """And counted: with no usable timestamps at all, frames are counted as
+    they were before #117, and the report says so."""
+    loop = _live(monkeypatch, _FakeStream(n=30, interval=0.002, ms=ms))
+    assert [l.index for l in loop.looks(31, stride=1, baseline_frames=31)] == list(range(31))
+    out = capsys.readouterr().out
+    assert re.search(rf"\[LIVE\] 0 gap\(s\) upstream, 0 frame\(s\) lost, 0 of them due a "
+                     rf"look; {untimed} frame\(s\) untimed", out)
+    assert f"[LIVE] configured 25 fps; by the stream's timestamps, {rate}" in out
+
+
+def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch):
+    """Indexing restarts from the untimed frame, so the frame lost after it,
+    at 20, is a gap of one, not absorbed by the one-frame shift (#117)."""
+    loop = _live(monkeypatch, _Losing(after=20, lost=1, interval=0.002, ms=_REPEATED))
+    indices = [l.index for l in loop.looks(40, stride=1, baseline_frames=40)]
+    assert indices == list(range(21)) + list(range(22, 40))
+    assert loop.cap.upstream == [(1, 1)] and loop.cap.untimed == 1
+
+
+def test_the_baseline_is_its_first_frames_read_across_a_gap_upstream(monkeypatch):
+    """100 frames lost after frame 10, inside a 20-frame baseline: the
+    baseline is still 20 frames in a row as read, not the indices under 20,
+    and the stride starts past it (#117)."""
+    loop = _live(monkeypatch, _Losing(after=10, lost=100, interval=0.002))
+    indices = [l.index for l in loop.looks(200, stride=3, baseline_frames=20)]
+    assert indices[:20] == list(range(11)) + list(range(111, 120))
+    assert indices[20:] and all(i % 3 == 0 for i in indices[20:])
+
+
+def test_live_times_are_the_stream_timestamps_from_frame_0s_wall_clock(
+        monkeypatch, capsys):
+    """Frames read every 2 ms, far ahead of their timestamps' 40 ms, as a
+    backlog is read at startup: a Bullet Hole is timed when the stream says
+    its first frame came, 1/25 s a frame after frame 0, not when it was
+    read (#117)."""
+    loop = _live(monkeypatch, _FakeStream(interval=0.002))
+    loop.model = _Watching(lambda i: i >= 6, stop_at=120)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
+    run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1)
+    (hole,) = run.holes
+    at = nbh._clock(loop.cap.times[0] + hole["first_frame"] / 25)
+    new = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[NEW]")]
+    assert len(new) == 1 and f"t={at}" in new[0]
+
+
+def test_a_reconnect_starts_a_session_indexed_by_its_own_timestamps(monkeypatch, capsys):
+    """Down after frame 40, at 1.6 s of stream; the reopened session's
+    timestamps restart lower, at 0.92 s, and it loses 5 frames of its own
+    later. Indices carry on from #84's count of the frames the drop missed,
+    and the new session is indexed from its own first frame (#117)."""
+    after = _Losing(after=30, lost=5, interval=0.002)
+    after.at = 22   # its first frame is 23: 920 ms
+    loop = _live(monkeypatch, _FakeStream(n=40, interval=0.002), lambda: after)
+    monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
+    indices = [l.index for l in loop.looks(80, stride=1, baseline_frames=80)]
+    (_, missed), = loop.cap.drops
+    back = 41 + missed
+    assert indices == list(range(41)) + list(range(back, back + 8)) + list(range(back + 13, 80))
+    assert loop.cap.unseen == list(range(41, back)) + list(range(back + 8, back + 13))
+    assert loop.cap.upstream == [(5, 5)] and loop.cap.untimed == 0

@@ -104,15 +104,16 @@ cd ImageRecognitionService
 - **Print scale.** A stream has no Capture Setup on record, so the print scale comes from `--mm-per-px` only. Measure it for the printed Target in use (`docs/ring_measurement.md`). Without it, positions stay in Board px.
 - **Stopping.** Ctrl-C or SIGTERM ends the run and prints the report.
 
-Each drop is logged when it starts, and again when the stream is back with that drop's duration (`[LIVE] stream back at … after X s without a frame`). Those lines are the per-drop durations #78 asks for. Before the Bullet Hole report, three `[LIVE]` lines give the totals:
+Each drop is logged when it starts, and again when the stream is back with that drop's duration (`[LIVE] stream back at … after X s without a frame`). Those lines are the per-drop durations #78 asks for. Frames lost upstream are logged when found, by the stream's timestamps (`[LIVE] N frame(s) lost upstream, X s of stream before …`, #117). Before the Bullet Hole report, four `[LIVE]` lines give the totals:
 
 ```
-[LIVE] configured 25 fps; frames arrived at R fps, over N frame(s) in T s up. ...
+[LIVE] configured 25 fps; by the stream's timestamps, frames step at F fps, and were received at R fps over T s of stream. ...
 [LIVE] L frame(s) looked at; D due frame(s) dropped: the loop was too late for them, ...
 [LIVE] K drop(s), S s down in all, M frame(s) missed ...
+[LIVE] G gap(s) upstream, U frame(s) lost, V of them due a look; W frame(s) untimed ...
 ```
 
-**Read the arrival rate over a long run.** `open` returns frame 0 once FFmpeg has already buffered about 1.2 s of stream, and the frames after it are read faster than real time until they catch up. Measured on the replay, frame 0 was timed 1.16 s late against the steady state. The rate therefore reads high by about 1.2 s over the run's length: +2.7% on a 45 s replay (25.67 fps with no frame lost) and +0.2% over 10 minutes. ffprobe's `r_frame_rate` and the keyframe spacing are the other two readings.
+**The rate comes from the stream's timestamps** (`CAP_PROP_POS_MSEC`, #117), not from when frames were read, so FFmpeg's buffering at `open` no longer inflates it. F is the commonest step between consecutive timestamps: the rate the camera sends at, which is "measured 25 fps". R is the frames received over the stream time they span, so it falls short of F by any frames lost upstream. Both read 25.00 fps on the replay with nothing lost; R read 21.33 fps with 165 frames lost. W counts frames whose timestamp was not later than the frame before's. Each was indexed one past the frame before, and the frames after it from it. A backend with no usable timestamps therefore counts frames as read, and the rate line says so. Indices are counted at 25 fps from the timestamps, so on a stream short of 25 fps every frame interval it skips is logged as a gap, and persistence and the stride count stream time rather than frames (ADR-0007). ffprobe's `r_frame_rate` and the keyframe spacing are the other two readings.
 
 ## Manual acceptance
 
@@ -160,7 +161,7 @@ The results are recorded below and were posted to #78.
 3. **WebRTC running at the same time.** Keep the operator's WebRTC view of the same path open for the whole run: KanatFrontend, or `http://<mtx-host>:8889/<alias>`.
 4. **A forced drop, recovered.** Pull the camera's network cable for about 10 s, or `DELETE` the path and re-add it. Watch for `[LIVE] stream dropped`, the reopen attempts, and `[LIVE] stream back … N frame(s) missed`. Registration resumes in the same Board space (#84); note any Board-lost frames after it.
 5. **Registration when the camera moves during an outage (#118).** Photograph the Board before the run and after it, as for the truth recordings (`tools.derive_truth`), and decide the footage's role (below) before comparing anything with that truth. Drop the stream again, and move the PTZ while it is down. Do this last, because the fixed-view rule says it invalidates the Range. Then check two things. Does the first fit after the reconnect fall into #110's check, and is it rejected (`[REGISTRATION] … checked`, `[WARN] silhouette disagreement`)? Do Bullet Hole positions after the reconnect still match the photographed truth?
-6. **#117 on the camera.** Look in MediaMTX's log for `reader is too slow, discarding` against the pipeline's RTSP session in the first seconds of the run. Look in the pipeline's output for `[h264 …] error while decoding`. Record how long the baseline took on that host: `[REGISTRATION] Board space built in`, and the time from frame 0 (named in `[INFO] baseline … from`) to that line printing, read by timestamping the output (for example `| ts` from moreutils).
+6. **#117 on the camera.** Look in MediaMTX's log for `reader is too slow, discarding` against the pipeline's RTSP session in the first seconds of the run. Check it against the pipeline's `[LIVE] … frame(s) lost upstream` lines: at 8 Mbit/s, about 27 discarded RTP packets make a frame. A discard smaller than a frame shows no gap. Look in the pipeline's output for `[h264 …] error while decoding`. Record how long the baseline took on that host: `[REGISTRATION] Board space built in`, and the time from frame 0 (named in `[INFO] baseline … from`) to that line printing, read by timestamping the output (for example `| ts` from moreutils).
 7. **Post the report to #78:** stride, configured and measured frame rate, frames looked at, late drops, drops with their durations, and Bullet Holes. Post the observations for #117 and #118 on those issues. Then #85 closes.
 
 Footage from this camera is a new Capture Setup. Its role under ADR-0005 (spent, threshold-work or sealed) is decided before anyone scores it. Recording the Range with the video service (`record: true` on the path) waits for that decision, and acceptance does not need a recording.
@@ -203,3 +204,20 @@ Footage from this camera is a new Capture Setup. Its role under ADR-0005 (spent,
 - **What it means.** Loss starts once the reader is about 2.6 s behind at 8 Mbit/s. A lower bitrate buffers longer. The arrival rate hides a small loss on a short run, because it reads high anyway (above); a large one shows (21.12 fps with 199 frames lost, below). MediaMTX's log is the evidence.
 - **Forcing it.** A replay with `--baseline-frames 30` holds the reader for the whole 30-look baseline. MediaMTX discarded for it throughout, and `POS_MSEC` jumped from 3880 to 11880 ms: 199 frames lost, with 926 of 1125 received. Every look after the gap fell 12 frames off the file run's stride phase (199 mod 17), the index shift #117 describes. Its Bullet Holes were run 1's within 0.1 mm, less the Miss its longer baseline absorbed, because they come 27 s later and persist for seconds. No file run was made at that baseline.
 - **The timestamps are usable.** `CAP_PROP_POS_MSEC` was monotonic in 40 ms steps within an RTSP session and restarts with each new one (880 ms after run 2's reconnect).
+
+## #117's replay, 2026-10-07: frames indexed by the stream's timestamps
+
+**Setup.** The same as #85's: MediaMTX v1.21.1 with `VideoService/mediamtx.yml` unchanged, ffmpeg 9.0.2, a fresh H.264 copy of the spent `_102250` made with step 1's command (1150 frames, 1080p25, GOP 25), and stride 17. The same scratch wrapper, not committed, hashed every frame looked at against the copy's decoded frames. Each live run joined at file frame 25 and is compared with a file run of the copy from 1.0 s, at the same stride and baseline.
+
+| Run | Lost upstream, as the run reported it | MediaMTX discarded | Looks hashed | Bullet Holes, live and file | Looks, live and file |
+|---|---|---|---|---|---|
+| `--baseline-frames 30` | 2 gaps: 100 + 65 frames, 10 of them due | 4441 RTP packets over 8 s | all 84 are file frame 25 + index | 4 and 4: positions identical to 0.1 mm | 84 and 95: 10 due in the gaps + 1 late |
+| `--baseline-frames 30`, again after review | 2 gaps: 139 + 39 frames, 11 of them due | 4867 packets | all 83 are file frame 25 + index | 4 and 4: positions within 0.1 mm | 83 and 95: 11 due in the gaps + 1 held at the end |
+| default baseline (5) | 1 gap: 5 frames, none due | 117 packets | 68 of 69 are file frame 25 + index; index 68 decoded corrupt | 5 and 5: positions identical to 0.1 mm | 69 and 71: 2 late |
+| default baseline (5) | none | 25 packets | 67 of 68 are file frame 25 + index; index 68 decoded corrupt | 5 and 5: positions identical to 0.1 mm | 68 and 71: 3 late |
+
+- **No shift.** Every look that decoded clean is the file frame its index names, plus the join offset, after the gaps too. Before the fix, the 30-frame baseline put every later look 12 frames off the file run's stride phase.
+- **The counts agree.** In the first 30-frame run, the timestamps spanned 45.0 s, 1125 frames, and 960 were received: 1125 − 165. MediaMTX's 4441 packets are about 27 a frame for those 165, and 4867 for 178 in the second, which matches #85's probe (28). MediaMTX counts RTP packets, so the match is to a frame or two, not exact.
+- **Times follow the timestamps.** Each Bullet Hole's time after frame 0 is the file run's to 0.01 s (28.56 s, for example), with frame 0's wall clock as the origin.
+- **The rate.** 25.00 fps by the timestamps on every run, for the step and, with nothing lost, for the frames received too. 21.33 fps received in the 30-frame run.
+- **What is still uncounted.** In the last run MediaMTX discarded 25 packets, less than one frame. That left no gap in the timestamps, only a frame that decoded corrupt (`error while decoding`) and the frames after it up to the next keyframe. In both default-baseline runs one look, index 68 (file frame 93), landed on such a frame. The Bullet Holes were the file run's all the same. Skipping corrupt frames stays out of scope until the camera run shows a gap followed by false Detections.

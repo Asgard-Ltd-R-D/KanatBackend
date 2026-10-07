@@ -35,6 +35,7 @@ import os
 import signal
 import threading
 import time
+from collections import Counter
 from datetime import datetime
 from typing import NamedTuple
 from urllib.parse import urlsplit, urlunsplit
@@ -351,7 +352,8 @@ def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES,
     """The confirmed Bullet Hole a candidate whose window has elapsed is, or
     None. `looked_at` and `lost` are sorted frame indices, as in
     `track_new_bullet_holes`; `unseen`, sorted too, is the due frames a stream
-    drop missed (#84), which count towards the floor as lost frames do.
+    drop missed (#84) or that were lost upstream (#117), which count towards
+    the floor as lost frames do.
     Counted by bisection, so a live run's judging does not slow as its
     history grows (#83)."""
     pos, sightings, first = candidate
@@ -548,32 +550,48 @@ class _Stream:
     catching up start once it is built.
 
     `read` answers as `cv2.VideoCapture.read` does, and `index` is then that
-    frame's position in the stream. Frame 0 is the one `open` read and built
-    Board space from, `arrived` the wall clock each frame looked at came in at.
+    frame's position in the stream: by its timestamp (`cv2.CAP_PROP_POS_MSEC`),
+    at `LIVE_FPS` from its RTSP session's first frame (#117). Frame 0 is the
+    one `open` read and built Board space from. `times` is each looked-at
+    frame's time by the same timestamps, from the wall clock frame 0 was read
+    at (a later RTSP session's first frame, after a drop), not when it was read.
 
-    Known limitation, a follow-up and not #84's: from `open` reading frame 0
-    until the baseline is built, nothing reads the stream past the frame in
-    hand, 1.6-2.8 s through MediaMTX on the development Mac (#85). Frames
-    lost upstream meanwhile (MediaMTX discarding for a slow reader, whose
-    queue VideoService's mediamtx.yml leaves at its default; a full socket
-    buffer) never arrive, so nothing counts or indexes them. Every later
-    index shifts by however many were lost, and with it the stride's phase
-    and every frame-counted window, and the frames read while catching up
-    carry the time they were read, not the time they arrived. #84 recovers
-    a stream that drops or stalls; this stream does neither. The `[LIVE]`
-    arrival rate hides a small loss, reading high on a short run anyway;
-    MediaMTX's log shows any ("reader is too slow, discarding"), and did in
-    #85 (docs/live_camera.md). The stream's own timestamps
-    (`cv2.CAP_PROP_POS_MSEC`) could index and time frames instead (#117).
+    Frames lost upstream are gaps too (#117). Until the baseline is built
+    nothing reads the stream past the frame in hand, and MediaMTX discards
+    for a reader about 2.6 s behind at 8 Mbit/s (#85). Those frames never
+    arrive, but the next frame's timestamp is past them, so indices jump past
+    them: each gap is logged, and its due frames are `unseen`. A frame whose
+    timestamp is not later than the one before is untrusted: placed one past
+    it, counted, and the frames after it indexed from it, as from an RTSP
+    session's first. So a backend with no timestamps counts frames as read,
+    and the report says so. The `[LIVE]` rate is the timestamps' too. They
+    index at `LIVE_FPS`, so on a stream short of it the frame intervals it
+    skips are gaps upstream too, and persistence and the stride count stream
+    time, not frames (ADR-0007).
+
+    Still not counted or corrected: a discard smaller than a frame leaves no
+    gap in the timestamps, only a frame that decodes corrupt (25 RTP packets
+    in #117's replay). Frames after a gap decode corrupt up to the next
+    keyframe too, and are looked at all the same. The frames a drop missed
+    are #84's wall-clock estimate, since timestamps restart with each RTSP
+    session (1.4 s over in #85). And `open` reads frame 0 once FFmpeg has
+    buffered about 1.2 s of stream (#85), so every time is about that late.
     """
 
     def __init__(self, cap, arrived, reopen):
         self.cap, self.index, self._reopen = cap, 0, reopen
-        self.arrived = {0: arrived}
-        self.received, self.first, self.latest = 1, arrived, arrived
+        self.times = {0: arrived}
+        self.latest = arrived
         self.late, self.stopped = 0, False
         self.drops, self._down = [], False   # (seconds, frames missed) each
-        self.unseen = []   # due frames a drop missed, in order
+        self.unseen = []   # due frames a drop or an upstream gap missed, in order
+        self.upstream, self.untimed = [], 0   # (frames lost, due) each gap (#117)
+        # Each timed step's rate, rounded, and the stream time they span (#117).
+        self._steps, self._spanned = Counter(), 0.0
+        # The frame indices count from: its timestamp, index and wall clock.
+        # An RTSP session's first, or an untimed frame (#117).
+        self._origin = (cap.get(cv2.CAP_PROP_POS_MSEC), 0, arrived)
+        self._pos = self._origin[0]   # the last frame's timestamp, in ms
         self._held, self._ended = None, False
         self._taken, self._dropping, self._baseline_frames = 0, False, 1
         self._ready = threading.Condition()
@@ -603,11 +621,11 @@ class _Stream:
                     self._reconnect()
                     continue
                 now = time.time()
-                back = index + 1 + self._missed(now)
+                placed, at = self._place(index, now)
                 # `_looked_at`, but the baseline counted in frames offered, so
                 # that it stays consecutive frames across a drop (#84).
                 frame = None
-                if _looked_at(offered if offered < baseline_frames else back,
+                if _looked_at(offered if offered < baseline_frames else placed,
                               stride, baseline_frames):
                     ok, frame = self.cap.retrieve()
                     if not ok:
@@ -616,8 +634,12 @@ class _Stream:
                         # cannot decode is the same drop, not a second.
                         self._reconnect()
                         continue
-                self._back_from_drop(now, range(index + 1, back), stride, baseline_frames)
-                index, self.received, self.latest = back, self.received + 1, now
+                gap = range(index + 1, placed)
+                if self._down:
+                    self._back_from_drop(now, gap, stride, baseline_frames)
+                elif gap:
+                    self._lost_upstream(at, gap, stride, baseline_frames)
+                index, self.latest = placed, now
                 if frame is None:
                     continue
                 offered += 1
@@ -629,7 +651,7 @@ class _Stream:
                         self._ready.wait(0.1)
                     if self._held is not None:
                         self.late += 1
-                    self._held = (index, frame, now)
+                    self._held = (index, frame, at)
                     self._ready.notify()
         finally:
             with self._ready:
@@ -637,7 +659,9 @@ class _Stream:
                 self._ready.notify()
 
     def _reconnect(self):
-        """Reopen the stream after `RECONNECT_EVERY_S`, unless stopped."""
+        """Reopen the stream after `RECONNECT_EVERY_S`, unless stopped. A new
+        RTSP session: its timestamps restart (#117)."""
+        self._origin = None
         if not self._down:
             self._down = True
             print(f"[LIVE] stream dropped: no frame since {_clock(self.latest)}; reopening "
@@ -649,15 +673,49 @@ class _Stream:
         if not self.stopped:
             self.cap = self._reopen()
 
+    def _place(self, index, now):
+        """The index and time of the frame just grabbed, the one after frame
+        `index`, by its timestamp (#117): counted at `LIVE_FPS` from the
+        origin, and timed from the origin's wall clock; its step counts
+        towards the rate. A new RTSP session's first frame is the origin,
+        placed by #84's count of the frames the drop missed and timed when it
+        was read. So is a frame whose timestamp is not later than the one
+        before, untrusted and counted, placed one past it: indexing restarts
+        from it, so a repeated or reset timestamp shifts nothing after it."""
+        before, self._pos = self._pos, self.cap.get(cv2.CAP_PROP_POS_MSEC)
+        if self._origin is not None and self._pos <= before:
+            self.untimed += 1
+            self._origin = None
+        if self._origin is None:
+            self._origin = (self._pos, index + 1 + self._missed(now), now)
+            return self._origin[1], now
+        step = self._pos - before
+        self._steps[round(1000 / step, 2)] += 1
+        self._spanned += step / 1000
+        first_pos, first_index, first_at = self._origin
+        since = self._pos - first_pos
+        # Never onto the frame before's index: a step under half a frame
+        # interval rounds onto it, on a stream faster than LIVE_FPS.
+        return (max(index + 1, first_index + round(since * LIVE_FPS / 1000)),
+                first_at + since / 1000)
+
     def _missed(self, now):
         """How many frames the drop the stream is back from missed, if any."""
         return max(0, round((now - self.latest) * LIVE_FPS) - 1) if self._down else 0
 
+    def _lost_upstream(self, at, gap, stride, baseline_frames):
+        """Count the frames lost upstream before the frame timed `at`: `gap`
+        is their indices, and those a look was due on are `unseen` (#117)."""
+        due = [i for i in gap if _looked_at(i, stride, baseline_frames)]
+        self.unseen += due   # one extend: the loop's thread bisects it
+        self.upstream.append((len(gap), len(due)))
+        print(f"[LIVE] {len(gap)} frame(s) lost upstream, {len(gap) / LIVE_FPS:.1f} s of "
+              f"stream before {_clock(at)}: {len(due)} of them due a look, counted against "
+              f"persistence's floor. Frames up to the next keyframe may decode corrupt (#117)")
+
     def _back_from_drop(self, now, gap, stride, baseline_frames):
-        """Close the drop the stream is back from, if any. `gap` is the
-        indices of the frames it missed; those a look was due on are `unseen`."""
-        if not self._down:
-            return
+        """Close the drop the stream is back from. `gap` is the indices of the
+        frames it missed; those a look was due on are `unseen`."""
         self._down = False
         seconds = now - self.latest
         due = [i for i in gap if _looked_at(i, stride, baseline_frames)]
@@ -677,7 +735,7 @@ class _Stream:
                 self._ready.wait(0.1)
             if self.stopped or self._held is None:
                 return False, None
-            (self.index, frame, self.arrived[self.index]), self._held = self._held, None
+            (self.index, frame, self.times[self.index]), self._held = self._held, None
             self._taken += 1
             self._ready.notify()   # the reader may be waiting for its turn
             return True, frame
@@ -690,15 +748,18 @@ class _Stream:
         self.cap.release()
 
     def report(self, fps):
+        # The commonest step is the camera's rate; frames received over the
+        # stream time they span fall short of it by any lost (#117).
+        rate = "no rate: they never advanced, so frames were counted as read"
+        if self._steps:
+            rate = (f"frames step at {self._steps.most_common(1)[0][0]:.2f} fps, and were "
+                    f"received at {self._steps.total() / self._spanned:.2f} fps over "
+                    f"{self._spanned:.1f} s of stream")
+        print(f"[LIVE] configured {fps:g} fps; by the stream's timestamps, {rate}. "
+              f"Frames are indexed at {fps:g} fps by them, so on a stream short of it the "
+              f"frame intervals it skips are gaps upstream, and persistence and the stride "
+              f"count stream time (ADR-0007, #117)")
         down = sum(seconds for seconds, _ in self.drops)
-        # Time the stream was down is no time for frames to arrive in.
-        elapsed = self.latest - self.first - down
-        rate = (f"{(self.received - 1) / elapsed:.2f} fps" if elapsed > 0
-                else "a rate not measured")
-        print(f"[LIVE] configured {fps:g} fps; frames arrived at {rate}, over "
-              f"{self.received} frame(s) in {elapsed:.1f} s up. Persistence, the baseline "
-              f"and the stride count frames, so a stream short of {fps:g} fps stretches "
-              f"each of them (ADR-0007)")
         # Frame 0 is looked at too, read by `open` rather than taken here.
         print(f"[LIVE] {self._taken + 1} frame(s) looked at; {self.late} due frame(s) "
               f"dropped: the loop was too late for them, and they are gaps for "
@@ -709,6 +770,11 @@ class _Stream:
             still = f"; the last still down at the end, no frame since {_clock(self.latest)}"
         print(f"[LIVE] {drops} drop(s), {down:.1f} s down in all, "
               f"{sum(missed for _, missed in self.drops)} frame(s) missed{still} (#84)")
+        print(f"[LIVE] {len(self.upstream)} gap(s) upstream, "
+              f"{sum(lost for lost, _ in self.upstream)} frame(s) lost, "
+              f"{sum(due for _, due in self.upstream)} of them due a look; {self.untimed} "
+              f"frame(s) untimed: a timestamp not later than the frame before's, so placed "
+              f"one past it (#117)")
 
 
 def _looked_at(index, stride, baseline_frames):
@@ -841,7 +907,8 @@ class RegisteredFrames:
         live = _is_stream(video)
         if live:
             print(f"[LIVE] {_redacted(video)}: a stream, read from where it is. Board space "
-                  f"is built from the first frame read, times are the wall clock, and "
+                  f"is built from the first frame read, times are the stream's timestamps "
+                  f"from the wall clock it was read at (#117), and "
                   f"SIGINT or SIGTERM ends the run with its report (#83)")
             cap = _open_stream(video)
             fps = LIVE_FPS
@@ -929,10 +996,10 @@ class RegisteredFrames:
 
     def when(self, index):
         """A looked-at frame's time as printed: seconds into the recording, or
-        on a stream the wall clock it arrived at (#83)."""
+        on a stream its timestamp from frame 0's wall clock (#83, #117)."""
         if not self.live:
             return f"{self.start + index / self.fps:.2f}s"
-        return _clock(self.cap.arrived[index])
+        return _clock(self.cap.times[index])
 
     def frames_until(self, end):
         """How many frames lie between `--start` and `end` seconds."""
@@ -955,11 +1022,11 @@ class RegisteredFrames:
         every frame passed, looked at or not.
 
         On a stream (#83) the `_Stream`'s thread skips the gaps, and drops the
-        due frames the loop is too late for, and the frames a drop missed
-        (#84), so indices jump past those too and `processed` is one past the
-        last frame looked at. A stream has no end but a stop: SIGINT or
-        SIGTERM ends iteration after the look in hand, and callers report as
-        at any end.
+        due frames the loop is too late for. Indices jump past those too, and
+        past the frames a drop missed (#84) or that were lost upstream (#117),
+        and `processed` is one past the last frame looked at. A stream has no
+        end but a stop: SIGINT or SIGTERM ends iteration after the look in
+        hand, and callers report as at any end.
         """
         live = self.live
         if live:
@@ -1137,8 +1204,8 @@ LIVE_STRIDE = 17           # PROVISIONAL
 # The frame rate a stream is taken to run at (#83): the AXIS Q6315-LE is set to
 # a constant 25 fps (#85), the rate PERSIST_FRAMES, BASELINE_FRAMES and
 # LIVE_STRIDE are counted at (ADR-0007). Not read off the stream, whose
-# reported rate is unreliable; a live run reports the rate frames arrived at
-# beside it.
+# reported rate is unreliable; a live run reports the rate its timestamps
+# measure beside it (#117), and indexes frames by them at this rate.
 LIVE_FPS = 25
 
 # How long opening a stream, or a read on it, may take before it fails (#84):
@@ -1252,7 +1319,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"{len(baseline_detections)} frame(s) from "
           f"{loop.when(0) if loop.live else f'{start}s'}{short}")
 
-    # ponytail: a live run still keeps every look's index, arrival time and
+    # ponytail: a live run still keeps every look's index, time and
     # residuals, and every candidate, for the end-of-run report: a few MB an
     # hour (#83). Keep only the persistence window and running totals if a
     # Range ever runs for days.

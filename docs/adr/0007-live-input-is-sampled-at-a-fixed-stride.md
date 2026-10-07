@@ -44,8 +44,43 @@ template px from anything pre-existing. CamA's at strides 1 and 13 are two
 different detector false positives, 830 and 1590 px out. Every true positive
 matches its truth label within 1–13 template px at every stride.
 
-Lost means lost against stride 1. Of the strides that keep up (13 and above,
-below), 17 is the only one with a miss, and it is the mark stride 1 misses too.
+**"Lost" means lost against stride 1.** #82's stop rule, "If any stride that
+would keep up live loses true Bullet Holes, stop and report", is about what
+sampling costs. #78 runs stride 1 as the reference ("at stride 1 and at
+candidate strides … compare confirmed Bullet Holes"), and its stop rule is
+phrased "If sampling loses real Bullet Holes". A stride loses a Bullet Hole when
+it misses one that stride 1 finds. A truth hole stride 1 misses as well is a
+miss of the pipeline, not a cost of sampling. Read the other way, as any miss
+at all, stride 1 itself would fail the rule on CamA (5/1/1), and the rule would
+then measure the detector rather than the stride. Of the strides that keep up
+(13 and above, below), 17 is the only one with a miss, and it adds no false
+negative to stride 1's.
+
+**Stride 17's miss is the same Bullet Hole as stride 1's, missed the same way.**
+Every run places the truth identically: the same `board.new.txt` line 4, the
+same `[TRUTH]` registration (correlation 0.9739), at template (−27.2, 428.1),
+602 template px from the nearest baseline mark. The pipeline's own loop was
+re-run with persistence opened to 0, so that every elapsed candidate reports
+its window:
+
+| Stride | Looks past the baseline seeing truth #4 | Its candidate's first Detection | Looks in that window seeing it | Persistence | Change evidence |
+|---:|---:|---|---:|---:|---|
+| 1 | 41 of 295 | 17.08 s, frame 102 | 9 of 50 | 0.18, fails | yes |
+| 17 | 5 of 17 | 17.08 s, frame 102 | 1 of 3 | 0.33, fails | yes |
+| 9 | 3 of 33 | 18.76 s, frame 144 | 3 of 6 | 0.50, passes | yes |
+| 13 | 2 of 23 | 19.24 s, frame 156 | 2 of 4 | 0.50, passes | yes |
+| 25 | 1 of 11 | 19.00 s, frame 150 | 1 of 2 | 0.50, passes | yes |
+
+The mark is detected for two frames at 17.08 s (102–103), then not again until
+18.76 s, where its dense run (144–187) begins. Persistence judges a candidate
+once, over the 50 frames after its first Detection (ADR-0003). Stride 1 and
+stride 17 both look at frame 102, so the window opens on that two-frame blip
+and closes at frame 151, before most of the run. At stride 17 the next Detection,
+frame 153, falls two frames past it. Strides 9, 13 and 25 do not look at frame
+102 or 103, so their windows open inside the dense run. They recover truth #4
+because of where their looks happen to fall, not because they sample better.
+A live stream's phase against the Hits is arbitrary, so any stride could land
+either way on a mark like this one.
 
 That is ten Bullet Holes on two recordings. It shows that sampling does not
 visibly break the pipeline. It does not show that sampling is free. The per-mark

@@ -1027,22 +1027,25 @@ _STEPS = r"by the stream's timestamps, frames step at 25\.00 fps"
 _WALL_CLOCK = r"frames arrived at [\d.]+ fps by the wall clock, over 31 frame\(s\)"
 
 
-@pytest.mark.parametrize("ms, untimed, rate, warned", [
-    (_REPEATED, 1, _STEPS, False),
+@pytest.mark.parametrize("ms, untimed, rate, timed", [
+    (_REPEATED, 1, _STEPS, None),
     # Frame 10 stamped with frame 9's timestamp, and the rest on time: no
     # frame after it is lost (Codex on #121).
-    (lambda at: (at - (at == 10)) * 40, 1, _STEPS, False),
+    (lambda at: (at - (at == 10)) * 40, 1, _STEPS, None),
     # Zero until frame 5, then absolute: not 5000 s lost (Codex on #121).
-    (lambda at: 0.0 if at < 5 else 5e6 + at * 40, 4, _STEPS, False),
+    (lambda at: 0.0 if at < 5 else 5e6 + at * 40, 4, _STEPS, None),
     # A backend with no timestamps at all: the wall-clock arrival rate, as
     # before #117.
-    (lambda at: 0.0, 30, _WALL_CLOCK, True),
+    (lambda at: 0.0, 30, _WALL_CLOCK, 0),
     # Advancing for 5 frames, then frozen for 25: not the 5's rate, measured
     # (Codex on #121).
-    (lambda at: min(at, 5) * 40, 25, _WALL_CLOCK, True),
+    (lambda at: min(at, 5) * 40, 25, _WALL_CLOCK, 5),
+    # Advancing for 12 frames, then 9 repeated and the 9 after them resuming:
+    # only the 12 steps are timed, not 12 against 9 untimed (Codex on #121).
+    (lambda at: (at - (at > 12 and at % 2)) * 40, 9, _WALL_CLOCK, 12),
 ])
 def test_a_timestamp_not_later_than_the_one_before_is_placed_one_past_it(
-        monkeypatch, capsys, ms, untimed, rate, warned):
+        monkeypatch, capsys, ms, untimed, rate, timed):
     """And counted: with no usable timestamps for most frames, frames are
     counted as they were before #117, and the report warns so and measures
     the rate frames arrived at instead (#83)."""
@@ -1052,8 +1055,9 @@ def test_a_timestamp_not_later_than_the_one_before_is_placed_one_past_it(
     assert re.search(rf"\[LIVE\] 0 gap\(s\) upstream, 0 frame\(s\) lost, 0 of them due a "
                      rf"look; {untimed} frame\(s\) untimed", out)
     assert re.search(rf"\[LIVE\] configured 25 fps; {rate}", out)
-    assert warned == (f"[WARN] the stream's timestamps did not advance for most frames: "
-                      f"{untimed} of 31 untimed" in out)
+    warned = re.search(r"\[WARN\] the stream's timestamps timed only (\d+) of 31 frame\(s\): "
+                       rf"the rest, {untimed} of them untimed,", out)
+    assert (warned and int(warned[1])) == timed
 
 
 def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch):

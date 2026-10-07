@@ -564,11 +564,12 @@ class _Stream:
     timestamp is not later than the one before is untrusted: placed one past
     it and counted, as is each after it until a timestamp advances again, and
     frames are indexed from that one, as from an RTSP session's first. So a
-    backend with no timestamps counts frames as read. When most frames were
-    untimed, the report warns so and gives the wall-clock arrival rate instead
-    of the timestamps' (#83). Indices are counted at `LIVE_FPS`, the
-    configured 25 fps, for gap accounting (ADR-0007): a stream at another
-    rate is unsupported, and its windows would count stream time, not frames.
+    backend with no timestamps counts frames as read. When the timestamps
+    timed no more than half the frames, the report warns so and gives the
+    wall-clock arrival rate instead of theirs (#83). Indices are counted at
+    `LIVE_FPS`, the configured 25 fps, for gap accounting (ADR-0007): a
+    stream at another rate is unsupported, and its windows would count stream
+    time, not frames.
 
     Still not counted or corrected: a discard smaller than a frame leaves no
     gap in the timestamps, only a frame that decodes corrupt (25 RTP packets
@@ -759,9 +760,11 @@ class _Stream:
 
     def report(self, fps):
         down = sum(seconds for seconds, _ in self.drops)
-        # Only timestamps that timed most frames measure the run: ones that
-        # advanced a few times and then froze measure those few (Codex on #121).
-        if self._steps.total() > self.untimed:
+        # Only timestamps that timed most frames measure the run. A frame is
+        # timed by a step; an untimed frame is not, nor the first after it, nor
+        # an RTSP session's first (Codex on #121).
+        timed = self._steps.total()
+        if 2 * timed > self.received - 1:
             # The commonest step is the camera's rate; frames received over the
             # stream time they span fall short of it by any lost (#117).
             rate = (f"by the stream's timestamps, frames step at "
@@ -772,11 +775,11 @@ class _Stream:
                     f"windows would count stream time, not frames")
         else:
             if self.untimed:
-                print(f"[WARN] the stream's timestamps did not advance for most frames: "
-                      f"{self.untimed} of {self.received} untimed. Those were counted and "
-                      f"timed as read, so frames lost upstream among them were neither "
-                      f"counted nor indexed, and the rate is the wall clock's, high by "
-                      f"FFmpeg's ~1.2 s of buffering at open (#117, #85)")
+                print(f"[WARN] the stream's timestamps timed only {timed} of "
+                      f"{self.received} frame(s): the rest, {self.untimed} of them untimed, "
+                      f"were counted and timed as read, so frames lost upstream among them "
+                      f"were neither counted nor indexed, and the rate is the wall clock's, "
+                      f"high by FFmpeg's ~1.2 s of buffering at open (#117, #85)")
             # Time the stream was down is no time for frames to arrive in.
             elapsed = self.latest - self.first - down
             arrived = (f"{(self.received - 1) / elapsed:.2f} fps" if elapsed > 0

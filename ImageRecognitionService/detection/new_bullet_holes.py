@@ -476,10 +476,10 @@ def change_evidence(points, view, inner_changed, changed, radius):
 
 def _is_stream(source):
     """Is the source a live stream (#83), rather than a recording's path?"""
-    return urlsplit(source).scheme == "rtsp"
+    return urlsplit(source).scheme in ("rtsp", "rtsps")
 
 
-def _shown(source):
+def _redacted(source):
     """The source as printed: a stream URL's credentials never are (#83)."""
     if not _is_stream(source):
         return source
@@ -503,9 +503,10 @@ class _Stream:
     The thread grabs every frame, keeps those a look is due on (`_looked_at`),
     and holds the newest for the loop. A due frame a newer one replaces before
     the loop takes it is one the loop was too late for: dropped and counted,
-    and a gap for persistence, so nothing queues. The first `baseline_frames`
-    are each held until taken instead, so the baseline is consecutive frames
-    however slow its looks, and lateness starts once it is built.
+    and a gap for persistence, so nothing queues. Until the loop asks for its
+    first frame past the baseline, each is held until taken instead, so the
+    baseline is consecutive frames however slow its looks, and lateness and
+    catching up start once it is built.
 
     `read` answers as `cv2.VideoCapture.read` does, and `index` is then that
     frame's position in the stream. Frame 0 is the one `open` read and built
@@ -518,10 +519,12 @@ class _Stream:
         self.received, self.first, self.latest = 1, arrived, arrived
         self.late, self.stopped = 0, False
         self._held, self._ended = None, False
+        self._taken, self._dropping, self._baseline_frames = 0, False, 1
         self._ready = threading.Condition()
         self._reader = None
 
     def start(self, stride, baseline_frames):
+        self._baseline_frames = baseline_frames
         self._reader = threading.Thread(target=self._read, args=(stride, baseline_frames),
                                         daemon=True)
         self._reader.start()
@@ -533,38 +536,44 @@ class _Stream:
 
     def _read(self, stride, baseline_frames):
         index = 1
-        # A failed read ends the stream here; recovering from a drop is #84.
-        while not self.stopped and self.cap.grab():
-            now = time.time()
-            self.received, self.latest = self.received + 1, now
-            if _looked_at(index, stride, baseline_frames):
-                ok, frame = self.cap.retrieve()
-                if not ok:
-                    break
-                with self._ready:
-                    # A held baseline frame is never replaced: the next due
-                    # frame waits for the loop to take it.
-                    while (self._held is not None and self._held[0] < baseline_frames
-                           and not self.stopped):
-                        self._ready.wait(0.1)
-                    if self._held is not None:
-                        self.late += 1
-                    self._held = (index, frame, now)
-                    self._ready.notify()
-            index += 1
-        with self._ready:
-            self._ended = True
-            self._ready.notify()
+        try:
+            # A failed read ends the stream here; recovering from a drop is #84.
+            while not self.stopped and self.cap.grab():
+                now = time.time()
+                self.received, self.latest = self.received + 1, now
+                if _looked_at(index, stride, baseline_frames):
+                    ok, frame = self.cap.retrieve()
+                    if not ok:
+                        break
+                    with self._ready:
+                        # Until the loop asks for its first frame past the
+                        # baseline, nothing held is replaced: the next due
+                        # frame waits for the loop to take it.
+                        while self._held is not None and not (self._dropping or self.stopped):
+                            self._ready.wait(0.1)
+                        if self._held is not None:
+                            self.late += 1
+                        self._held = (index, frame, now)
+                        self._ready.notify()
+                index += 1
+        finally:
+            with self._ready:
+                self._ended = True   # however the read ended, so `read` never waits on it
+                self._ready.notify()
 
     def read(self):
         with self._ready:
+            # Frame 0 was the baseline's first; asked for one past its last,
+            # the baseline is built and lateness starts.
+            self._dropping = self._taken >= self._baseline_frames - 1
             # Timed, so a stop is seen while no frame comes.
             while self._held is None and not (self._ended or self.stopped):
                 self._ready.wait(0.1)
             if self.stopped or self._held is None:
                 return False, None
             (self.index, frame, self.arrived[self.index]), self._held = self._held, None
-            self._ready.notify()   # a baseline frame may be waiting for its turn
+            self._taken += 1
+            self._ready.notify()   # the reader may be waiting for its turn
             return True, frame
 
     def release(self):
@@ -715,7 +724,7 @@ class RegisteredFrames:
         opened_at = time.perf_counter()
         live = _is_stream(video)
         if live:
-            print(f"[LIVE] {_shown(video)}: a stream, read from where it is. Board space "
+            print(f"[LIVE] {_redacted(video)}: a stream, read from where it is. Board space "
                   f"is built from the first frame read, times are the wall clock, and "
                   f"SIGINT or SIGTERM ends the run with its report (#83)")
             # FFmpeg by name: OpenCV's fallback backends print a URL they
@@ -729,7 +738,7 @@ class RegisteredFrames:
         ok, base = cap.read()
         arrived = time.time()
         if not ok:
-            raise SystemExit(f"cannot read {_shown(video)}" if live else
+            raise SystemExit(f"cannot read {_redacted(video)}" if live else
                              f"cannot read {video} at {start}s")
 
         view, correlation = board.build_view(base, template_mask)
@@ -1163,15 +1172,20 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                  if any(len(r) for r in residuals_per_frame) else np.zeros(0))
     print(registration_note(residuals, match_px))
 
-    new = track_new_bullet_holes(per_frame, processed, match_px, lost=lost)
-    for hole in new:
-        hole["target"] = loop.last.assign(hole["pos"])
-        hole["corroborated"] = any(
-            same_bullet_hole(c, hole["box"], match_px) for c in corroboration)
-
-    if require_change_evidence:
+    if announce:
+        # What was announced, no more and no less (ADR-0004).
+        before, new = announce.confirmed()
+        for hole in new:
+            hole["target"] = loop.last.assign(hole["pos"])
+    else:
+        new = track_new_bullet_holes(per_frame, processed, match_px, lost=lost)
         before = len(new)
-        new = [h for h in new if h["corroborated"]]
+        for hole in new:
+            hole["target"] = loop.last.assign(hole["pos"])
+            hole["corroborated"] = _corroborates(corroboration, hole["box"], match_px)
+        if require_change_evidence:
+            new = [h for h in new if h["corroborated"]]
+    if require_change_evidence:
         print(f"[FILTER] change evidence required: {before} -> {len(new)} Bullet Holes")
 
     if merge_displaced:
@@ -1204,8 +1218,11 @@ class _Announcer:
     first look past its window: it is judged then, once. With change evidence
     required, a confirmed Bullet Hole is printed when a corroborating Detection
     lands on it, which may be at a later look; one already waiting is checked
-    against each look's new corroboration only. The end-of-run report is still
-    the whole run's, as on a recording.
+    against each look's new corroboration only.
+
+    The end-of-run report lists the Bullet Holes printed here and no others
+    (`confirmed`): re-deciding at the end, on positions averaged since, could
+    drop one already printed, which ADR-0004 rules out.
 
     Called after every look with its index; a registered look adds its new
     Detections and those change evidence saw. `lost` and `corroboration` are
@@ -1217,33 +1234,49 @@ class _Announcer:
         self.loop, self.match_px = loop, match_px
         self.lost, self.corroboration = lost, corroboration
         self.require, self.mm_per_tpl_px = require_change_evidence, mm_per_tpl_px
-        self.candidates, self.looked_at, self.waiting = [], [], []
+        self.candidates, self.looked_at = [], []
+        self.waiting, self.announced = [], []   # (hole, its candidate)
         self.judged = 0   # candidates are made in frame order, so the judged are a prefix
 
     def __call__(self, index, pts=None, corroborating=()):
         if pts is not None:
             self.looked_at.append(index)
             _fold(self.candidates, index, pts, self.match_px)
-        for hole in self.waiting:
-            hole["corroborated"] = any(same_bullet_hole(c, hole["box"], self.match_px)
-                                       for c in corroborating)
+        for hole, candidate in self.waiting:
+            hole["corroborated"] = _corroborates(corroborating, candidate[0], self.match_px)
         while (self.judged < len(self.candidates)
                and self.candidates[self.judged][2] + PERSIST_FRAMES <= self.loop.processed):
-            hole = _judge(self.candidates[self.judged], self.looked_at, self.lost)
+            candidate = self.candidates[self.judged]
             self.judged += 1
+            hole = _judge(candidate, self.looked_at, self.lost)
             if hole is not None:
-                hole["corroborated"] = any(same_bullet_hole(c, hole["box"], self.match_px)
-                                           for c in self.corroboration)
-                self.waiting.append(hole)
-        still = []
-        for hole in self.waiting:
+                hole["corroborated"] = _corroborates(self.corroboration, hole["box"],
+                                                     self.match_px)
+                self.waiting.append((hole, candidate))
+        waiting = []
+        for hole, candidate in self.waiting:
             if self.require and not hole["corroborated"]:
-                still.append(hole)
+                waiting.append((hole, candidate))
                 continue
             hole["target"] = self.loop.last.assign(hole["pos"])
             _measure(hole, self.loop.last, self.mm_per_tpl_px)
-            print(f"[NEW] {_hole_line(hole, self.loop.when, self.mm_per_tpl_px)}")
-        self.waiting = still
+            print(f"[NEW] {_bullet_hole_line(hole, self.loop.when, self.mm_per_tpl_px)}")
+            self.announced.append((hole, candidate))
+        self.waiting = waiting
+
+    def confirmed(self):
+        """`(n, announced)`: how many Bullet Holes persistence confirmed, and
+        those printed, in first-frame order, each with where the run placed it
+        and when it saw it by the end."""
+        for hole, (pos, sightings, _) in self.announced:
+            hole.update(pos=pos[:2], box=pos, seen=sorted(set(sightings)))
+        holes = sorted((hole for hole, _ in self.announced), key=lambda h: h["first_frame"])
+        return len(holes) + len(self.waiting), holes
+
+
+def _corroborates(points, box, match_px):
+    """Did change evidence see any of `points` on this Bullet Hole?"""
+    return any(same_bullet_hole(c, box, match_px) for c in points)
 
 
 def _measure(hole, view, mm_per_tpl_px):
@@ -1267,7 +1300,7 @@ def _measure(hole, view, mm_per_tpl_px):
     return None
 
 
-def _hole_line(hole, when, mm_per_tpl_px):
+def _bullet_hole_line(hole, when, mm_per_tpl_px):
     """A measured Bullet Hole, as the report lists it and a live run announces it."""
     where = "MISS" if hole["target"] is None else f"Target {hole['target'] + 1}"
     evidence = "changed" if hole["corroborated"] else "model only"
@@ -1294,7 +1327,7 @@ def _report(new, when, view, mm_per_tpl_px, looked_at):
             print(f"[BLOCKED] millimetres unavailable: {why}")
 
     for i, hole in enumerate(new, 1):
-        print(f"  #{i}  {_hole_line(hole, when, mm_per_tpl_px)}")
+        print(f"  #{i}  {_bullet_hole_line(hole, when, mm_per_tpl_px)}")
 
         # Observation facts, not a claim about the mark. A detection ceasing is
         # not evidence that the Bullet Hole ceased: on CamB_20260915_102250 a
@@ -1391,7 +1424,8 @@ def _render(video, start, n_frames, fps, views, baseline, new, out_video,
 if __name__ == "__main__":
     p = argparse.ArgumentParser("Report Bullet Holes that are new since the baseline")
     p.add_argument("video", help="a recording, or a stream's rtsp:// URL, normally a "
-                                 "KanatVideo path rtsp://<mtx-host>:8554/<path> (#83)")
+                                 "VideoService (MediaMTX) path "
+                                 "rtsp://<mtx-host>:8554/<path> (#83)")
     p.add_argument("--start", type=float,
                    help="baseline timestamp, seconds. A recording's only: a stream "
                         "is read from where it is")
@@ -1438,6 +1472,9 @@ if __name__ == "__main__":
         if a.start is not None or a.end is not None or a.out:
             p.error("a stream takes no --start, --end or --out: it can be neither "
                     "seeked nor replayed (#83)")
+        if a.merge_displaced:
+            p.error("a stream takes no --merge-displaced: it would fold away Bullet "
+                    "Holes already announced (ADR-0004)")
     elif a.start is None or a.end is None:
         p.error("a recording needs --start and --end")
 

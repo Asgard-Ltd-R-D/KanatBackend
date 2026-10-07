@@ -668,7 +668,8 @@ def test_a_stream_is_looked_at_on_the_stride_and_frames_it_is_too_late_for_are_d
     indices = [l.index for l in loop.looks(math.inf, stride=3, baseline_frames=5)]
     assert indices[:5] == [0, 1, 2, 3, 4]
     past = indices[5:]
-    assert past and past == sorted(set(past)) and all(i % 3 == 0 for i in past)
+    assert past[0] == 6   # nothing dropped until the baseline was built
+    assert past == sorted(set(past)) and all(i % 3 == 0 for i in past)
     assert [index for _, index, _ in loop.calls] == indices[1:]   # each its own frame
     due = [i for i in range(5, 201) if i % 3 == 0]
     assert loop.cap.late > 0 and len(past) + loop.cap.late == len(due)
@@ -724,7 +725,7 @@ def test_a_live_bullet_hole_is_printed_once_as_soon_as_its_window_elapses(
         monkeypatch, capsys):
     """Printed at the first look past its persistence window, with the wall
     clock it was first seen at, and never again (#83)."""
-    _live_run(monkeypatch, _Watching(lambda i: i >= 6, stop_at=120))
+    run = _live_run(monkeypatch, _Watching(lambda i: i >= 6, stop_at=120))
     lines, looked = _lines_after_looks(capsys.readouterr().out)
     first = next(i for i in looked if i >= 6)
     elapsed = next(i for i in looked if i + 1 >= first + nbh.PERSIST_FRAMES)
@@ -732,6 +733,19 @@ def test_a_live_bullet_hole_is_printed_once_as_soon_as_its_window_elapses(
     assert len(new) == 1
     assert lines[new[0] - 1] == f"[LOOK] {elapsed}"
     assert re.search(r"t=\d\d:\d\d:\d\d\.\d\d  MISS", lines[new[0]])
+    assert [h["first_frame"] for h in run.holes] == [first]   # the report's is the one announced
+
+
+def test_the_end_of_a_live_run_reports_what_was_announced_and_nothing_else(
+        monkeypatch, capsys):
+    """The report lists exactly the Bullet Holes announced: one it dropped
+    would be retracted (ADR-0004). Change evidence here stops before the
+    mark's window ends, the setting in which a drifting position could lose it."""
+    run = _live_run(monkeypatch, _Watching(lambda i: i >= 6, stop_at=120),
+                    changed=lambda index: index <= 20)
+    out = capsys.readouterr().out
+    assert out.count("[NEW]") == 1 and len(run.holes) == 1
+    assert "[FILTER] change evidence required: 1 -> 1" in out
 
 
 def test_a_confirmed_live_bullet_hole_waits_for_change_evidence(monkeypatch, capsys):
@@ -759,9 +773,11 @@ def test_a_live_run_reports_the_configured_fps_beside_the_measured_arrival_rate(
 
 
 def test_a_stream_bypasses_the_manifest_gate(monkeypatch):
+    """rtsps too: gated as a file, its URL reached a traceback, password and all."""
     monkeypatch.setattr(nbh.manifest, "authorise",
                         lambda *args, **kwargs: pytest.fail("a stream was gated"))
-    assert nbh._gate("rtsp://mtx:8554/cam", False, "model.pt") is None
+    for url in ("rtsp://mtx:8554/cam", "rtsps://operator:secret@mtx:8322/cam"):
+        assert nbh._gate(url, False, "model.pt") is None
 
 
 def test_an_unregistered_file_is_still_refused(tmp_path):

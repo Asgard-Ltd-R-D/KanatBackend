@@ -588,6 +588,7 @@ class _Stream:
         self.drops, self._down = [], False   # (seconds, frames missed) each
         self.unseen = []   # due frames a drop or an upstream gap missed, in order
         self.upstream, self.untimed = [], 0   # (frames lost, due) each gap (#117)
+        self.resumed = 0   # frames the first to advance after an untimed one
         # Each timed step's rate, rounded, and the stream time they span (#117).
         self._steps, self._spanned = Counter(), 0.0
         # The frame indices count from: its timestamp, index and wall clock.
@@ -694,6 +695,8 @@ class _Stream:
         before real ones, shifts anything after it (Codex on #121)."""
         before, self._pos = self._pos, self.cap.get(cv2.CAP_PROP_POS_MSEC)
         if self._origin is None and (self._down or self._pos > before):
+            if not self._down:
+                self.resumed += 1
             self._origin = (self._pos, index + 1 + self._missed(now), now)
             return self._origin[1], now
         if self._pos <= before:
@@ -776,11 +779,12 @@ class _Stream:
         else:
             if self.received > 1:   # however the frames went untimed (Codex on #121)
                 print(f"[WARN] the stream's timestamps timed only {timed} of "
-                      f"{self.received} frame(s): the rest, {self.untimed} of them untimed "
-                      f"and {len(self.drops)} the first after a drop, were counted and timed "
-                      f"as read, so frames lost upstream among them were neither counted "
-                      f"nor indexed, and the rate is the wall clock's, high by FFmpeg's "
-                      f"~1.2 s of buffering at open (#117, #85)")
+                      f"{self.received} frame(s). The rest were counted and timed as read: "
+                      f"frame 0, {self.untimed} untimed, {self.resumed} the first to advance "
+                      f"after one, and {len(self.drops)} the first after a drop. Frames lost "
+                      f"upstream before any of them were neither counted nor indexed, and "
+                      f"the rate is the wall clock's, high by FFmpeg's ~1.2 s of buffering "
+                      f"at open (#117, #85)")
             # Time the stream was down is no time for frames to arrive in.
             elapsed = self.latest - self.first - down
             arrived = (f"{(self.received - 1) / elapsed:.2f} fps" if elapsed > 0

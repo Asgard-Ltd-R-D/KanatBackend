@@ -1055,10 +1055,26 @@ def test_a_timestamp_not_later_than_the_one_before_is_placed_one_past_it(
     assert re.search(rf"\[LIVE\] 0 gap\(s\) upstream, 0 frame\(s\) lost, 0 of them due a "
                      rf"look; {untimed} frame\(s\) untimed", out)
     assert re.search(rf"\[LIVE\] configured 25 fps; {rate}", out)
-    warned = re.search(r"\[WARN\] the stream's timestamps timed only (\d+) of 31 frame\(s\): "
-                       rf"the rest, {untimed} of them untimed and 0 the first after a drop,",
-                       out)
-    assert (warned and int(warned[1])) == timed
+    warned = _coverage_warning(out)
+    assert (warned and warned[0]) == timed
+    if warned:   # no drops, so the rest is frame 0, the untimed and the resumed
+        _, received, untimed_, _, reconnected = warned
+        assert (received, untimed_, reconnected) == (31, untimed, 0)
+
+
+def _coverage_warning(out):
+    """The low timestamp coverage warning's counts: frames timed, received,
+    untimed, the first to advance after an untimed one, and the first after
+    a drop; checked to account for every frame received, frame 0 included."""
+    warned = re.search(r"\[WARN\] the stream's timestamps timed only (\d+) of (\d+) frame\(s\)\. "
+                       r"The rest were counted and timed as read: frame 0, (\d+) untimed, "
+                       r"(\d+) the first to advance after one, and (\d+) the first after a "
+                       r"drop\.", out)
+    if not warned:
+        return None
+    timed, received, untimed, resumed, reconnected = map(int, warned.groups())
+    assert 1 + timed + untimed + resumed + reconnected == received
+    return timed, received, untimed, resumed, reconnected
 
 
 def test_a_stream_that_keeps_reconnecting_still_warns_its_timestamps_timed_none(
@@ -1068,10 +1084,10 @@ def test_a_stream_that_keeps_reconnecting_still_warns_its_timestamps_timed_none(
     (Codex on #121)."""
     loop = _live(monkeypatch, _FakeStream(n=0), lambda: _FakeStream(n=1, interval=0.002))
     list(loop.looks(10, stride=1, baseline_frames=10))
-    warned = re.search(r"\[WARN\] the stream's timestamps timed only 0 of (\d+) frame\(s\): "
-                       r"the rest, 0 of them untimed and (\d+) the first after a drop,",
-                       capsys.readouterr().out)
-    assert warned and int(warned[2]) == len(loop.cap.drops) == int(warned[1]) - 1 >= 2
+    timed, received, untimed, resumed, reconnected = _coverage_warning(
+        capsys.readouterr().out)
+    assert (timed, untimed, resumed) == (0, 0, 0) and received >= 3
+    assert reconnected == len(loop.cap.drops)
 
 
 def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch):

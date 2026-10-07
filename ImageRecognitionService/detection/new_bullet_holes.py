@@ -562,12 +562,13 @@ class _Stream:
     arrive, but the next frame's timestamp is past them, so indices jump past
     them: each gap is logged, and its due frames are `unseen`. A frame whose
     timestamp is not later than the one before is untrusted: placed one past
-    it, counted, and the frames after it indexed from it, as from an RTSP
-    session's first. So a backend with no timestamps counts frames as read,
-    and the report warns so and gives the wall-clock arrival rate instead of
-    the timestamps' (#83). Indices are counted at `LIVE_FPS`, the configured
-    25 fps, for gap accounting (ADR-0007): a stream at another rate is
-    unsupported, and its windows would count stream time, not frames.
+    it and counted, as is each after it until a timestamp advances again, and
+    frames are indexed from that one, as from an RTSP session's first. So a
+    backend with no timestamps counts frames as read, and the report warns so
+    and gives the wall-clock arrival rate instead of the timestamps' (#83).
+    Indices are counted at `LIVE_FPS`, the configured 25 fps, for gap
+    accounting (ADR-0007): a stream at another rate is unsupported, and its
+    windows would count stream time, not frames.
 
     Still not counted or corrected: a discard smaller than a frame leaves no
     gap in the timestamps, only a frame that decodes corrupt (25 RTP packets
@@ -589,7 +590,8 @@ class _Stream:
         # Each timed step's rate, rounded, and the stream time they span (#117).
         self._steps, self._spanned = Counter(), 0.0
         # The frame indices count from: its timestamp, index and wall clock.
-        # An RTSP session's first, or an untimed frame (#117).
+        # An RTSP session's first, or the first to advance after an untimed one;
+        # None until then (#117).
         self._origin = (cap.get(cv2.CAP_PROP_POS_MSEC), 0, arrived)
         self._pos = self._origin[0]   # the last frame's timestamp, in ms
         self._held, self._ended = None, False
@@ -622,6 +624,12 @@ class _Stream:
                     continue
                 now = time.time()
                 placed, at = self._place(index, now)
+                if not self._down and placed > index + 1:
+                    # Counted before the decode: the frame after a gap may not
+                    # decode, and the drop that starts there must not take the
+                    # gap with it (Codex on #121).
+                    self._lost_upstream(at, range(index + 1, placed), stride, baseline_frames)
+                    index = placed - 1
                 # `_looked_at`, but the baseline counted in frames offered, so
                 # that it stays consecutive frames across a drop (#84).
                 frame = None
@@ -634,11 +642,8 @@ class _Stream:
                         # cannot decode is the same drop, not a second.
                         self._reconnect()
                         continue
-                gap = range(index + 1, placed)
                 if self._down:
-                    self._back_from_drop(now, gap, stride, baseline_frames)
-                elif gap:
-                    self._lost_upstream(at, gap, stride, baseline_frames)
+                    self._back_from_drop(now, range(index + 1, placed), stride, baseline_frames)
                 index, self.received, self.latest = placed, self.received + 1, now
                 if frame is None:
                     continue
@@ -679,16 +684,19 @@ class _Stream:
         origin, and timed from the origin's wall clock; its step counts
         towards the rate. A new RTSP session's first frame is the origin,
         placed by #84's count of the frames the drop missed and timed when it
-        was read. So is a frame whose timestamp is not later than the one
-        before, untrusted and counted, placed one past it: indexing restarts
-        from it, so a repeated or reset timestamp shifts nothing after it."""
+        was read. A frame whose timestamp is not later than the one before is
+        untrusted and counted, placed one past it and timed when it was read,
+        and so is each after it until a timestamp advances again: that frame
+        is the origin. So neither a repeated nor a reset timestamp, nor zeros
+        before real ones, shifts anything after it (Codex on #121)."""
         before, self._pos = self._pos, self.cap.get(cv2.CAP_PROP_POS_MSEC)
-        if self._origin is not None and self._pos <= before:
-            self.untimed += 1
-            self._origin = None
-        if self._origin is None:
+        if self._origin is None and (self._down or self._pos > before):
             self._origin = (self._pos, index + 1 + self._missed(now), now)
             return self._origin[1], now
+        if self._pos <= before:
+            self.untimed += 1
+            self._origin = None
+            return index + 1, now
         step = self._pos - before
         self._steps[round(1000 / step, 2)] += 1
         self._spanned += step / 1000

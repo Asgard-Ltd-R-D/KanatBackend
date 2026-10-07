@@ -1023,10 +1023,16 @@ def test_a_gap_upstream_is_logged_when_found_and_in_the_totals(monkeypatch, caps
 # Frame 10 an extra one, stamped with frame 9's timestamp, as are the rest one
 # frame behind.
 _REPEATED = lambda at: (at - (at >= 10)) * 40
+_STEPS = r"by the stream's timestamps, frames step at 25\.00 fps"
 
 
 @pytest.mark.parametrize("ms, untimed, rate, warned", [
-    (_REPEATED, 1, r"by the stream's timestamps, frames step at 25\.00 fps", False),
+    (_REPEATED, 1, _STEPS, False),
+    # Frame 10 stamped with frame 9's timestamp, and the rest on time: no
+    # frame after it is lost (Codex on #121).
+    (lambda at: (at - (at == 10)) * 40, 1, _STEPS, False),
+    # Zero until frame 5, then absolute: not 5000 s lost (Codex on #121).
+    (lambda at: 0.0 if at < 5 else 5e6 + at * 40, 4, _STEPS, False),
     # A backend with no timestamps at all: the wall-clock arrival rate, as
     # before #117.
     (lambda at: 0.0, 30, r"frames arrived at [\d.]+ fps by the wall clock, over 31 "
@@ -1048,12 +1054,35 @@ def test_a_timestamp_not_later_than_the_one_before_is_placed_one_past_it(
 
 
 def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch):
-    """Indexing restarts from the untimed frame, so the frame lost after it,
-    at 20, is a gap of one, not absorbed by the one-frame shift (#117)."""
+    """Indexing restarts from the frame after the untimed one, so the frame
+    lost after it, at 20, is a gap of one, not absorbed by the one-frame
+    shift (#117)."""
     loop = _live(monkeypatch, _Losing(after=20, lost=1, interval=0.002, ms=_REPEATED))
     indices = [l.index for l in loop.looks(40, stride=1, baseline_frames=40)]
     assert indices == list(range(21)) + list(range(22, 40))
     assert loop.cap.upstream == [(1, 1)] and loop.cap.untimed == 1
+
+
+class _CorruptAfterTheGap(_Losing):
+    """`_Losing`, and the first frame after the gap does not decode."""
+    def retrieve(self):
+        if self.at == self.after + self.lost + 1:
+            return False, None
+        return super().retrieve()
+
+
+def test_a_gap_upstream_is_kept_when_the_frame_after_it_does_not_decode(monkeypatch):
+    """100 frames lost after frame 10, and frame 111 grabbed but not decoded:
+    a drop from it, but the 100 are still a gap upstream, and indices after
+    the drop are past them (Codex on #121)."""
+    loop = _live(monkeypatch, _CorruptAfterTheGap(after=10, lost=100, interval=0.002),
+                 lambda: _FakeStream(interval=0.002))
+    monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
+    indices = [l.index for l in loop.looks(200, stride=1, baseline_frames=200)]
+    (_, missed), = loop.cap.drops
+    back = 111 + missed   # the drop missed frame 111 onwards
+    assert indices == list(range(11)) + list(range(back, 200))
+    assert loop.cap.upstream == [(100, 100)] and loop.cap.unseen == list(range(11, back))
 
 
 def test_the_baseline_is_its_first_frames_read_across_a_gap_upstream(monkeypatch):

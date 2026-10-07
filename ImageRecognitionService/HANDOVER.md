@@ -681,7 +681,10 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # Prints [NEW] per Bullet Hole once confirmed; Ctrl-C/SIGTERM prints the report.
 # [LIVE] gives configured vs arrived fps and the due frames dropped late. A
 # failed read, or one stalled past STREAM_TIMEOUT_MS, is a drop (#84): reopened
-# every second until back, its missed frames gaps, each drop and the totals logged.
+# until back, its missed frames gaps, each drop and the totals logged.
+# RECONNECT_EVERY_S (1 s) is the wait after each failed attempt, not an attempt
+# every wall-clock second: an attempt on a silent or unreachable source also
+# takes up to STREAM_TIMEOUT_MS (5 s), so attempts then fall ~6 s apart.
 .venv/bin/python -m detection.new_bullet_holes rtsp://MTX-HOST:8554/PATH
 ```
 

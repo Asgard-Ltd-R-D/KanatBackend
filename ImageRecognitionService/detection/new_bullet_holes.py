@@ -563,13 +563,15 @@ class _Stream:
     them: each gap is logged, and its due frames are `unseen`. A frame whose
     timestamp is not later than the one before is untrusted: placed one past
     it and counted, as is each after it until a timestamp advances again, and
-    frames are indexed from that one, as from an RTSP session's first. So a
-    backend with no timestamps counts frames as read. When the timestamps
-    timed no more than half the frames, the report warns so and gives the
-    wall-clock arrival rate instead of theirs (#83). Indices are counted at
-    `LIVE_FPS`, the configured 25 fps, for gap accounting (ADR-0007): a
-    stream at another rate is unsupported, and its windows would count stream
-    time, not frames.
+    frames are indexed from that one, as from an RTSP session's first. It is
+    placed by its advance on the last frame a step timed, so a loss before it
+    is still a gap, or one past the frame before with none this session or a
+    timestamp behind it (a reset). So a backend with no timestamps counts
+    frames as read. When the timestamps timed no more than half the frames,
+    the report warns so and gives the wall-clock arrival rate instead of
+    theirs (#83). Indices are counted at `LIVE_FPS`, the configured 25 fps,
+    for gap accounting (ADR-0007): a stream at another rate is unsupported,
+    and its windows would count stream time, not frames.
 
     Still not counted or corrected: a discard smaller than a frame leaves no
     gap in the timestamps, only a frame that decodes corrupt (25 RTP packets
@@ -596,6 +598,9 @@ class _Stream:
         # None until then (#117).
         self._origin = (cap.get(cv2.CAP_PROP_POS_MSEC), 0, arrived)
         self._pos = self._origin[0]   # the last frame's timestamp, in ms
+        # The last frame a step timed this RTSP session, in the origin's form:
+        # what a frame resuming after untimed ones is placed from (#117).
+        self._trusted = None
         self._held, self._ended = None, False
         self._taken, self._dropping, self._baseline_frames = 0, False, 1
         self._ready = threading.Condition()
@@ -671,7 +676,7 @@ class _Stream:
     def _reconnect(self):
         """Reopen the stream after `RECONNECT_EVERY_S`, unless stopped. A new
         RTSP session: its timestamps restart (#117)."""
-        self._origin = None
+        self._origin = self._trusted = None
         if not self._down:
             self._down = True
             print(f"[LIVE] stream dropped: no frame since {_clock(self.latest)}; reopening "
@@ -693,12 +698,22 @@ class _Stream:
         was read. A frame whose timestamp is not later than the one before is
         untrusted and counted, placed one past it and timed when it was read,
         and so is each after it until a timestamp advances again: that frame
-        is the origin. So neither a repeated nor a reset timestamp, nor zeros
+        is the origin, placed and timed by its advance on the last frame a
+        step timed, so frames lost upstream meanwhile are still a gap. With
+        none this session, or a timestamp behind it, it is placed one past the
+        frame before. So neither a repeated nor a reset timestamp, nor zeros
         before real ones, shifts anything after it (Codex on #121)."""
         before, self._pos = self._pos, self.cap.get(cv2.CAP_PROP_POS_MSEC)
         if self._origin is None and (self._down or self._pos > before):
-            self._origin = (self._pos, index + 1 + self._missed(now), now)
-            return self._origin[1], now, None
+            placed, at = index + 1 + self._missed(now), now
+            if not self._down and self._trusted:
+                trusted_pos, trusted_index, trusted_at = self._trusted
+                since = self._pos - trusted_pos
+                if since > 0:
+                    placed = max(placed, trusted_index + round(since * LIVE_FPS / 1000))
+                    at = trusted_at + since / 1000
+            self._origin = (self._pos, placed, at)
+            return placed, at, None
         step = self._pos - before
         if step <= 0:
             self._origin = None
@@ -707,8 +722,9 @@ class _Stream:
         since = self._pos - first_pos
         # Never onto the frame before's index: a step under half a frame
         # interval rounds onto it, on a stream faster than LIVE_FPS.
-        return (max(index + 1, first_index + round(since * LIVE_FPS / 1000)),
-                first_at + since / 1000, step)
+        placed = max(index + 1, first_index + round(since * LIVE_FPS / 1000))
+        self._trusted = (self._pos, placed, first_at + since / 1000)
+        return placed, self._trusted[2], step
 
     def _count(self, step):
         """Count a frame received, by `_place`'s step, towards the report: a

@@ -1034,6 +1034,9 @@ _WALL_CLOCK = r"frames arrived at [\d.]+ fps by the wall clock, over 31 frame\(s
     (lambda at: (at - (at == 10)) * 40, 1, _STEPS, None),
     # Zero until frame 5, then absolute: not 5000 s lost (Codex on #121).
     (lambda at: 0.0 if at < 5 else 5e6 + at * 40, 4, _STEPS, None),
+    # Reset to 0 at frame 10: behind the last frame a step timed, so one past
+    # the frame before, not a gap (Codex on #121).
+    (lambda at: (at - 10 * (at >= 10)) * 40, 1, _STEPS, None),
     # A backend with no timestamps at all: the wall-clock arrival rate, as
     # before #117.
     (lambda at: 0.0, 30, _WALL_CLOCK, 0),
@@ -1102,14 +1105,23 @@ def test_a_stream_that_keeps_reconnecting_still_warns_its_timestamps_timed_none(
     assert reconnected == len(loop.cap.drops)
 
 
-def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch):
+@pytest.mark.parametrize("ms, after, lost", [
+    (_REPEATED, 20, 1),
+    # Frame 10 stamped with frame 9's timestamp, and the 100 after it lost:
+    # placed from frame 9, the last a step timed, not one past frame 10
+    # (Codex on #121).
+    (lambda at: (at - (at == 10)) * 40, 10, 100),
+])
+def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch, ms, after, lost):
     """Indexing restarts from the frame after the untimed one, so the frame
     lost after it, at 20, is a gap of one, not absorbed by the one-frame
-    shift (#117)."""
-    loop = _live(monkeypatch, _Losing(after=20, lost=1, interval=0.002, ms=_REPEATED))
-    indices = [l.index for l in loop.looks(40, stride=1, baseline_frames=40)]
-    assert indices == list(range(21)) + list(range(22, 40))
-    assert loop.cap.upstream == [(1, 1)] and loop.cap.untimed == 1
+    shift; and frames lost before it, measured from the last frame a step
+    timed, are a gap too (#117)."""
+    loop = _live(monkeypatch, _Losing(after=after, lost=lost, interval=0.002, ms=ms))
+    end = after + lost + 20
+    indices = [l.index for l in loop.looks(end, stride=1, baseline_frames=end)]
+    assert indices == list(range(after + 1)) + list(range(after + lost + 1, end))
+    assert loop.cap.upstream == [(lost, lost)] and loop.cap.untimed == 1
 
 
 class _CorruptAfterTheGap(_Losing):

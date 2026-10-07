@@ -1056,8 +1056,22 @@ def test_a_timestamp_not_later_than_the_one_before_is_placed_one_past_it(
                      rf"look; {untimed} frame\(s\) untimed", out)
     assert re.search(rf"\[LIVE\] configured 25 fps; {rate}", out)
     warned = re.search(r"\[WARN\] the stream's timestamps timed only (\d+) of 31 frame\(s\): "
-                       rf"the rest, {untimed} of them untimed,", out)
+                       rf"the rest, {untimed} of them untimed and 0 the first after a drop,",
+                       out)
     assert (warned and int(warned[1])) == timed
+
+
+def test_a_stream_that_keeps_reconnecting_still_warns_its_timestamps_timed_none(
+        monkeypatch, capsys):
+    """One frame a session: each is the first of its RTSP session, so none is
+    timed by a step, and none is untimed either. Still warned, with why
+    (Codex on #121)."""
+    loop = _live(monkeypatch, _FakeStream(n=0), lambda: _FakeStream(n=1, interval=0.002))
+    list(loop.looks(10, stride=1, baseline_frames=10))
+    warned = re.search(r"\[WARN\] the stream's timestamps timed only 0 of (\d+) frame\(s\): "
+                       r"the rest, 0 of them untimed and (\d+) the first after a drop,",
+                       capsys.readouterr().out)
+    assert warned and int(warned[2]) == len(loop.cap.drops) == int(warned[1]) - 1 >= 2
 
 
 def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch):

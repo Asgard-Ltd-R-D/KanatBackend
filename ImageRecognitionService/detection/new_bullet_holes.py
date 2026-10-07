@@ -774,12 +774,13 @@ class _Stream:
                     f"(ADR-0007, #117): a stream at another rate is unsupported, and its "
                     f"windows would count stream time, not frames")
         else:
-            if self.untimed:
+            if self.received > 1:   # however the frames went untimed (Codex on #121)
                 print(f"[WARN] the stream's timestamps timed only {timed} of "
-                      f"{self.received} frame(s): the rest, {self.untimed} of them untimed, "
-                      f"were counted and timed as read, so frames lost upstream among them "
-                      f"were neither counted nor indexed, and the rate is the wall clock's, "
-                      f"high by FFmpeg's ~1.2 s of buffering at open (#117, #85)")
+                      f"{self.received} frame(s): the rest, {self.untimed} of them untimed "
+                      f"and {len(self.drops)} the first after a drop, were counted and timed "
+                      f"as read, so frames lost upstream among them were neither counted "
+                      f"nor indexed, and the rate is the wall clock's, high by FFmpeg's "
+                      f"~1.2 s of buffering at open (#117, #85)")
             # Time the stream was down is no time for frames to arrive in.
             elapsed = self.latest - self.first - down
             arrived = (f"{(self.received - 1) / elapsed:.2f} fps" if elapsed > 0

@@ -627,9 +627,11 @@ class _Stream:
                 if not self._down and placed > index + 1:
                     # Counted before the decode: the frame after a gap may not
                     # decode, and the drop that starts there must not take the
-                    # gap with it (Codex on #121).
+                    # gap with it, nor count its time again. So it runs from
+                    # the last lost frame, a frame interval before this one,
+                    # and misses this one (Codex on #121).
                     self._lost_upstream(at, range(index + 1, placed), stride, baseline_frames)
-                    index = placed - 1
+                    index, self.latest = placed - 1, now - 1 / LIVE_FPS
                 # `_looked_at`, but the baseline counted in frames offered, so
                 # that it stays consecutive frames across a drop (#84).
                 frame = None

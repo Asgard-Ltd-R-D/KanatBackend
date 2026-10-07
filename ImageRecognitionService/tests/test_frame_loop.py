@@ -1064,7 +1064,13 @@ def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch):
 
 
 class _CorruptAfterTheGap(_Losing):
-    """`_Losing`, and the first frame after the gap does not decode."""
+    """`_Losing`, and the first frame after the gap comes 0.5 s late, as to a
+    reader that stalled, and does not decode."""
+    def grab(self):
+        if self.at == self.after:
+            time.sleep(0.5)
+        return super().grab()
+
     def retrieve(self):
         if self.at == self.after + self.lost + 1:
             return False, None
@@ -1074,12 +1080,15 @@ class _CorruptAfterTheGap(_Losing):
 def test_a_gap_upstream_is_kept_when_the_frame_after_it_does_not_decode(monkeypatch):
     """100 frames lost after frame 10, and frame 111 grabbed but not decoded:
     a drop from it, but the 100 are still a gap upstream, and indices after
-    the drop are past them (Codex on #121)."""
+    the drop are past them. The drop runs from frame 111, a frame after the
+    last lost one: the stall before it is the gap's, not counted twice
+    (Codex on #121)."""
     loop = _live(monkeypatch, _CorruptAfterTheGap(after=10, lost=100, interval=0.002),
                  lambda: _FakeStream(interval=0.002))
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
     indices = [l.index for l in loop.looks(200, stride=1, baseline_frames=200)]
-    (_, missed), = loop.cap.drops
+    (seconds, missed), = loop.cap.drops
+    assert 0.1 + 1 / nbh.LIVE_FPS <= seconds < 0.5
     back = 111 + missed   # the drop missed frame 111 onwards
     assert indices == list(range(11)) + list(range(back, 200))
     assert loop.cap.upstream == [(100, 100)] and loop.cap.unseen == list(range(11, back))

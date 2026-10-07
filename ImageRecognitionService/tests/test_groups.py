@@ -94,7 +94,7 @@ def _run_report(mm_per_tpl_px, capsys, misses_only=False):
     new = [_hole(0, view.ring_centre(0)), _hole(0, view.ring_centre(0) + 10), _hole(None, (900, 50))]
     if misses_only:
         new = [_hole(None, (900, 50)), _hole(None, (50, 900))]
-    _report(new, 0.0, 25.0, view, mm_per_tpl_px, [0])
+    _report(new, lambda index: f"{index / 25.0:.2f}s", view, mm_per_tpl_px, [0])
     return capsys.readouterr().out
 
 

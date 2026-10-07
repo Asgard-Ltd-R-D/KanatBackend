@@ -676,6 +676,37 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # spent truth recordings (#82): no stride loses a true Bullet Hole. Live default
 # 17 at 25 fps, LIVE_STRIDE; table and timings in ADR-0007.
 
+# Live (#83): an rtsp:// URL in place of the clip, normally a VideoService path. No
+# --start/--end/--out/--merge-displaced and no manifest gate; stride LIVE_STRIDE unless given.
+# Prints [NEW] per Bullet Hole once confirmed; Ctrl-C/SIGTERM prints the report.
+# [LIVE] gives configured vs arrived fps and the due frames dropped late. A
+# failed read ends the run until #84 reconnects.
+.venv/bin/python -m detection.new_bullet_holes rtsp://MTX-HOST:8554/PATH
+```
+
+Two known limitations of the live run, neither closed by #83:
+
+- **Frames lost upstream while the baseline is built go uncounted.** From
+  opening the stream until the 5-frame baseline is built, about 3–5 s on the
+  development Mac, nothing reads the stream past the frame in hand. Any frame
+  lost upstream in that time never arrives: MediaMTX discarding for a slow
+  reader (`VideoService/mediamtx.yml` leaves its queue at the default), or a full
+  socket buffer. It is neither counted as a late drop nor indexed. Every later
+  index shifts by the number lost, and with it the stride's phase and every
+  frame-counted window. Frames read while catching up carry the time they were
+  read, not the time they arrived. Only a slightly low arrival rate in `[LIVE]`
+  hints at it. This is not the
+  stream drop #84 handles, and #84 does not fix it: the stream neither drops
+  nor stalls. A follow-up could index and time frames by the stream's own
+  timestamps (`cv2.CAP_PROP_POS_MSEC`); #85's MediaMTX run is where to measure
+  whether it happens.
+- **A Sealed recording streamed over RTSP is not refused.** The manifest gate
+  hashes files and cannot see a stream, so #83 skips it for streams by design.
+  "Never stream a Sealed recording" (ADR-0005) is #85's acceptance rule, kept
+  by hand: replay only spent recordings through MediaMTX.
+
+```bash
+
 # Derive the new Bullet Holes from a before/after photograph pair. --truth-labels
 # then points at the board.new.txt this writes, never at the after export.
 .venv/bin/python -m tools.derive_truth \

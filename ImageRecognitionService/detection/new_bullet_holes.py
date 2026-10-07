@@ -346,14 +346,18 @@ def _fold(candidates, idx, pts, match_px):
             match[1].append(idx)
 
 
-def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES):
+def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES,
+           unseen=()):
     """The confirmed Bullet Hole a candidate whose window has elapsed is, or
     None. `looked_at` and `lost` are sorted frame indices, as in
-    `track_new_bullet_holes`. Counted by bisection, so a live run's judging
-    does not slow as its history grows (#83)."""
+    `track_new_bullet_holes`; `unseen`, sorted too, is the due frames a stream
+    drop missed (#84), which count towards the floor as lost frames do.
+    Counted by bisection, so a live run's judging does not slow as its
+    history grows (#83)."""
     pos, sightings, first = candidate
     span = _count_in(looked_at, first, first + window)
-    tried = span + _count_in(lost, first, first + window)
+    tried = (span + _count_in(lost, first, first + window)
+             + _count_in(unseen, first, first + window))
     if span <= 0 or span < persist * tried:
         # Too few looks survived registration to call anything persistent:
         # 100% of one frame among lost ones is not persistence.
@@ -505,9 +509,35 @@ def _gate(source, final_run, model):
     return manifest.gate(source, final_run, model, "new_bullet_holes.py")
 
 
+def _open_stream(url):
+    """A stream's capture. FFmpeg by name: OpenCV's fallback backends print a
+    URL they cannot open, credentials and all (#83). Opening and each read are
+    bounded by `STREAM_TIMEOUT_MS`, so a connection that stays open but stops
+    delivering frames fails a read, a drop to recover from, instead of
+    blocking for FFmpeg's default 30 s (#84)."""
+    return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
+                            [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
+                             cv2.CAP_PROP_READ_TIMEOUT_MSEC, STREAM_TIMEOUT_MS])
+
+
+def _clock(t):
+    """A wall-clock time as a live run prints it."""
+    return datetime.fromtimestamp(t).strftime("%H:%M:%S.%f")[:-4]
+
+
 class _Stream:
     """A live source, read on a thread of its own so that frames keep arriving
     while a look is being processed (#83).
+
+    A failed read is a drop, never the end: the stream closed, or stalled past
+    `STREAM_TIMEOUT_MS`. The thread reopens it with `reopen` every
+    `RECONNECT_EVERY_S`, for as long as the run goes on, and the frames the
+    drop missed, counted at `LIVE_FPS` from the last frame received, are gaps:
+    indices jump past them (#84). Those a look was due on are `unseen`, and
+    count against persistence's floor as lost frames do: a window a drop
+    emptied confirms nothing, rather than confirm on the one look before it.
+    Nothing else restarts, so registration resumes from the last view, in
+    the same Board space.
 
     The thread grabs every frame, keeps those a look is due on (`_looked_at`),
     and holds the newest for the loop. A due frame a newer one replaces before
@@ -530,16 +560,18 @@ class _Stream:
     many were lost, and with it the stride's phase and every frame-counted
     window, and the frames read while catching up carry the time they were
     read, not the time they arrived. #84 recovers a stream that drops or
-    stalls; this stream never does either. Only a slightly low arrival rate
+    stalls; this stream does neither. Only a slightly low arrival rate
     in the `[LIVE]` line hints at it. The stream's own timestamps
     (`cv2.CAP_PROP_POS_MSEC`) could index and time frames instead.
     """
 
-    def __init__(self, cap, arrived):
-        self.cap, self.index = cap, 0
+    def __init__(self, cap, arrived, reopen):
+        self.cap, self.index, self._reopen = cap, 0, reopen
         self.arrived = {0: arrived}
         self.received, self.first, self.latest = 1, arrived, arrived
         self.late, self.stopped = 0, False
+        self.drops, self._down = [], False   # (seconds, frames missed) each
+        self.unseen = []   # due frames a drop missed, in order
         self._held, self._ended = None, False
         self._taken, self._dropping, self._baseline_frames = 0, False, 1
         self._ready = threading.Condition()
@@ -557,31 +589,81 @@ class _Stream:
         self.stopped = True
 
     def _read(self, stride, baseline_frames):
-        index = 1
+        index, offered = 0, 1   # frame 0, the one `open` read
         try:
-            # A failed read ends the stream here; recovering from a drop is #84.
-            while not self.stopped and self.cap.grab():
+            while not self.stopped:
+                began = time.monotonic()
+                # A read the timeout cut short can still return a frame
+                # (measured over HTTP, #84): a stall all the same, so a drop
+                # measured from the frame before it, whose time it would hide.
+                if (not self.cap.grab()
+                        or time.monotonic() - began >= STREAM_TIMEOUT_MS / 1000):
+                    self._reconnect()
+                    continue
                 now = time.time()
-                self.received, self.latest = self.received + 1, now
-                if _looked_at(index, stride, baseline_frames):
+                back = index + 1 + self._missed(now)
+                # `_looked_at`, but the baseline counted in frames offered, so
+                # that it stays consecutive frames across a drop (#84).
+                frame = None
+                if _looked_at(offered if offered < baseline_frames else back,
+                              stride, baseline_frames):
                     ok, frame = self.cap.retrieve()
                     if not ok:
-                        break
-                    with self._ready:
-                        # Until the loop asks for its first frame past the
-                        # baseline, nothing held is replaced: the next due
-                        # frame waits for the loop to take it.
-                        while self._held is not None and not (self._dropping or self.stopped):
-                            self._ready.wait(0.1)
-                        if self._held is not None:
-                            self.late += 1
-                        self._held = (index, frame, now)
-                        self._ready.notify()
-                index += 1
+                        # Not a frame received: a drop stays open until one
+                        # is in hand, so a reopened stream that grabs but
+                        # cannot decode is the same drop, not a second.
+                        self._reconnect()
+                        continue
+                self._back_from_drop(now, range(index + 1, back), stride, baseline_frames)
+                index, self.received, self.latest = back, self.received + 1, now
+                if frame is None:
+                    continue
+                offered += 1
+                with self._ready:
+                    # Until the loop asks for its first frame past the
+                    # baseline, nothing held is replaced: the next due
+                    # frame waits for the loop to take it.
+                    while self._held is not None and not (self._dropping or self.stopped):
+                        self._ready.wait(0.1)
+                    if self._held is not None:
+                        self.late += 1
+                    self._held = (index, frame, now)
+                    self._ready.notify()
         finally:
             with self._ready:
                 self._ended = True   # however the read ended, so `read` never waits on it
                 self._ready.notify()
+
+    def _reconnect(self):
+        """Reopen the stream after `RECONNECT_EVERY_S`, unless stopped."""
+        if not self._down:
+            self._down = True
+            print(f"[LIVE] stream dropped: no frame since {_clock(self.latest)}; reopening "
+                  f"every {RECONNECT_EVERY_S:g} s until it is back or the run is stopped (#84)")
+        self.cap.release()
+        resume = time.monotonic() + RECONNECT_EVERY_S
+        while not self.stopped and time.monotonic() < resume:
+            time.sleep(0.05)   # polled, so a stop is seen while waiting
+        if not self.stopped:
+            self.cap = self._reopen()
+
+    def _missed(self, now):
+        """How many frames the drop the stream is back from missed, if any."""
+        return max(0, round((now - self.latest) * LIVE_FPS) - 1) if self._down else 0
+
+    def _back_from_drop(self, now, gap, stride, baseline_frames):
+        """Close the drop the stream is back from, if any. `gap` is the
+        indices of the frames it missed; those a look was due on are `unseen`."""
+        if not self._down:
+            return
+        self._down = False
+        seconds = now - self.latest
+        due = [i for i in gap if _looked_at(i, stride, baseline_frames)]
+        self.unseen += due   # one extend: the loop's thread bisects it
+        self.drops.append((seconds, len(gap)))
+        print(f"[LIVE] stream back at {_clock(now)} after {seconds:.1f} s without a frame: "
+              f"{len(gap)} frame(s) missed at {LIVE_FPS} fps, {len(due)} of them due a "
+              f"look and counted against persistence's floor (#84)")
 
     def read(self):
         with self._ready:
@@ -601,20 +683,28 @@ class _Stream:
     def release(self):
         self.stopped = True
         if self._reader is not None:
-            # A stalled read returns within FFmpeg's own timeout; #84 bounds it.
+            # A stalled read returns within STREAM_TIMEOUT_MS (#84).
             self._reader.join()
         self.cap.release()
 
     def report(self, fps):
-        elapsed = self.latest - self.first
+        down = sum(seconds for seconds, _ in self.drops)
+        # Time the stream was down is no time for frames to arrive in.
+        elapsed = self.latest - self.first - down
         rate = (f"{(self.received - 1) / elapsed:.2f} fps" if elapsed > 0
                 else "a rate not measured")
         print(f"[LIVE] configured {fps:g} fps; frames arrived at {rate}, over "
-              f"{self.received} frame(s) in {elapsed:.1f} s. Persistence, the baseline and "
-              f"the stride count frames, so a stream short of {fps:g} fps stretches "
+              f"{self.received} frame(s) in {elapsed:.1f} s up. Persistence, the baseline "
+              f"and the stride count frames, so a stream short of {fps:g} fps stretches "
               f"each of them (ADR-0007)")
         print(f"[LIVE] {self.late} due frame(s) dropped: the loop was too late for them, "
               f"and they are gaps for persistence (#83)")
+        drops, still = len(self.drops), ""
+        if self._down:
+            drops, down = drops + 1, down + time.time() - self.latest
+            still = f"; the last still down at the end, no frame since {_clock(self.latest)}"
+        print(f"[LIVE] {drops} drop(s), {down:.1f} s down in all, "
+              f"{sum(missed for _, missed in self.drops)} frame(s) missed{still} (#84)")
 
 
 def _looked_at(index, stride, baseline_frames):
@@ -630,7 +720,7 @@ def _next_view(cap, last, reanchor_on=None):
     Returns `(frame, view, correlation)`. `view` is None when the Board was not
     found or ECC failed — no evidence from that frame, either way — and `frame`
     is None when the read itself failed, which is the end of what the file holds,
-    or of a stream: it ended or was stopped (#83).
+    or on a stream a stop (#83), since a stream recovers from a drop (#84).
 
     `reanchor_on` is the Target artwork's mask when this frame is to be
     re-anchored (`board.reanchor_view`, #80) rather than tracked from `last`.
@@ -749,9 +839,7 @@ class RegisteredFrames:
             print(f"[LIVE] {_redacted(video)}: a stream, read from where it is. Board space "
                   f"is built from the first frame read, times are the wall clock, and "
                   f"SIGINT or SIGTERM ends the run with its report (#83)")
-            # FFmpeg by name: OpenCV's fallback backends print a URL they
-            # cannot open, credentials and all (#83).
-            cap = cv2.VideoCapture(video, cv2.CAP_FFMPEG)
+            cap = _open_stream(video)
             fps = LIVE_FPS
         else:
             cap = cv2.VideoCapture(video)
@@ -825,7 +913,8 @@ class RegisteredFrames:
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
-        loop = cls(_Stream(cap, arrived) if live else cap, model, view, base, imgsz, conf,
+        loop = cls(_Stream(cap, arrived, lambda: _open_stream(video)) if live else cap,
+                   model, view, base, imgsz, conf,
                    fps, start, template_mask)
         loop.net_scale = scale
         return loop
@@ -839,7 +928,7 @@ class RegisteredFrames:
         on a stream the wall clock it arrived at (#83)."""
         if not self.live:
             return f"{self.start + index / self.fps:.2f}s"
-        return datetime.fromtimestamp(self.cap.arrived[index]).strftime("%H:%M:%S.%f")[:-4]
+        return _clock(self.cap.arrived[index])
 
     def frames_until(self, end):
         """How many frames lie between `--start` and `end` seconds."""
@@ -862,10 +951,11 @@ class RegisteredFrames:
         every frame passed, looked at or not.
 
         On a stream (#83) the `_Stream`'s thread skips the gaps, and drops the
-        due frames the loop is too late for, so indices jump past those too and
-        `processed` is one past the last frame looked at. A stream has no end
-        but a stop: SIGINT or SIGTERM ends iteration after the look in hand,
-        and callers report as at any end.
+        due frames the loop is too late for, and the frames a drop missed
+        (#84), so indices jump past those too and `processed` is one past the
+        last frame looked at. A stream has no end but a stop: SIGINT or
+        SIGTERM ends iteration after the look in hand, and callers report as
+        at any end.
         """
         live = self.live
         if live:
@@ -1046,6 +1136,18 @@ LIVE_STRIDE = 17           # PROVISIONAL
 # reported rate is unreliable; a live run reports the rate frames arrived at
 # beside it.
 LIVE_FPS = 25
+
+# How long opening a stream, or a read on it, may take before it fails (#84):
+# a connection that stays open but delivers no frame is then a drop, recovered
+# from like any other. Through VideoService's multicast ingest a silent camera
+# need not close the RTSP session. Five keyframe intervals (GOP 25 at 25 fps,
+# #85), with network slack; not tuned on a live stream.
+STREAM_TIMEOUT_MS = 5000   # PROVISIONAL
+
+# The wait before each reopen of a dropped stream, for as long as the run goes
+# on (#84). An attempt that opens a silent stream, or cannot reach the host,
+# fails only after STREAM_TIMEOUT_MS on top, so attempts then fall ~6 s apart.
+RECONNECT_EVERY_S = 1.0
 
 
 def add_stride_flag(parser):
@@ -1276,7 +1378,7 @@ class _Announcer:
                and self.candidates[self.judged][2] + PERSIST_FRAMES <= self.loop.processed):
             candidate = self.candidates[self.judged]
             self.judged += 1
-            hole = _judge(candidate, self.looked_at, self.lost)
+            hole = _judge(candidate, self.looked_at, self.lost, unseen=self.loop.cap.unseen)
             if hole is not None:
                 hole["corroborated"] = _corroborates(self.corroboration, hole["box"],
                                                      self.match_px)

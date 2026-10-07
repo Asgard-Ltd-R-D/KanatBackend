@@ -767,10 +767,11 @@ def test_a_confirmed_live_bullet_hole_waits_for_change_evidence(monkeypatch, cap
     assert lines[new[0] - 1] == f"[LOOK] {next(i for i in looked if i >= 90)}"
 
 
-def test_a_live_run_reports_the_configured_fps_beside_the_measured_arrival_rate(
+def test_a_live_run_reports_its_arrival_rate_and_the_frames_it_looked_at(
         monkeypatch, capsys):
     """At the live default stride. A frame every 2 ms or more arrives at no
-    more than 500 fps, against the 25 configured (#83)."""
+    more than 500 fps, against the 25 configured (#83); #85's report to #78
+    asks for the frames looked at, baseline included."""
     _live_run(monkeypatch, _Watching(lambda i: False, stop_at=60), stride=None)
     out = capsys.readouterr().out
     rate = re.search(r"\[LIVE\] configured 25 fps; frames arrived at ([\d.]+) fps", out)
@@ -778,7 +779,6 @@ def test_a_live_run_reports_the_configured_fps_beside_the_measured_arrival_rate(
     assert f"[INFO] stride {nbh.LIVE_STRIDE}:" in out
     _, looked = _lines_after_looks(out)
     assert all(i % nbh.LIVE_STRIDE == 0 for i in looked[nbh.BASELINE_FRAMES:])
-    # #85's report to #78 asks for the frames looked at, baseline included.
     assert f"[LIVE] {len(looked)} frame(s) looked at;" in out
 
 

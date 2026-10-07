@@ -54,10 +54,10 @@ The capabilities come from the Q6315-LE datasheet and VAPIX. The URL arguments w
 
 | | Q6315-LE | Selected | Why |
 |---|---|---|---|
-| Codec | H.264, H.265, Motion JPEG | H.264, `videocodec=h264` | The video service's multicast ingest is H.264 only. Most browsers cannot decode H.265, and the WebRTC operator view runs in one. A reader joining H.264 mid-GOP gets its first frame at the next IDR, decoded clean (measured below). |
+| Codec | H.264 (Baseline/Main/High), H.265 (Main), Motion JPEG | H.264, `videocodec=h264` | The video service's multicast ingest is H.264 only. Most browsers cannot decode H.265, and the WebRTC operator view runs in one. A reader joining H.264 mid-GOP gets its first frame at the next IDR, decoded clean (measured below). |
 | Resolution | 1920x1080 down to 320x180 | `resolution=1920x1080` | Full resolution, the same as the truth recordings. |
-| Frame rate | up to 50 fps (50 Hz variant) or 60 fps (60 Hz variant) | constant 25 fps, `fps=25` | `PERSIST_FRAMES`, `BASELINE_FRAMES` and `LIVE_STRIDE` are frame counts set at 25 fps (ADR-0007). |
-| Zipstream dynamic FPS | available, off by default | off, `videozfpsmode=fixed` | Dynamic FPS lowers the frame rate when the scene is still, and a Board between shots is exactly that. |
+| Frame rate | up to 50 fps (50 Hz variant) or 60 fps (60 Hz variant), at all resolutions | constant 25 fps, `fps=25` | `PERSIST_FRAMES`, `BASELINE_FRAMES` and `LIVE_STRIDE` are frame counts set at 25 fps (ADR-0007). |
+| Zipstream dynamic FPS | available, off by default | off, `videozfpsmode=fixed` | Dynamic FPS lowers the frame rate when the scene is still, and a Board between Hits is exactly that. |
 | Zipstream dynamic GOP | available, off by default | off, `videozgopmode=fixed` | VAPIX says `fixed` means "the product's default GOP length", so the keyframe check above is what confirms 25. |
 | GOP | configurable | 25 frames, `videokeyframeinterval=25` | After a (re)connect, the first decodable frame is at most 1 s away. |
 | Transport | RTSP on :554, RTP/RTCP, RTSPS/SRTP, multicast (IGMP v1–v3) | RTSP over TCP, `"rtspTransport": "tcp"` | A lost UDP packet corrupts frames the detector would then see. |
@@ -76,7 +76,7 @@ Registration anchors to the Range's baseline frame, and Board space is built onc
 - No mid-Range change to settings that change the image geometry: zoom, EIS, rotation, capture mode.
 - Day mode held. The pipeline has only seen colour daylight footage, and a switch to night mode (IR, black and white) is untested.
 
-A move mid-Range invalidates the Range. Moving to another preset starts a new Range with its own calibration. PTZ control and detecting PTZ movement are out of scope; the SOW requires neither.
+A move mid-Range invalidates the Range. Moving to another preset starts a new Range with its own baseline and Board space. PTZ control and detecting PTZ movement are out of scope; the SOW requires neither.
 
 ## Running the pipeline on the camera
 
@@ -89,7 +89,7 @@ cd ImageRecognitionService
 - **Print scale.** A stream has no Capture Setup on record, so the print scale comes from `--mm-per-px` only. Measure it for the printed Target in use (`docs/ring_measurement.md`). Without it, positions stay in Board px.
 - **Stopping.** Ctrl-C or SIGTERM ends the run and prints the report.
 
-Each drop is logged when it starts and when the stream is back. The report ends with the three `[LIVE]` lines the #78 report quotes:
+Each drop is logged when it starts, and again when the stream is back with that drop's duration (`[LIVE] stream back at … after X s without a frame`). Those lines are the per-drop durations #78 asks for. Before the Bullet Hole report, three `[LIVE]` lines give the totals:
 
 ```
 [LIVE] configured 25 fps; frames arrived at R fps, over N frame(s) in T s up. ...
@@ -121,12 +121,12 @@ Each drop is logged when it starts and when the stream is back. The report ends 
    ```
    With `-c copy` the live frames are the file's own frames, so any difference from a file run comes from the live path.
 3. **Run live** on `rtsp://127.0.0.1:8554/replay` with `--mm-per-px 0.1763`. Stop the run when it logs `[LIVE] stream dropped`: the publisher has reached the end of the file.
-4. **File-run the copy** at the same stride, from the frame the live run started on. With nothing else reading the path, that was file frame 25 (1.0 s), the first IDR after the reader joined. The copy is not in the manifest, so the CLI refuses it; call `process` directly:
+4. **File-run the copy** at the same stride, from the frame the live run started on. That is the first IDR after the reader joined. With nothing else reading the path it was file frame 25 (1.0 s) in both runs that started the publisher; the record below identified it by hashing frames. The copy is not in the manifest, so the CLI refuses it; call `process` directly. **Only ever on a copy of a spent recording:** the gate cannot trace a copy to its source, so check the source's role in `config/recordings.json` first (`_102250` is sha256 `ed4c3afd…`, spent).
    ```bash
    .venv/bin/python -c "from detection import new_bullet_holes as n; \
      n.process('replay.h264.mkv', 1.0, 46, n.DEFAULT_MODEL, mm_per_tpl_px=0.1763, stride=17)"
    ```
-5. **Compare** the Bullet Holes, their positions, and the number of looks. The only allowed differences are the counted late drops and the one due frame held when the stream ended.
+5. **Compare** the Bullet Holes, their positions, and the number of looks: live, the `[LIVE] … frame(s) looked at` line; in the file run, the `[REGISTRATION] … of N converged fit(s)` count plus 1 for frame 0, plus any Board-lost frames. The only allowed differences are the counted late drops and the one due frame held when the stream ended.
 
 The results are recorded below and were posted to #78.
 
@@ -143,20 +143,22 @@ The results are recorded below and were posted to #78.
 1. **Measured 25 fps.** With the camera at a fixed preset looking at a Board, add the path. Then check it: `ready` in the path list, and ffprobe showing H.264 at 1920x1080, `r_frame_rate` 25/1, and keyframes 1.000 s apart.
 2. **The real AXIS → MediaMTX → pipeline path.** Run the pipeline live on `rtsp://<mtx-host>:8554/<alias>` for at least 10 minutes. Keep MediaMTX's log.
 3. **WebRTC running at the same time.** Keep the operator's WebRTC view of the same path open for the whole run: KanatFrontend, or `http://<mtx-host>:8889/<alias>`.
-4. **A forced drop, recovered.** Pull the camera's network cable for about 10 s, or `DELETE` the path and re-add it. Watch for `[LIVE] stream dropped`, the reopen attempts, and `[LIVE] stream back … N frame(s) missed`. Registration must resume without Board-lost frames.
-5. **Registration when the camera moves during an outage (#118).** Drop the stream again, and move the PTZ while it is down. Do this last, because the fixed-view rule says it invalidates the Range. Then check two things. Does the first fit after the reconnect fall into #110's check, and is it rejected (`[REGISTRATION] … checked`, `[WARN] silhouette disagreement`)? Do Bullet Hole positions after the reconnect still match the photographed truth?
-6. **#117 on the camera.** Look in MediaMTX's log for `reader is too slow, discarding` against the pipeline's session in the first seconds of the run. Look in the pipeline's output for `[h264 …] error while decoding`.
+4. **A forced drop, recovered.** Pull the camera's network cable for about 10 s, or `DELETE` the path and re-add it. Watch for `[LIVE] stream dropped`, the reopen attempts, and `[LIVE] stream back … N frame(s) missed`. Registration resumes in the same Board space (#84); note any Board-lost frames after it.
+5. **Registration when the camera moves during an outage (#118).** Photograph the Board before the run and after it, as for the truth recordings (`tools.derive_truth`), and decide the footage's role (below) before comparing anything with that truth. Drop the stream again, and move the PTZ while it is down. Do this last, because the fixed-view rule says it invalidates the Range. Then check two things. Does the first fit after the reconnect fall into #110's check, and is it rejected (`[REGISTRATION] … checked`, `[WARN] silhouette disagreement`)? Do Bullet Hole positions after the reconnect still match the photographed truth?
+6. **#117 on the camera.** Look in MediaMTX's log for `reader is too slow, discarding` against the pipeline's RTSP session in the first seconds of the run. Look in the pipeline's output for `[h264 …] error while decoding`. Record how long the baseline took on that host: `[REGISTRATION] Board space built in`, and the time from frame 0 (named in `[INFO] baseline … from`) to that line printing, read by timestamping the output (for example `| ts` from moreutils).
 7. **Post the report to #78:** stride, configured and measured frame rate, frames looked at, late drops, drops with their durations, and Bullet Holes. Post the observations for #117 and #118 on those issues. Then #85 closes.
 
-Footage from this camera is a new Capture Setup. Whether it becomes spent or held out (ADR-0005) is decided before anyone scores it. Recording the session with the video service (`record: true` on the path) waits for that decision, and acceptance does not need a recording.
+Footage from this camera is a new Capture Setup. Its role under ADR-0005 (spent, threshold-work or sealed) is decided before anyone scores it. Recording the Range with the video service (`record: true` on the path) waits for that decision, and acceptance does not need a recording.
 
-**Security.** The Control API (:9997, on all interfaces) is unauthenticated, and it returns a path's `source` with the camera credentials in clear (#89). For acceptance, use the viewer-only camera account and keep :9997 off untrusted networks. The pipeline's URL carries no credentials, because reading from MediaMTX is anonymous, and `_redacted` keeps any URL credentials out of its output.
+**Security.** The Control API (:9997, on all interfaces) is unauthenticated, and it returns a path's `source` with the camera credentials in clear (#89). For acceptance, use the viewer-only camera account and keep :9997 off untrusted networks. Fixing it is not part of #85; it is tracked in #89. The pipeline's URL carries no credentials, because reading from MediaMTX is anonymous, and `_redacted` keeps any URL credentials out of its output.
 
 ## The replay, 2026-10-07
 
 **Environment:** MediaMTX v1.21.1 (darwin arm64, checksum-verified release) with `VideoService/mediamtx.yml` unchanged, ffmpeg 9.0.2, `opencv-python` 4.10.0, on the development Mac. The copy is 1150 frames, H.264 Main, 1920x1080, 25 fps, GOP 25, no B-frames, 8.0 Mbit/s. Only the spent `_102250` and this copy of it were streamed.
 
 **Instrumentation.** The live runs were instrumented by a scratch wrapper, not committed. The wrapper logged the stream timestamp (`CAP_PROP_POS_MSEC`) of every frame grabbed. It also hashed every frame decoded against the copy's own 1150 decoded frames, which are all distinct. A match names the frame and shows it decoded clean.
+
+**The copy against the original.** At stride 17 from 0 s, the H.264 copy's file run gives the original `.mkv`'s 5 Bullet Holes, with the same Targets, scores and first-seen times. Positions are within 3 mm, and the Extreme Spread is 113.0 mm against 109.0 mm. The 8 Mbit/s encode moves positions by a few millimetres and changes nothing else.
 
 **The live result matches the file run at the same stride.** Each live run is compared with a file run of the copy from the live run's first frame:
 
@@ -167,21 +169,21 @@ Footage from this camera is a new Capture Setup. Whether it becomes spent or hel
 | 3, stride 5 | file frame 25 | 5 and 5: the same as run 1. Positions within 0.1 mm | 111 and 229 | 117 | the end of the file |
 
 - **Run 1.** Looks are file frames 25 + index, so they are the file run's own frames. The 3 looks fewer are the 2 late drops plus the due frame held when the publisher ended. The MPI, CEP and Extreme Spread match to 0.1 mm.
-- **Run 2.** The 16 looks fewer are 4 late drops, 11 due frames inside the drop, and the 1 held at the end. Before the drop, looks were file frames 125 + index, the same as the file run's. Run 2 is compared with a file run from 5.0 s.
+- **Run 2.** The 16 looks fewer are 4 late drops, the 11 due frames the drop's content gap held, and the 1 held at the end. The pipeline's own count of due frames missed was 13; see the missed count below. Before the drop, looks were file frames 125 + index, the same as the file run's. Run 2 is compared with a file run from 5.0 s.
 - **Run 3.** It stresses the count: 229 frames were due in indices 0–1124, and 111 looked at + 117 late + 1 held = 229. Half the due frames were dropped late, and the result is still the file run's.
 - **Clean frames.** In all three runs, every frame looked at hash-matched the file: none was decoded corrupt.
-- **Persistence filters less live.** Before the change filter, runs 2 and 3 had 1–2 more persistent candidates than their file runs: 5 against 4, and 8 against 6. A late drop or a drop gap leaves fewer looks in a window, so one sighting goes further. The change filter removed every extra one. This is ADR-0007's "persistence filters less, and the change filter does more", made stronger by late drops.
+- **Persistence filters less live.** Before the change filter, runs 2 and 3 had 1–2 more persistent candidates than their file runs: 5 against 4, and 8 against 6. A late drop or a drop gap leaves fewer looks in a window, so one Detection goes further. The change filter removed every extra one. This is ADR-0007's "persistence filters less, and the change filter does more", made stronger by late drops.
 
 **The forced drop (run 2) recovered:**
 - **Detected.** The path was deleted through the Control API, and the pipeline logged `stream dropped` 18 ms later.
 - **Reopen attempts.** While the path was gone, each reopen failed at once with OpenCV's warning, which names no URL. Attempts fell 1.03 s apart.
 - **Back.** The path was re-added, seeked to where a camera that kept running would be. The stream was back 1.2 s later, after 9.2 s without a frame: 228 frames missed, 13 of them due a look.
 - **After the reconnect.** Every fit of the run, 48 of them, converged at or above 0.9 (none checked, none lost). Every frame decoded clean, and the 4 Bullet Holes matched the file run.
-- **The missed count.** 228 is a wall-clock estimate. The content gap was 194 frames (file frames 456–649), so the estimate is 1.4 s long: the first frame back is timed after FFmpeg's buffering at the reopen, as frame 0 is. Indices after a reconnect are therefore approximate by about that much (#84 counts missed frames at `LIVE_FPS` from the last frame received, by design).
+- **The missed count.** 228 is a wall-clock estimate. The content gap was 194 frames (file frames 456–649), so the estimate is 1.4 s long, and it counts 13 due frames where the gap held 11. The first frame back is timed after FFmpeg's buffering at the reopen, as frame 0 is. Indices after a reconnect are therefore approximate by about that much (#84 counts missed frames at `LIVE_FPS` from the last frame received, by design).
 
 **Measured for #117, frames lost upstream while the baseline is built:**
 - **Instrumented runs.** In runs 1–3, frame 0 to baseline built took 1.6–2.3 s, against the 3–5 s estimated before. The reader fell at most 0.6–1.2 s behind the stream. No frame was lost: `CAP_PROP_POS_MSEC` ran in unbroken 40 ms steps, and run 1 received 1125 frames, exactly file frames 25–1149. MediaMTX logged no discard for those readers.
-- **A slow start loses frames.** One uninstrumented run took 3.99 s to build Board space. MediaMTX then logged `reader is too slow, discarding 507 frames` and `… 399 frames` for the pipeline's session. Those counts are RTP packets, not video frames. The pipeline printed `[h264] error while decoding MB 109 48` right after the baseline.
+- **A slow start loses frames.** One uninstrumented run was slower: 2.8 s from frame 0 to baseline built, and 3.99 s for `[REGISTRATION] Board space built in` (measured from opening the source), against 2.4 s in the instrumented runs. MediaMTX then logged `reader is too slow, discarding 507 frames` and `… 399 frames` for the pipeline's session. Those counts are RTP packets, not video frames. The pipeline printed `[h264] error while decoding MB 109 48` right after the baseline.
 - **A probe.** A probe reader that paused 4 s after its first frame, twice, showed the shape of it. About 2.6 s of stream (at 8 Mbit/s) stayed buffered. Then 71–74 frames (about 3 s) were lost, seen as `POS_MSEC` jumping, for example from 3320 to 6320 ms. After that, 11–12 frames decoded corrupt up to the next IDR.
 - **What it means.** Loss starts once the reader is about 2.6 s behind at 8 Mbit/s. A lower bitrate buffers longer. The arrival rate cannot reveal a loss on a short run, because it reads high (above). MediaMTX's log is the evidence.
-- **The timestamps are usable.** `CAP_PROP_POS_MSEC` was monotonic in 40 ms steps within a session and restarts with each new session (880 ms after run 2's reconnect).
+- **The timestamps are usable.** `CAP_PROP_POS_MSEC` was monotonic in 40 ms steps within an RTSP session and restarts with each new one (880 ms after run 2's reconnect).

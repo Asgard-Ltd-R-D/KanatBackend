@@ -553,18 +553,18 @@ class _Stream:
 
     Known limitation, a follow-up and not #84's: from `open` reading frame 0
     until the baseline is built, nothing reads the stream past the frame in
-    hand, 1.6-2.3 s through MediaMTX on the development Mac (#85). Frames
+    hand, 1.6-2.8 s through MediaMTX on the development Mac (#85). Frames
     lost upstream meanwhile (MediaMTX discarding for a slow reader, whose
     queue VideoService's mediamtx.yml leaves at its default; a full socket
-    buffer) never arrive, so nothing counts or indexes them. Every later index shifts by however
-    many were lost, and with it the stride's phase and every frame-counted
-    window, and the frames read while catching up carry the time they were
-    read, not the time they arrived. #84 recovers a stream that drops or
-    stalls; this stream does neither. The `[LIVE]` arrival rate cannot show
-    it, reading high on a short run anyway; MediaMTX's log can ("reader is
-    too slow, discarding"). Seen in #85 once Board space took 3.99 s. The
-    stream's own timestamps (`cv2.CAP_PROP_POS_MSEC`) could index and time
-    frames instead (#117).
+    buffer) never arrive, so nothing counts or indexes them. Every later
+    index shifts by however many were lost, and with it the stride's phase
+    and every frame-counted window, and the frames read while catching up
+    carry the time they were read, not the time they arrived. #84 recovers
+    a stream that drops or stalls; this stream does neither. The `[LIVE]`
+    arrival rate cannot show it, reading high on a short run anyway;
+    MediaMTX's log can ("reader is too slow, discarding"), and did once in
+    #85 (docs/live_camera.md). The stream's own timestamps
+    (`cv2.CAP_PROP_POS_MSEC`) could index and time frames instead (#117).
     """
 
     def __init__(self, cap, arrived, reopen):

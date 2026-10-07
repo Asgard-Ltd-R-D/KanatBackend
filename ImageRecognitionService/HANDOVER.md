@@ -1260,6 +1260,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `EDGE_GAP_SPANS` | 0.3 | `detection/board.py` | Skips the Target print's border; CamA's panel top falls inside it, so CamA finds no edge |
 | `EDGE_SEARCH_SPANS` | 2.0 | `detection/board.py` | How far out the edge is looked for; `_103223`'s left edge is found at 1.97, the others' not within it |
 | `LIVE_STRIDE` | 17 | `detection/new_bullet_holes.py` | Live stride at 25 fps: ⌈646 ms × 25⌉, the slowest per-frame time on the dev Mac; no true Bullet Hole lost at 9–25 on the spent truth recordings (ADR-0007, #82) |
+| `STREAM_TIMEOUT_MS` | 5000 | `detection/new_bullet_holes.py` | Bounds opening a stream and each read on it, so a silent connection is a drop to recover from (#84). Five keyframe intervals at GOP 25, 25 fps; not tuned on a live stream. A stall fails at 5.1 s against FFmpeg's default 30.0 s (HTTP, spent recording) |
 | `BAND_CONTEXT_PX` | 32 | `detection/new_bullet_holes.py` | Margin-canvas px each exposed-Board band carries for context; one stride-32 cell, not swept (#46) |
 | `GREEN_LO` / `GREEN_HI` | — | `detection/board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `detection/board.py` | May reject distant Targets |

@@ -581,7 +581,7 @@ class _Stream:
         self.stopped = True
 
     def _read(self, stride, baseline_frames):
-        index = 0
+        index, offered = 0, 1   # frame 0, the one `open` read
         try:
             while not self.stopped:
                 began = time.monotonic()
@@ -593,13 +593,18 @@ class _Stream:
                     self._reconnect()
                     continue
                 now = time.time()
-                index += 1 + self._missed(now)
+                index += 1 + self._back_from_drop(now)
                 self.received, self.latest = self.received + 1, now
-                if not _looked_at(index, stride, baseline_frames):
+                # `_looked_at`, but the baseline counted in frames offered, so
+                # that it stays consecutive frames across a drop (#84).
+                if not _looked_at(offered if offered < baseline_frames else index,
+                                  stride, baseline_frames):
                     continue
                 ok, frame = self.cap.retrieve()
                 if not ok:
-                    continue   # grabbed but undecodable: a gap
+                    self._reconnect()
+                    continue
+                offered += 1
                 with self._ready:
                     # Until the loop asks for its first frame past the
                     # baseline, nothing held is replaced: the next due
@@ -628,8 +633,8 @@ class _Stream:
         if not self.stopped:
             self.cap = self._reopen()
 
-    def _missed(self, now):
-        """The frames a drop the stream is now back from missed, else 0."""
+    def _back_from_drop(self, now):
+        """Close the drop the stream is back from, if any; the frames it missed."""
         if not self._down:
             return 0
         self._down = False
@@ -674,9 +679,11 @@ class _Stream:
               f"each of them (ADR-0007)")
         print(f"[LIVE] {self.late} due frame(s) dropped: the loop was too late for them, "
               f"and they are gaps for persistence (#83)")
-        still = (f"; down at the end, no frame since {_clock(self.latest)}" if self._down
-                 else "")
-        print(f"[LIVE] {len(self.drops)} drop(s), {down:.1f} s down in all, "
+        drops, still = len(self.drops), ""
+        if self._down:
+            drops, down = drops + 1, down + time.time() - self.latest
+            still = f"; the last still down at the end, no frame since {_clock(self.latest)}"
+        print(f"[LIVE] {drops} drop(s), {down:.1f} s down in all, "
               f"{sum(missed for _, missed in self.drops)} frame(s) missed{still} (#84)")
 
 
@@ -693,7 +700,7 @@ def _next_view(cap, last, reanchor_on=None):
     Returns `(frame, view, correlation)`. `view` is None when the Board was not
     found or ECC failed — no evidence from that frame, either way — and `frame`
     is None when the read itself failed, which is the end of what the file holds,
-    or on a stream a stop (#83): a stream recovers from a drop (#84).
+    or on a stream a stop (#83), since a stream recovers from a drop (#84).
 
     `reanchor_on` is the Target artwork's mask when this frame is to be
     re-anchored (`board.reanchor_view`, #80) rather than tracked from `last`.
@@ -924,10 +931,11 @@ class RegisteredFrames:
         every frame passed, looked at or not.
 
         On a stream (#83) the `_Stream`'s thread skips the gaps, and drops the
-        due frames the loop is too late for, and the frames a drop missed (#84),
-        so indices jump past those too and `processed` is one past the last
-        frame looked at. A stream has no end but a stop: SIGINT or SIGTERM ends iteration after the look in hand,
-        and callers report as at any end.
+        due frames the loop is too late for, and the frames a drop missed
+        (#84), so indices jump past those too and `processed` is one past the
+        last frame looked at. A stream has no end but a stop: SIGINT or
+        SIGTERM ends iteration after the look in hand, and callers report as
+        at any end.
         """
         live = self.live
         if live:
@@ -1112,11 +1120,13 @@ LIVE_FPS = 25
 # How long opening a stream, or a read on it, may take before it fails (#84):
 # a connection that stays open but delivers no frame is then a drop, recovered
 # from like any other. Through VideoService's multicast ingest a silent camera
-# need not close the RTSP session. Five frame intervals' worth of keyframes
-# (GOP 25 at 25 fps, #85) and network slack; not tuned on a live stream.
+# need not close the RTSP session. Five keyframe intervals (GOP 25 at 25 fps,
+# #85), with network slack; not tuned on a live stream.
 STREAM_TIMEOUT_MS = 5000   # PROVISIONAL
 
-# How often a dropped stream is reopened, for as long as the run goes on (#84).
+# The wait before each reopen of a dropped stream, for as long as the run goes
+# on (#84). An attempt that opens a silent stream, or cannot reach the host,
+# fails only after STREAM_TIMEOUT_MS on top, so attempts then fall ~6 s apart.
 RECONNECT_EVERY_S = 1.0
 
 

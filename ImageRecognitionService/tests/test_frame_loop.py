@@ -868,10 +868,26 @@ def test_a_read_cut_short_by_the_timeout_is_a_drop_from_the_frame_before_it(
     assert loop.calls[10][1] == 1   # the reopened stream's first, not the stalled one
 
 
-def test_a_live_run_without_a_drop_reports_none(monkeypatch, capsys):
+def test_a_drop_during_the_baseline_leaves_it_consecutive_frames(monkeypatch):
+    """Indices jump past the drop, but the baseline is still its first frames
+    in a row, not frames a stride apart from the end of the drop (#84)."""
+    loop = _live(monkeypatch, _FakeStream(n=2, interval=0.002),
+                 lambda: _FakeStream(interval=0.002))
+    monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
+    indices = [l.index for l in loop.looks(60, stride=3, baseline_frames=5)]
+    (_, missed), = loop.cap.drops
+    back = 3 + missed
+    assert missed >= 1 and indices[:5] == [0, 1, 2, back, back + 1]
+    assert all(i % 3 == 0 for i in indices[5:])
+
+
+def test_a_drop_still_open_when_the_run_stops_is_in_the_totals(monkeypatch, capsys):
+    """Down for good after 20 frames: its first reopen stops the run (#84)."""
     loop = _live(monkeypatch, _FakeStream(n=20, interval=0.001))
     list(loop.looks(math.inf, stride=1, baseline_frames=5))
-    assert "[LIVE] 0 drop(s)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert re.search(r"\[LIVE\] 1 drop\(s\), [\d.]+ s down in all, 0 frame\(s\) missed; "
+                     r"the last still down at the end", out)
 
 
 def test_a_stream_is_opened_with_a_bounded_read_timeout(monkeypatch):

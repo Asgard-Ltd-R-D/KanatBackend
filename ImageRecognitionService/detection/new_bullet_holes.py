@@ -564,10 +564,10 @@ class _Stream:
     timestamp is not later than the one before is untrusted: placed one past
     it, counted, and the frames after it indexed from it, as from an RTSP
     session's first. So a backend with no timestamps counts frames as read,
-    and the report says so. The `[LIVE]` rate is the timestamps' too. They
-    index at `LIVE_FPS`, so on a stream short of it the frame intervals it
-    skips are gaps upstream too, and persistence and the stride count stream
-    time, not frames (ADR-0007).
+    and the report warns so and gives the wall-clock arrival rate instead of
+    the timestamps' (#83). Indices are counted at `LIVE_FPS`, the configured
+    25 fps, for gap accounting (ADR-0007): a stream at another rate is
+    unsupported, and its windows would count stream time, not frames.
 
     Still not counted or corrected: a discard smaller than a frame leaves no
     gap in the timestamps, only a frame that decodes corrupt (25 RTP packets
@@ -581,7 +581,7 @@ class _Stream:
     def __init__(self, cap, arrived, reopen):
         self.cap, self.index, self._reopen = cap, 0, reopen
         self.times = {0: arrived}
-        self.latest = arrived
+        self.received, self.first, self.latest = 1, arrived, arrived
         self.late, self.stopped = 0, False
         self.drops, self._down = [], False   # (seconds, frames missed) each
         self.unseen = []   # due frames a drop or an upstream gap missed, in order
@@ -639,7 +639,7 @@ class _Stream:
                     self._back_from_drop(now, gap, stride, baseline_frames)
                 elif gap:
                     self._lost_upstream(at, gap, stride, baseline_frames)
-                index, self.latest = placed, now
+                index, self.received, self.latest = placed, self.received + 1, now
                 if frame is None:
                     continue
                 offered += 1
@@ -748,18 +748,31 @@ class _Stream:
         self.cap.release()
 
     def report(self, fps):
-        # The commonest step is the camera's rate; frames received over the
-        # stream time they span fall short of it by any lost (#117).
-        rate = "no rate: they never advanced, so frames were counted as read"
-        if self._steps:
-            rate = (f"frames step at {self._steps.most_common(1)[0][0]:.2f} fps, and were "
-                    f"received at {self._steps.total() / self._spanned:.2f} fps over "
-                    f"{self._spanned:.1f} s of stream")
-        print(f"[LIVE] configured {fps:g} fps; by the stream's timestamps, {rate}. "
-              f"Frames are indexed at {fps:g} fps by them, so on a stream short of it the "
-              f"frame intervals it skips are gaps upstream, and persistence and the stride "
-              f"count stream time (ADR-0007, #117)")
         down = sum(seconds for seconds, _ in self.drops)
+        if self._steps:
+            # The commonest step is the camera's rate; frames received over the
+            # stream time they span fall short of it by any lost (#117).
+            rate = (f"by the stream's timestamps, frames step at "
+                    f"{self._steps.most_common(1)[0][0]:.2f} fps, and were received at "
+                    f"{self._steps.total() / self._spanned:.2f} fps over {self._spanned:.1f} s "
+                    f"of stream. Frames are indexed from them at the configured {fps:g} fps "
+                    f"(ADR-0007, #117): a stream at another rate is unsupported, and its "
+                    f"windows would count stream time, not frames")
+        else:
+            if self.untimed:
+                print("[WARN] the stream's timestamps never advanced: no timestamp-based "
+                      "indexing. Frames were counted and timed as read, so frames lost "
+                      "upstream were neither counted nor indexed, and the rate is the wall "
+                      "clock's, high by FFmpeg's ~1.2 s of buffering at open (#117, #85)")
+            # Time the stream was down is no time for frames to arrive in.
+            elapsed = self.latest - self.first - down
+            arrived = (f"{(self.received - 1) / elapsed:.2f} fps" if elapsed > 0
+                       else "a rate not measured")
+            rate = (f"frames arrived at {arrived} by the wall clock, over {self.received} "
+                    f"frame(s) in {elapsed:.1f} s up. Persistence, the baseline and the stride "
+                    f"count frames, so a stream short of {fps:g} fps stretches each of them "
+                    f"(ADR-0007)")
+        print(f"[LIVE] configured {fps:g} fps; {rate}")
         # Frame 0 is looked at too, read by `open` rather than taken here.
         print(f"[LIVE] {self._taken + 1} frame(s) looked at; {self.late} due frame(s) "
               f"dropped: the loop was too late for them, and they are gaps for "

@@ -1025,21 +1025,26 @@ def test_a_gap_upstream_is_logged_when_found_and_in_the_totals(monkeypatch, caps
 _REPEATED = lambda at: (at - (at >= 10)) * 40
 
 
-@pytest.mark.parametrize("ms, untimed, rate", [
-    (_REPEATED, 1, "frames step at 25.00 fps"),
-    (lambda at: 0.0, 30,   # a backend with no timestamps at all
-     "no rate: they never advanced, so frames were counted as read"),
+@pytest.mark.parametrize("ms, untimed, rate, warned", [
+    (_REPEATED, 1, r"by the stream's timestamps, frames step at 25\.00 fps", False),
+    # A backend with no timestamps at all: the wall-clock arrival rate, as
+    # before #117.
+    (lambda at: 0.0, 30, r"frames arrived at [\d.]+ fps by the wall clock, over 31 "
+                         r"frame\(s\)", True),
 ])
 def test_a_timestamp_not_later_than_the_one_before_is_placed_one_past_it(
-        monkeypatch, capsys, ms, untimed, rate):
+        monkeypatch, capsys, ms, untimed, rate, warned):
     """And counted: with no usable timestamps at all, frames are counted as
-    they were before #117, and the report says so."""
+    they were before #117, and the report warns so and measures the rate
+    frames arrived at instead (#83)."""
     loop = _live(monkeypatch, _FakeStream(n=30, interval=0.002, ms=ms))
     assert [l.index for l in loop.looks(31, stride=1, baseline_frames=31)] == list(range(31))
     out = capsys.readouterr().out
     assert re.search(rf"\[LIVE\] 0 gap\(s\) upstream, 0 frame\(s\) lost, 0 of them due a "
                      rf"look; {untimed} frame\(s\) untimed", out)
-    assert f"[LIVE] configured 25 fps; by the stream's timestamps, {rate}" in out
+    assert re.search(rf"\[LIVE\] configured 25 fps; {rate}", out)
+    assert warned == ("[WARN] the stream's timestamps never advanced: no timestamp-based "
+                      "indexing" in out)
 
 
 def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch):

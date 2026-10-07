@@ -682,8 +682,9 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # Frames are indexed and timed by the stream's timestamps (#117): frames lost
 # upstream are gaps (the due ones count against persistence's floor), each
 # logged when found. [LIVE] gives configured fps vs the timestamps' step and
-# the rate frames were received at over the stream time they span, the frames
-# looked at, the due frames dropped late and the gaps upstream. A failed read, or
+# the rate frames were received at over the stream time they span (with no
+# usable timestamps, a [WARN] and the wall-clock arrival rate instead), the
+# frames looked at, the due frames dropped late and the gaps upstream. A failed read, or
 # one stalled past STREAM_TIMEOUT_MS, is a drop (#84): reopened
 # until back, its missed frames gaps (the due ones count against persistence's
 # floor, so a drop cannot confirm on one look), each drop and the totals logged.
@@ -706,7 +707,10 @@ Two known limitations of the live run, neither closed by #83:
   (`CAP_PROP_POS_MSEC`) within an RTSP session, so a lost frame is a gap,
   logged when found (`[LIVE] N frame(s) lost upstream`), its due frames
   counted against persistence's floor, and the totals reported. Frame times
-  and the `[LIVE]` rate come from the timestamps too. Still not handled: a
+  and the `[LIVE]` rate come from the timestamps too; a stream without usable
+  timestamps is counted as read, with a `[WARN]` and the wall-clock arrival
+  rate. Indices are counted at the configured 25 fps (ADR-0007): another
+  frame rate is unsupported. Still not handled: a
   discard smaller than a frame leaves no gap in the timestamps, only a frame
   that decodes corrupt; frames after a gap decode corrupt up to the next
   keyframe, and are looked at all the same; and every time runs about 1.2 s

@@ -490,7 +490,9 @@ def _redacted(source):
 def _gate(source, final_run, model):
     """The manifest entry for a recording, refused unless it may be looked at
     (ADR-0005). A stream is no recording the manifest knows: it is not gated,
-    and has no entry (#83)."""
+    and has no entry (#83). So nothing here stops a Sealed recording published
+    over RTSP: "never stream a Sealed recording" is #85's acceptance rule, kept
+    by hand."""
     if _is_stream(source):
         return None
     return manifest.gate(source, final_run, model, "new_bullet_holes.py")
@@ -511,6 +513,19 @@ class _Stream:
     `read` answers as `cv2.VideoCapture.read` does, and `index` is then that
     frame's position in the stream. Frame 0 is the one `open` read and built
     Board space from, `arrived` the wall clock each frame looked at came in at.
+
+    Known limitation, a follow-up and not #84's: from `open` reading frame 0
+    until the baseline is built, nothing reads the stream past the frame in
+    hand, about 3-5 s on the development Mac. Frames lost upstream meanwhile
+    (MediaMTX discarding for a slow reader, whose queue VideoService's
+    mediamtx.yml leaves at its default; a full socket buffer) never arrive,
+    so nothing counts or indexes them. Every later index shifts by however
+    many were lost, and with it the stride's phase and every frame-counted
+    window, and the frames read while catching up carry the time they were
+    read, not the time they arrived. #84 recovers a stream that drops or
+    stalls; this stream never does either. Only a slightly low arrival rate
+    in the `[LIVE]` line hints at it. The stream's own timestamps
+    (`cv2.CAP_PROP_POS_MSEC`) could index and time frames instead.
     """
 
     def __init__(self, cap, arrived):

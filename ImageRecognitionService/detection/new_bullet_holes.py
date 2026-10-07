@@ -561,8 +561,8 @@ class _Stream:
     and every frame-counted window, and the frames read while catching up
     carry the time they were read, not the time they arrived. #84 recovers
     a stream that drops or stalls; this stream does neither. The `[LIVE]`
-    arrival rate cannot show it, reading high on a short run anyway;
-    MediaMTX's log can ("reader is too slow, discarding"), and did once in
+    arrival rate hides a small loss, reading high on a short run anyway;
+    MediaMTX's log shows any ("reader is too slow, discarding"), and did in
     #85 (docs/live_camera.md). The stream's own timestamps
     (`cv2.CAP_PROP_POS_MSEC`) could index and time frames instead (#117).
     """

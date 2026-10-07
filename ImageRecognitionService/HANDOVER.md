@@ -705,8 +705,8 @@ Two known limitations of the live run, neither closed by #83:
   drop nor indexed. Every later index shifts by the number lost, and with it
   the stride's phase and every frame-counted window. Frames read while
   catching up carry the time they were read, not the time they arrived. The
-  `[LIVE]` arrival rate cannot show it, reading high on a short run anyway;
-  MediaMTX's log can (`reader is too slow, discarding`). This is not the
+  `[LIVE]` arrival rate hides a small loss, reading high on a short run
+  anyway; MediaMTX's log shows any (`reader is too slow, discarding`). This is not the
   stream drop #84 handles, and #84 does not fix it: the stream neither drops
   nor stalls. #85 saw it happen once; the measurements are in
   [`live_camera.md`](docs/live_camera.md), the fix is #117.

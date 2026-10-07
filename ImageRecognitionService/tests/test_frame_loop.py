@@ -1024,6 +1024,7 @@ def test_a_gap_upstream_is_logged_when_found_and_in_the_totals(monkeypatch, caps
 # frame behind.
 _REPEATED = lambda at: (at - (at >= 10)) * 40
 _STEPS = r"by the stream's timestamps, frames step at 25\.00 fps"
+_WALL_CLOCK = r"frames arrived at [\d.]+ fps by the wall clock, over 31 frame\(s\)"
 
 
 @pytest.mark.parametrize("ms, untimed, rate, warned", [
@@ -1035,22 +1036,24 @@ _STEPS = r"by the stream's timestamps, frames step at 25\.00 fps"
     (lambda at: 0.0 if at < 5 else 5e6 + at * 40, 4, _STEPS, False),
     # A backend with no timestamps at all: the wall-clock arrival rate, as
     # before #117.
-    (lambda at: 0.0, 30, r"frames arrived at [\d.]+ fps by the wall clock, over 31 "
-                         r"frame\(s\)", True),
+    (lambda at: 0.0, 30, _WALL_CLOCK, True),
+    # Advancing for 5 frames, then frozen for 25: not the 5's rate, measured
+    # (Codex on #121).
+    (lambda at: min(at, 5) * 40, 25, _WALL_CLOCK, True),
 ])
 def test_a_timestamp_not_later_than_the_one_before_is_placed_one_past_it(
         monkeypatch, capsys, ms, untimed, rate, warned):
-    """And counted: with no usable timestamps at all, frames are counted as
-    they were before #117, and the report warns so and measures the rate
-    frames arrived at instead (#83)."""
+    """And counted: with no usable timestamps for most frames, frames are
+    counted as they were before #117, and the report warns so and measures
+    the rate frames arrived at instead (#83)."""
     loop = _live(monkeypatch, _FakeStream(n=30, interval=0.002, ms=ms))
     assert [l.index for l in loop.looks(31, stride=1, baseline_frames=31)] == list(range(31))
     out = capsys.readouterr().out
     assert re.search(rf"\[LIVE\] 0 gap\(s\) upstream, 0 frame\(s\) lost, 0 of them due a "
                      rf"look; {untimed} frame\(s\) untimed", out)
     assert re.search(rf"\[LIVE\] configured 25 fps; {rate}", out)
-    assert warned == ("[WARN] the stream's timestamps never advanced: no timestamp-based "
-                      "indexing" in out)
+    assert warned == (f"[WARN] the stream's timestamps did not advance for most frames: "
+                      f"{untimed} of 31 untimed" in out)
 
 
 def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(monkeypatch):

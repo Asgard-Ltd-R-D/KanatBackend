@@ -13,7 +13,7 @@ targets captured during it.
 _Avoid_: session, run
 
 **Shot Distance**:
-The distance from a hit to its target's centre, in centimetres.
+The distance from a Bullet Hole to its Target's centre, in millimetres.
 _Avoid_: range, mean range
 
 ### Vision
@@ -47,6 +47,29 @@ _Avoid_: hit, sighting, hole
 A Bullet Hole on a Board that falls outside every Target on it. A real Hit, and
 counted as one, but carrying no Shot Distance and no score.
 _Avoid_: stray, off-target hit
+
+**Group**:
+The new Bullet Holes on one Target during one Range, after the operator's
+corrections. Bullet Holes that were already on the Board when the Range
+started, and Misses, belong to no Group. Since a Group counts Bullet Holes,
+not Hits, a tight Group can be under-counted (ADR-0001); its MPI, CEP and
+Extreme Spread carry the same caveat, with no fixed direction of error.
+_Avoid_: grouping, cluster, string
+
+**MPI** (Mean Point of Impact):
+The mean position of a Group's Bullet Holes, as an offset from the Target's
+centre in millimetres.
+_Avoid_: centroid, group centre
+
+**CEP** (Circular Error Probable):
+The radius of the circle around the MPI that contains half the Group's Bullet
+Holes. Where another dispersion measure is meant, it is named: Mean Radius
+(the mean distance from the MPI) or RMS radius.
+_Avoid_: dispersion, spread radius
+
+**Extreme Spread**:
+The largest centre-to-centre distance between any two Bullet Holes of a Group.
+_Avoid_: group size, max spread
 
 **Capture Profile**:
 A named, reusable set of detection settings tied to one physical setup —

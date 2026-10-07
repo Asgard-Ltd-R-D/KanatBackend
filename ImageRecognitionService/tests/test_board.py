@@ -1,9 +1,11 @@
 """Checks for Board geometry. No model, no video, no torch."""
+
 import cv2
 import numpy as np
 import pytest
 
 from detection import board
+from tools import ring_landmarks
 
 
 def _square(x0, y0, side):
@@ -87,14 +89,40 @@ def test_board_with_no_targets_assigns_nothing():
 
 # --- calibration is blocked, and says so ------------------------------------
 
-def test_millimetres_refuses_to_guess_the_ring_diameter():
+def test_millimetres_refuses_to_guess_the_print_scale():
     """Everything downstream scales linearly with it, so it must not default."""
-    with pytest.raises(board.NotCalibrated, match="has not been measured"):
+    with pytest.raises(board.NotCalibrated, match="no print scale"):
         board.to_millimetres([[0, 0]], _view([]))
 
 
+def test_a_configured_print_scale_is_read_for_its_capture_setup(tmp_path):
+    path = tmp_path / "print_scale.json"
+    path.write_text('{"camb": {"mm_per_tpl_px": 0.1763, "source": "#62 fresh print"}}')
+    assert board.print_scales(path) == {"camb": 0.1763}
+
+
+def test_a_print_scale_without_a_source_is_refused(tmp_path):
+    path = tmp_path / "print_scale.json"
+    path.write_text('{"camb": {"mm_per_tpl_px": 0.1763}}')
+    with pytest.raises(ValueError, match="no source"):
+        board.print_scales(path)
+
+
+@pytest.mark.parametrize("bad", ["0", "-0.1763", '"nan"', '"inf"'])
+def test_a_print_scale_that_is_not_a_length_is_refused(tmp_path, bad):
+    """Zero puts every Bullet Hole on the centre, a negative mirrors them."""
+    path = tmp_path / "print_scale.json"
+    path.write_text(f'{{"camb": {{"mm_per_tpl_px": {bad}, "source": "typo"}}}}')
+    with pytest.raises(ValueError, match="not a finite length"):
+        board.print_scales(path)
+
+
+def test_every_shipped_print_scale_is_valid():
+    board.print_scales()
+
+
 def test_scoring_needs_no_calibration():
-    """A score is a ratio inside one picture, so the missing ruler cannot block it."""
+    """A score is a ratio inside one picture, so the missing print scale cannot block it."""
     view = _view([_square(0, 0, 100)])
     centre = view.ring_centre(0)
     assert board.score([centre], view, 0) == [10]
@@ -105,6 +133,19 @@ def test_each_ring_scores_its_own_value():
     centre = view.ring_centre(0)
     just_inside = [centre + [r - 1, 0] for r in board.RING_RADII_TPL]
     assert board.score(just_inside, view, 0) == list(board.RING_SCORES)
+
+
+def test_just_outside_the_white_disk_scores_9():
+    """112.5 px is past the disk's 111.5 edge; the old 113.5 boundary scored it 10 (#70)."""
+    view = _view([_square(0, 0, 100)])
+    assert board.score([view.ring_centre(0) + [112.5, 0]], view, 0) == [9]
+
+
+def test_ring_landmarks_match_the_artwork():
+    """The constants are readings off the PNG; re-reading it must agree."""
+    edge, line_radii = ring_landmarks.measure()
+    assert 2 * edge == pytest.approx(board.RING_DIAMETER_TPL, abs=0.1)
+    assert line_radii == pytest.approx(board.RING_RADII_TPL[1:], abs=0.1)
 
 
 def test_beyond_the_outer_ring_scores_outside():
@@ -121,12 +162,12 @@ def test_score_is_unaffected_by_board_scale():
         assert board.score([point], view, 0) == [8]
 
 
-def test_millimetres_work_once_the_ring_is_measured():
-    """A Bullet Hole one ring-radius right of centre is half a diameter right."""
+def test_millimetres_work_once_the_print_scale_is_configured():
+    """100 template px right of centre, at 0.2 mm per template px, is 20 mm right."""
     view = _view([], scale=1.0)
     centre = board.RING_CENTRE_TPL
-    offset = centre + np.array([board.RING_DIAMETER_TPL / 2, 0])
-    mm = board.to_millimetres([centre, offset], view, ring_diameter_mm=40.0)
+    offset = centre + np.array([100.0, 0])
+    mm = board.to_millimetres([centre, offset], view, mm_per_tpl_px=0.2)
     assert mm[0] == pytest.approx([0.0, 0.0])
     assert mm[1] == pytest.approx([20.0, 0.0])
 
@@ -134,9 +175,9 @@ def test_millimetres_work_once_the_ring_is_measured():
 def test_millimetres_are_independent_of_board_scale():
     """Rectifying larger must not change a physical measurement."""
     centre = board.RING_CENTRE_TPL
-    offset = centre + np.array([board.RING_DIAMETER_TPL / 2, 0])
-    at_one = board.to_millimetres([offset], _view([], scale=1.0), ring_diameter_mm=40.0)
-    at_three = board.to_millimetres([offset * 3], _view([], scale=3.0), ring_diameter_mm=40.0)
+    offset = centre + np.array([100.0, 0])
+    at_one = board.to_millimetres([offset], _view([], scale=1.0), mm_per_tpl_px=0.2)
+    at_three = board.to_millimetres([offset * 3], _view([], scale=3.0), mm_per_tpl_px=0.2)
     # abs, not relative: one component is zero, and float32 leaves ~1e-5 mm of
     # noise there. A micron is five thousand times under SOW 2.3.2's budget.
     assert at_one[0] == pytest.approx(at_three[0], abs=1e-3)
@@ -145,8 +186,8 @@ def test_millimetres_are_independent_of_board_scale():
 def test_physical_y_grows_upward():
     """Image y grows down; a Bullet Hole above centre must read positive."""
     view = _view([])
-    above = board.RING_CENTRE_TPL - np.array([0, board.RING_DIAMETER_TPL / 2])
-    assert board.to_millimetres([above], view, ring_diameter_mm=40.0)[0][1] == pytest.approx(20.0)
+    above = board.RING_CENTRE_TPL - np.array([0, 100.0])
+    assert board.to_millimetres([above], view, mm_per_tpl_px=0.2)[0][1] == pytest.approx(20.0)
 
 
 def test_each_target_has_its_own_ring_centre():
@@ -164,8 +205,8 @@ def test_same_bullet_hole_measures_differently_against_different_targets():
     """The Target index is load-bearing, not cosmetic."""
     view = _view([_square(0, 0, 100), _square(500, 500, 100)])
     point = [[60.0, 60.0]]
-    on_first = board.to_millimetres(point, view, ring_diameter_mm=40.0, target_index=0)
-    on_second = board.to_millimetres(point, view, ring_diameter_mm=40.0, target_index=1)
+    on_first = board.to_millimetres(point, view, mm_per_tpl_px=0.18, target_index=0)
+    on_second = board.to_millimetres(point, view, mm_per_tpl_px=0.18, target_index=1)
     assert np.linalg.norm(on_first[0] - on_second[0]) > 50  # mm
 
 
@@ -307,6 +348,59 @@ def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
     second, _ = board.track_view(colour(_scene((5.0, -3.0))), first)
     assert board._apply(second.H, [[80, 90]])[0] == pytest.approx([105, 97], abs=0.4)
     assert second.anchor is anchor and second.targets is reference.targets
+
+
+def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypatch):
+    """#80: the silhouette fit is only the seed; texture ECC against the baseline
+    frame moves it onto the Board, and Board space, the Targets and the anchor
+    are the reference's."""
+    target = _square(80, 60, 40)
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([target], None))
+    H0 = np.float32([[1, 0, -600], [0, 1, -560], [0, 0, 1]])   # ring at (95, 79)
+    monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
+                        (H0 + np.float32([[0, 0, 10], [0, 0, -5], [0, 0, 0]]), 0.9))
+    anchor = board.Anchor(_scene() / 255, np.full((240, 320), 255, np.uint8), H0)
+    reference = board.BoardView(H0, board._as_matrix(2.0), (300, 300), [target], anchor)
+    colour = lambda img: cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+    view, _ = board.reanchor_view(colour(_scene((12.0, -7.0))), None, reference)
+    assert board._apply(view.H, [[700, 650]])[0] == pytest.approx([112, 83], abs=0.4)
+    assert view.anchor is anchor and view.targets is reference.targets
+    assert view.tpl_to_board is reference.tpl_to_board
+    assert view.canvas_size == reference.canvas_size
+
+
+def _seeded_fits(monkeypatch, correlations):
+    """Contour i seeds a fit converging at `correlations[i]`; None fails to converge."""
+    contours = [_square(100 * i, 0, 40) for i in range(len(correlations))]
+    monkeypatch.setattr(board, "find_targets", lambda frame: (contours, None))
+    monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
+                        (contour, 0.9))
+    def track_view(frame, reference, seed):
+        corr = correlations[[c is seed for c in contours].index(True)]
+        if corr is None:
+            raise cv2.error("did not converge")
+        return seed, corr
+    monkeypatch.setattr(board, "track_view", track_view)
+    return contours
+
+
+def test_re_anchoring_keeps_the_seed_the_board_texture_agrees_with(monkeypatch):
+    """The Targets share one artwork: whichever is nearest or largest, the fit
+    that matches the baseline frame's texture best is the right one (#80)."""
+    contours = _seeded_fits(monkeypatch, [0.55, None, 0.99, 0.20])
+    assert board.reanchor_view(None, None, None) == (contours[2], 0.99)
+
+
+def test_re_anchoring_refuses_a_best_fit_below_the_floor(monkeypatch):
+    """Only neighbours in view: the best fit is one Target over, not a re-anchor."""
+    _seeded_fits(monkeypatch, [0.55, 0.20])
+    assert board.reanchor_view(None, None, None) == (None, None)
+
+
+def test_re_anchoring_with_no_target_in_view_finds_nothing(monkeypatch):
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([], None))
+    assert board.reanchor_view(None, None, _view([])) == (None, None)
 
 
 def _tracked(monkeypatch, reference, seen):
@@ -480,3 +574,28 @@ def test_the_inner_rectification_is_the_margin_canvas_warp_itself():
                            inner=board.Inner(inner_T, (120, 90), (11, 5)))
     alone = board.BoardView(H, inner_T, (120, 90), [])
     assert np.array_equal(view.rectify_inner(frame), alone.rectify(frame))
+
+
+# --- gross-failure check on a converged fit (#110) ---------------------------
+
+def test_silhouette_disagreement_is_the_reference_target_centres_offset(monkeypatch):
+    """An independent silhouette fit 10 frame px right of the tracked one puts
+    the reference Target's centre 20 Board px off at board scale 2 (#110)."""
+    target = _square(100, 100, 40)
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([target], None))
+    shifted = np.float32([[1, 0, 10], [0, 1, 0], [0, 0, 1]])
+    monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
+                        (shifted, 0.9))
+    view = _view([_square(10, 10, 40)], scale=2.0)
+    assert board.silhouette_disagreement(None, None, view) == pytest.approx(20.0)
+
+
+def test_silhouette_disagreement_is_unknown_without_a_silhouette_fit(monkeypatch):
+    """A fit that does not converge, or no Target to fit, is no verdict."""
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([_square(0, 0, 40)], None))
+    def fails(*args):
+        raise cv2.error("did not converge")
+    monkeypatch.setattr(board, "register", fails)
+    assert board.silhouette_disagreement(None, None, _view([_square(0, 0, 40)])) is None
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([], None))
+    assert board.silhouette_disagreement(None, None, _view([_square(0, 0, 40)])) is None

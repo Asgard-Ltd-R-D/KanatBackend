@@ -5,6 +5,7 @@ What is testable without a video file is the bookkeeping the probe depends on:
 which frames got a look, and which only appeared to.
 """
 import itertools
+import sys
 import types
 
 import numpy as np
@@ -18,12 +19,21 @@ class _FakeView:
     canvas_size = (64, 64)
     match_radius = 3.0
     grew = False
+    targets = [None]
+    board_scale = 1.0
+    inner = types.SimpleNamespace(offset=(0, 0), size=(64, 64))
 
     def rectify(self, frame):
         return frame
 
     def exposed_bands(self, context):
         return []
+
+    def in_inner(self, points):
+        return np.ones(len(points), bool)
+
+    def assign(self, pos):
+        return None   # every Bullet Hole is a Miss: no Target geometry here
 
 
 class _GrownView(_FakeView):
@@ -47,18 +57,33 @@ class _GrownView(_FakeView):
 
 
 class _FakeCap:
-    """A file holding `n` frames after the one Board space was built from."""
+    """A file holding `n` frames after the one Board space was built from.
+    Each frame's pixels are its index in the clip, so a fake can tell which
+    frame it was handed; `grabbed` is the indices skipped without decoding."""
     def __init__(self, n):
-        self.left, self.released = n, False
+        self.n, self.at, self.released, self.grabbed = n, 0, False, []
+
+    def grab(self):
+        if self.at >= self.n:
+            return False
+        self.at += 1
+        self.grabbed.append(self.at)
+        return True
 
     def read(self):
-        if self.left <= 0:
+        if self.at >= self.n:
             return False, None
-        self.left -= 1
-        return True, np.zeros((8, 8, 3), np.uint8)
+        self.at += 1
+        return True, np.full((8, 8, 3), self.at, np.int64)
 
     def release(self):
         self.released = True
+
+    def get(self, prop):
+        return 25.0
+
+    def set(self, prop, value):
+        pass
 
 
 class _FakeModel:
@@ -70,11 +95,36 @@ class _FakeModel:
         return [types.SimpleNamespace(boxes=[box])]
 
 
-def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0):
-    """A loop over `frames` frames; `registers(index)` says which ones register,
-    and `below(index)` how far that frame's view runs past the canvas bottom,
-    in Board px against a 100 px Target span — None for an unmeasurable view."""
-    seen = iter(range(1, frames + 1))
+def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0,
+          reanchors=lambda i: False, correlation=lambda i: 0.9,
+          disagreement=lambda i: 0.0):
+    """A loop over `frames` frames; `registers(index)` says which ones register
+    when tracked, `reanchors(index)` which when re-anchored (#80), and
+    `below(index)` how far that frame's view runs past the canvas bottom,
+    in Board px against a 100 px Target span — None for an unmeasurable view.
+    A fit converges at `correlation(index)`, and an independent silhouette fit
+    disagrees with it by `disagreement(index)` Board px (#110).
+
+    `loop.calls` records `(how, index, last)` for each frame read, where `how`
+    is "track" or "reanchor" and `last` is the view it was handed;
+    `loop.silhouetted` the indices whose fit was checked against the silhouette."""
+    calls, checked = [], []
+    def fit(how, succeeds):
+        def call(frame, *args):
+            index, last = int(frame[0, 0, 0]), args[-1]
+            calls.append((how, index, last))
+            if not succeeds(index):
+                return None, None
+            view = _FakeView()
+            view.index = index
+            # A re-anchor only ever returns a fit at or above its floor.
+            floor = nbh.board.REANCHOR_MIN_CORRELATION if how == "reanchor" else 0.0
+            return view, max(floor, correlation(index))
+        return call
+    def silhouette(frame, template_mask, view):
+        checked.append(view.index)
+        return disagreement(view.index)
+    monkeypatch.setattr(nbh.board, "silhouette_disagreement", silhouette)
     measured = itertools.count()   # the baseline in __init__, then each look
     edges = dict.fromkeys(("left", "right", "above"), 0.0)
     def uncovered(view, size):
@@ -82,12 +132,13 @@ def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0):
         return None if reach is None else (0.0, {**edges, "below": reach})
     monkeypatch.setattr(nbh.board, "uncovered_view", uncovered)
     monkeypatch.setattr(nbh.board, "target_span", lambda view: 100.0)
-    monkeypatch.setattr(nbh.board, "track_view",
-                        lambda frame, last: (
-                            _FakeView() if registers(next(seen)) else None, 0.9))
-    return nbh.RegisteredFrames(_FakeCap(frames), _FakeModel(), _FakeView(),
+    monkeypatch.setattr(nbh.board, "track_view", fit("track", registers))
+    monkeypatch.setattr(nbh.board, "reanchor_view", fit("reanchor", reanchors))
+    loop = nbh.RegisteredFrames(_FakeCap(frames), _FakeModel(), _FakeView(),
                                 np.zeros((8, 8, 3), np.uint8), imgsz=64, conf=0.02,
-                                fps=25.0, start=10.0)
+                                fps=25.0, start=10.0, template_mask=np.zeros((8, 8), np.uint8))
+    loop.calls, loop.silhouetted = calls, checked
+    return loop
 
 
 def test_a_lost_frame_is_not_a_frame_that_saw_nothing(monkeypatch):
@@ -233,3 +284,330 @@ def test_a_grown_canvas_is_searched_as_the_margin_canvas_plus_its_bands(monkeypa
     assert model.calls == [((64, 64), 1, 64), ((48, 64), 7, 64)]
     assert look.detections[:, :2].tolist() == [[15.0, 15.0], [30.0, 72.0]]
     assert look.inner.shape == (64, 64, 3) and look.canvas.shape == (80, 64, 3)
+
+
+def test_opening_reports_how_long_building_board_space_took(monkeypatch, capsys):
+    """Wall time from opening the source to Board space built, printed once (#79).
+    The value is the machine's, so only that it is reported is checked."""
+    monkeypatch.setitem(sys.modules, "ultralytics",
+                        types.SimpleNamespace(YOLO=lambda path: _FakeModel()))
+    monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _FakeCap(1))
+    monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
+    monkeypatch.setattr(nbh.board, "template_contour", lambda mask: None)
+    monkeypatch.setattr(nbh.board, "contour_span", lambda contour: 100.0)
+    monkeypatch.setattr(nbh.board, "net_scale", lambda *args: 1.0)
+    monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask: (_FakeView(), 0.95))
+    monkeypatch.setattr(nbh.board, "uncovered_view",
+                        lambda view, size: (0.0, dict.fromkeys(
+                            ("left", "right", "above", "below"), 0.0)))
+    nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt")
+    assert capsys.readouterr().out.count("[REGISTRATION] Board space built in ") == 1
+
+
+# --- re-anchoring after the Board is lost (#80) ------------------------------
+
+N = nbh.REANCHOR_AFTER_LOST
+
+
+def _reanchored(loop):
+    return [index for how, index, _ in loop.calls if how == "reanchor"]
+
+
+def test_one_lost_frame_short_of_the_trigger_does_not_re_anchor(monkeypatch):
+    loop = _loop(monkeypatch, lambda i: i > N - 1, frames=N + 5)
+    list(loop.looks(N + 6))
+    assert _reanchored(loop) == []
+
+
+def test_the_frame_after_a_full_trigger_of_lost_frames_is_re_anchored(monkeypatch):
+    """Frames 1..N are lost; frame N+1 is re-anchored instead of tracked."""
+    loop = _loop(monkeypatch, lambda i: False, frames=N + 5)
+    list(loop.looks(N + 6))
+    assert _reanchored(loop) == [N + 1]
+
+
+def test_after_a_re_anchor_later_frames_track_from_the_re_anchored_view(monkeypatch):
+    loop = _loop(monkeypatch, lambda i: i > N + 1, frames=N + 4,
+                 reanchors=lambda i: True)
+    looks = list(loop.looks(N + 5))
+    recovered = looks[N + 1]
+    assert recovered.registered and recovered.index == N + 1
+    after = [last for how, index, last in loop.calls if index == N + 2]
+    assert after == [recovered.view]
+    assert all(l.registered for l in looks[N + 1:])
+
+
+def test_a_re_anchor_starts_from_the_last_registered_view(monkeypatch):
+    """Board space and the anchor come from it; nothing is rebuilt."""
+    loop = _loop(monkeypatch, lambda i: False, frames=N + 1)
+    list(loop.looks(N + 2))
+    assert [last for how, _, last in loop.calls if how == "reanchor"] == [loop.view]
+
+
+def test_a_failed_re_anchor_stays_lost_and_waits_a_full_interval(monkeypatch):
+    loop = _loop(monkeypatch, lambda i: False, frames=3 * N + 5)
+    looks = list(loop.looks(3 * N + 6))
+    assert _reanchored(loop) == [N + 1, 2 * N + 1, 3 * N + 1]
+    assert not any(l.registered for l in looks[1:])
+    assert [l.index for l in looks] == list(range(3 * N + 6))
+    assert all(l.detections is None for l in looks[1:])
+
+
+def test_a_registered_frame_resets_the_count(monkeypatch):
+    """Only consecutive lost frames trigger: N lost in two runs is not N in a row."""
+    loop = _loop(monkeypatch, lambda i: i == N // 2, frames=N + 5)
+    list(loop.looks(N + 6))
+    assert _reanchored(loop) == []
+
+
+def test_each_re_anchor_is_reported_and_counted_at_the_end(monkeypatch, capsys):
+    loop = _loop(monkeypatch, lambda i: False, frames=2 * N + 2,
+                 reanchors=lambda i: i == 2 * N + 1)
+    list(loop.looks(2 * N + 3))
+    out = capsys.readouterr().out
+    lines = [l for l in out.splitlines() if "[REGISTRATION] re-anchor at" in l]
+    assert len(lines) == 2
+    assert f"frame {N + 1}" in lines[0] and f"after {N} lost" in lines[0]
+    assert "failed" in lines[0]
+    assert f"frame {2 * N + 1}" in lines[1] and f"after {2 * N} lost" in lines[1]
+    assert "registered" in lines[1]
+    assert "[REGISTRATION] 2 re-anchor attempt(s): 1 registered, 1 failed" in out
+
+
+def test_a_run_that_never_lost_the_board_reports_no_re_anchor(monkeypatch, capsys):
+    loop = _loop(monkeypatch, lambda i: True, frames=3)
+    list(loop.looks(4))
+    assert "[REGISTRATION] 0 re-anchor attempt(s)" in capsys.readouterr().out
+    assert _reanchored(loop) == []
+
+
+def _rendering(monkeypatch, frames):
+    """`_render` over a `frames`-frame clip. Returns `(named, drawn, written)`:
+    `named(name)` is a view that logs `name` to `drawn` when it rectifies, and
+    `written` counts the frames the output video got."""
+    drawn, written = [], []
+
+    class _Named(_FakeView):
+        targets = []
+
+        def __init__(self, name):
+            self.name = name
+
+        def rectify(self, frame):
+            drawn.append(self.name)
+            return np.zeros((64, 64, 3), np.uint8)
+
+    class _Writer:
+        def write(self, image):
+            written.append(1)
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _FakeCap(frames))
+    monkeypatch.setattr(nbh.cv2, "VideoWriter", lambda *args: _Writer())
+    monkeypatch.setattr(nbh.board, "track_view",
+                        lambda *args: (_ for _ in ()).throw(AssertionError("re-registered")))
+    return _Named, drawn, written
+
+
+def test_render_draws_each_frame_with_the_view_detection_used(monkeypatch):
+    """`_render` registers nothing (#80): a re-anchored view is drawn from its
+    frame on, and a lost frame keeps the last view before it."""
+    named, drawn, _ = _rendering(monkeypatch, 5)
+    views = {0: named("base"), 1: named("base"), 3: named("re-anchored")}
+    nbh._render("clip.mp4", 0.0, 5, 25.0, views, [], [], "out.mp4")
+    assert drawn == ["base", "base", "base", "re-anchored", "re-anchored"]
+
+
+def test_render_leaves_out_the_frames_a_stride_skipped(monkeypatch):
+    """A gap has no registration of its own; drawn with the last look's, it
+    would show stale geometry (#81 review). Only looked-at frames are written."""
+    named, drawn, written = _rendering(monkeypatch, 20)
+    views = {i: named(i) for i in (0, 1, 2, 3, 4, 13)}
+    nbh._render("clip.mp4", 0.0, 20, 25.0, views, [], [], "out.mp4",
+                stride=13, baseline_frames=5)
+    assert drawn == [0, 1, 2, 3, 4, 13] and len(written) == 6
+
+
+def test_an_interval_shorter_than_a_frame_still_renders(monkeypatch):
+    """`--end` at `--start` reads no frame; `--out` gets Board space's own view
+    rather than a KeyError."""
+    loop = _loop(monkeypatch, lambda i: True)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    rendered = []
+    monkeypatch.setattr(nbh, "_render", lambda video, start, n, fps, views, *rest:
+                        rendered.append((n, views)))
+    nbh.process("clip.mp4", 10.0, 10.0, "model.pt", out_video="out.mp4")
+    assert rendered == [(0, {0: loop.view})]
+
+
+def test_rendering_gets_the_view_of_every_frame_read(monkeypatch):
+    """Views are kept only for `--out` (#80); when they are, none is missing."""
+    loop = _loop(monkeypatch, lambda i: True)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    rendered = []
+    monkeypatch.setattr(nbh, "_render", lambda video, start, n, fps, views, *rest:
+                        rendered.append(sorted(views)))
+    nbh.process("clip.mp4", 10.0, 10.4, "model.pt", out_video="out.mp4")
+    assert rendered == [list(range(10))]
+
+
+# --- a converged fit that is grossly wrong (#110) ----------------------------
+
+GROSS = nbh.GROSS_DISAGREEMENT_PX
+
+
+def test_a_fit_converging_above_the_floor_is_not_checked(monkeypatch):
+    """The check costs ~0.5 s a frame; a fit the re-anchor floor would accept
+    is not paid for (#110)."""
+    loop = _loop(monkeypatch, lambda i: True, frames=4,
+                 correlation=lambda i: nbh.board.REANCHOR_MIN_CORRELATION,
+                 disagreement=lambda i: 10 * GROSS)
+    looks = list(loop.looks(5))
+    assert loop.silhouetted == [] and all(l.registered for l in looks)
+
+
+def test_a_grossly_wrong_fit_is_lost_and_feeds_the_re_anchor(monkeypatch):
+    """Frames 1..N converge on the wrong scene: each is lost, the count runs
+    on, and frame N+1 is re-anchored from the last right view (#110, #80)."""
+    loop = _loop(monkeypatch, lambda i: True, frames=N + 3,
+                 correlation=lambda i: 0.2, disagreement=lambda i: GROSS)
+    looks = list(loop.looks(N + 4))
+    assert not any(l.registered for l in looks[1:N + 1])
+    assert all(l.detections is None for l in looks[1:N + 1])
+    assert loop.lost == N + 3   # every frame after the baseline: none recovers
+    assert _reanchored(loop) == [N + 1] and loop.reanchors == 1
+    assert all(last is loop.view for how, i, last in loop.calls if i <= N + 1)
+
+
+def test_a_moderate_disagreement_keeps_the_frame_and_warns_once(monkeypatch, capsys):
+    """Below the gross bound nothing is rejected; the run says how many of the
+    frames it checked disagreed, and that only those were checked (#110)."""
+    loop = _loop(monkeypatch, lambda i: True, frames=5,
+                 correlation=lambda i: 0.5 if i in (2, 3, 4) else 0.95,
+                 disagreement=lambda i: GROSS - 1 if i in (2, 3) else 0.0)
+    looks = list(loop.looks(6))
+    assert all(l.registered for l in looks) and loop.lost == 0
+    out = capsys.readouterr().out
+    lines = [l for l in out.splitlines() if "silhouette" in l and "[WARN]" in l]
+    assert len(lines) == 1
+    assert "2 of 3" in lines[0]
+
+
+def test_a_check_with_no_verdict_keeps_the_frame(monkeypatch, capsys):
+    """A silhouette fit that fails says nothing about the tracked one."""
+    loop = _loop(monkeypatch, lambda i: True, frames=3,
+                 correlation=lambda i: 0.2, disagreement=lambda i: None)
+    looks = list(loop.looks(4))
+    assert all(l.registered for l in looks) and loop.lost == 0
+    assert "0 of 3 converged fit(s) checked" in capsys.readouterr().out
+
+
+def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch):
+    """The #110 floor counts frames tried and lost, so `process` must say which
+    were lost; a frame it never read (a stride gap, #81) is not among them."""
+    loop = _loop(monkeypatch, lambda i: i not in (7, 8))
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    handed = {}
+    def track(per_frame, n_frames, match_px, lost=()):
+        handed["lost"] = list(lost)
+        return []
+    monkeypatch.setattr(nbh, "track_new_bullet_holes", track)
+    nbh.process("clip.mp4", 10.0, 10.4, "model.pt")
+    assert handed["lost"] == [7, 8]
+
+
+# --- a stride: look at every Nth frame (#81) ---------------------------------
+
+
+def test_a_stride_looks_at_the_first_frames_then_its_multiples_past_them(monkeypatch):
+    """The baseline's frames 0..B-1 are all looked at whatever the stride; past
+    them, only multiples of the stride at or after B (#81)."""
+    for stride, expected in [(13, [0, 1, 2, 3, 4, 13, 26, 39, 52]),
+                             (2, [0, 1, 2, 3, 4, 6, 8, 10]),
+                             (1, list(range(11)))]:
+        loop = _loop(monkeypatch, lambda i: True, frames=60)
+        last = expected[-1] + 1
+        assert [l.index for l in loop.looks(last, stride, 5)] == expected
+
+
+def test_frames_a_stride_skips_are_neither_registered_nor_yielded(monkeypatch):
+    """A skipped frame is a gap, not a lost frame: never decoded, never fitted."""
+    loop = _loop(monkeypatch, lambda i: True, frames=30)
+    looks = list(loop.looks(30, 13, 5))
+    assert [index for _, index, _ in loop.calls] == [1, 2, 3, 4, 13, 26]
+    assert all(l.registered for l in looks)
+    assert loop.cap.grabbed == [i for i in range(5, 30) if i % 13]
+    assert (loop.processed, loop.lost) == (30, 0)
+
+
+def test_a_stride_stops_at_the_end_of_the_file(monkeypatch):
+    """A failed grab is the end of the file too, so `processed` stays real."""
+    loop = _loop(monkeypatch, lambda i: True, frames=20)
+    assert [l.index for l in loop.looks(50, 13, 5)] == [0, 1, 2, 3, 4, 13]
+    assert loop.processed == 21
+
+
+class _SeenOn(_FakeModel):
+    """A Bullet Hole at (15, 15) on the frames `on(index)` says. The frame's
+    pixels are its index (see `_FakeCap`), which is why they are int64."""
+    def __init__(self, on):
+        self.on = on
+
+    def predict(self, image, imgsz, conf, verbose=False, classes=None):
+        return super().predict(image, imgsz, conf) if self.on(int(image[0, 0, 0])) \
+            else [types.SimpleNamespace(boxes=[])]
+
+
+def _strided_run(monkeypatch, n_frames, on=lambda i: i >= 6):
+    """`process` at stride 13 over `n_frames`; half a frame on `--end` keeps
+    `frames_until` clear of float truncation."""
+    loop = _loop(monkeypatch, lambda i: True, frames=100)
+    loop.model = _SeenOn(on)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.zeros((8, 8), bool))
+    return nbh.process("clip.mp4", 10.0, 10.0 + (n_frames + 0.5) / 25, "model.pt",
+                       require_change_evidence=False, stride=13)
+
+
+def test_at_stride_13_a_bullet_hole_from_frame_6_is_new_and_first_seen_on_13(monkeypatch):
+    """Not in the baseline (frames 0-4), first looked at on 13, confirmed once
+    its window has elapsed (#81)."""
+    run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES)
+    assert len(run.baseline) == 0
+    assert [h["first_frame"] for h in run.holes] == [13]
+    assert run.holes[0]["seen"] == [13, 26, 39, 52]
+
+
+def test_at_stride_13_a_bullet_hole_is_withheld_until_its_window_elapses(monkeypatch):
+    """One frame short of its window, it is unconfirmable, not rejected."""
+    run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES - 1)
+    assert run.holes == []
+
+
+def test_at_stride_13_a_detection_on_one_sampled_frame_is_dropped(monkeypatch):
+    """Seen on 13 alone of the window's looks at 13, 26, 39, 52: a flicker."""
+    run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES, on=lambda i: i == 13)
+    assert run.holes == []
+
+
+def test_the_report_states_the_stride(monkeypatch, capsys):
+    """A stride-sampled result is only comparable at the same stride (#81)."""
+    _strided_run(monkeypatch, 25)
+    assert "[INFO] stride 13:" in capsys.readouterr().out
+
+
+def test_a_stride_leaving_one_look_a_window_is_refused():
+    """At a stride of the persistence window or more, a window holds one look,
+    and any single sighting would confirm at 1/1 (#81 review)."""
+    import argparse
+    import pytest
+    parser = argparse.ArgumentParser()
+    nbh.add_stride_flag(parser)
+    assert parser.parse_args(["--stride", str(nbh.PERSIST_FRAMES - 1)]).stride == \
+        nbh.PERSIST_FRAMES - 1
+    for refused in ("0", str(nbh.PERSIST_FRAMES)):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--stride", refused])

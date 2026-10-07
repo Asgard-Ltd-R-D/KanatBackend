@@ -361,7 +361,103 @@ out). Smoothing would buy little more.
 **Open: one fixed reference frame.** ECC against the baseline frame will
 degrade as new Bullet Holes, shadows and wind change the Board. Nothing here
 shows it yet, since lost and skipped counts are 0–2, but these windows are all
-under a minute. A long session needs re-anchoring (`ponytail:` in `track_view`).
+under a minute. Since #80 a Board lost for `REANCHOR_AFTER_LOST` (25) consecutive
+frames is re-anchored (`board.reanchor_view`): a silhouette seed refined against
+the same baseline frame, so Board space never moves. Every Target in view seeds
+a fit, since the Targets share one artwork, and the best correlation is kept,
+only at `REANCHOR_MIN_CORRELATION` (0.9) or above: on four clips the right
+Target scored 0.97-0.99 and a neighbour 0.55 or less. The anchor itself is still
+never refreshed (`ponytail:` in `track_view`); failing re-anchors would be the
+sign it needs to be.
+
+**A converged fit can be the wrong one (#92, measured 2026-10-06); since #110
+only a moderately wrong one is accepted.** Before #110 a frame was lost only
+when no Target was visible or ECC failed to converge. Over the ten unsealed CamA/CamB clips, two real wrong fits,
+one real camera move that tracking followed, and #91's synthetic jump:
+
+| Recording | What happens | Fit | ECC corr | Silhouette disagreement* |
+|---|---|---|---|---|
+| `CamA_20260914_150248` | frame 19 on: the camera pans off this view onto the black-cross part of the Board (`cama-20260914-close-cross`'s view) | **wrong**, frames 19–99, then lost | 0.00–0.29 | 180–1008 |
+| `CamA_20260914_144747` 866–870 | a person crosses the ECC region; camera still | **wrong** 1–3 frames; frame 868 off by up to 98 Board px at a Target centre, 1454 at a canvas corner | 0.66–0.82 | 2–21 |
+| `CamA_20260914_141846` 1076 on | a real camera re-aim, ~100 Board px | **right** near the Target where checked (overlay, 1200 and 1323) | 0.49–0.71 | 5–9, 24 in an artefact burst |
+| `CamB_20260915_102250`, #91's 80×40 synthetic shift | stale seed | **wrong**, 75–124 | 0.70–0.80 | 5.0–6.4 |
+
+\* Board px at the reference Target's centre, against an independent silhouette
+fit (`board.register` from a box seed). It sees only that Target, so it
+under-reads error elsewhere on the Board: frame 868 reads 21 while another
+Target's centre is 98 off. The other seven clips, `_102250` unshifted among
+them: no lost frames, disagreement ≤3.1, corr ≥0.917.
+
+**Case 1 of #92 (plain tracking after a jump) was not reproduced on real
+motion.** The one real move, `_141846`'s re-aim, was tracked right; no
+recording has a bumped stand or strong wind. The two real wrong fits are a
+pan off the view and an occlusion, which #92 did not anticipate.
+
+The cost is real: `new_bullet_holes` on `_150248` (0–17.72s) reports three
+Misses at 2.20–3.96s, all Registration Displacement from the wrong-fit window.
+Persistence passes them (68–90%), since the lost frames after it are excluded;
+the change filter passes them, since the whole canvas changed. That run, and
+the probes, opened `_150248` past its pan before the pan was known: pixels of
+the sealed close-cross setup's view were seen. Nothing was fitted on them,
+but the gross-fit signal below was chosen partly on them, and two negatives
+mined from them were trained into the `*_neg_v1` checkpoints (below). So
+`cama-20260914-close-cross` is no longer held out: its three hashes are in
+`data/sealed_runs.log` (`tool=exposed-by-92`), which refuses them to every tool,
+`--final-run` included. The role stays `sealed`, not `spent`, so nothing mines
+the Board and light of the sealed wide setups from it (ADR-0005).
+
+What separates a wrong fit from a right one, on this evidence: a **gross**
+failure (the camera on something else) separates on every signal, best on
+silhouette disagreement (≥180 against ≤24 on `_141846`, its artefact burst at
+1151–1180 included); correlation's margin is thin (≤0.29 against 0.68–0.71 on
+the two overlay-checked `_141846` frames, and that clip runs down to 0.49
+unchecked). In that burst a canvas phase correlation finds no peak for either
+fit, so which fit is right there is unknown. **Moderate** wrong fits overlap right
+ones on another clip on both, so no threshold separates them; the re-anchor's
+0.9 floor applied to tracking would drop ~250 right frames of `_141846`.
+Frame-to-frame warp jump fires on both edges of a transient and on real motion
+(46 Board px on a still clip), so it does not say which frame is wrong.
+Baseline-mark residuals were not measured: only the CamB trio carry before-
+photograph marks, and none of them shows a wrong fit. Case 2 of #92 (re-anchor
+one Target over) is already closed by #91's every-Target seeding and 0.9 floor.
+
+Decided: a gross failure becomes a lost frame, so it feeds the #80 re-anchor;
+moderate disagreement gets a run-level warning only; silhouette disagreement is
+the signal, but not as a per-frame check (~0.5 s a frame). Follow-up: #110.
+The probes were scratch scripts (session transcript of 2026-10-06), not committed.
+
+**#110, done 2026-10-06.** `RegisteredFrames` checks a converged fit against
+`board.silhouette_disagreement` only when it converged below
+`REANCHOR_MIN_CORRELATION` (0.9): every wrong fit #92 measured sat at 0.82 or
+less, still clips at 0.917 or more, so a still clip pays nothing. At or past
+`GROSS_DISAGREEMENT_PX` (66, PROVISIONAL: the geometric mean of #92's gap, 24
+right vs 180 wrong, on `_141846` and `_150248`) the frame is lost and feeds the
+re-anchor. From 3.1 up to that bound it is only counted, in one `[WARN]` whose
+denominator is the fits checked. A gross fit converging at 0.9 or above would
+pass unchecked; none was measured (`ponytail:` in `_grossly_wrong`).
+
+Rejecting frames exposed a second fault. On `_150248` 0–17.72s two pan frames
+survived: frame 19 (corr 0.807, disagreement 6.5, moderate by design) and
+frame 48 (0.40, 29.6, a wrong fit inside the gap #92 left; its probe sampled
+every 5th frame). With the frames round them lost, persistence confirmed 9
+false Bullet Holes on 1–2 looks each. So a persistence window in which under
+`PERSIST` of the frames tried registered now confirms nothing (ADR-0003). Frames
+tried, not the window's 50: a stride gap (#81, #82: ~6 looks a window at 9, 2 at
+25) is never read and counts for nothing. Results, all `main` vs
+this change:
+
+| Run | Before | After |
+|---|---|---|
+| `_150248` 0–0.76s | 0 new | 0 new, nothing checked |
+| `_150248` 0–17.72s | 3 Misses at 2.20, 2.20, 3.08s (3.96 above was #92's run), 13 re-anchors | 0 new; 17 fits lost as gross, 2 moderate; 16 re-anchors, all failed |
+| `_141846` 0–53s | 15 new | 15 new; 235 checked, 0 lost, 174 moderate |
+| `_144747` 0–48.64s | not re-run | 4 new; 75 checked, 0 lost, 24 moderate. No frame lost, so neither change can alter it |
+| CamA `_141546` 13–25s | 5/1/1 | 5/1/1, nothing checked |
+| CamB `_102250` 0–46s | 4/1/0 | 4/1/0, nothing checked |
+
+Runtime (`new_bullet_holes`, wall, sequential): `_141546` 13–25s 113.8 →
+111.1 s, `_102250` 0–20s 252.4 → 251.7 s (no fit checked: noise);
+`_141846`, the worst case, 599 → 824 s (+37%, ~0.96 s a check).
 
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the
@@ -514,7 +610,9 @@ placement doubt on `_101550`. One Capture Setup and two Bullet Holes: **not a
 statistically meaningful validation.** The run opened no other sealed
 recording. Which recordings stay sealed is `config/recordings.json`. Measuring
 any not yet in `data/sealed_runs.log` needs truth first and a new human
-decision. A measured one is never opened again.
+decision. A measured one is never opened again. The log also carries
+`cama-20260914-close-cross`, never measured but exposed by #92 (above), so it
+is closed the same way.
 
 **Nothing is tuned on that result, and it is not diagnosed on the sealed
 recordings** (ADR-0005). A follow-up may reproduce a mechanism the run
@@ -571,6 +669,12 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # The baseline spans --baseline-frames frames from --start (default 5, ~200 ms).
 # A Hit landing inside that window is absorbed into the baseline and never
 # reported, so --start must sit before the shooting.
+
+# --stride N (both tools, default 1) looks at every Nth frame past the baseline,
+# the baseline still being its first --baseline-frames consecutive frames; the
+# frames between are gaps for persistence (#81). Measured at 1/9/13/17/25 on the
+# spent truth recordings (#82): no stride loses a true Bullet Hole. Live default
+# 17 at 25 fps, LIVE_STRIDE; table and timings in ADR-0007.
 
 # Derive the new Bullet Holes from a before/after photograph pair. --truth-labels
 # then points at the board.new.txt this writes, never at the after export.
@@ -659,11 +763,15 @@ extraction is what keeps sealed pixels out of it.
 |---|---|
 | `detection/board.py` | Board geometry: find, register, rectify, Target/Miss, scoring, mm |
 | `detection/new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
+| `detection/groups.py` | Group statistics per Target (MPI, CEP50, Mean Radius, RMS, Extreme Spread), printed as `[GROUP]` blocks; pure, for SOW 2.4.1 to reuse (#86) |
 | `tools/evaluate.py`, `tools/derive_truth.py` | Scoring a run against labelled ground truth; deriving that truth from a photograph pair |
 | `tools/probe.py`, `tools/registration_reach.py` | Per-mark detection and registration measurements over a clip |
+| `tools/ring_landmarks.py` | Re-reads the 10-ring diameter and scoring-ring radii off the artwork (#70) |
 | `tools/mine_negatives.py` | Background negatives from unsealed footage, into `data/negatives/` |
 | `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
 | `docs/model_bench.md` | Every checkpoint's training record, the dataset each one trained on, and its bench (#30) |
+| `docs/ring_measurement.md` | The printed 10-ring in millimetres: the print scale for `--mm-per-px`, its readings, and what it depends on (#62) |
+| `config/print_scale.json` | The print scale per Capture Setup, each with its source: 0.1763 for every CamA and CamB setup (#69) |
 | `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `data/truth/<recording>/` | Ground truth, one directory per recording |
 | `detection/tagging_bullets.py`, `tools/sweep_profile.py`, `config/capture_profiles.json` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
@@ -988,10 +1096,18 @@ a version assert tells you why, earlier, for less code.
 
 ## Blocked, in priority order
 
-**1. One ruler measurement.** The printed white 10-ring's diameter in
-millimetres. Everything physical scales linearly with it, so it is not guessed —
-`to_millimetres` raises `NotCalibrated` instead. Pass `--ring-mm` once measured.
-This blocks millimetre output and SOW 2.3.2 entirely.
+**1. The millimetre scale: unblocked, 0.1763 mm per template px.**
+Everything physical scales linearly with it, so it is not guessed —
+`to_millimetres` raises `NotCalibrated` unless a print scale is passed
+(`--mm-per-px`) or configured for the recording's Capture Setup in
+`config/print_scale.json` (#69). Every CamA and CamB Capture Setup is
+configured; `legacy-dev` is not, its print is unknown.
+
+#62 measured two A4 *Scale to Fit* prints: 0.1763 for the repo artwork, 0.1810
+for the lookalike. On 2026-10-04 the user confirmed the recorded Boards' Targets
+came from the repo artwork with the same setup, so the footage takes 0.1763.
+Readings in [`ring_measurement.md`](docs/ring_measurement.md). A new print path
+needs its own measurement and its own entry.
 
 It cannot be recovered from the imagery: no page edge in the video, and the
 close-up ground-truth photo is cropped inside the sheet.
@@ -1033,12 +1149,19 @@ undefined.
 
 ## Not verified by real data
 
-**No bullet has ever landed on a Target** in any footage provided — all seven
-detections in the reference clip are Misses. So Target assignment, per-Target
-ring centres and scoring are proven only by unit tests and a direct check on a
-real Board view. A clip where someone hits the silhouette would exercise all
-three at once. **This is the most valuable single piece of footage to capture
-next.**
+**Few bullets have landed on a Target.** The CamA reference clip's Hits are all
+Misses; CamB is the only footage with on-Target Bullet Holes — two of its four,
+scoring 7 and 8 (see above). That is a single Target with a two-Bullet-Hole
+Group, so per-Target ring centres across several Targets, and Group statistics
+(#86) beyond N=2, rest on unit tests. A clip with a full group on each of
+several Targets would exercise all of it at once.
+
+On `_102250` 0–46s the `[GROUP]` block (2026-10-05, #86) reports Target 1 with
+N=3, MPI −11.3/−2.5 mm, CEP 37.1, Extreme Spread 108.9 mm, 2 Misses excluded.
+N=3 holds the detector's false positive, found #4, 4.7 mm from #3: the block
+reports whatever the pipeline confirms, so a false positive on a Target moves
+the MPI and spread (here MPI from −4.5/+13.6 to −11.3/−2.5 mm). Operator
+correction (SOW 2.3.3) is what removes it.
 
 **One false positive survives** the change filter on CamA, and it is genuine —
 it sits inside the ground-truth photo's coverage, so it is not an unlabelled hole
@@ -1104,6 +1227,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `EDGE_MIN` | 20.0 | `detection/board.py` | Mean signed Sobel along a Board edge; set on four baseline frames, not swept (#46) |
 | `EDGE_GAP_SPANS` | 0.3 | `detection/board.py` | Skips the Target print's border; CamA's panel top falls inside it, so CamA finds no edge |
 | `EDGE_SEARCH_SPANS` | 2.0 | `detection/board.py` | How far out the edge is looked for; `_103223`'s left edge is found at 1.97, the others' not within it |
+| `LIVE_STRIDE` | 17 | `detection/new_bullet_holes.py` | Live stride at 25 fps: ⌈646 ms × 25⌉, the slowest per-frame time on the dev Mac; no true Bullet Hole lost at 9–25 on the spent truth recordings (ADR-0007, #82) |
 | `BAND_CONTEXT_PX` | 32 | `detection/new_bullet_holes.py` | Margin-canvas px each exposed-Board band carries for context; one stride-32 cell, not swept (#46) |
 | `GREEN_LO` / `GREEN_HI` | — | `detection/board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `detection/board.py` | May reject distant Targets |
@@ -1117,6 +1241,11 @@ lands near 40. Encouraging, and not validation across a dataset.
 Measured artwork landmarks — `RING_CENTRE_TPL`, `RING_DIAMETER_TPL`,
 `RING_OFFSET_TPL`, `RING_RADII_TPL` — are *not* tunables. They are readings off
 `data/targets/kanat_silhouette_a4.png` and only change if the artwork does.
+`tools/ring_landmarks.py` re-reads the diameter and ring radii, and a test holds
+the constants to it. #70 corrected both: the old ones had moved every scoring
+boundary ([`ring_measurement.md`](docs/ring_measurement.md), item 2). The scores
+above survive it, since CamB `_102250`'s on-Target reports sit 20+ template px from
+any boundary, old or new.
 
 ---
 
@@ -1133,13 +1262,25 @@ before any architecture change.
 refuses sealed recordings outright, with no flag. It covers the gravel and not
 the rings: an empty label file on the Board would be a lie, because the Board
 carries Bullet Holes. On 2026-09-23, over every recording the manifest does
-not seal, it yields **15** negatives, all `cama-20260914`: 5 from `_141546`,
+not seal, it yields **15** negatives (13 since #92, below), all `cama-20260914`: 5 from `_141546`,
 4 from `_144747`, 3 from `_150248`, and 1 each from `_141646`, `_141846` and
 `_145047` (`data/negatives/sources.csv` is the record). Near-duplicates are dropped
 across the whole Capture Setup, so its seventh file, `_141446`, adds nothing new. Nothing comes from the CamB close trio,
 whose canvas is all Board, or from the legacy clips, which carry no green Target.
 A static camera gives only a few distinct gravel tiles per clip, so more
 negatives means more Capture Setups, not a smaller `--step`.
+
+**Two of those were removed on 2026-10-06 (#92); 13 remain.** `_150248`'s two
+frame-50 tiles (2.00s) came from after its camera pans onto the view of the
+sealed `cama-20260914-close-cross` setup (#92, above), through the pre-#50
+silhouette chain. Its manifest window is now 0–0.76s (frames 0–18; the end is exclusive). The
+benched `*_neg_v1` checkpoints were trained with all 15, so neither may be
+promoted without retraining on the 13. Re-mining today keeps only frame 0: the
+post-pan frames register at correlation ≤0.29, under `MIN_CORRELATION` (mining
+ignores the window, so that floor is the only thing keeping them out). The
+Kaggle recipe's local copies (`~/Downloads/datasets` and `kanat_negatives_30`,
+folders and zips) and any dataset uploaded from them still hold the two tiles:
+remove them and rebuild with the 13 before any retraining.
 
 `yolo26.yaml` and `yolo26-p2.yaml` are both present in the installed ultralytics
 (8.4.126), so `m` and the P2 experiment can be trained. `m` is benched on the

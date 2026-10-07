@@ -30,12 +30,13 @@ one Bullet Hole, and no amount of temporal evidence separates them.
 import argparse
 import itertools
 import os
+import time
 from typing import NamedTuple
 
 import cv2
 import numpy as np
 
-from detection import board
+from detection import board, groups
 from tools import manifest
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
@@ -66,6 +67,28 @@ DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 # stride-32 cell; measured at this value on the four spent/threshold-work
 # recordings, not swept.
 BAND_CONTEXT_PX = 32       # PROVISIONAL
+
+# Consecutive lost frames before the loop re-acquires the Board on its own
+# (#80): 1 s at 25 fps and stride 1, ~17 s at LIVE_STRIDE (ADR-0007, #84).
+# Counted in frames the loop attempted. A failed attempt
+# is itself a lost frame, so attempts fall every this many frames while the
+# Board stays lost. Set from the SOW wording, not from footage.
+REANCHOR_AFTER_LOST = 25   # PROVISIONAL
+
+# A converged fit can be on the wrong scene altogether: CamA_20260914_150248
+# pans off the Board at frame 19 and tracking converges on the Board next over
+# for ~80 frames (#92). At or past this silhouette disagreement
+# (`board.silhouette_disagreement`, Board px at the reference Target's centre)
+# the frame counts as lost, so it feeds the re-anchor above (#110). #92's gap:
+# wrong 180-1008 on `_150248`; right at most 24 on `_141846`'s re-aim, its
+# artefact burst included, and 3.1 on still clips. The bound is the gap's
+# geometric mean, ~2.7x clear of each side. Two CamA clips, at their board scale.
+GROSS_DISAGREEMENT_PX = 66.0    # PROVISIONAL
+# Below the gross bound nothing is rejected: a moderately wrong fit (`_144747`'s
+# occlusion 2-21, #91's synthetic shift 5.0-6.4) reads like one following a real
+# re-aim (`_141846`, 5-9). Past the most a still clip read, a checked fit is
+# counted and the run warns once.
+MODERATE_DISAGREEMENT_PX = 3.1  # PROVISIONAL: the most a right fit read on a still clip
 
 # How many frames the baseline is built from.
 #
@@ -261,7 +284,7 @@ def strip_pre_existing(pts, baseline, match_px):
 
 
 def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
-                           window=PERSIST_FRAMES):
+                           window=PERSIST_FRAMES, lost=()):
     """Fold per-frame detections into confirmed new Bullet Holes.
 
     `per_frame` is [(frame_idx, Nx2 array of Board-space centres), ...], already
@@ -269,7 +292,11 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
     successfully appear in it**, and a registered frame with no detections must
     appear with an empty array rather than be omitted: the denominator below
     counts the frames that actually got a look, so a registration failure neither
-    counts for nor against a Bullet Hole.
+    counts for nor against a Bullet Hole — down to a floor: a window in which
+    under `persist` of the frames the loop TRIED to register did register
+    confirms nothing (#110, ADR-0003). `lost` is the indices of the frames that
+    were tried and lost, gross wrong fits included. A frame in neither list was
+    never read — a stride gap (#81) — and counts for nothing, floor included.
 
     A candidate whose window has not yet elapsed is not reported. Shortening the
     denominator instead would confirm a Bullet Hole seen in 7 of the 10 frames
@@ -279,6 +306,7 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
     Kept free of cv2 and the model so the logic is testable on plain arrays.
     """
     looked_at = sorted(idx for idx, _ in per_frame)
+    lost = sorted(lost)
 
     candidates = []  # [pos, seen_frame_idxs, first_idx]
     for idx, pts in per_frame:
@@ -296,7 +324,15 @@ def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
         if first + window > n_frames:
             continue  # window has not elapsed; unconfirmable, not rejected
         span = sum(1 for i in looked_at if first <= i < first + window)
-        if span <= 0:
+        tried = span + sum(1 for i in lost if first <= i < first + window)
+        if span <= 0 or span < persist * tried:
+            # Too few looks survived registration to call anything persistent:
+            # 100% of one frame among lost ones is not persistence.
+            # Unconfirmable, not rejected, as above. Measured on
+            # CamA_20260914_150248 once its pan frames were lost (#110): two
+            # surviving wrong fits confirmed 9 false Bullet Holes on 1-2 looks.
+            # Against frames tried, not the window: a stride (#81) leaves ~4
+            # looks a window at 13 on purpose.
             continue
         # Distinct FRAMES, not sightings: two detections on one mark in one frame
         # both fold into this candidate, and counting each made that frame worth
@@ -411,27 +447,38 @@ def change_evidence(points, view, inner_changed, changed, radius):
             for p, inside in zip(points, on_inner)]
 
 
-def _next_view(cap, last):
+def _looked_at(index, stride, baseline_frames):
+    """Is this frame looked at under a stride (#81)? Every baseline frame is;
+    past them, only multiples of the stride. One rule, so that `looks` and
+    `_render` cannot disagree on which frames are gaps."""
+    return index < baseline_frames or index % stride == 0
+
+
+def _next_view(cap, last, reanchor_on=None):
     """Read one frame and re-register Board space onto it.
 
-    Returns `(frame, view)`. `view` is None when the Board was not found or ECC
-    failed — no evidence from that frame, either way — and `(None, None)` when
-    the read itself failed, which is the end of what the file holds.
+    Returns `(frame, view, correlation)`. `view` is None when the Board was not
+    found or ECC failed — no evidence from that frame, either way — and `frame`
+    is None when the read itself failed, which is the end of what the file holds.
+
+    `reanchor_on` is the Target artwork's mask when this frame is to be
+    re-anchored (`board.reanchor_view`, #80) rather than tracked from `last`.
 
     Every caller that DETECTS goes through `RegisteredFrames.looks`, on
     purpose: a second way of reading and registering frames is a silent
     difference between what one caller measures and what the runtime sees.
-    `_render` still reads the clip itself, and may — it repeats no detection,
-    so it cannot disagree about the image the model was shown.
+    `_render` still reads the clip itself, but registers nothing: it replays the
+    views `looks` produced, re-anchors included (#80).
     """
     ok, frame = cap.read()
     if not ok:
-        return None, None
+        return None, None, None
     try:
-        current, _ = board.track_view(frame, last)
+        if reanchor_on is None:
+            return (frame, *board.track_view(frame, last))
+        return (frame, *board.reanchor_view(frame, reanchor_on, last))
     except cv2.error:
-        current = None
-    return frame, current
+        return frame, None, None
 
 
 class Look(NamedTuple):
@@ -473,14 +520,17 @@ class RegisteredFrames:
     number about a distribution the runtime never sees.
 
     Board space is fixed once, by the frame at `--start`, and every later frame
-    is registered onto it.
+    is registered onto it. After `REANCHOR_AFTER_LOST` consecutive lost frames
+    the next one is re-anchored into that same Board space (#80), here and only
+    here, so evaluation and runtime cannot differ on it. A fit converged on the
+    wrong scene altogether counts as lost too (#110).
 
     Built by `open`. The constructor takes its collaborators directly so the
     iteration can be exercised without a video file or a model.
     """
 
     def __init__(self, cap, model, view, base, imgsz, conf,
-                 fps, start):
+                 fps, start, template_mask):
         self.cap, self.model = cap, model
         # Two views, and the difference matters: `view` is the Board space
         # everything is registered ONTO, fixed by the frame at `--start`, and
@@ -492,6 +542,11 @@ class RegisteredFrames:
         self._base = base
         self.net_scale = None   # measured by `open`; see the warning there
         self.processed = self.lost = 0
+        self._template_mask = template_mask   # the artwork a re-anchor seeds from
+        self._lost_run = 0      # consecutive lost frames, up to this one
+        self.reanchors = self.reanchored = 0   # attempts, and those that registered (#80)
+        # Converged fits after the first, those checked, and the verdicts (#110).
+        self.converged = self.checked = self.gross = self.moderate = 0
         # How far past each canvas edge any registered frame's view has run,
         # in Board px — the baseline's is only the first (#41).
         uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
@@ -512,6 +567,9 @@ class RegisteredFrames:
             raise SystemExit(f"cannot read Target artwork at {template_path}")
         _, template_mask = board.find_targets(template, min_area=1)
 
+        # How long building Board space takes is measured from opening the
+        # source, so the model load above is not in it (#79).
+        opened_at = time.perf_counter()
         cap = cv2.VideoCapture(video)
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
@@ -522,6 +580,11 @@ class RegisteredFrames:
         view, correlation = board.build_view(base, template_mask)
         if view is None:
             raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+        # A disclosure for agreeing what "fast" means with the customer, and
+        # never a gate: no bar is agreed (#77).
+        print(f"[REGISTRATION] Board space built in {time.perf_counter() - opened_at:.2f} s, "
+              f"wall time from opening the source. Not a pass/fail bar; none is "
+              f"agreed (#79)")
         canvas_w, canvas_h = view.canvas_size
         # The detector is shown the margin canvas exactly as before #46, and
         # the Board past it as bands of their own (#46); imgsz and the net scale
@@ -576,7 +639,7 @@ class RegisteredFrames:
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
-        loop = cls(cap, model, view, base, imgsz, conf, fps, start)
+        loop = cls(cap, model, view, base, imgsz, conf, fps, start, template_mask)
         loop.net_scale = scale
         return loop
 
@@ -584,8 +647,8 @@ class RegisteredFrames:
         """How many frames lie between `--start` and `end` seconds."""
         return int((end - self.start) * self.fps)
 
-    def looks(self, n_frames):
-        """Yield a `Look` per frame read, up to `n_frames` from `--start`.
+    def looks(self, n_frames, stride=1, baseline_frames=0):
+        """Yield a `Look` per frame looked at, up to `n_frames` from `--start`.
 
         Frames that failed to register are yielded too, unregistered — see
         `Look`. Iteration stops early when the file runs out, which is why
@@ -593,20 +656,39 @@ class RegisteredFrames:
 
         The first frame is the one Board space was built from, so it is already
         read and already registered; it is yielded like any other.
+
+        With a `stride` (#81) the first `baseline_frames` are all looked at,
+        and past them only indices that are multiples of `stride`. The rest are
+        grabbed without decoding and never registered or yielded: gaps, not
+        lost frames. Indices stay positions in the clip, and `processed` counts
+        every frame passed, looked at or not.
         """
         try:
             while self.processed < n_frames:
+                if not _looked_at(self.processed, stride, baseline_frames):
+                    if not self.cap.grab():
+                        break  # the end of what the file holds
+                    self.processed += 1
+                    continue
+                due = self._lost_run > 0 and self._lost_run % REANCHOR_AFTER_LOST == 0
                 if self.processed:
-                    frame, current = _next_view(self.cap, self.last)
+                    frame, current, correlation = _next_view(
+                        self.cap, self.last, self._template_mask if due else None)
                     if frame is None:
                         break  # the end of what the file holds
+                    if current is not None and self._grossly_wrong(frame, current, correlation):
+                        current = None   # lost, so it feeds the re-anchor (#110)
                 else:
                     frame, current = self._base, self.view
                 index, self.processed = self.processed, self.processed + 1
+                if due:
+                    self._report_reanchor(index, current is not None)
                 if current is None:
                     self.lost += 1
+                    self._lost_run += 1
                     yield Look(index, None, None, None)
                     continue
+                self._lost_run = 0
                 self.last = current
                 self._track_reach(current, frame)
                 canvas = current.rectify(frame)
@@ -620,6 +702,56 @@ class RegisteredFrames:
         finally:
             self.cap.release()
             self._report_reach()
+            print(f"[REGISTRATION] {self.reanchors} re-anchor attempt(s): {self.reanchored} "
+                  f"registered, {self.reanchors - self.reanchored} failed (#80)")
+            self._report_checks()
+
+    def _grossly_wrong(self, frame, view, correlation):
+        """Is this converged fit on the wrong scene altogether (#110)?
+
+        Only a fit converging below the re-anchor floor is checked: the check
+        costs ~0.5-1 s a 1080p frame (0.96 on `_141846`, #110), against 0.2-0.6 s
+        for `track_view` itself.
+        Every wrong fit #92 measured converged at 0.82 or less, the gross ones
+        at 0.29 or less; still clips at 0.917 or more.
+
+        ponytail: a gross fit converging at or above the floor passes unchecked;
+        #92 measured none. Check every Nth frame too if one turns up.
+        """
+        self.converged += 1
+        if correlation >= board.REANCHOR_MIN_CORRELATION:
+            return False
+        disagreement = board.silhouette_disagreement(frame, self._template_mask, view)
+        if disagreement is None:
+            return False   # no verdict: the frame keeps its fit
+        self.checked += 1
+        if disagreement >= GROSS_DISAGREEMENT_PX:
+            self.gross += 1
+            return True
+        self.moderate += disagreement > MODERATE_DISAGREEMENT_PX
+        return False
+
+    def _report_checks(self):
+        floor = board.REANCHOR_MIN_CORRELATION
+        print(f"[REGISTRATION] {self.checked} of {self.converged} converged fit(s) checked "
+              f"against an independent silhouette fit (only those converging below "
+              f"{floor}): {self.gross} grossly wrong, at or past {GROSS_DISAGREEMENT_PX:.0f} "
+              f"Board px, counted lost (#110)")
+        if self.moderate:
+            print(f"[WARN] silhouette disagreement of {MODERATE_DISAGREEMENT_PX}-"
+                  f"{GROSS_DISAGREEMENT_PX:.0f} Board px on {self.moderate} of "
+                  f"{self.checked} checked fit(s): moderately wrong, or following real "
+                  f"camera motion, which #92 could not tell apart, so none was rejected. "
+                  f"Fits converging at or above {floor} were not checked (#110)")
+
+    def _report_reanchor(self, index, registered):
+        self.reanchors += 1
+        self.reanchored += registered
+        result = ("registered" if registered else
+                  f"failed, the frame stays lost; next attempt after "
+                  f"{REANCHOR_AFTER_LOST} more")
+        print(f"[REGISTRATION] re-anchor at t={self.start + index / self.fps:.2f}s "
+              f"(frame {index}) after {self._lost_run} lost frame(s): {result} (#80)")
 
     def _detect_grown(self, view, canvas, inner):
         """Inference A on the margin canvas, B on each band, merged in canvas px."""
@@ -686,6 +818,35 @@ class Run(NamedTuple):
     residual: np.ndarray   # distance from a suppressed detection to its mark
 
 
+# The stride a live 25 fps stream is looked at with (ADR-0007, #82): the
+# slowest per-frame time on record on the development Mac, 646 ms on CamB,
+# times 25, rounded up. Measured to lose no true Bullet Hole on the spent truth
+# recordings. A count of frames, so it holds only at 25 fps; on another live
+# host, re-derive it from the time per look measured there.
+LIVE_STRIDE = 17           # PROVISIONAL
+
+
+def add_stride_flag(parser):
+    """The `--stride` flag, identical in every tool that runs `process`."""
+    def stride(text):
+        n = int(text)
+        if n < 1:
+            raise argparse.ArgumentTypeError("a stride is 1 frame or more")
+        # From PERSIST_FRAMES on, a window holds one look and any single
+        # sighting confirms at 1/1: persistence would filter nothing.
+        if n >= PERSIST_FRAMES:
+            raise argparse.ArgumentTypeError(
+                f"a stride under the {PERSIST_FRAMES}-frame persistence window, so "
+                f"each window holds more than one look")
+        return n
+    parser.add_argument("--stride", type=stride, default=1,
+                        help="look at every Nth frame past the baseline; the "
+                             "rest are gaps for persistence (#81). The baseline "
+                             "is still its first --baseline-frames consecutive "
+                             "frames. 1, the default, looks at every frame; "
+                             f"it must be under {PERSIST_FRAMES}, the persistence window.")
+
+
 def registration_note(residual, radius, unit="Board px"):
     """The one `[REGISTRATION]` sentence, in whatever units the caller measures in.
 
@@ -711,14 +872,18 @@ def registration_note(residual, radius, unit="Board px"):
 
 
 def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
-            out_video=None, ring_diameter_mm=None, template_path=board.DEFAULT_TEMPLATE,
+            out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES):
+            baseline_frames=BASELINE_FRAMES, stride=1):
     loop = RegisteredFrames.open(video, start, model_path, conf, template_path)
     fps, match_px = loop.fps, loop.view.match_radius
     n_frames = loop.frames_until(end)
-    looks = loop.looks(n_frames)
+    baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
+    # The stride starts past the baseline, never inside it: built from frames
+    # 0, 13, 26... it would span seconds, and a Hit landing in them would be
+    # absorbed and never reported (#81).
+    looks = loop.looks(n_frames, stride, baseline_frames)
 
     # The baseline is built from BASELINE_FRAMES frames, not one. Everything it
     # fails to see is reported as a new Bullet Hole, and a single frame passes
@@ -729,11 +894,16 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # They come off the front of the same iterator the run continues on, so the
     # baseline cannot be built from a differently rectified Board than the one
     # it is subtracted from.
-    baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
     baseline_canvas, baseline_inner, baseline_detections = None, None, []
+    # Frame index -> the view detection used, for `_render`. Seeded with look
+    # 0's view, Board space itself, so a run that reads no frame still has one.
+    # Kept only for `--out`: nothing else reads it, and a view a frame adds up.
+    views = {0: loop.view}
     for look in itertools.islice(looks, baseline_frames):
         if not look.registered:
             continue
+        if out_video:
+            views[look.index] = look.view
         if baseline_canvas is None:
             # Always look 0's: Board space is built from that frame, so `open`
             # has already raised if it did not register. This is the image
@@ -747,11 +917,13 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes over "
           f"{len(baseline_detections)} frame(s) from {start}s{short}")
 
-    per_frame, corroboration, residuals_per_frame, lost = [], [], [], 0
+    per_frame, corroboration, residuals_per_frame, lost = [], [], [], []
     for look in looks:
         if not look.registered:
-            lost += 1
-            continue  # no evidence from this frame, either way
+            lost.append(look.index)
+            continue  # no evidence from this frame, but it counts towards the floor
+        if out_video:
+            views[look.index] = look.view
         pts, matched = strip_pre_existing(look.detections, baseline, match_px)
         residuals_per_frame.append(matched)
         if len(pts):
@@ -764,7 +936,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
 
     processed = loop.processed
     if lost:
-        print(f"[WARN] Board lost on {lost} frame(s); excluded from persistence")
+        print(f"[WARN] Board lost on {len(lost)} frame(s); excluded from persistence, "
+              f"and a window mostly lost confirms nothing (#110)")
 
     # A short read is not a crash. The interpreter is alive, the window is simply
     # shorter than asked for, and the frames never read must not lengthen the
@@ -783,7 +956,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                  if any(len(r) for r in residuals_per_frame) else np.zeros(0))
     print(registration_note(residuals, match_px))
 
-    new = track_new_bullet_holes(per_frame, processed, match_px)
+    new = track_new_bullet_holes(per_frame, processed, match_px, lost=lost)
     for hole in new:
         hole["target"] = loop.last.assign(hole["pos"])
         hole["corroborated"] = any(
@@ -805,15 +978,19 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         if not merged:
             print("[MERGE] no displaced sightings found")
 
-    _report(new, start, fps, loop.last, ring_diameter_mm,
+    print("[INFO] stride 1: every frame looked at" if stride == 1 else
+          f"[INFO] stride {stride}: past the baseline, every {stride}th frame looked "
+          f"at; the frames between are gaps, counting neither for nor against a "
+          f"Bullet Hole (#81)")
+    _report(new, start, fps, loop.last, mm_per_tpl_px,
             [idx for idx, _ in per_frame])
     if out_video:
-        _render(video, start, processed, fps, loop.view,
-                baseline, new, out_video)
+        _render(video, start, processed, fps, views, baseline, new, out_video,
+                stride, baseline_frames)
     return Run(new, baseline, residuals)
 
 
-def _report(new, start, fps, view, ring_diameter_mm, looked_at):
+def _report(new, start, fps, view, mm_per_tpl_px, looked_at):
     misses = sum(1 for h in new if h["target"] is None)
     print(f"[INFO] {len(new)} new Bullet Holes ({len(new) - misses} on a Target, {misses} Miss)")
 
@@ -825,7 +1002,7 @@ def _report(new, start, fps, view, ring_diameter_mm, looked_at):
         if hole["target"] is None:
             continue
         try:
-            hole["mm"] = board.to_millimetres([hole["pos"]], view, ring_diameter_mm,
+            hole["mm"] = board.to_millimetres([hole["pos"]], view, mm_per_tpl_px,
                                               hole["target"])[0]
         except board.NotCalibrated as why:
             if hole is new[0]:
@@ -847,7 +1024,7 @@ def _report(new, start, fps, view, ring_diameter_mm, looked_at):
                 f"persistence {hole['persistence']:.0%}  [{evidence}]{scored}")
         if hole["mm"] is not None:
             line += f"  X {hole['mm'][0]:+7.1f} mm  Y {hole['mm'][1]:+7.1f} mm"
-        elif hole["target"] is not None and ring_diameter_mm is not None:
+        elif hole["target"] is not None and mm_per_tpl_px is not None:
             line += "  (mm unavailable)"
         print(line)
 
@@ -867,26 +1044,55 @@ def _report(new, start, fps, view, ring_diameter_mm, looked_at):
               f"last detected: {start + max(seen) / fps:.2f}s   "
               f"detected in {len(seen)} frame(s){share}")
 
+    _report_groups(new, mm_per_tpl_px)
 
-def _render(video, start, n_frames, fps, reference, baseline, new, out_video):
-    """Redraw the clip as the rectified Board. Detection is not repeated."""
+
+def _report_groups(new, mm_per_tpl_px):
+    """One block per Target with new Bullet Holes. Millimetres only: with no
+    print scale there is no Group block, never a pixel-unit stand-in."""
+    if mm_per_tpl_px is None:
+        print("[GROUP] no Group statistics: the print scale is not configured for "
+              "this Capture Setup")
+        return
+    stats, misses = groups.groups(new)
+    if misses:
+        print(f"[GROUP] {misses} Miss excluded from every Group" if misses == 1 else
+              f"[GROUP] {misses} Misses excluded from every Group")
+    for target, g in stats.items():
+        print(f"[GROUP] Target {target + 1}: {g['n']} Bullet Hole{'s' if g['n'] > 1 else ''}"
+              f" (counts Bullet Holes, not Hits: a tight Group can be under-counted, ADR-0001)")
+        print(f"      MPI  X {g['mpi'][0]:+7.1f} mm  Y {g['mpi'][1]:+7.1f} mm")
+        if g["n"] < 2:
+            print("      spread measures need at least two Bullet Holes")
+            continue
+        print(f"      CEP {g['cep']:.1f} mm (CEP50: median distance from the MPI)   "
+              f"Mean Radius {g['mean_radius']:.1f} mm   RMS radius {g['rms_radius']:.1f} mm")
+        print(f"      Extreme Spread {g['extreme_spread']:.1f} mm (centre to centre)")
+
+
+def _render(video, start, n_frames, fps, views, baseline, new, out_video,
+            stride=1, baseline_frames=0):
+    """Redraw the clip as the rectified Board. Neither detection nor
+    registration is repeated: `views` is what detection used, by frame index,
+    and a lost frame is drawn with the last view before it.
+
+    A stride's gaps are left out (#81): no fit was made on them, and the last
+    look's could be stale by up to a stride. The output then plays faster
+    than the clip; each frame's own t stays on it."""
     cap = cv2.VideoCapture(video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
-    ok, base = cap.read()
-    w, h = reference.canvas_size
+    view = views[0]  # Board space's own view; `process` always records it
+    w, h = view.canvas_size
     vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
-    view, idx, frame = reference, 0, base
-    while idx < n_frames:
-        if idx:
-            ok, frame = cap.read()
-            if not ok:
+    for idx in range(n_frames):
+        if not _looked_at(idx, stride, baseline_frames):
+            if not cap.grab():
                 break
-            try:
-                tracked, _ = board.track_view(frame, view)
-                if tracked is not None:
-                    view = tracked
-            except cv2.error:
-                pass
+            continue
+        ok, frame = cap.read()
+        if not ok:
+            break
+        view = views.get(idx, view)
         vis = view.rectify(frame)
         for t in view.targets:
             cv2.polylines(vis, [np.int32(t)], True, (0, 200, 0), 2)
@@ -909,7 +1115,6 @@ def _render(video, start, n_frames, fps, reference, baseline, new, out_video):
         cv2.putText(vis, f"NEW {shown}", (16, 100),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         vw.write(vis)
-        idx += 1
     cap.release()
     vw.release()
     print(f"[INFO] -> {out_video}")
@@ -928,11 +1133,14 @@ if __name__ == "__main__":
     p.add_argument("--template", default=board.DEFAULT_TEMPLATE,
                    help="printed Target artwork used to register the Board")
     p.add_argument("--confidence", type=float, default=DEFAULT_CONFIDENCE)
-    p.add_argument("--ring-mm", type=float, default=None,
-                   help="measured diameter of the printed white 10-ring, in mm. "
-                        "Without it, positions stay in Board pixels: every "
-                        "millimetre figure scales linearly with this, so it is "
-                        "not guessed.")
+    p.add_argument("--mm-per-px", type=board.checked_scale, default=None,
+                   help="print scale: millimetres per template px on the printed "
+                        "Target, measured off its outline (docs/ring_measurement.md), "
+                        "not a ruler reading of any ring. Overrides "
+                        "config/print_scale.json for this recording's Capture "
+                        "Setup. Without either, positions stay in Board pixels: "
+                        "every millimetre figure scales linearly with this, so "
+                        "it is not guessed.")
     p.add_argument("--no-change-filter", action="store_true",
                    help="keep confirmed Bullet Holes that change detection did "
                         "not corroborate. Raises recall, lowers precision.")
@@ -948,13 +1156,24 @@ if __name__ == "__main__":
                         "as new Bullet Holes; a Hit landing inside this window is "
                         "absorbed into the baseline and never reported, so the "
                         "window must precede the shooting.")
+    add_stride_flag(p)
     p.add_argument("--out", help="write an annotated video of the rectified Board here")
     manifest.add_flag(p)
     a = p.parse_args()
 
     # Split membership before anything is opened: a sealed recording is refused
     # unless this run says it is the final one. See manifest.py and ADR-0005.
-    manifest.gate(a.video, a.final_run, a.model, "new_bullet_holes.py")
+    # The print scales are checked before the gate too: a malformed one found
+    # after it would spend a sealed recording on a run that reports nothing.
+    scales = board.print_scales()
+    entry = manifest.gate(a.video, a.final_run, a.model, "new_bullet_holes.py")
+    scale = a.mm_per_px
+    if scale is None:
+        scale = scales.get(entry["capture_setup"])
+        if scale is not None:
+            print(f"[INFO] print scale {scale} mm per template px, configured for "
+                  f"{entry['capture_setup']} in config/print_scale.json")
 
-    process(a.video, a.start, a.end, a.model, a.confidence, a.out, a.ring_mm,
-            a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames)
+    process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
+            a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,
+            a.stride)

@@ -7,9 +7,8 @@ right frame of reference:
 
 - It does not move. The camera drifts ~16px over 12s on real footage, and the
   Board itself moves in wind; Board space absorbs both.
-- It is tied to printed artwork of known physical size, so every Board-space
-  length converts to millimetres the moment one ruler reading exists — see
-  `to_millimetres`.
+- It is tied to printed artwork, so every Board-space length converts to
+  millimetres once the print scale is known — see `to_millimetres`.
 
 **One homography for the whole Board**, with Targets located inside it: the
 baseline frame's is fitted to the reference Target's silhouette, and every later
@@ -19,6 +18,8 @@ visibly curl, so the assumption is known to be imperfect; `residuals` exists to
 measure what it costs if SOW 2.3.2's 5mm proves unreachable. The alternative is
 one homography per Target, which absorbs curl a Board-level fit cannot.
 """
+import json
+import math
 import os
 from typing import NamedTuple
 
@@ -27,11 +28,15 @@ import numpy as np
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
 DEFAULT_TEMPLATE = os.path.join(BASE_DIR, "data", "targets", "kanat_silhouette_a4.png")
+PRINT_SCALE_PATH = os.path.join(BASE_DIR, "config", "print_scale.json")
 
 # --- Target artwork landmarks, measured on the source PNG -------------------
-# Exact readings off the artwork, not tuning knobs.
+# Readings off the artwork, not tuning knobs.
 RING_CENTRE_TPL = np.array([695.4, 639.2])  # white 10-ring centre, template px
-RING_DIAMETER_TPL = 227.0                   # white 10-ring diameter, template px
+# White 10-ring diameter, template px: twice the median radius of its edge, at
+# half level, over 720 rays (`tools/ring_landmarks.py`, #70). The disk is ~2%
+# taller than wide (221.1 x 224.6). 227 until #70, which was 1-3 px outside it.
+RING_DIAMETER_TPL = 223.0
 
 # Ring centre relative to the silhouette's centroid. Every Target on a Board is
 # the same artwork, but only the reference Target is registered against the
@@ -40,11 +45,14 @@ RING_DIAMETER_TPL = 227.0                   # white 10-ring diameter, template p
 # relative to one another — consistent with the single-plane Board.
 RING_OFFSET_TPL = RING_CENTRE_TPL - np.array([696.8, 648.9])
 
-# Outer radius of each scoring ring, template px, measured off the artwork by
-# tracing rays out from the ring centre and recording where the printed white
-# lines fall. Spacing is ~101 px and the values repeat within 3 px across 280
-# rays, which is the width of the printed line itself.
-RING_RADII_TPL = (113.5, 219.0, 318.0, 420.0, 522.0)
+# Outer radius of each scoring ring, template px. The 10-ring ends at the white
+# disk's edge. Each ring after it ends at the centre of the white line, the
+# median over 720 rays from the ring centre (`tools/ring_landmarks.py`, #70).
+# The rings are ~2% taller than wide, so one radius is off by up to ±1.4 px at
+# the 10-ring and ±5 px at the 7-ring.
+# ponytail: circular rings, well under the 7-8 px registration error (#50);
+# score an ellipse (one y/x aspect, ~1.022) if registration gets that good.
+RING_RADII_TPL = (RING_DIAMETER_TPL / 2, 220.5, 322.4, 425.1, 528.2)
 RING_SCORES = (10, 9, 8, 7, 6)
 OUTSIDE_RINGS = 0          # on the Target, beyond the 6-ring
 
@@ -78,8 +86,8 @@ TARGET_NET_SCALE = 0.90    # PROVISIONAL
 
 # Two detections are the same Bullet Hole within this many template px. Expressed
 # in template px precisely so it survives a change of camera distance, unlike a
-# frame-pixel value. 227 template px is the 10-ring diameter, so this converts to
-# millimetres the moment `to_millimetres` is unblocked.
+# frame-pixel value. It converts to millimetres with the print scale, as
+# `to_millimetres` does.
 #
 # Swept against data/truth/cama-20260914-141546 (6 Bullet Holes): 40 scores
 # 5 true / 1 false / 1 missed, 20 scores 6 / 1 / 0. The radius also gates
@@ -131,6 +139,13 @@ EDGE_BLUR = 2.0            # search px; the border erosion below covers its reac
 REGION_SPANS = 1.5         # PROVISIONAL
 ECC_SCALE = 0.5            # PROVISIONAL: half resolution
 ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drift
+
+# A re-anchor (#80) is seeded from every Target in view and keeps the best fit,
+# and only above this. The Targets share one artwork, so a neighbour's seed can
+# converge one Target over. Measured 2026-10-05 seeding every contour against
+# the baseline, four CamA/CamB clips: the right Target 0.97-0.99, a neighbour
+# 0.55 (182 frame px off) and 0.20, or no convergence. Not swept.
+REANCHOR_MIN_CORRELATION = 0.9   # PROVISIONAL
 
 
 class NotCalibrated(RuntimeError):
@@ -655,7 +670,7 @@ def uncovered_view(view, frame_size):
                       for k, v in reach.items()}
 
 
-def track_view(frame, reference):
+def track_view(frame, reference, seed=None):
     """Re-register the reference view's Board space onto a later frame.
 
     Board space — scale, origin, canvas size and the Targets in it — is fixed
@@ -673,11 +688,16 @@ def track_view(frame, reference):
     had nothing past that Target to hold its perspective, and wandered p95
     63-66 template px at 1.2 Target spans against 7-8 for this (#50). The previous
     frame's W seeds the search, so the camera drift is tracked incrementally;
-    `reference` may be the baseline view or any view tracked from it.
+    `reference` may be the baseline view or any view tracked from it. `seed`
+    (template -> frame) replaces the previous frame's fit as the starting point;
+    `reanchor_view` passes one once the Board has moved out of its reach.
 
-    ponytail: one fixed reference frame. New Bullet Holes, shadows and wind
-    change the Board against it over a long session; re-anchor to a recent
-    registered frame if lost frames climb.
+    ponytail: one fixed reference frame, on purpose. A lost Board re-anchors
+    against it (`reanchor_view`, #80) rather than against a recent frame, since
+    every hop between frames adds its error to Board space. New Bullet Holes,
+    shadows and wind still change the Board against it over a long session; if
+    re-anchors start failing, the anchor itself needs refreshing, chained to
+    this one.
 
     Returns `(None, None)` when no Target is visible, and raises `cv2.error` when
     registration fails to converge — both mean "no evidence from this frame".
@@ -686,9 +706,73 @@ def track_view(frame, reference):
         return None, None
     a = reference.anchor
     W, correlation = ecc_warp(a.gray, _gray(frame), cv2.MOTION_HOMOGRAPHY,
-                              reference.H @ np.linalg.inv(a.H), a.region)
+                              (reference.H if seed is None else seed) @ np.linalg.inv(a.H),
+                              a.region)
     return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
                      reference.targets, a, reference.edges, reference.inner), correlation
+
+
+def reanchor_view(frame, template_mask, reference):
+    """Find the Board again after tracking lost it, in the same Board space (#80).
+
+    `track_view` starts each fit from the last registered frame's, which is no
+    use once the Board has moved out of ECC's reach (wind, a bumped stand). The
+    silhouette registration the baseline was built with is run on this frame
+    only as a seed; `track_view` then refines it against the same baseline
+    frame on Board texture. Board space, the Targets (#33) and the anchor are
+    `reference`'s. Rebuilding them with `build_view` instead would bring back the
+    pre-#50 far-field error, 63-66 template px, as Registration Displacement.
+
+    The Targets share one artwork, so a silhouette fit to a neighbour is a good
+    fit one Target over, and neither proximity nor size says which Target is
+    which after a jump. Every Target in view seeds a fit and the Board texture
+    decides: the best correlation against the baseline frame is kept, and only
+    above `REANCHOR_MIN_CORRELATION` — with the reference Target out of view,
+    the best is a neighbour.
+
+    Returns `(None, None)` when no Target is visible or no fit clears the floor.
+    """
+    contours, frame_mask = find_targets(frame)
+    best = None, None
+    for contour in contours:
+        try:
+            seed, _ = register(template_mask, frame_mask, contour)
+            fit = track_view(frame, reference, seed)
+        except cv2.error:
+            continue
+        if fit[1] is not None and fit[1] >= max(REANCHOR_MIN_CORRELATION, best[1] or 0):
+            best = fit
+    return best
+
+
+def silhouette_disagreement(frame, template_mask, view):
+    """How far an independent silhouette fit puts the reference Target's
+    centre from where `view` puts it, in Board px (#92, #110).
+
+    The silhouette registration the baseline was built with, from a box seed
+    on the frame's largest Target, knows nothing of the tracked fit, so a
+    tracked fit on the wrong part of the scene disagrees with it grossly. It
+    sees only the reference Target, so it under-reads error elsewhere on the
+    Board (#92: 21 here against 98 at another Target's centre).
+
+    ponytail: seeded from the frame's largest Target, as #92 measured it, not
+    the one nearest the tracked fit's reference: a wrong fit landing on a
+    lookalike Target would agree with a fit seeded there. A right fit on a frame
+    where a neighbour is largest reads ~one Target spacing and is lost; none was
+    on #110's six clips. Match the contour to the baseline's Target if one is.
+
+    None when no Target is visible or the silhouette fit fails: no verdict.
+    """
+    contours, frame_mask = find_targets(frame)
+    if not contours:
+        return None
+    try:
+        own_H, _ = register(template_mask, frame_mask, contours[0])
+    except cv2.error:
+        return None
+    centre = view.targets[0].reshape(-1, 2).mean(axis=0, keepdims=True)
+    own = _apply(view.tpl_to_board @ np.linalg.inv(own_H), view.board_to_frame(centre))
+    return float(np.linalg.norm(own - centre))
 
 
 def residuals(frame, template_mask, view):
@@ -741,25 +825,68 @@ def changed_regions(baseline_canvas, current_canvas, sigma=ABSDIFF_SIGMA):
     return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
 
-def to_millimetres(board_points, view, ring_diameter_mm=None, target_index=None):
+def print_scales(path=PRINT_SCALE_PATH):
+    """Each Capture Setup's print scale, mm per template px.
+
+    Each entry in `path` is `{"mm_per_tpl_px": ..., "source": ...}`, keyed by
+    Capture Setup: the Boards of different setups may come from different
+    prints. `source` says which print and how it was measured
+    (docs/ring_measurement.md); an entry without one is refused, because a
+    scale nobody can trace is a guess.
+
+    The whole file is checked, not just one setup's entry, so a caller can read
+    it before the sealed-run gate: a malformed entry found after the gate has
+    logged the look would spend the held-out recording for nothing.
+    """
+    name = os.path.basename(path)
+    with open(path) as f:
+        entries = json.load(f)
+    scales = {}
+    for capture_setup, entry in entries.items():
+        where = f"{name}: {capture_setup!r}"
+        if not entry.get("source"):
+            raise ValueError(f"{where} has no source. Record which print and "
+                             "how it was measured.")
+        scales[capture_setup] = checked_scale(entry["mm_per_tpl_px"], where)
+    return scales
+
+
+def checked_scale(value, where="print scale"):
+    """A print scale as a float, refused unless finite and above zero.
+
+    It is a physical length ratio applied to every Shot Distance: zero would
+    put every Bullet Hole on the centre, a negative one would mirror them.
+    """
+    scale = float(value)
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError(f"{where}: mm_per_tpl_px {value!r} is not a finite "
+                         "length above zero")
+    return scale
+
+
+def to_millimetres(board_points, view, mm_per_tpl_px=None, target_index=None):
     """Board-space positions as millimetres from a Target's centre.
+
+    `mm_per_tpl_px` is the print scale: millimetres per template px on the
+    printed Target, measured off its outline against the sheet
+    (docs/ring_measurement.md). It is not a ruler reading of any ring.
 
     `target_index` names the Target the Bullet Holes are on. A Miss has no
     Target and therefore no Shot Distance — do not call this for one.
 
-    Deliberately refuses to guess. The printed 10-ring has never been measured
-    with a ruler, and every millimetre figure scales linearly with it — an
+    Deliberately refuses to guess. Every millimetre figure scales linearly with
+    the print scale, and it depends on how the Targets were printed — an
     unchecked assumption here would silently corrupt SOW 2.3.2's 5mm budget and
     every Grouping Analytic derived from it.
-
-    One ruler reading unblocks this, and scoring with it.
     """
-    if ring_diameter_mm is None:
+    if mm_per_tpl_px is None:
         raise NotCalibrated(
-            "printed 10-ring diameter has not been measured. Measure the white "
-            "centre circle on the printed Target and pass ring_diameter_mm. "
-            "Everything downstream scales linearly with it, so it is not guessed.")
-    mm_per_board_px = ring_diameter_mm / (RING_DIAMETER_TPL * view.board_scale)
+            "no print scale (mm per template px) for this Board. Configure it "
+            "for the Capture Setup in config/print_scale.json, or pass it; "
+            "docs/ring_measurement.md has how it is measured. Not a ring's "
+            "ruler reading. Everything downstream scales linearly with it, so "
+            "it is not guessed.")
+    mm_per_board_px = mm_per_tpl_px / view.board_scale
     offset = (np.asarray(board_points, np.float32).reshape(-1, 2)
               - view.ring_centre(target_index)) * mm_per_board_px
     offset[:, 1] *= -1  # image y grows downward, physical y grows up
@@ -772,7 +899,7 @@ def score(board_points, view, target_index=None):
     **Needs no calibration.** A score is which printed ring contains the Bullet
     Hole — a ratio between two lengths in the same picture, not a physical
     measurement. The ring radii and the Bullet Hole are both in template pixels,
-    so the millimetre scale cancels and `to_millimetres`'s missing ruler reading
+    so the millimetre scale cancels and `to_millimetres`'s missing print scale
     does not block this.
 
     Returns `OUTSIDE_RINGS` for a Bullet Hole on the Target but beyond the

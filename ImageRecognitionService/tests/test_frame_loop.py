@@ -1077,12 +1077,24 @@ def _coverage_warning(out):
     return timed, received, untimed, resumed, reconnected
 
 
+class _UndecodableAfterOne(_FakeStream):
+    """`_FakeStream`, whose second frame advances but does not decode."""
+    def retrieve(self):
+        return (False, None) if self.at == 2 else super().retrieve()
+
+
+@pytest.mark.parametrize("session", [
+    lambda: _FakeStream(n=1, interval=0.002),
+    # Its second frame's step is no frame received, so not timed either
+    # (Codex on #121).
+    lambda: _UndecodableAfterOne(interval=0.002),
+])
 def test_a_stream_that_keeps_reconnecting_still_warns_its_timestamps_timed_none(
-        monkeypatch, capsys):
-    """One frame a session: each is the first of its RTSP session, so none is
-    timed by a step, and none is untimed either. Still warned, with why
-    (Codex on #121)."""
-    loop = _live(monkeypatch, _FakeStream(n=0), lambda: _FakeStream(n=1, interval=0.002))
+        monkeypatch, capsys, session):
+    """One frame received a session: each is the first of its RTSP session,
+    so none is timed by a step, and none is untimed either. Still warned,
+    with why (Codex on #121)."""
+    loop = _live(monkeypatch, _FakeStream(n=0), session)
     list(loop.looks(10, stride=1, baseline_frames=10))
     timed, received, untimed, resumed, reconnected = _coverage_warning(
         capsys.readouterr().out)

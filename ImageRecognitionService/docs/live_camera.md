@@ -19,14 +19,29 @@ The MediaMTX is `VideoService/`'s, and nothing in it changes:
 
 ### Add the camera: RTSP pull, the acceptance path
 
-MediaMTX holds the camera connection and reconnects it itself:
+MediaMTX holds the camera connection and reconnects it itself.
+
+The account is never typed into the URL or the JSON by hand:
+- **Percent-encoded.** A reserved character in the user name or password (`@ : / ? # %`, for example) would otherwise change what the URL means.
+- **Serialised by `json.dumps`.** A quote or backslash would otherwise break the request body.
+- **Prompted for.** It stays out of shell history, and `curl` reads the body on stdin, so the account is not on any command line.
 
 ```bash
+read -r -p 'AXIS viewer user: ' AXIS_USER; read -r -s -p 'AXIS viewer password: ' AXIS_PASS; echo
+AXIS_USER=$AXIS_USER AXIS_PASS=$AXIS_PASS python3 -c '
+import json, os, sys
+from urllib.parse import quote
+user, password = (quote(os.environ[k], safe="") for k in ("AXIS_USER", "AXIS_PASS"))
+print(json.dumps({"source": f"rtsp://{user}:{password}@{sys.argv[1]}:554/axis-media/media.amp"
+                            "?videocodec=h264&resolution=1920x1080&fps=25&videozfpsmode=fixed"
+                            "&videozgopmode=fixed&videokeyframeinterval=25",
+                  "rtspTransport": "tcp", "sourceOnDemand": False}))' '<camera-ip>' |
 curl -X POST http://<mtx-host>:9997/v3/config/paths/add/<alias> \
-  -H 'Content-Type: application/json' \
-  -d '{"source": "rtsp://<user>:<password>@<camera-ip>:554/axis-media/media.amp?videocodec=h264&resolution=1920x1080&fps=25&videozfpsmode=fixed&videozgopmode=fixed&videokeyframeinterval=25",
-       "rtspTransport": "tcp", "sourceOnDemand": false}'
+  -H 'Content-Type: application/json' --data-binary @-
+unset AXIS_USER AXIS_PASS
 ```
+
+MediaMTX decodes the percent-encoding before it authenticates. This was checked on v1.21.1 against a stand-in RTSP server that requires user `view@er`, password `p#ss@x&y`. The encoded source went ready, and the stand-in refused no credentials or wrong ones with 401. The same source unencoded was rejected with a 400, and that error echoes the URL, password and all, back to the caller.
 
 Check the path before running anything on it:
 

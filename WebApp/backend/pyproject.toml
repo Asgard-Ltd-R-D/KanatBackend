@@ -1,0 +1,24 @@
+[project]
+name = "kanat-webapp-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.30.6",
+    "sqlalchemy==2.0.35",
+    "alembic==1.13.3",
+    "psycopg2-binary==2.9.9",
+    "pydantic==2.9.2",
+    "pydantic-settings==2.5.2",
+    "weasyprint==62.3",
+    "openpyxl==3.1.5",
+    "duckdb==1.1.1",
+    "jinja2>=3.1.6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+

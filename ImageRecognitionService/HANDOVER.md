@@ -679,36 +679,43 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # Live (#83): an rtsp:// URL in place of the clip, normally a VideoService path. No
 # --start/--end/--out/--merge-displaced and no manifest gate; stride LIVE_STRIDE unless given.
 # Prints [NEW] per Bullet Hole once confirmed; Ctrl-C/SIGTERM prints the report.
-# [LIVE] gives configured vs arrived fps and the due frames dropped late. A
-# failed read, or one stalled past STREAM_TIMEOUT_MS, is a drop (#84): reopened
+# [LIVE] gives configured vs arrived fps, the frames looked at and the due
+# frames dropped late. The arrived rate reads high on a short run (~1.2 s of
+# FFmpeg buffering at open, #85), so read it over minutes. A failed read, or
+# one stalled past STREAM_TIMEOUT_MS, is a drop (#84): reopened
 # until back, its missed frames gaps (the due ones count against persistence's
 # floor, so a drop cannot confirm on one look), each drop and the totals logged.
 # RECONNECT_EVERY_S (1 s) is the wait after each failed attempt, not an attempt
 # every wall-clock second: an attempt on a silent or unreachable source also
 # takes up to STREAM_TIMEOUT_MS (5 s), so attempts then fall ~6 s apart.
 .venv/bin/python -m detection.new_bullet_holes rtsp://MTX-HOST:8554/PATH
+# The AXIS Q6315-LE: its MediaMTX path, stream settings, the fixed-view rule and
+# the manual acceptance are in docs/live_camera.md (#85). A replay through
+# MediaMTX must be H.264: an MPEG-4 Part 2 recording joined mid-GOP exits at open.
 ```
 
 Two known limitations of the live run, neither closed by #83:
 
 - **Frames lost upstream while the baseline is built go uncounted.** From
-  opening the stream until the 5-frame baseline is built, about 3–5 s on the
-  development Mac, nothing reads the stream past the frame in hand. Any frame
-  lost upstream in that time never arrives: MediaMTX discarding for a slow
-  reader (`VideoService/mediamtx.yml` leaves its queue at the default), or a full
-  socket buffer. It is neither counted as a late drop nor indexed. Every later
-  index shifts by the number lost, and with it the stride's phase and every
-  frame-counted window. Frames read while catching up carry the time they were
-  read, not the time they arrived. Only a slightly low arrival rate in `[LIVE]`
-  hints at it. This is not the
+  opening the stream until the 5-frame baseline is built, 1.6–2.8 s through
+  MediaMTX on the development Mac (#85), nothing reads the stream past the
+  frame in hand. Any frame lost upstream in that time never arrives: MediaMTX
+  discarding for a slow reader (`VideoService/mediamtx.yml` leaves its queue
+  at the default), or a full socket buffer. It is neither counted as a late
+  drop nor indexed. Every later index shifts by the number lost, and with it
+  the stride's phase and every frame-counted window. Frames read while
+  catching up carry the time they were read, not the time they arrived. The
+  `[LIVE]` arrival rate hides a small loss, reading high on a short run
+  anyway; MediaMTX's log shows any (`reader is too slow, discarding`). This is not the
   stream drop #84 handles, and #84 does not fix it: the stream neither drops
-  nor stalls. A follow-up could index and time frames by the stream's own
-  timestamps (`cv2.CAP_PROP_POS_MSEC`); #85's MediaMTX run is where to measure
-  whether it happens.
+  nor stalls. #85 saw it happen once; the measurements are in
+  [`live_camera.md`](docs/live_camera.md), the fix is #117.
 - **A Sealed recording streamed over RTSP is not refused.** The manifest gate
   hashes files and cannot see a stream, so #83 skips it for streams by design.
   "Never stream a Sealed recording" (ADR-0005) is #85's acceptance rule, kept
-  by hand: replay only spent recordings through MediaMTX.
+  by hand: replay only spent recordings through MediaMTX. The same holds for
+  the H.264 copy a replay needs: a transcode has a hash the manifest cannot
+  trace, so never make one of a Sealed recording.
 
 ```bash
 
@@ -807,6 +814,7 @@ extraction is what keeps sealed pixels out of it.
 | `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
 | `docs/model_bench.md` | Every checkpoint's training record, the dataset each one trained on, and its bench (#30) |
 | `docs/ring_measurement.md` | The printed 10-ring in millimetres: the print scale for `--mm-per-px`, its readings, and what it depends on (#62) |
+| `docs/live_camera.md` | The AXIS Q6315-LE through VideoService's MediaMTX: its path, stream settings, the fixed-view rule, the manual acceptance and the replay's record (#85) |
 | `config/print_scale.json` | The print scale per Capture Setup, each with its source: 0.1763 for every CamA and CamB setup (#69) |
 | `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `data/truth/<recording>/` | Ground truth, one directory per recording |

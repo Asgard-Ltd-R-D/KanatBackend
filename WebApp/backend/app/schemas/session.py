@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -13,7 +13,7 @@ class SessionCreate(BaseModel):
 
 class SessionUpdate(BaseModel):
     name: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[Literal["active", "completed"]] = None
 
 
 class SessionResponse(BaseModel):

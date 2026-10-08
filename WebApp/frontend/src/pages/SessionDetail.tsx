@@ -190,11 +190,23 @@ export function SessionDetail() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 mb-8">
-        <StatTile label="Total Bullets" value={bullets.length} icon={Crosshair} />
+        {session.status === 'completed' && (
+          <StatTile label="Total Bullets" value={bullets.length} icon={Crosshair} />
+        )}
         <StatTile label="Duration" value={formatDuration(session.started_at, session.ended_at)} icon={TargetIcon} />
       </div>
 
-      {/* View toggle */}
+      {/* Active-session placeholder */}
+      {session.status === 'active' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl flex flex-col items-center justify-center py-20 gap-3">
+          <Crosshair size={36} className="text-slate-700" />
+          <p className="text-slate-400 font-medium">Session in progress</p>
+          <p className="text-slate-600 text-sm">Results will be shown once the session is ended.</p>
+        </div>
+      )}
+
+      {/* View toggle + results — only shown for completed sessions */}
+      {session.status === 'completed' && (<>
       <div className="flex items-center gap-1 mb-6 bg-slate-900 border border-slate-800 rounded-lg p-1 w-fit">
         <button
           onClick={() => setView('target')}
@@ -318,6 +330,7 @@ export function SessionDetail() {
           </table>
         </div>
       )}
+      </>)}
 
       <ConfirmDialog
         open={showEndConfirm}

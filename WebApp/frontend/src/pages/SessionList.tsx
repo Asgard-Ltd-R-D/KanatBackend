@@ -78,7 +78,7 @@ export function SessionList() {
     },
   })
 
-  const totalBullets = sessions?.reduce((s, sess) => s + (sess.bullet_count ?? 0), 0) ?? 0
+  const totalBullets = sessions?.reduce((s, sess) => s + (sess.status === 'active' ? 0 : (sess.bullet_count ?? 0)), 0) ?? 0
   const activeSessions = sessions?.filter(s => s.status === 'active').length ?? 0
   const todaySessions = sessions?.filter(s => isToday(new Date(s.started_at))).length ?? 0
 
@@ -254,7 +254,7 @@ export function SessionList() {
                 </td>
 
                 <td className="px-4 py-3.5 text-slate-300 font-mono text-sm">
-                  {session.bullet_count ?? 0}
+                  {session.status === 'active' ? '—' : (session.bullet_count ?? 0)}
                 </td>
 
                 <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>

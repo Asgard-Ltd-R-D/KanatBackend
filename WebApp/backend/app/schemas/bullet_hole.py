@@ -1,3 +1,4 @@
+import math
 import uuid
 from datetime import datetime
 from typing import Literal, Optional
@@ -24,6 +25,13 @@ class BulletCreate(BaseModel):
     def version_must_be_v1(cls, v: str) -> str:
         if v != "v1":
             raise ValueError(f"Unsupported contract version '{v}', expected 'v1'")
+        return v
+
+    @field_validator("x_mm", "y_mm")
+    @classmethod
+    def must_be_finite(cls, v: float | None) -> float | None:
+        if v is not None and not math.isfinite(v):
+            raise ValueError("must be a finite number, not NaN or infinity")
         return v
 
 

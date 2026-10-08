@@ -30,10 +30,29 @@ jobs:
       - name: Run tests
         run: uv run pytest || [ $? -eq 5 ]
 
+  check-frontend:
+    name: Check frontend lock file
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect package-lock.json
+        id: check
+        run: |
+          if [ -f WebApp/frontend/package-lock.json ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
   frontend-typecheck:
     name: Frontend type check
+    needs: check-frontend
+    if: needs.check-frontend.outputs.exists == 'true'
     runs-on: ubuntu-latest
-    if: hashFiles('WebApp/frontend/package-lock.json') != ''
     defaults:
       run:
         working-directory: WebApp/frontend

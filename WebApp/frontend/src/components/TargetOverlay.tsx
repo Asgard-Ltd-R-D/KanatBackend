@@ -6,7 +6,6 @@ interface TooltipData {
   x: number
   y: number
   bullet: BulletHole
-  index: number
 }
 
 interface Props {
@@ -37,7 +36,7 @@ export function TargetOverlay({ bullets }: Props) {
         className="absolute inset-0 w-full h-full"
         style={{ top: 0, left: 0 }}
       >
-        {bullets.map((b, i) => {
+        {bullets.map((b) => {
           const cx = b.position_x
           const cy = b.position_y
           const label = String(b.rank)
@@ -50,7 +49,7 @@ export function TargetOverlay({ bullets }: Props) {
                 const rect = (e.currentTarget.closest('svg') as SVGElement).getBoundingClientRect()
                 const svgX = (cx / TPL_W) * rect.width
                 const svgY = (cy / TPL_H) * rect.height
-                setTooltip({ x: svgX, y: svgY, bullet: b, index: i + 1 })
+                setTooltip({ x: svgX, y: svgY, bullet: b })
               }}
               onMouseLeave={() => setTooltip(null)}
               style={{ cursor: 'pointer' }}
@@ -78,7 +77,7 @@ export function TargetOverlay({ bullets }: Props) {
           style={{ left: Math.min(tooltip.x + 12, 999), top: Math.max(tooltip.y - 80, 0) }}
         >
           <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 shadow-xl text-xs whitespace-nowrap">
-            <div className="font-semibold text-slate-100 mb-1">Bullet #{tooltip.index}</div>
+            <div className="font-semibold text-slate-100 mb-1">Bullet #{tooltip.bullet.rank}</div>
             <div className="text-slate-400">
               Time: <span className="text-slate-200 font-medium">{formatTime(tooltip.bullet.first_seen_at)}</span>
             </div>

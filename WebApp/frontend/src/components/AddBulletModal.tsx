@@ -35,8 +35,12 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
   function validate(): boolean {
     const e: Record<string, string> = {}
     if (!form.first_seen_at || isNaN(new Date(form.first_seen_at).getTime())) e.first_seen_at = 'Required date/time'
-    if (!form.position_x || isNaN(Number(form.position_x))) e.position_x = 'Required number'
-    if (!form.position_y || isNaN(Number(form.position_y))) e.position_y = 'Required number'
+    const x = Number(form.position_x)
+    const y = Number(form.position_y)
+    if (!form.position_x || isNaN(x)) e.position_x = 'Required number'
+    else if (x < 0 || x > 1405) e.position_x = 'Must be 0–1405'
+    if (!form.position_y || isNaN(y)) e.position_y = 'Required number'
+    else if (y < 0 || y > 1120) e.position_y = 'Must be 0–1120'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -84,7 +88,7 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
                 value={form.position_x}
                 onChange={e => setForm(f => ({ ...f, position_x: e.target.value }))}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
-                placeholder="0–1390"
+                placeholder="0–1405"
               />
               {errors.position_x && <p className="text-red-400 text-xs mt-1">{errors.position_x}</p>}
             </div>
@@ -96,7 +100,7 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
                 value={form.position_y}
                 onChange={e => setForm(f => ({ ...f, position_y: e.target.value }))}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
-                placeholder="0–1974"
+                placeholder="0–1120"
               />
               {errors.position_y && <p className="text-red-400 text-xs mt-1">{errors.position_y}</p>}
             </div>

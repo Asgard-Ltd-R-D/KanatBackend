@@ -334,7 +334,7 @@ export function SessionDetail() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete Bullet"
-        message={`Remove bullet #${deleteTarget ? (bullets.indexOf(deleteTarget) + 1) : ''}? This cannot be undone.`}
+        message={`Remove bullet #${deleteTarget?.rank ?? ''}? This cannot be undone.`}
         confirmLabel="Delete"
         onConfirm={() => deleteTarget && deleteBulletMutation.mutate(deleteTarget.id)}
         onCancel={() => setDeleteTarget(null)}

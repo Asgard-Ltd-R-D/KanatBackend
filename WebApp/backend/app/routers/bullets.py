@@ -10,7 +10,7 @@ from app.services import bullets as svc
 router = APIRouter(prefix="/sessions/{session_id}/bullets", tags=["bullets"])
 
 
-@router.post("/", response_model=BulletHoleResponse, status_code=201)
+@router.post("", response_model=BulletHoleResponse, status_code=201)
 def report_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession = Depends(get_db)):
     return svc.create_bullet(session_id, body, db)
 

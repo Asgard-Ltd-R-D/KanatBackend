@@ -28,11 +28,12 @@ jobs:
         run: uv sync --frozen
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run pytest || [ $? -eq 5 ]
 
   frontend-typecheck:
     name: Frontend type check
     runs-on: ubuntu-latest
+    if: hashFiles('WebApp/frontend/package-lock.json') != ''
     defaults:
       run:
         working-directory: WebApp/frontend

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.bullet_hole import BulletHoleInSession
 
@@ -25,7 +25,7 @@ class SessionResponse(BaseModel):
     started_at: datetime
     ended_at: Optional[datetime]
     created_at: datetime
-    bullet_holes: list[BulletHoleInSession] = []
+    bullet_holes: list[BulletHoleInSession] = Field(default=[], validation_alias="active_bullet_holes")
 
 
 class SessionListItem(BaseModel):

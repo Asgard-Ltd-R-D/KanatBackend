@@ -25,6 +25,7 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['session', sessionId] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
       onSuccess()
       onClose()
       setForm({ first_seen_at: '', position_x: '', position_y: '' })

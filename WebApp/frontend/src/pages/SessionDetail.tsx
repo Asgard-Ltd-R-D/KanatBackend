@@ -67,6 +67,7 @@ export function SessionDetail() {
     mutationFn: (bulletId: string) => deleteBullet(id!, bulletId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['session', id] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
       setDeleteTarget(null)
     },
   })

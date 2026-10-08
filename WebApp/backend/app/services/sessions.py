@@ -74,6 +74,8 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) ->
         session.status = body.status
         if body.status == "completed" and session.ended_at is None:
             session.ended_at = datetime.now(timezone.utc)
+        elif body.status == "active":
+            session.ended_at = None
 
     db.commit()
     return get_session_detail(session_id, db)

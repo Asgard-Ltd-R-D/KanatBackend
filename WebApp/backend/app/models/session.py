@@ -17,7 +17,7 @@ class Session(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
+        DateTime(timezone=True), nullable=False, server_default=text("now()"), index=True
     )
 
     bullet_holes: Mapped[list["BulletHole"]] = relationship(  # type: ignore[name-defined]
@@ -25,4 +25,13 @@ class Session(Base):
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="BulletHole.first_seen_at",
+    )
+
+    active_bullet_holes: Mapped[list["BulletHole"]] = relationship(  # type: ignore[name-defined]
+        "BulletHole",
+        primaryjoin="and_(Session.id == BulletHole.session_id, BulletHole.deleted_at == None)",
+        foreign_keys="[BulletHole.session_id]",
+        order_by="BulletHole.first_seen_at",
+        viewonly=True,
+        overlaps="bullet_holes,session",
     )

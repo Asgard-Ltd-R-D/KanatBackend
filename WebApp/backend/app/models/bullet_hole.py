@@ -13,7 +13,7 @@ class BulletHole(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     position_x: Mapped[float] = mapped_column(Float, nullable=False)

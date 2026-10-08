@@ -23,6 +23,7 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("status", sa.String(), nullable=False, server_default="active"),
+        sa.CheckConstraint("status IN ('active', 'completed')", name="ck_sessions_status"),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(

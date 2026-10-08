@@ -2,12 +2,12 @@ import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 
 class BulletPosition(BaseModel):
-    x: float
-    y: float
+    x: float = Field(ge=0, le=1390)
+    y: float = Field(ge=0, le=1974)
 
 
 class BulletCreate(BaseModel):

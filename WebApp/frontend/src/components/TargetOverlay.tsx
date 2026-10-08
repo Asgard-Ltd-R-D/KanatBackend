@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import targetPng from '../../public/target.png'
+import targetPng from '../assets/target.png'
 import { BulletHole } from '../types'
 
 interface TooltipData {

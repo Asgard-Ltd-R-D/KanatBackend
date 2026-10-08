@@ -322,7 +322,7 @@ export function SessionDetail() {
       <ConfirmDialog
         open={showEndConfirm}
         title="End Session"
-        message={`End "${session.name}" now? The session will be marked as completed with ${bullets.length} bullet${bullets.length !== 1 ? 's' : ''} recorded. You can still export results after.`}
+        message={`End "${session.name}" now? The session will be marked as completed. You can still export results after.`}
         confirmLabel="End Session"
         onConfirm={() => endMutation.mutate()}
         onCancel={() => setShowEndConfirm(false)}

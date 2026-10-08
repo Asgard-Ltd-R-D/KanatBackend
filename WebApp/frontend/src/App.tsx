@@ -1,0 +1,30 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { Layout } from './components/Layout'
+import { SessionList } from './pages/SessionList'
+import { SessionDetail } from './pages/SessionDetail'
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 2,
+      staleTime: 5_000,
+    },
+  },
+})
+
+export function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Layout />}>
+            <Route index element={<SessionList />} />
+            <Route path="sessions/:id" element={<SessionDetail />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </QueryClientProvider>
+  )
+}

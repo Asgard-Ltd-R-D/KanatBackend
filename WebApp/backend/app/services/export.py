@@ -57,7 +57,7 @@ _REPORT_HTML = """<!DOCTYPE html>
     <tbody>
       {% for b in bullets %}
       <tr>
-        <td>{{ loop.index }}</td>
+        <td>{{ b.rank }}</td>
         <td>{{ b.first_seen_at.strftime('%H:%M:%S') }}</td>
         <td>{{ "%.1f" | format(b.position_x) }}</td>
         <td>{{ "%.1f" | format(b.position_y) }}</td>
@@ -98,7 +98,7 @@ _jinja_env = Environment(autoescape=True)
 
 
 def generate_pdf(session: Session) -> bytes:
-    bullets = session.bullet_holes
+    bullets = sorted(session.bullet_holes, key=lambda b: b.rank)
     html = _jinja_env.from_string(_REPORT_HTML).render(
         session=session,
         bullets=bullets,
@@ -109,7 +109,7 @@ def generate_pdf(session: Session) -> bytes:
 
 
 def generate_csv(session: Session) -> str:
-    bullets = session.bullet_holes
+    bullets = sorted(session.bullet_holes, key=lambda b: b.rank)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["#", "first_seen_at", "position_x", "position_y", "source", "rank"])
@@ -126,7 +126,7 @@ def generate_csv(session: Session) -> str:
 
 
 def generate_excel(session: Session) -> bytes:
-    bullets = session.bullet_holes
+    bullets = sorted(session.bullet_holes, key=lambda b: b.rank)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Bullet Holes"

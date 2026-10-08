@@ -1,10 +1,11 @@
 import csv
 import io
+import urllib.parse
 from datetime import datetime, timezone
 
 import openpyxl
 import weasyprint
-from jinja2 import Template
+from jinja2 import Environment
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from app.models import Session
@@ -77,15 +78,21 @@ def _session_duration(session: Session) -> str:
     return "—"
 
 
-def _session_filename(session: Session, ext: str) -> str:
-    safe_name = session.name.replace(" ", "_")
+def _content_disposition(session: Session, ext: str) -> str:
     date_str = session.started_at.strftime("%Y%m%d")
-    return f"session_{safe_name}_{date_str}.{ext}"
+    ascii_name = session.name.encode("ascii", errors="replace").decode().replace(" ", "_").replace("?", "_")
+    fallback = f"session_{ascii_name}_{date_str}.{ext}"
+    utf8_name = f"session_{session.name.replace(' ', '_')}_{date_str}.{ext}"
+    encoded = urllib.parse.quote(utf8_name, safe="-._~")
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
+
+
+_jinja_env = Environment(autoescape=True)
 
 
 def generate_pdf(session: Session) -> bytes:
     bullets = session.bullet_holes
-    html = Template(_REPORT_HTML).render(
+    html = _jinja_env.from_string(_REPORT_HTML).render(
         session=session,
         bullets=bullets,
         duration=_session_duration(session),
@@ -94,7 +101,7 @@ def generate_pdf(session: Session) -> bytes:
     return weasyprint.HTML(string=html, base_url=None).write_pdf()
 
 
-def generate_csv(session: Session) -> tuple[str, str]:
+def generate_csv(session: Session) -> str:
     bullets = session.bullet_holes
     output = io.StringIO()
     writer = csv.writer(output)
@@ -108,10 +115,10 @@ def generate_csv(session: Session) -> tuple[str, str]:
             b.source,
             b.rank,
         ])
-    return output.getvalue(), _session_filename(session, "csv")
+    return output.getvalue()
 
 
-def generate_excel(session: Session) -> tuple[bytes, str]:
+def generate_excel(session: Session) -> bytes:
     bullets = session.bullet_holes
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -143,4 +150,4 @@ def generate_excel(session: Session) -> tuple[bytes, str]:
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    return buf.read(), _session_filename(session, "xlsx")
+    return buf.read()

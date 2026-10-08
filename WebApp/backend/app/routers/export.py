@@ -26,31 +26,30 @@ def _require_completed(session_id: uuid.UUID, db: DBSession):
 def export_pdf(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
     session = _require_completed(session_id, db)
     pdf_bytes = svc.generate_pdf(session)
-    filename = svc._session_filename(session, "pdf")
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": svc._content_disposition(session, "pdf")},
     )
 
 
 @router.get("/csv")
 def export_csv(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
     session = _require_completed(session_id, db)
-    content, filename = svc.generate_csv(session)
+    content = svc.generate_csv(session)
     return StreamingResponse(
         iter([content]),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": svc._content_disposition(session, "csv")},
     )
 
 
 @router.get("/excel")
 def export_excel(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
     session = _require_completed(session_id, db)
-    content, filename = svc.generate_excel(session)
+    content = svc.generate_excel(session)
     return StreamingResponse(
         io.BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": svc._content_disposition(session, "xlsx")},
     )

@@ -284,7 +284,7 @@ export function SessionList() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete Session"
-        message={`Are you sure you want to delete "${deleteTarget?.name}"? This will also delete all ${deleteTarget?.bullet_count ?? 0} bullet holes. This action cannot be undone.`}
+        message={`Are you sure you want to delete "${deleteTarget?.name}"?${deleteTarget?.status === 'completed' ? ` This will also delete all ${deleteTarget.bullet_count ?? 0} bullet holes.` : ''} This action cannot be undone.`}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
         onCancel={() => setDeleteTarget(null)}
         loading={deleteMutation.isPending}

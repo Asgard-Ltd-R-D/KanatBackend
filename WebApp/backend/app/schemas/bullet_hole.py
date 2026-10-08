@@ -7,8 +7,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 
 
 class BulletPosition(BaseModel):
-    x: float = Field(ge=0, le=1390)
-    y: float = Field(ge=0, le=1974)
+    x: float = Field(ge=0, le=1405)
+    y: float = Field(ge=0, le=1120)
 
 
 class BulletCreate(BaseModel):

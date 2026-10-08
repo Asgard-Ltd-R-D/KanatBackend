@@ -12,7 +12,7 @@ The detection model calls this endpoint once per confirmed Bullet Hole.
   "first_seen_at": "2026-10-08T14:32:07.412Z",
   "position": {
     "x": 774.8,
-    "y": 1417.7
+    "y": 560.3
   },
   "target_index": 0,
   "x_mm": -12.3,
@@ -27,8 +27,8 @@ The detection model calls this endpoint once per confirmed Bullet Hole.
 |---|---|---|---|
 | `version` | string | yes | Must be `"v1"`. Unknown versions are rejected with `422`. |
 | `first_seen_at` | string (ISO 8601, timezone required) | yes | Absolute UTC timestamp when the Bullet Hole was first confirmed by the model. Naive timestamps (no `Z` or offset) are rejected with `422`. |
-| `position.x` | float | yes | Template-space X coordinate (0–1390 px). |
-| `position.y` | float | yes | Template-space Y coordinate (0–1974 px). |
+| `position.x` | float | yes | Template-space X coordinate (0–1405 px). |
+| `position.y` | float | yes | Template-space Y coordinate (0–1120 px). |
 | `target_index` | integer | no | Index of the Target the hole landed on, when the model can determine it. `null` or absent means Miss or undetermined. |
 | `x_mm` | float | no | Horizontal offset from Target centre in millimetres. Requires a calibrated print scale. `null` if unavailable. |
 | `y_mm` | float | no | Vertical offset from Target centre in millimetres. Requires a calibrated print scale. `null` if unavailable. |

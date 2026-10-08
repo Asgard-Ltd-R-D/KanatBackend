@@ -116,7 +116,7 @@ export function SessionList() {
               type="text"
               value={newName}
               onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && createMutation.mutate()}
+              onKeyDown={e => e.key === 'Enter' && !createMutation.isPending && createMutation.mutate()}
               placeholder="Session name (e.g. Morning Range - Alpha)"
               className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 mb-4"
             />

@@ -50,7 +50,6 @@ export function SessionList() {
   const { data: sessions, isLoading, isError, refetch } = useQuery({
     queryKey: ['sessions'],
     queryFn: getSessions,
-    refetchInterval: 10000,
   })
 
   const createMutation = useMutation({

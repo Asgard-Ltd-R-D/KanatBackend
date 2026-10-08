@@ -51,8 +51,6 @@ export function SessionDetail() {
   const { data: session, isLoading, isError, refetch } = useQuery({
     queryKey: ['session', id],
     queryFn: () => getSession(id!),
-    refetchInterval: (query) =>
-      (query.state.data as { status?: string } | undefined)?.status === 'active' ? 5000 : false,
     enabled: !!id,
   })
 

@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 import urllib.parse
 from datetime import datetime, timezone
 
@@ -78,10 +79,16 @@ def _session_duration(session: Session) -> str:
     return "—"
 
 
+def _ascii_slug(name: str) -> str:
+    slug = name.encode("ascii", errors="replace").decode()
+    slug = re.sub(r"[^\w\s-]", "_", slug)
+    slug = re.sub(r"[\s]+", "_", slug)
+    return slug.strip("_") or "session"
+
+
 def _content_disposition(session: Session, ext: str) -> str:
     date_str = session.started_at.strftime("%Y%m%d")
-    ascii_name = session.name.encode("ascii", errors="replace").decode().replace(" ", "_").replace("?", "_")
-    fallback = f"session_{ascii_name}_{date_str}.{ext}"
+    fallback = f"session_{_ascii_slug(session.name)}_{date_str}.{ext}"
     utf8_name = f"session_{session.name.replace(' ', '_')}_{date_str}.{ext}"
     encoded = urllib.parse.quote(utf8_name, safe="-._~")
     return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"

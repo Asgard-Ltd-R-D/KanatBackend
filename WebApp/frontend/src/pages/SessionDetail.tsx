@@ -289,10 +289,7 @@ export function SessionDetail() {
                   <td colSpan={5} className="py-16 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <Crosshair size={32} className="text-slate-700" />
-                      <p className="text-slate-500 text-sm">No bullets detected yet</p>
-                      {session.status === 'active' && (
-                        <p className="text-slate-600 text-xs">The detection model will report bullets automatically</p>
-                      )}
+                      <p className="text-slate-500 text-sm">No bullets recorded</p>
                     </div>
                   </td>
                 </tr>

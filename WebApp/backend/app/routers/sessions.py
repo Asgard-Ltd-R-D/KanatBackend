@@ -10,12 +10,12 @@ from app.services import sessions as svc
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
-@router.post("/", response_model=SessionResponse, status_code=201)
+@router.post("", response_model=SessionResponse, status_code=201)
 def create_session(body: SessionCreate, db: DBSession = Depends(get_db)):
     return svc.create_session(body, db)
 
 
-@router.get("/", response_model=list[SessionListItem])
+@router.get("", response_model=list[SessionListItem])
 def list_sessions(db: DBSession = Depends(get_db)):
     return svc.list_sessions(db)
 

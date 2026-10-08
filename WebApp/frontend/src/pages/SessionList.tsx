@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, ChevronRight, Target, AlertCircle, X, Check } from 'lucide-react'
-import { format, isToday } from 'date-fns'
+import { format } from 'date-fns'
 import { getSessions, createSession, updateSession, deleteSession } from '../api/sessions'
 import { Session } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
@@ -26,12 +26,14 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
   )
 }
 
+const SKELETON_WIDTHS = ['65%', '55%', '40%', '30%', '25%', '20%']
+
 function SkeletonRow() {
   return (
     <tr>
-      {[...Array(6)].map((_, i) => (
+      {SKELETON_WIDTHS.map((w, i) => (
         <td key={i} className="px-4 py-4">
-          <div className="h-4 bg-slate-800 rounded animate-pulse" style={{ width: `${60 + Math.random() * 40}%` }} />
+          <div className="h-4 bg-slate-800 rounded animate-pulse" style={{ width: w }} />
         </td>
       ))}
     </tr>
@@ -80,7 +82,6 @@ export function SessionList() {
 
   const totalBullets = sessions?.reduce((s, sess) => s + (sess.status === 'active' ? 0 : (sess.bullet_count ?? 0)), 0) ?? 0
   const activeSessions = sessions?.filter(s => s.status === 'active').length ?? 0
-  const todaySessions = sessions?.filter(s => isToday(new Date(s.started_at))).length ?? 0
 
   return (
     <div className="p-8">

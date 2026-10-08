@@ -112,7 +112,7 @@ def generate_csv(session: Session) -> str:
     bullets = sorted(session.bullet_holes, key=lambda b: b.rank)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["#", "first_seen_at", "position_x", "position_y", "source", "rank"])
+    writer.writerow(["rank", "first_seen_at", "position_x", "position_y", "source"])
     for b in bullets:
         writer.writerow([
             b.rank,
@@ -120,7 +120,6 @@ def generate_csv(session: Session) -> str:
             b.position_x,
             b.position_y,
             b.source,
-            b.rank,
         ])
     return output.getvalue()
 

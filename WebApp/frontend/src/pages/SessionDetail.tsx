@@ -155,36 +155,38 @@ export function SessionDetail() {
             </button>
           )}
 
-          <div className="flex items-center gap-1 pl-2 border-l border-slate-700">
-            <a
-              href={exportUrl(session.id, 'pdf')}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
-              title="Export PDF"
-            >
-              <FileText size={14} />
-              PDF
-            </a>
-            <a
-              href={exportUrl(session.id, 'csv')}
-              download
-              className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
-              title="Export CSV"
-            >
-              <Download size={14} />
-              CSV
-            </a>
-            <a
-              href={exportUrl(session.id, 'excel')}
-              download
-              className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
-              title="Export Excel"
-            >
-              <FileSpreadsheet size={14} />
-              Excel
-            </a>
-          </div>
+          {session.status === 'completed' && (
+            <div className="flex items-center gap-1 pl-2 border-l border-slate-700">
+              <a
+                href={exportUrl(session.id, 'pdf')}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
+                title="Export PDF"
+              >
+                <FileText size={14} />
+                PDF
+              </a>
+              <a
+                href={exportUrl(session.id, 'csv')}
+                download
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
+                title="Export CSV"
+              >
+                <Download size={14} />
+                CSV
+              </a>
+              <a
+                href={exportUrl(session.id, 'excel')}
+                download
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
+                title="Export Excel"
+              >
+                <FileSpreadsheet size={14} />
+                Excel
+              </a>
+            </div>
+          )}
         </div>
       </div>
 

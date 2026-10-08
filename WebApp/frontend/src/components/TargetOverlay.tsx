@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import targetPng from '../../public/target.png'
 import { BulletHole } from '../types'
 
 interface TooltipData {
@@ -12,8 +13,8 @@ interface Props {
   bullets: BulletHole[]
 }
 
-const TPL_W = 1390
-const TPL_H = 1974
+const TPL_W = 1405
+const TPL_H = 1120
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -25,7 +26,7 @@ export function TargetOverlay({ bullets }: Props) {
   return (
     <div className="relative w-full select-none">
       <img
-        src="/target.png"
+        src={targetPng}
         alt="Target"
         className="w-full h-auto rounded-lg block"
         draggable={false}
@@ -39,7 +40,7 @@ export function TargetOverlay({ bullets }: Props) {
         {bullets.map((b, i) => {
           const cx = b.position_x
           const cy = b.position_y
-          const label = String(i + 1)
+          const label = String(b.rank)
           const fontSize = label.length > 1 ? 52 : 60
 
           return (

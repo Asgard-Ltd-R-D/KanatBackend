@@ -21,7 +21,7 @@ The two components in this repo that matter for day-to-day range operation are `
 One shooting run on a Range. An operator starts a Session before firing begins and closes it when done. A Session has a `status` of `active` or `completed`. All Bullet Holes reported during a Session belong to it. A Session is the unit of export (PDF report) and the unit displayed in the session list.
 
 **Bullet Hole** (web app sense)
-A confirmed detection reported by the detection model to the backend. One row in the `bullet_holes` table. Carries a position (template coordinates x/y), a ring score (0 = Miss, 6–10 = scored ring), whether it landed on a Target or was a Miss, a timestamp in ms from the start of the Session, and detection metadata (confidence, first/last frame seen).
+A confirmed detection reported by the detection model to the backend. One row in the `bullet_holes` table. Carries a position (template coordinates x/y), the absolute timestamp when it was first detected (`first_seen_at`), a source (`"model"` or `"manual"`), and an insertion-order rank within the session. Optional fields (`target_index`, `x_mm`, `y_mm`) are populated when the model provides them. Ring scores, target/miss classification, and per-detection confidence/frame metadata are outside the current WebApp scope.
 
 This is distinct from a **Hit**: two bullets through the same point leave one Bullet Hole. The system counts Bullet Holes, not Hits. See `docs/adr/0001-report-bullet-holes-not-hits.md`.
 

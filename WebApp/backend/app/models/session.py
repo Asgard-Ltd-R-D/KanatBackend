@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 
@@ -23,14 +25,14 @@ class Session(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()"), index=True
     )
 
-    bullet_holes: Mapped[list["BulletHole"]] = relationship(  # type: ignore[name-defined]
+    bullet_holes: Mapped[list[BulletHole]] = relationship(
         "BulletHole",
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="BulletHole.first_seen_at",
     )
 
-    active_bullet_holes: Mapped[list["BulletHole"]] = relationship(  # type: ignore[name-defined]
+    active_bullet_holes: Mapped[list[BulletHole]] = relationship(
         "BulletHole",
         primaryjoin="and_(Session.id == BulletHole.session_id, BulletHole.deleted_at == None)",
         foreign_keys="[BulletHole.session_id]",

@@ -354,7 +354,7 @@ export function SessionDetail() {
         open={showAddBullet}
         sessionId={session.id}
         onClose={() => setShowAddBullet(false)}
-        onSuccess={() => qc.invalidateQueries({ queryKey: ['session', id] })}
+        onSuccess={() => {}}
       />
     </div>
   )

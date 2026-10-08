@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 
@@ -28,4 +30,4 @@ class BulletHole(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
-    session: Mapped["Session"] = relationship("Session", back_populates="bullet_holes")  # type: ignore[name-defined]
+    session: Mapped[Session] = relationship("Session", back_populates="bullet_holes")

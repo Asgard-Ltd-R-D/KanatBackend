@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.models import BulletHole, Session
 from app.schemas.bullet_hole import BulletCreate
-from app.services.sessions import get_session_or_404
 
 
 def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> BulletHole:

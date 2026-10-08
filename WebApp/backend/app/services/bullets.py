@@ -55,7 +55,14 @@ def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> B
 
 
 def delete_bullet(session_id: uuid.UUID, bullet_id: uuid.UUID, db: DBSession) -> None:
-    get_session_or_404(session_id, db)
+    session = (
+        db.query(Session)
+        .filter(Session.id == session_id)
+        .with_for_update()
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     bullet = db.query(BulletHole).filter(
         BulletHole.id == bullet_id,

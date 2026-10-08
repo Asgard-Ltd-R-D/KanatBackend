@@ -26,7 +26,7 @@ A confirmed detection reported by the detection model to the backend. One row in
 This is distinct from a **Hit**: two bullets through the same point leave one Bullet Hole. The system counts Bullet Holes, not Hits. See `docs/adr/0001-report-bullet-holes-not-hits.md`.
 
 **Template coordinates**
-The coordinate system of the printed Target artwork (`ImageRecognitionService/data/targets/kanat_silhouette_a4.png`, 1390×1974 px). All Bullet Hole positions are reported and stored in these coordinates. The frontend's target overlay maps them back to screen pixels at render time.
+The coordinate system of the printed Target artwork (`ImageRecognitionService/data/targets/kanat_silhouette_a4.png`, 1405×1120 px). All Bullet Hole positions are reported and stored in these coordinates. The frontend's target overlay maps them back to screen pixels at render time.
 
 **Target / Miss**
 A Bullet Hole is a **Target** hit if it landed on a scoring silhouette. It is a **Miss** if it hit the Board outside any Target. Ring scores 6–10 are Target hits; score 0 is a Miss.

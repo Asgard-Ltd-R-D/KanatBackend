@@ -743,6 +743,11 @@ Two known limitations of the live run, neither closed by #83:
 .venv/bin/python -m tools.evaluate data/videos/CamB_20260915_102250.mkv --start 0 --end 46 \
     --truth-labels data/truth/camb-20260915-102250
 
+# SOW 2.3.2 stage 1: Position Error over every unsealed recording with truth,
+# window and Capture Setup from the manifest; Sealed ones skipped by role (#126)
+.venv/bin/python -m tools.position_error --stride 17   # the headline (LIVE_STRIDE)
+.venv/bin/python -m tools.position_error --stride 1
+
 .venv/bin/python -m pytest -q
 ```
 
@@ -817,6 +822,7 @@ extraction is what keeps sealed pixels out of it.
 | `detection/new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
 | `detection/groups.py` | Group statistics per Target (MPI, CEP50, Mean Radius, RMS, Extreme Spread), printed as `[GROUP]` blocks; pure, for SOW 2.4.1 to reuse (#86) |
 | `tools/evaluate.py`, `tools/derive_truth.py` | Scoring a run against labelled ground truth; deriving that truth from a photograph pair |
+| `tools/position_error.py` | SOW 2.3.2 stage 1: Position Error pooled over the unsealed truth recordings, per camera, labelled internal (#126) |
 | `tools/probe.py`, `tools/registration_reach.py` | Per-mark detection and registration measurements over a clip |
 | `tools/ring_landmarks.py` | Re-reads the 10-ring diameter and scoring-ring radii off the artwork (#70) |
 | `tools/mine_negatives.py` | Background negatives from unsealed footage, into `data/negatives/` |

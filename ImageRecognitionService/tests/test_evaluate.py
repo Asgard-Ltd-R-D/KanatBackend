@@ -7,8 +7,8 @@ from detection import board
 from tools.evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
                       RAW_NAMES, SOURCE_NAME, UNKNOWN,
                       attribute, load_labels, match, off_canvas,
-                      placement_note, pre_existing_labels, register_photograph,
-                      score)
+                      placement_note, position_errors, pre_existing_labels,
+                      register_photograph, score)
 
 
 def test_greedy_matching_is_one_to_one():
@@ -141,6 +141,36 @@ def test_the_nearer_pairing_wins_when_both_score_the_same():
     pairs, missed = match(truth, found, tolerance=6)
     assert [(i, j) for i, j, _ in pairs] == [(0, 0), (2, 1)]
     assert missed == []
+
+
+# --- Position Error --------------------------------------------------------
+#
+# Template px, whose y grows downward, against the printed Target's axes: X
+# right, Y up, system minus truth (SOW 2.3.2, #123).
+
+
+def test_a_bullet_hole_found_right_of_and_above_its_truth_errs_plus_on_both_axes():
+    """10 template px right and 10 up, at 0.2 mm per template px."""
+    truth = np.float32([[100, 100]])
+    found = np.float32([[110, 90]])
+    errors = position_errors(truth, found, score(truth, found)["pairs"], 0.2)
+    np.testing.assert_allclose(errors, [[2.0, 2.0, 2.8284271]], atol=1e-6)
+
+
+def test_position_error_follows_each_pair_not_the_index():
+    """Found #1 is truth #2's: the error is taken across the pair, in the order
+    scoring returns the pairs."""
+    truth = np.float32([[0, 0], [200, 200]])
+    found = np.float32([[195, 212], [3, 4], [900, 900]])
+    errors = position_errors(truth, found, score(truth, found)["pairs"], 0.5)
+    np.testing.assert_allclose(errors, [[-2.5, -6.0, 6.5], [1.5, -2.0, 2.5]],
+                               atol=1e-6)
+
+
+def test_no_pairs_is_no_position_error():
+    errors = position_errors(np.float32([[0, 0]]), np.zeros((0, 2), np.float32),
+                             [], 0.2)
+    assert errors.shape == (0, 3)
 
 
 # --- attributing false positives ------------------------------------------
@@ -304,7 +334,7 @@ def test_off_canvas_pre_existing_marks_stay_a_placement_doubt():
     A wrong placement could have thrown them there, so the on-canvas match
     alone is not a clean placement (#41)."""
     note = placement_note(np.float32([[0, 0]]), np.float32([[3, 4]]),
-                          40.0, off_canvas_count=2)
+                          40.0, 0.2, off_canvas_count=2)
     assert "1 of 1" in note
     assert "[WARN] 2 more pre-existing mark(s) land off the canvas" in note
 
@@ -312,6 +342,14 @@ def test_off_canvas_pre_existing_marks_stay_a_placement_doubt():
 def test_placement_is_unverified_when_every_pre_existing_mark_is_off_canvas():
     """Nothing left to check against is not "0 of 0 land within" — say so."""
     note = placement_note(np.zeros((0, 2), np.float32), np.float32([[3, 4]]),
-                          40.0, off_canvas_count=2)
+                          40.0, 0.2, off_canvas_count=2)
     assert "placement unverified" in note
     assert "2 pre-existing mark(s)" in note
+
+
+def test_the_placement_range_is_stated_in_mm_too():
+    """The placement's own error sits inside every Position Error measured
+    against this truth, so it is read in the same unit (#124)."""
+    note = placement_note(np.float32([[0, 0], [100, 0]]),
+                          np.float32([[3, 4], [100, 10]]), 40.0, 0.2)
+    assert "5-10 px (1.0-2.0 mm)" in note

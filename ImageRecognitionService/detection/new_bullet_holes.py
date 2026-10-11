@@ -887,11 +887,11 @@ class Registration:
     """
 
     def __init__(self, view, frame_size, template_mask, when):
-        # Two views, and the difference matters: `_view` is the Board space
+        # Two views, and the difference matters: `_space` is the Board space
         # everything is registered ONTO, and `last` is the most recently
         # registered frame, which is what the next ECC fit starts from. Both
         # carry the baseline's Targets (#33).
-        self._view = self.last = view
+        self._space = self.last = view
         self._template_mask, self._when = template_mask, when
         self._lost_run = 0      # consecutive Lost Looks, up to this one
         self._reanchors = self._reanchored = 0   # attempts, and those that registered (#80)
@@ -1008,7 +1008,7 @@ class Registration:
         grew = {k: v for k, v in self._reach.items()
                 if v > self._baseline_reach[k] + board.ROUNDING_PX}
         if grew:
-            span = board.target_span(self._view)
+            span = board.target_span(self._space)
             where = ", ".join(f"{v / span:.2f} {k}" for k, v in grew.items())
             print(f"[WARN] registered frames put the view further off the canvas "
                   f"than the baseline did, up to {where} (Target spans): the "
@@ -1061,18 +1061,17 @@ class RegisteredFrames:
     capture: read from where it is, never seeked, at `LIVE_FPS`.
 
     Built by `open`. The constructor takes its collaborators directly so the
-    iteration can be exercised without a video file or a model; `open` sets
-    `registration` after it, since a `Registration` logs by the loop's `when`.
+    iteration can be exercised without a video file or a model.
     """
 
-    def __init__(self, cap, model, view, base, imgsz, conf, fps, start):
+    def __init__(self, cap, model, view, base, imgsz, conf, fps, start, registration):
         self.cap, self.model = cap, model
         self.view = view   # Board space, fixed by the frame at `--start`
         self.imgsz, self.conf = imgsz, conf
         self.fps, self.start = fps, start
         self._base = base
         self.net_scale = None   # measured by `open`; see the warning there
-        self.registration = None   # set by `open`, see above
+        self.registration = registration
         self.processed = self.lost = 0
         # The Board past the margin canvas, searched by a second inference (#46).
         self.bands = view.exposed_bands(BAND_CONTEXT_PX)
@@ -1172,10 +1171,12 @@ class RegisteredFrames:
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
+        # Registration logs by the loop's `when`; `loop` is bound by the time
+        # the first frame is registered.
+        registration = Registration(view, (base.shape[1], base.shape[0]), template_mask,
+                                    lambda index: loop.when(index))
         loop = cls(_Stream(cap, arrived, lambda: _open_stream(video)) if live else cap,
-                   model, view, base, imgsz, conf, fps, start)
-        loop.registration = Registration(view, (base.shape[1], base.shape[0]),
-                                         template_mask, loop.when)
+                   model, view, base, imgsz, conf, fps, start, registration)
         loop.net_scale = scale
         return loop
 

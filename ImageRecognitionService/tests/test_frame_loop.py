@@ -122,13 +122,14 @@ class _Scripted:
         self.reported += 1
 
 
-def _loop(registers=lambda i: True, frames=10, cap=None):
-    """A loop over `frames` frames, registering those `registers(index)` says."""
-    loop = nbh.RegisteredFrames(cap or _FakeCap(frames), _FakeModel(), _FakeView(),
+def _loop(registers=lambda i: True, frames=10, cap=None, view=None, registration=None):
+    """A loop over `frames` frames onto Board space `view`, registering those
+    `registers(index)` says, unless a `registration` is given."""
+    view = view or _FakeView()
+    return nbh.RegisteredFrames(cap or _FakeCap(frames), _FakeModel(), view,
                                 np.zeros((8, 8, 3), np.uint8), imgsz=64, conf=0.02,
-                                fps=25.0, start=10.0)
-    loop.registration = _Scripted(loop.view, registers)
-    return loop
+                                fps=25.0, start=10.0,
+                                registration=registration or _Scripted(view, registers))
 
 
 def test_a_lost_frame_is_not_a_frame_that_saw_nothing():
@@ -232,10 +233,8 @@ def test_a_grown_canvas_is_searched_as_the_margin_canvas_plus_its_bands():
     """A on the margin canvas at the loop's imgsz; B on each band at its own;
     B keeps only what lies past the margin canvas, in grown-canvas px."""
     model = _RecordingModel()
-    loop = _loop(frames=0)
-    loop.view = _GrownView()
-    loop._base = np.zeros((8, 8, 3), np.uint8)
-    loop.model, loop.bands = model, loop.view.exposed_bands(nbh.BAND_CONTEXT_PX)
+    loop = _loop(frames=0, view=_GrownView())
+    loop.model = model
     look = next(loop.looks(1))
     assert model.calls == [((64, 64), 1, 64), ((48, 64), 7, 64)]
     assert look.detections[:, :2].tolist() == [[15.0, 15.0], [30.0, 72.0]]
@@ -338,12 +337,13 @@ def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch):
     were lost; a frame it never read (a stride gap, #81) is not among them.
     The one loop test with the real `Registration` in it (#138): frames 7 and
     8 do not register."""
-    loop = _loop()
     monkeypatch.setattr(nbh.board, "track_view", lambda frame, last: (
         (None, None) if frame[0, 0, 0] in (7, 8) else (_FakeView(), 0.95)))
     monkeypatch.setattr(nbh.board, "uncovered_view", lambda view, size: (
         0.0, dict.fromkeys(("left", "right", "above", "below"), 0.0)))
-    loop.registration = nbh.Registration(loop.view, (8, 8), None, loop.when)
+    view = _FakeView()
+    # `when` is never called: nothing here re-anchors.
+    loop = _loop(view=view, registration=nbh.Registration(view, (8, 8), None, str))
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     handed = {}
     def track(per_frame, n_frames, match_px, lost=()):

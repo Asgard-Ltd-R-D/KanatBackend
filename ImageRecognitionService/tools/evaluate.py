@@ -824,6 +824,128 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance, mm_per_tpl_px,
     return note
 
 
+def score_recording(video, start, end, truth_labels, truth_image=None,
+                    model=nbh.DEFAULT_MODEL, template=board.DEFAULT_TEMPLATE,
+                    confidence=nbh.DEFAULT_CONFIDENCE, change_filter=True,
+                    merge_displaced=False, baseline_frames=nbh.BASELINE_FRAMES,
+                    stride=None, tolerance=MATCH_TOLERANCE_TPL, final_run=False):
+    """Score one run of `video` against its truth, printing every line as it
+    goes, and return what a pooled report reads (position_error.py, #126):
+
+    - `rows`: per matched pair, `(found #, truth #, Target or "MISS", dX, dY,
+      radial)`, 1-based, mm, in truth order;
+    - `unmatched` and `missed`: the detections no truth claimed and the truth
+      no detection found;
+    - `placement`: the placement-check note as printed;
+    - `entry`: the manifest entry the gate found by content hash.
+    """
+    # The print scale before the gate, looked up as the pipeline looks it up but
+    # refused where the pipeline runs on without millimetres: refused after the
+    # gate, a final run would spend a sealed recording on a score with no
+    # Position Error. The gate still rules on the recording itself.
+    # ponytail: hashes the recording twice; pass the hash to the gate if that matters
+    scales = board.print_scales()
+    peek = manifest.load().get(manifest.content_hash(video))
+    if peek is not None and peek["capture_setup"] not in scales:
+        raise SystemExit(
+            f"[REFUSED] Capture Setup {peek['capture_setup']!r} has no print "
+            f"scale in config/print_scale.json, so no Position Error can be put "
+            f"in mm. docs/ring_measurement.md has how it is measured; every mm "
+            f"figure scales linearly with it, so it is not guessed.")
+
+    # Split membership before anything is opened: a sealed recording is refused
+    # unless this run says it is the final one. See manifest.py and ADR-0005.
+    entry = manifest.gate(video, final_run, model, "evaluate.py")
+    mm_per_tpl_px = scales[entry["capture_setup"]]
+
+    template_image = cv2.imread(template)
+    _, template_mask = board.find_targets(template_image, min_area=1)
+
+    # The run's positions are in Board space; ground truth is in template space.
+    # Board space is fixed by the BASELINE frame, and the truth is placed
+    # through that same frame.
+    baseline_frame, view = baseline_view(video, start, template_mask)
+    truth, pre_labels = load_truth(truth_image, truth_labels,
+                                   baseline_frame, view)
+
+    run = nbh.process(video, start, end, model, confidence,
+                      template_path=template,
+                      require_change_evidence=change_filter,
+                      merge_displaced=merge_displaced,
+                      baseline_frames=baseline_frames, stride=stride)
+
+    to_template = np.linalg.inv(view.tpl_to_board)
+    found = board._apply(to_template,
+                         np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
+    # The marks that were already on the Board, in the same frame of reference —
+    # what tells a displaced one of those from a detector false positive.
+    pre_existing = board._apply(
+        to_template, np.asarray(run.baseline, np.float32)[:, :2])
+    if pre_labels is not None and len(pre_labels):
+        outside = off_canvas(pre_labels, view)
+        placement = placement_note(np.delete(pre_labels, outside, axis=0),
+                                   pre_existing, tolerance, mm_per_tpl_px,
+                                   off_canvas_count=len(outside))
+    else:
+        placement = ("[WARN] placement unverified: the truth names no "
+                     "pre-existing mark to check it against, and the "
+                     "registration correlation is not a geometry check. A wrong "
+                     "placement would change this score silently.")
+    print(placement)
+
+    result = score(truth, found, tolerance)
+    print(f"\n[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "
+          f"precision {result['precision']:.0%}  recall {result['recall']:.0%}  "
+          f"F1 {result['f1']:.2f}")
+    for i, j, d in sorted(result["pairs"], key=lambda t: t[1]):
+        print(f"   found #{i + 1} -> truth #{j + 1}   {d:5.0f} template px")
+    if result["missed"]:
+        print(f"   missed: {', '.join(f'truth #{j + 1}' for j in result['missed'])}")
+
+    # SOW 2.3.2 (#123). Internal: this truth shares the footage's print scale
+    # and mapping to the artwork, so errors in those cancel out of it.
+    errors = position_errors(truth, found, result["pairs"], mm_per_tpl_px)
+    rows = []
+    for (i, j, _), (dx, dy, radial) in sorted(zip(result["pairs"], errors),
+                                              key=lambda t: t[0][1]):
+        target = run.holes[i]["target"]
+        where = "MISS" if target is None else f"Target {target + 1}"
+        rows.append((i + 1, j + 1, where, dx, dy, radial))
+    print(f"\n[POSITION ERROR] {len(errors)} matched pair(s), mm along the "
+          f"Target's printed axes (X right, Y up), system minus truth, at "
+          f"{mm_per_tpl_px} mm per template px ({entry['capture_setup']}). "
+          f"Internal: against truth in this footage's own frame of reference")
+    for i, j, where, dx, dy, radial in rows:
+        print(f"   found #{i} -> truth #{j}   {where:<9} dX {dx:+6.1f}  "
+              f"dY {dy:+6.1f}  radial {radial:5.1f} mm")
+
+    # Under the headline, never in it.
+    attribution = attribute(found, result["pairs"], pre_existing, tolerance)
+    if attribution:
+        counted = {c: sum(1 for _, cause, _ in attribution if cause == c)
+                   for c in CAUSES}
+        print(f"\n[ATTRIBUTION] {len(attribution)} false positive(s): "
+              + ", ".join(f"{n} {c}" for c, n in counted.items())
+              + f" (displacement within {tolerance:.0f} template px of a mark "
+                f"the baseline already held, detector beyond "
+                f"{UNKNOWN_FACTOR * tolerance:.0f})")
+        for i, cause, distance in attribution:
+            near = "none" if distance == float("inf") else f"{distance:.0f} px"
+            print(f"   found #{i + 1}  {cause:<12} nearest pre-existing mark {near}")
+
+    # On every score, in the template px a score is read in, and a bar on
+    # nothing: no registration-failure threshold has been validated — not
+    # against Bullet Hole scale, not against SOW 2.3.2's 5 mm — and inventing
+    # one from a single clip is the error this project keeps finding in its own
+    # constants. So a run is never refused or marked unscoreable on this line.
+    print(nbh.registration_note(
+        np.asarray(run.residual, np.float32) / view.board_scale,
+        board.MATCH_TPL_PX, "template px"))
+
+    return {"rows": rows, "unmatched": result["fp"], "missed": result["fn"],
+            "placement": placement, "entry": entry}
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser("Score a run against labelled ground truth")
     p.add_argument("video")
@@ -847,102 +969,10 @@ if __name__ == "__main__":
                    help="how close a detection must be to claim a label, template px")
     manifest.add_flag(p)
     a = p.parse_args()
-
-    # The print scale before the gate, looked up as the pipeline looks it up but
-    # refused where the pipeline runs on without millimetres: refused after the
-    # gate, a final run would spend a sealed recording on a score with no
-    # Position Error. The gate still rules on the recording itself.
-    # ponytail: hashes the recording twice; pass the hash to the gate if that matters
-    scales = board.print_scales()
-    peek = manifest.load().get(manifest.content_hash(a.video))
-    if peek is not None and peek["capture_setup"] not in scales:
-        raise SystemExit(
-            f"[REFUSED] Capture Setup {peek['capture_setup']!r} has no print "
-            f"scale in config/print_scale.json, so no Position Error can be put "
-            f"in mm. docs/ring_measurement.md has how it is measured; every mm "
-            f"figure scales linearly with it, so it is not guessed.")
-
-    # Split membership before anything is opened: a sealed recording is refused
-    # unless this run says it is the final one. See manifest.py and ADR-0005.
-    entry = manifest.gate(a.video, a.final_run, a.model, "evaluate.py")
-    mm_per_tpl_px = scales[entry["capture_setup"]]
-
-    template = cv2.imread(a.template)
-    _, template_mask = board.find_targets(template, min_area=1)
-
-    # The run's positions are in Board space; ground truth is in template space.
-    # Board space is fixed by the BASELINE frame, and the truth is placed
-    # through that same frame.
-    baseline_frame, view = baseline_view(a.video, a.start, template_mask)
-    truth, pre_labels = load_truth(a.truth_image, a.truth_labels,
-                                   baseline_frame, view)
-
-    run =nbh.process(a.video, a.start, a.end, a.model, a.confidence,
-                      template_path=a.template,
-                      require_change_evidence=not a.no_change_filter,
-                      merge_displaced=a.merge_displaced,
-                      baseline_frames=a.baseline_frames, stride=a.stride)
-
-    to_template = np.linalg.inv(view.tpl_to_board)
-    found = board._apply(to_template,
-                         np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
-    # The marks that were already on the Board, in the same frame of reference —
-    # what tells a displaced one of those from a detector false positive.
-    pre_existing = board._apply(
-        to_template, np.asarray(run.baseline, np.float32)[:, :2])
-    if pre_labels is not None and len(pre_labels):
-        outside = off_canvas(pre_labels, view)
-        print(placement_note(np.delete(pre_labels, outside, axis=0), pre_existing,
-                             a.tolerance, mm_per_tpl_px,
-                             off_canvas_count=len(outside)))
-    else:
-        print("[WARN] placement unverified: the truth names no pre-existing "
-              "mark to check it against, and the registration correlation is "
-              "not a geometry check. A wrong placement would change this "
-              "score silently.")
-
-    result = score(truth, found, a.tolerance)
-    print(f"\n[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "
-          f"precision {result['precision']:.0%}  recall {result['recall']:.0%}  "
-          f"F1 {result['f1']:.2f}")
-    for i, j, d in sorted(result["pairs"], key=lambda t: t[1]):
-        print(f"   found #{i + 1} -> truth #{j + 1}   {d:5.0f} template px")
-    if result["missed"]:
-        print(f"   missed: {', '.join(f'truth #{j + 1}' for j in result['missed'])}")
-
-    # SOW 2.3.2 (#123). Internal: this truth shares the footage's print scale
-    # and mapping to the artwork, so errors in those cancel out of it.
-    errors = position_errors(truth, found, result["pairs"], mm_per_tpl_px)
-    print(f"\n[POSITION ERROR] {len(errors)} matched pair(s), mm along the "
-          f"Target's printed axes (X right, Y up), system minus truth, at "
-          f"{mm_per_tpl_px} mm per template px ({entry['capture_setup']}). "
-          f"Internal: against truth in this footage's own frame of reference")
-    for (i, j, _), (dx, dy, radial) in sorted(zip(result["pairs"], errors),
-                                              key=lambda t: t[0][1]):
-        target = run.holes[i]["target"]
-        where = "MISS" if target is None else f"Target {target + 1}"
-        print(f"   found #{i + 1} -> truth #{j + 1}   {where:<9} dX {dx:+6.1f}  "
-              f"dY {dy:+6.1f}  radial {radial:5.1f} mm")
-
-    # Under the headline, never in it.
-    attribution = attribute(found, result["pairs"], pre_existing, a.tolerance)
-    if attribution:
-        counted = {c: sum(1 for _, cause, _ in attribution if cause == c)
-                   for c in CAUSES}
-        print(f"\n[ATTRIBUTION] {len(attribution)} false positive(s): "
-              + ", ".join(f"{n} {c}" for c, n in counted.items())
-              + f" (displacement within {a.tolerance:.0f} template px of a mark "
-                f"the baseline already held, detector beyond "
-                f"{UNKNOWN_FACTOR * a.tolerance:.0f})")
-        for i, cause, distance in attribution:
-            near = "none" if distance == float("inf") else f"{distance:.0f} px"
-            print(f"   found #{i + 1}  {cause:<12} nearest pre-existing mark {near}")
-
-    # On every score, in the template px a score is read in, and a bar on
-    # nothing: no registration-failure threshold has been validated — not
-    # against Bullet Hole scale, not against SOW 2.3.2's 5 mm — and inventing
-    # one from a single clip is the error this project keeps finding in its own
-    # constants. So a run is never refused or marked unscoreable on this line.
-    print(nbh.registration_note(
-        np.asarray(run.residual, np.float32) / view.board_scale,
-        board.MATCH_TPL_PX, "template px"))
+    score_recording(a.video, a.start, a.end, a.truth_labels, a.truth_image,
+                    model=a.model, template=a.template,
+                    confidence=a.confidence,
+                    change_filter=not a.no_change_filter,
+                    merge_displaced=a.merge_displaced,
+                    baseline_frames=a.baseline_frames, stride=a.stride,
+                    tolerance=a.tolerance, final_run=a.final_run)

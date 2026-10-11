@@ -332,9 +332,9 @@ def test_rendering_gets_the_view_of_every_frame_read(monkeypatch):
     assert rendered == [list(range(10))]
 
 
-def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch):
-    """The #110 floor counts frames tried and lost, so `process` must say which
-    were lost; a frame it never read (a stride gap, #81) is not among them.
+def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch, capsys):
+    """The #110 floor counts frames tried and lost, so `process` must hand
+    `Persistence` each Lost Look; the Board-lost warning counts what it holds.
     The one loop test with the real `Registration` in it (#138): frames 7 and
     8 do not register."""
     monkeypatch.setattr(nbh.board, "track_view", lambda frame, last: (
@@ -345,13 +345,8 @@ def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch):
     # `when` is never called: nothing here re-anchors.
     loop = _loop(view=view, registration=nbh.Registration(view, (8, 8), None, str))
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
-    handed = {}
-    def track(per_frame, n_frames, match_px, lost=()):
-        handed["lost"] = list(lost)
-        return []
-    monkeypatch.setattr(nbh, "track_new_bullet_holes", track)
     nbh.process("clip.mp4", 10.0, 10.4, "model.pt")
-    assert handed["lost"] == [7, 8]
+    assert "[WARN] Board lost on 2 frame(s);" in capsys.readouterr().out
 
 
 # --- a stride: look at every Nth frame (#81) ---------------------------------

@@ -1,9 +1,9 @@
 """Checks for the new-Bullet-Hole tracker. No model, no video, no torch."""
 import numpy as np
 from detection import board
-from detection.new_bullet_holes import (_overlap_fraction, change_evidence, merge_band_detections,
-                              merge_displaced_tracks, same_bullet_hole,
-                              track_new_bullet_holes)
+from detection.new_bullet_holes import (PERSIST_FRAMES, Persistence, _overlap_fraction,
+                              change_evidence, merge_band_detections,
+                              merge_displaced_tracks, same_bullet_hole)
 
 MATCH = 22.0  # Board-space px; the tracker takes it from BoardView.match_radius
 
@@ -32,25 +32,35 @@ def _looked(frames, seen):
             for i in frames]
 
 
+def _persisted(per_frame, n_frames, match_px, window=PERSIST_FRAMES, lost=()):
+    """What persisted over a run: `per_frame` the registered Looks as
+    (index, Detections), `lost` the Lost ones, fed to `Persistence` in frame
+    order, then `n_frames` passed."""
+    persistence = Persistence(match_px, window=window)
+    for index, pts in sorted([*per_frame, *((i, None) for i in lost)], key=lambda l: l[0]):
+        persistence.add(index, pts)
+    return persistence.end(n_frames)
+
+
 def test_persistent_bullet_hole_is_reported():
-    got = track_new_bullet_holes(_looked(range(10, 40), set(range(10, 40))),
-                                 n_frames=40, match_px=MATCH, window=20)
+    got = _persisted(_looked(range(10, 40), set(range(10, 40))),
+                     n_frames=40, match_px=MATCH, window=20)
     assert len(got) == 1
     assert got[0]["first_frame"] == 10
     assert got[0]["persistence"] == 1.0
 
 
 def test_flickering_detection_is_dropped():
-    got = track_new_bullet_holes(_looked(range(10, 40), {10, 13, 19, 25}),
-                                 n_frames=40, match_px=MATCH, window=20)
+    got = _persisted(_looked(range(10, 40), {10, 13, 19, 25}),
+                     n_frames=40, match_px=MATCH, window=20)
     assert got == []
 
 
 def test_verdict_does_not_depend_on_clip_length():
     """Solid for its window, so it confirms in a short clip and a long one."""
     frames, seen = range(10, 40), set(range(10, 30))
-    short = track_new_bullet_holes(_looked(frames, seen), n_frames=40, match_px=MATCH, window=20)
-    long_ = track_new_bullet_holes(_looked(range(10, 300), seen), n_frames=300, match_px=MATCH, window=20)
+    short = _persisted(_looked(frames, seen), n_frames=40, match_px=MATCH, window=20)
+    long_ = _persisted(_looked(range(10, 300), seen), n_frames=300, match_px=MATCH, window=20)
     assert len(short) == len(long_) == 1
 
 
@@ -61,8 +71,8 @@ def test_unelapsed_window_is_not_reported():
     needs 20. Shortening the denominator here is what made the verdict depend on
     where the operator stopped recording.
     """
-    got = track_new_bullet_holes(_looked(range(30, 40), set(range(30, 38))),
-                                 n_frames=40, match_px=MATCH, window=20)
+    got = _persisted(_looked(range(30, 40), set(range(30, 38))),
+                     n_frames=40, match_px=MATCH, window=20)
     assert got == []
 
 
@@ -73,7 +83,7 @@ def test_lost_registration_frames_do_not_count_against_a_bullet_hole():
     other 10 were lost to registration failure. That is 100%, not 50%.
     """
     frames = list(range(10, 20))          # only these registered
-    got = track_new_bullet_holes(_looked(frames, set(frames)), n_frames=40, match_px=MATCH, window=20)
+    got = _persisted(_looked(frames, set(frames)), n_frames=40, match_px=MATCH, window=20)
     assert len(got) == 1
     assert got[0]["persistence"] == 1.0
 
@@ -85,14 +95,14 @@ def test_a_window_mostly_lost_to_registration_confirms_nothing():
     looks each. Under PERSIST of the frames the loop tried to register is
     unconfirmable, not rejected, like a window that has not elapsed. Exactly
     PERSIST still confirms."""
-    lone = track_new_bullet_holes(_looked([10], {10}), n_frames=40, match_px=MATCH,
-                                  window=20, lost=range(11, 30))
+    lone = _persisted(_looked([10], {10}), n_frames=40, match_px=MATCH,
+                      window=20, lost=range(11, 30))
     short = list(range(10, 19))           # 9 of 20 registered, all seeing it
-    sparse = track_new_bullet_holes(_looked(short, set(short)), n_frames=40,
-                                    match_px=MATCH, window=20, lost=range(19, 30))
+    sparse = _persisted(_looked(short, set(short)), n_frames=40,
+                        match_px=MATCH, window=20, lost=range(19, 30))
     half = list(range(10, 20))            # 10 of 20
-    edge = track_new_bullet_holes(_looked(half, set(half)), n_frames=40,
-                                  match_px=MATCH, window=20, lost=range(20, 30))
+    edge = _persisted(_looked(half, set(half)), n_frames=40,
+                      match_px=MATCH, window=20, lost=range(20, 30))
     assert lone == sparse == [] and len(edge) == 1
 
 
@@ -103,23 +113,23 @@ def test_stride_gaps_are_not_lost_frames():
     """#81/#82 look at every Nth frame on purpose: ~4 looks a 50-frame window
     at stride 13. Frames never read are gaps, not registration failures, so
     the #110 floor does not count them and a persistent Bullet Hole confirms."""
-    got = track_new_bullet_holes(_looked(STRIDE_13, set(STRIDE_13)), n_frames=300,
-                                 match_px=MATCH)
+    got = _persisted(_looked(STRIDE_13, set(STRIDE_13)), n_frames=300,
+                     match_px=MATCH)
     assert len(got) == 1 and got[0]["persistence"] == 1.0
 
 
 def test_stride_still_drops_a_flickering_detection():
     seen = set(STRIDE_13[::4])            # 1 look in 4
-    assert track_new_bullet_holes(_looked(STRIDE_13, seen), n_frames=300,
-                                  match_px=MATCH) == []
+    assert _persisted(_looked(STRIDE_13, seen), n_frames=300,
+                      match_px=MATCH) == []
 
 
 def test_a_lost_sampled_frame_counts_against_the_floor():
     """At stride 13 a window holds frames 13..52: 4 tries. Three of them lost
     to registration leaves 1 look of 4, under the floor."""
     looked = [13] + list(range(65, 300, 13))
-    got = track_new_bullet_holes(_looked(looked, set(looked)), n_frames=300,
-                                 match_px=MATCH, lost=[26, 39, 52])
+    got = _persisted(_looked(looked, set(looked)), n_frames=300,
+                     match_px=MATCH, lost=[26, 39, 52])
     assert all(h["first_frame"] != 13 for h in got)
 
 
@@ -128,18 +138,18 @@ def test_the_frame_past_the_window_does_not_count():
     PERSIST, and a look at frame 50 must not join the denominator."""
     frames = [(i, np.array([[100, 100]], np.float32) if i < 25 else np.zeros((0, 2), np.float32))
               for i in range(51)]
-    assert len(track_new_bullet_holes(frames, n_frames=51, match_px=MATCH)) == 1
+    assert len(_persisted(frames, n_frames=51, match_px=MATCH)) == 1
 
 
 def test_nearby_detections_merge_into_one_bullet_hole():
     frames = [(i, np.array([[100 + (i % 3), 100 - (i % 2)]], np.float32))
               for i in range(10, 40)]
-    assert len(track_new_bullet_holes(frames, n_frames=40, match_px=MATCH, window=20)) == 1
+    assert len(_persisted(frames, n_frames=40, match_px=MATCH, window=20)) == 1
 
 
 def test_distinct_bullet_holes_stay_distinct():
     frames = [(i, np.array([[100, 100], [200, 200]], np.float32)) for i in range(10, 40)]
-    assert len(track_new_bullet_holes(frames, n_frames=40, match_px=MATCH, window=20)) == 2
+    assert len(_persisted(frames, n_frames=40, match_px=MATCH, window=20)) == 2
 
 
 def test_centres_inside_the_floor_are_one_bullet_hole():
@@ -180,7 +190,7 @@ def test_real_bullet_holes_a_diagonal_apart_stay_distinct():
     a, b = CAMA_PAIR
     assert not same_bullet_hole(a, b, FLOOR)
     frames = [(i, np.array([a, b], np.float32)) for i in range(10, 40)]
-    assert len(track_new_bullet_holes(frames, n_frames=40, match_px=FLOOR, window=20)) == 2
+    assert len(_persisted(frames, n_frames=40, match_px=FLOOR, window=20)) == 2
 
 
 def test_camb_split_is_not_merged_by_the_gate_alone():
@@ -272,9 +282,9 @@ def test_a_truncated_run_does_not_confirm_on_frames_it_never_read():
     it actually read, not the frames it asked for.
     """
     looked = _looked(range(30, 40), set(range(30, 40)))
-    assert track_new_bullet_holes(looked, n_frames=40, match_px=MATCH, window=20) == []
+    assert _persisted(looked, n_frames=40, match_px=MATCH, window=20) == []
     # ... and the same evidence against the requested count wrongly confirms it.
-    assert len(track_new_bullet_holes(looked, n_frames=300, match_px=MATCH, window=20)) == 1
+    assert len(_persisted(looked, n_frames=300, match_px=MATCH, window=20)) == 1
 
 
 def test_two_boxes_on_one_mark_in_one_frame_count_as_one_frame():
@@ -294,32 +304,51 @@ def test_two_boxes_on_one_mark_in_one_frame_count_as_one_frame():
     split = np.array([[100.0, 100.0], [100.5, 100.0]], np.float32)
     per_frame = [(i, split if i < 16 else np.zeros((0, 2), np.float32))
                  for i in range(10, 40)]
-    assert track_new_bullet_holes(per_frame, n_frames=40, match_px=MATCH, window=20) == []
+    assert _persisted(per_frame, n_frames=40, match_px=MATCH, window=20) == []
 
 
 def test_every_frame_is_recorded_once_however_many_boxes_it_held():
     split = np.array([[100.0, 100.0], [100.5, 100.0]], np.float32)
-    got = track_new_bullet_holes([(i, split) for i in range(10, 40)],
-                                 n_frames=40, match_px=MATCH, window=20)
+    got = _persisted([(i, split) for i in range(10, 40)],
+                     n_frames=40, match_px=MATCH, window=20)
     assert len(got) == 1
     assert got[0]["seen"] == list(range(10, 40))
     assert got[0]["persistence"] == 1.0
 
 
-def test_persistence_cannot_exceed_one_on_out_of_order_frames():
-    """`first` is the frame the candidate was first ENCOUNTERED in.
+def test_a_candidate_persists_at_the_first_look_past_its_window():
+    """Looks every 5 frames: the window [10, 30) has passed by the Look at 30,
+    so that Look's `add` returns the Candidate, and no `add` before it does."""
+    persistence = Persistence(MATCH, window=20)
+    looks = _looked(range(10, 50, 5), set(range(10, 50, 5)))
+    returned = {index: persistence.add(index, pts) for index, pts in looks}
+    assert [index for index, got in returned.items() if got] == [30]
+    assert returned[30][0]["first_frame"] == 10
 
-    Given frames out of order it is not the earliest, and a numerator without the
-    window's lower bound then counted sightings the denominator did not — 1.5,
-    measured, with `min(ratio, 1.0)` hiding it. `process` feeds frames in order;
-    the docstring promises only that registered frames all appear, so nothing
-    else pins this.
-    """
-    p = np.array([[100.0, 100.0]], np.float32)
-    shuffled = [(i, p) for i in range(20, 40)] + [(i, p) for i in range(10, 20)]
-    got = track_new_bullet_holes(shuffled, n_frames=40, match_px=MATCH, window=20)
-    assert [c["persistence"] for c in got] == [1.0]
 
+def test_a_candidate_due_only_after_the_last_look_is_judged_by_end():
+    """A stride's last Look is at 25, but it passed frames up to 29 without
+    looking: the window [10, 30) has passed only then, so `end` judges it."""
+    persistence = Persistence(MATCH, window=20)
+    assert not any(persistence.add(index, pts)
+                   for index, pts in _looked(range(10, 30, 5), set(range(10, 30, 5))))
+    assert [h["first_frame"] for h in persistence.end(30)] == [10]
+
+
+def test_end_gives_the_final_position_and_sightings_not_those_at_judgement():
+    """Judged at the Look at 29, then seen 2 px over for 10 more Looks: `end`
+    and `position` give where the running mean ended, and every sighting."""
+    persistence = Persistence(MATCH, window=20)
+    judged = []
+    for index in range(10, 40):
+        x = 100.0 if index < 30 else 102.0
+        judged += persistence.add(index, np.array([[x, 100.0]], np.float32))
+    (at_judgement,) = judged
+    pos, seen = at_judgement["pos"].copy(), list(at_judgement["seen"])
+    (final,) = persistence.end(40)
+    assert seen == list(range(10, 30)) and final["seen"] == list(range(10, 40))
+    assert pos[0] == 100.0 and final["pos"][0] > 100.0
+    assert np.array_equal(persistence.position(final)[:2], final["pos"])
 
 
 # --- dual inference: merging the exposed Board's detections (#46) ------------

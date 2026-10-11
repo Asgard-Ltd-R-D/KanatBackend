@@ -8,7 +8,7 @@ The runtime pipeline from bullet_hole_detection_pipeline_updated.md:
       -> rectified Board         board.BoardView.rectify, at TARGET_NET_SCALE
       -> YOLO on the rectified Board
       -> Target / Miss           board.BoardView.assign
-      -> baseline + persistence  track_new_bullet_holes, here
+      -> baseline + persistence  Persistence, here
       -> millimetres, score      NOT IMPLEMENTED, see board.to_millimetres
 
 Two things the plain detector cannot do on its own:
@@ -17,7 +17,7 @@ Two things the plain detector cannot do on its own:
   present in the baseline frame are recorded once and never reported again.
 - **Persistence.** A real Bullet Hole appears and then stays put. A false
   positive on gravel or a shadow flickers. Measured on CamA_20260914_141546,
-  requiring a detection to survive its confirmation window cut 70 candidates to
+  requiring a detection to survive its persistence window cut 70 candidates to
   7 — with no retraining, and where no confidence threshold could separate them.
 
 Change detection runs alongside as corroborating evidence only, never as the
@@ -64,7 +64,7 @@ DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26n_v1", "we
 # Bullet Holes, rejected by a bar set from nothing but intuition.
 PERSIST = 0.50        # PROVISIONAL
 PERSIST_FRAMES = 50   # PROVISIONAL length, but FIXED by design: measured to the end
-                      # of the clip instead, the same Bullet Hole confirms over
+                      # of the clip instead, the same Bullet Hole persists over
                       # 13-17s and fails over 13-25s purely because registration
                       # drifts further over the longer run.
 DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
@@ -118,10 +118,10 @@ MODERATE_DISAGREEMENT_PX = 3.1  # PROVISIONAL: the most a right fit read on a st
 # clip with a narrow safe band; this is a duration.
 BASELINE_FRAMES = 5   # PROVISIONAL: exercise on the held-out recordings
 
-# Require change detection to corroborate a confirmed Bullet Hole.
+# Require change detection to corroborate a persisted Candidate.
 #
 # This is a narrower role than the gate rejected in ADR-0003: it filters
-# CONFIRMED Bullet Holes rather than deciding what the model looks at, so a
+# PERSISTED Candidates rather than deciding what the model looks at, so a
 # missed candidate is still detected and can still be recovered by lowering the
 # bar. On the ground-truth clip it removed 5 of 7 false positives and cost
 # nothing real — every one of the four true Bullet Holes was corroborated.
@@ -290,53 +290,13 @@ def strip_pre_existing(pts, baseline, match_px):
     return pts[distance >= match_px], distance[distance < match_px]
 
 
-def track_new_bullet_holes(per_frame, n_frames, match_px, persist=PERSIST,
-                           window=PERSIST_FRAMES, lost=()):
-    """Fold per-frame detections into confirmed new Bullet Holes.
-
-    `per_frame` is [(frame_idx, Nx2 array of Board-space centres), ...], already
-    stripped of anything matching the baseline. **Only frames that registered
-    successfully appear in it**, and a registered frame with no detections must
-    appear with an empty array rather than be omitted: the denominator below
-    counts the frames that actually got a look, so a registration failure neither
-    counts for nor against a Bullet Hole — down to a floor: a window in which
-    under `persist` of the frames the loop TRIED to register did register
-    confirms nothing (#110, ADR-0003). `lost` is the indices of the frames that
-    were tried and lost, gross wrong fits included. A frame in neither list was
-    never read — a stride gap (#81) — and counts for nothing, floor included.
-
-    A candidate whose window has not yet elapsed is not reported. Shortening the
-    denominator instead would confirm a Bullet Hole seen in 7 of the 10 frames
-    that happened to remain — exactly the clip-length dependence the fixed window
-    exists to remove.
-
-    Kept free of cv2 and the model so the logic is testable on plain arrays.
-    """
-    looked_at = sorted(idx for idx, _ in per_frame)
-    lost = sorted(lost)
-
-    candidates = []
-    for idx, pts in per_frame:
-        _fold(candidates, idx, pts, match_px)
-
-    confirmed = []
-    for candidate in candidates:
-        if candidate[2] + window > n_frames:
-            continue  # window has not elapsed; unconfirmable, not rejected
-        hole = _judge(candidate, looked_at, lost, persist, window)
-        if hole is not None:
-            confirmed.append(hole)
-    return sorted(confirmed, key=lambda c: c["first_frame"])
-
-
 def _fold(candidates, idx, pts, match_px):
-    """One frame's Detections into the candidates, in place: the fold
-    `track_new_bullet_holes` makes over a run, and a live run makes a look at
-    a time (#83). A candidate is [pos, seen_frame_idxs, first_idx].
+    """One Look's Detections into the candidates, in place, for `Persistence`.
+    A candidate is [pos, seen_frame_idxs, first_idx].
 
     ponytail: each Detection is matched against every candidate so far, kept
-    or not, as the whole-run fold always was. Live that is once a look, so a
-    very long Range slows its looks; index candidates spatially if one does."""
+    or not, as the whole-run fold always was. That is once a Look, so a very
+    long Range slows its Looks; index candidates spatially if one does."""
     for p in np.asarray(pts, np.float32):  # (cx, cy) or (cx, cy, w, h), always 2-D
         match = next((c for c in candidates if same_bullet_hole(c[0], p, match_px)), None)
         if match is None:
@@ -349,13 +309,11 @@ def _fold(candidates, idx, pts, match_px):
 
 def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES,
            unseen=()):
-    """The confirmed Bullet Hole a candidate whose window has elapsed is, or
-    None. `looked_at` and `lost` are sorted frame indices, as in
-    `track_new_bullet_holes`; `unseen`, sorted too, is the due frames a stream
-    drop missed (#84) or that were lost upstream (#117), which count towards
-    the floor as lost frames do.
-    Counted by bisection, so a live run's judging does not slow as its
-    history grows (#83)."""
+    """The persisted Candidate a candidate whose window has elapsed is, or
+    None. `looked_at`, `lost` and `unseen` are sorted frame indices, as
+    `Persistence` keeps them.
+    Counted by bisection, so judging does not slow as a run's history grows
+    (#83)."""
     pos, sightings, first = candidate
     span = _count_in(looked_at, first, first + window)
     tried = (span + _count_in(lost, first, first + window)
@@ -372,9 +330,9 @@ def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES,
     # Distinct FRAMES, not sightings: two detections on one mark in one frame
     # both fold into this candidate, and counting each made that frame worth
     # double. Numerator and denominator now take the same window, so the
-    # ratio cannot exceed 1 and needs no clamp. The lower bound is not
-    # decoration — `first` is the frame the candidate was FIRST ENCOUNTERED
-    # in, so out-of-order input put sightings in the numerator that the
+    # ratio cannot exceed 1 and needs no clamp. The lower bound is part of
+    # the window's definition, kept though Looks now arrive in order: without
+    # it, out-of-order input once put sightings in the numerator that the
     # denominator never saw. Measured at 1.5, hidden by `min(ratio, 1.0)`.
     #
     # Position still averages over every sighting: that running mean is what
@@ -1016,6 +974,83 @@ class Registration:
                   f"A Bullet Hole there is a miss no setting can recover (#41)")
 
 
+class Persistence:
+    """Folds each Look's Detections into Candidates and judges which persisted
+    (CONTEXT.md: Look, Lost, Candidate, Persistence; ADR-0003). A recording
+    and a stream both feed it every Look, in frame order.
+
+    A Look's Detections are Board-space (cx, cy[, w, h]), already stripped of
+    anything matching the baseline. A Look that saw nothing adds an empty
+    array: it counts against a Candidate. A Lost Look adds None: it counts
+    neither for nor against one, down to a floor: a window in which under
+    `persist` of the frames tried registered confirms nothing (#110). So do
+    `unseen`, the due frames a stream missed through a drop (#84) or upstream
+    loss (#117), passed by reference since the stream's thread extends it, and
+    empty on a recording. A frame that was neither looked at nor due, a
+    stride's gap (#81), counts for nothing, floor included.
+
+    A Candidate is judged once its window has passed, never before. Shortening
+    the window instead would find a Candidate persisted on 7 of the 10 frames
+    that happened to remain: exactly the clip-length dependence the fixed
+    window exists to remove. A Candidate's verdict counts only what falls
+    inside its window, all known once the window has passed, so judging at
+    that Look gives the verdict judging at the end of the run would.
+
+    Change Evidence is not checked here: when it is differs by mode, on
+    purpose (ADR-0003, amended 2026-10-11).
+
+    Kept free of cv2 and the model so the logic is testable on plain arrays.
+    """
+
+    def __init__(self, match_px, persist=PERSIST, window=PERSIST_FRAMES, unseen=()):
+        self.match_px, self.persist, self.window = match_px, persist, window
+        self.unseen = unseen
+        self.looked_at, self.lost = [], []   # frame indices, in order
+        self._candidates = []
+        self._judged = 0   # candidates are made in frame order, so the judged are a prefix
+        self._persisted = {}   # id(hole) -> (hole, its candidate)
+
+    def add(self, index, pts):
+        """One Look: its Detections, or None if it was Lost. Returns the
+        Candidates that persisted at it, each with its position and sightings
+        as of now. `index + 1` frames have passed, in both modes."""
+        if pts is None:
+            self.lost.append(index)
+        else:
+            self.looked_at.append(index)
+            _fold(self._candidates, index, pts, self.match_px)
+        return self._judge_due(index + 1)
+
+    def end(self, processed):
+        """Judge whatever became due after the last Look, `processed` frames
+        having passed: a stride can pass frames past its last Look. Returns
+        every persisted Candidate in first-Detection order, refreshed in place
+        to its final position and sightings. A Candidate still inside its
+        window stays unconfirmable, not rejected."""
+        self._judge_due(processed)
+        for hole, (pos, sightings, _) in self._persisted.values():
+            hole.update(pos=pos[:2], box=pos, seen=sorted(set(sightings)))
+        return sorted((hole for hole, _ in self._persisted.values()),
+                      key=lambda h: h["first_frame"])
+
+    def position(self, hole):
+        """Where a persisted Candidate is now, (cx, cy[, w, h])."""
+        return self._persisted[id(hole)][1][0]
+
+    def _judge_due(self, processed):
+        persisted = []
+        while (self._judged < len(self._candidates)
+               and self._candidates[self._judged][2] + self.window <= processed):
+            candidate = self._candidates[self._judged]
+            self._judged += 1
+            hole = _judge(candidate, self.looked_at, self.lost, self.persist, self.window,
+                          self.unseen)
+            if hole is not None:
+                self._persisted[id(hole)] = (hole, candidate)
+                persisted.append(hole)
+        return persisted
+
+
 class Look(NamedTuple):
     """One frame, as the runtime saw it.
 
@@ -1333,7 +1368,7 @@ def add_stride_flag(parser):
         if n < 1:
             raise argparse.ArgumentTypeError("a stride is 1 frame or more")
         # From PERSIST_FRAMES on, a window holds one look and any single
-        # sighting confirms at 1/1: persistence would filter nothing.
+        # sighting persists at 1/1: persistence would filter nothing.
         if n >= PERSIST_FRAMES:
             raise argparse.ArgumentTypeError(
                 f"a stride under the {PERSIST_FRAMES}-frame persistence window, so "
@@ -1428,40 +1463,36 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # residuals, and every candidate, for the end-of-run report: a few MB an
     # hour (#83). Keep only the persistence window and running totals if a
     # Range ever runs for days.
-    per_frame, corroboration, residuals_per_frame, lost = [], [], [], []
-    announce = (_Announcer(loop, match_px, lost, corroboration, require_change_evidence,
+    corroboration, residuals_per_frame = [], []
+    persistence = Persistence(match_px, unseen=loop.cap.unseen if loop.live else ())
+    announce = (_Announcer(loop, persistence, corroboration, require_change_evidence,
                            mm_per_tpl_px) if loop.live else None)
     for look in looks:
-        if not look.registered:
-            lost.append(look.index)
-            if announce:
-                announce(look.index)
-            continue  # no evidence from this frame, but it counts towards the floor
-        if out_video:
-            views[look.index] = look.view
-        pts, matched = strip_pre_existing(look.detections, baseline, match_px)
-        residuals_per_frame.append(matched)
-        corroborating = []
-        if len(pts):
-            evidence = change_evidence(
-                pts[:, :2], look.view,
-                lambda: board.changed_regions(baseline_inner, look.inner),
-                lambda: board.changed_regions(baseline_canvas, look.canvas), match_px / 2)
-            corroborating = [p for p, seen in zip(pts, evidence) if seen]
-            corroboration += corroborating
-        if announce:   # live: it folds as it goes and keeps the indices itself
-            announce(look.index, pts, corroborating)
-        else:
-            per_frame.append((look.index, pts))  # empty is meaningful: looked, saw nothing
+        pts, corroborating = None, []   # None: Lost, no evidence, but it counts towards the floor
+        if look.registered:
+            if out_video:
+                views[look.index] = look.view
+            pts, matched = strip_pre_existing(look.detections, baseline, match_px)
+            residuals_per_frame.append(matched)
+            if len(pts):
+                evidence = change_evidence(
+                    pts[:, :2], look.view,
+                    lambda: board.changed_regions(baseline_inner, look.inner),
+                    lambda: board.changed_regions(baseline_canvas, look.canvas), match_px / 2)
+                corroborating = [p for p, seen in zip(pts, evidence) if seen]
+                corroboration += corroborating
+        persisted_now = persistence.add(look.index, pts)  # empty is meaningful: looked, saw nothing
+        if announce:
+            announce(persisted_now, corroborating)
 
     processed = loop.processed
-    if lost:
-        print(f"[WARN] Board lost on {len(lost)} frame(s); excluded from persistence, "
-              f"and a window mostly lost confirms nothing (#110)")
+    if persistence.lost:
+        print(f"[WARN] Board lost on {len(persistence.lost)} frame(s); excluded from "
+              f"persistence, and a window mostly lost confirms nothing (#110)")
 
     # A short read is not a crash. The interpreter is alive, the window is simply
     # shorter than asked for, and the frames never read must not lengthen the
-    # confirmation horizon: a candidate whose window runs past where reading
+    # persistence horizon: a candidate whose window runs past where reading
     # stopped is unconfirmable, exactly as one running past --end is. A stream
     # has no end to fall short of.
     if not loop.live and processed < n_frames:
@@ -1477,21 +1508,22 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                  if any(len(r) for r in residuals_per_frame) else np.zeros(0))
     print(registration_note(residuals, match_px))
 
+    # Refreshed in place, announced ones too. Live it judges nothing new, the last
+    # `add` having passed `processed` frames: the count is announced plus waiting.
+    persisted = persistence.end(processed)
     if announce:
         # What was announced, no more and no less (ADR-0004).
-        before, new = announce.confirmed()
-        for hole in new:
-            hole["target"] = loop.last.assign(hole["pos"])
+        new = sorted(announce.announced, key=lambda h: h["first_frame"])
     else:
-        new = track_new_bullet_holes(per_frame, processed, match_px, lost=lost)
-        before = len(new)
+        new = persisted
         for hole in new:
-            hole["target"] = loop.last.assign(hole["pos"])
             hole["corroborated"] = _corroborates(corroboration, hole["box"], match_px)
         if require_change_evidence:
             new = [h for h in new if h["corroborated"]]
+    for hole in new:
+        hole["target"] = loop.last.assign(hole["pos"])
     if require_change_evidence:
-        print(f"[FILTER] change evidence required: {before} -> {len(new)} Bullet Holes")
+        print(f"[FILTER] change evidence required: {len(persisted)} -> {len(new)} Bullet Holes")
 
     if merge_displaced:
         new, merged = merge_displaced_tracks(new, loop.last)
@@ -1508,8 +1540,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"[INFO] stride {stride}: past the baseline, every {stride}th frame looked "
           f"at; the frames between are gaps, counting neither for nor against a "
           f"Bullet Hole (#81)")
-    _report(new, loop.when, loop.last, mm_per_tpl_px,
-            announce.looked_at if announce else [idx for idx, _ in per_frame])
+    _report(new, loop.when, loop.last, mm_per_tpl_px, persistence.looked_at)
     if out_video:
         _render(video, start, processed, fps, views, baseline, new, out_video,
                 stride, baseline_frames)
@@ -1517,67 +1548,45 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
 
 
 class _Announcer:
-    """Prints each Bullet Hole of a live run once, as soon as it is confirmed
-    (#83), by the fold and the verdict `track_new_bullet_holes` makes at the end.
+    """Prints each Bullet Hole of a live run once, as soon as it is Confirmed
+    (#83): persisted, by `Persistence`, and corroborated by Change Evidence.
 
-    A stream's looks come in order, so a candidate's verdict is final at the
-    first look past its window: it is judged then, once. With change evidence
-    required, a confirmed Bullet Hole is printed when a corroborating Detection
-    lands on it, which may be at a later look; one already waiting is checked
-    against each look's new corroboration only.
+    Called after every Look with the Candidates that persisted at it and the
+    Detections Change Evidence saw on it. A newly persisted one is checked
+    against every Detection corroborated so far (`corroboration`, `process`'s
+    list), at its position then. With Change Evidence required, one it does
+    not corroborate waits, and is checked against each later Look's, at its
+    Candidate's position at that Look (ADR-0003, amended 2026-10-11).
 
-    The end-of-run report lists the Bullet Holes printed here and no others
-    (`confirmed`): re-deciding at the end, on positions averaged since, could
-    drop one already printed, which ADR-0004 rules out.
-
-    Called after every look with its index; a registered look adds its new
-    Detections and those change evidence saw. `lost` and `corroboration` are
-    `process`'s own lists, every lost frame and corroborating Detection so far.
+    `announced` is what was printed. The end-of-run report lists these and no
+    others, at the positions `Persistence.end` refreshes them to: re-deciding
+    at the end, on positions averaged since, could drop one already printed,
+    which ADR-0004 rules out.
     """
 
-    def __init__(self, loop, match_px, lost, corroboration, require_change_evidence,
+    def __init__(self, loop, persistence, corroboration, require_change_evidence,
                  mm_per_tpl_px):
-        self.loop, self.match_px = loop, match_px
-        self.lost, self.corroboration = lost, corroboration
+        self.loop, self.persistence, self.corroboration = loop, persistence, corroboration
         self.require, self.mm_per_tpl_px = require_change_evidence, mm_per_tpl_px
-        self.candidates, self.looked_at = [], []
-        self.waiting, self.announced = [], []   # (hole, its candidate)
-        self.judged = 0   # candidates are made in frame order, so the judged are a prefix
+        self.waiting, self.announced = [], []
 
-    def __call__(self, index, pts=None, corroborating=()):
-        if pts is not None:
-            self.looked_at.append(index)
-            _fold(self.candidates, index, pts, self.match_px)
-        for hole, candidate in self.waiting:
-            hole["corroborated"] = _corroborates(corroborating, candidate[0], self.match_px)
-        while (self.judged < len(self.candidates)
-               and self.candidates[self.judged][2] + PERSIST_FRAMES <= self.loop.processed):
-            candidate = self.candidates[self.judged]
-            self.judged += 1
-            hole = _judge(candidate, self.looked_at, self.lost, unseen=self.loop.cap.unseen)
-            if hole is not None:
-                hole["corroborated"] = _corroborates(self.corroboration, hole["box"],
-                                                     self.match_px)
-                self.waiting.append((hole, candidate))
+    def __call__(self, persisted, corroborating):
+        match_px = self.persistence.match_px
+        for hole in self.waiting:
+            hole["corroborated"] = _corroborates(corroborating,
+                                                 self.persistence.position(hole), match_px)
+        for hole in persisted:
+            hole["corroborated"] = _corroborates(self.corroboration, hole["box"], match_px)
         waiting = []
-        for hole, candidate in self.waiting:
+        for hole in self.waiting + persisted:
             if self.require and not hole["corroborated"]:
-                waiting.append((hole, candidate))
+                waiting.append(hole)
                 continue
             hole["target"] = self.loop.last.assign(hole["pos"])
             _measure(hole, self.loop.last, self.mm_per_tpl_px)
             print(f"[NEW] {_bullet_hole_line(hole, self.loop.when, self.mm_per_tpl_px)}")
-            self.announced.append((hole, candidate))
+            self.announced.append(hole)
         self.waiting = waiting
-
-    def confirmed(self):
-        """`(n, announced)`: how many Bullet Holes persistence confirmed, and
-        those printed, in first-frame order, each with where the run placed it
-        and when it saw it by the end."""
-        for hole, (pos, sightings, _) in self.announced:
-            hole.update(pos=pos[:2], box=pos, seen=sorted(set(sightings)))
-        holes = sorted((hole for hole, _ in self.announced), key=lambda h: h["first_frame"])
-        return len(holes) + len(self.waiting), holes
 
 
 def _corroborates(points, box, match_px):
@@ -1642,7 +1651,7 @@ def _report(new, when, view, mm_per_tpl_px, looked_at):
         # confirmed; the operator gets to see that it stopped being seen.
         # Denominator is frames that REGISTERED since first sighting, not frames
         # read: a Board-lost frame neither counts for nor against a Bullet Hole,
-        # the same rule `track_new_bullet_holes` applies to persistence. Counting
+        # the same rule `Persistence` applies. Counting
         # reads here would understate detection on a clip with dropouts.
         seen = hole["seen"]
         span = sum(1 for i in looked_at if i >= hole["first_frame"])
@@ -1738,7 +1747,7 @@ if __name__ == "__main__":
     p.add_argument("--end", type=float,
                    help="end of the window, seconds. Allow at least "
                         f"{PERSIST_FRAMES} frames after the last expected Hit: a "
-                        "Bullet Hole whose confirmation window runs past the end "
+                        "Bullet Hole whose persistence window runs past the end "
                         "is not reported. A recording's only: a stream runs until "
                         "SIGINT or SIGTERM, then reports.")
     p.add_argument("--model", default=DEFAULT_MODEL)
@@ -1755,7 +1764,7 @@ if __name__ == "__main__":
                         "every millimetre figure scales linearly with this, so "
                         "it is not guessed.")
     p.add_argument("--no-change-filter", action="store_true",
-                   help="keep confirmed Bullet Holes that change detection did "
+                   help="keep persisted Candidates that change detection did "
                         "not corroborate. Raises recall, lowers precision.")
     p.add_argument("--merge-displaced", action="store_true",
                    help="PROVISIONAL, off by default. Fold a Bullet Hole that "

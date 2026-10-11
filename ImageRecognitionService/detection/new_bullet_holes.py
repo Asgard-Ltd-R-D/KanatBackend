@@ -990,7 +990,7 @@ class Persistence:
     stride's gap (#81), counts for nothing, floor included.
 
     A Candidate is judged once its window has passed, never before. Shortening
-    the window instead would confirm a Bullet Hole seen in 7 of the 10 frames
+    the window instead would find a Candidate persisted on 7 of the 10 frames
     that happened to remain: exactly the clip-length dependence the fixed
     window exists to remove. A Candidate's verdict counts only what falls
     inside its window, all known once the window has passed, so judging at
@@ -1481,9 +1481,9 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                     lambda: board.changed_regions(baseline_canvas, look.canvas), match_px / 2)
                 corroborating = [p for p, seen in zip(pts, evidence) if seen]
                 corroboration += corroborating
-        persisted = persistence.add(look.index, pts)  # empty is meaningful: looked, saw nothing
+        persisted_now = persistence.add(look.index, pts)  # empty is meaningful: looked, saw nothing
         if announce:
-            announce(persisted, corroborating)
+            announce(persisted_now, corroborating)
 
     processed = loop.processed
     if persistence.lost:
@@ -1508,7 +1508,9 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                  if any(len(r) for r in residuals_per_frame) else np.zeros(0))
     print(registration_note(residuals, match_px))
 
-    persisted = persistence.end(processed)   # refreshed in place, announced ones too
+    # Refreshed in place, announced ones too. Live it judges nothing new, the last
+    # `add` having passed `processed` frames: the count is announced plus waiting.
+    persisted = persistence.end(processed)
     if announce:
         # What was announced, no more and no less (ADR-0004).
         new = sorted(announce.announced, key=lambda h: h["first_frame"])
@@ -1762,7 +1764,7 @@ if __name__ == "__main__":
                         "every millimetre figure scales linearly with this, so "
                         "it is not guessed.")
     p.add_argument("--no-change-filter", action="store_true",
-                   help="keep persisted Bullet Holes that change detection did "
+                   help="keep persisted Candidates that change detection did "
                         "not corroborate. Raises recall, lowers precision.")
     p.add_argument("--merge-displaced", action="store_true",
                    help="PROVISIONAL, off by default. Fold a Bullet Hole that "

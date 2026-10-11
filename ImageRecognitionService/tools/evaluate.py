@@ -264,6 +264,23 @@ def score(truth, found, tolerance=MATCH_TOLERANCE_TPL):
             "recall": recall, "f1": f1, "pairs": pairs, "missed": missed}
 
 
+def position_errors(truth, found, pairs, mm_per_tpl_px):
+    """Each matched pair's Position Error in mm, as rows of `(dX, dY, radial)`
+    in the order of `pairs` (`score`'s).
+
+    dX is right and dY up along the Target's printed axes, as
+    `board.to_millimetres` gives a Position, system minus truth. Both sides are
+    already template px, so the Target centre is not needed: it cancels. So does
+    any error in it, in the print scale or in the baseline frame's mapping to
+    the artwork — this truth was carried through all three (CONTEXT.md,
+    Position Error).
+    """
+    d = np.array([found[i] - truth[j] for i, j, _ in pairs],
+                 np.float64).reshape(-1, 2) * mm_per_tpl_px
+    d[:, 1] *= -1  # template y grows downward, the printed Target's Y grows up
+    return np.column_stack([d, np.hypot(d[:, 0], d[:, 1])])
+
+
 # --- attributing a false positive ------------------------------------------
 #
 # Registration displacement is the one OPEN failure mode in HANDOVER.md, and a
@@ -765,7 +782,7 @@ def load_truth(image_path, label_path, frame, view):
     return truth, pre
 
 
-def placement_note(pre_existing_truth, baseline_tpl, tolerance,
+def placement_note(pre_existing_truth, baseline_tpl, tolerance, mm_per_tpl_px,
                    off_canvas_count=0):
     """How far the photograph's pre-existing marks land from the baseline's.
 
@@ -793,7 +810,8 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance,
             f"template px of a mark the baseline holds")
     if pairs:
         d = sorted(d for _, _, d in pairs)
-        note += f", {d[0]:.0f}-{d[-1]:.0f} px: that is the placement's error"
+        note += (f", {d[0]:.0f}-{d[-1]:.0f} px ({d[0] * mm_per_tpl_px:.1f}-"
+                 f"{d[-1] * mm_per_tpl_px:.1f} mm): that is the placement's error")
     if off_canvas_count:
         note += (f"\n[WARN] {off_canvas_count} more pre-existing mark(s) land off "
                  f"the canvas, where no baseline can hold them: the Board runs "
@@ -830,9 +848,24 @@ if __name__ == "__main__":
     manifest.add_flag(p)
     a = p.parse_args()
 
+    # The print scale before the gate, looked up as the pipeline looks it up but
+    # refused where the pipeline runs on without millimetres: refused after the
+    # gate, a final run would spend a sealed recording on a score with no
+    # Position Error. The gate still rules on the recording itself.
+    # ponytail: hashes the recording twice; pass the hash to the gate if that matters
+    scales = board.print_scales()
+    peek = manifest.load().get(manifest.content_hash(a.video))
+    if peek is not None and peek["capture_setup"] not in scales:
+        raise SystemExit(
+            f"[REFUSED] Capture Setup {peek['capture_setup']!r} has no print "
+            f"scale in config/print_scale.json, so no Position Error can be put "
+            f"in mm. docs/ring_measurement.md has how it is measured; every mm "
+            f"figure scales linearly with it, so it is not guessed.")
+
     # Split membership before anything is opened: a sealed recording is refused
     # unless this run says it is the final one. See manifest.py and ADR-0005.
-    manifest.gate(a.video, a.final_run, a.model, "evaluate.py")
+    entry = manifest.gate(a.video, a.final_run, a.model, "evaluate.py")
+    mm_per_tpl_px = scales[entry["capture_setup"]]
 
     template = cv2.imread(a.template)
     _, template_mask = board.find_targets(template, min_area=1)
@@ -860,7 +893,8 @@ if __name__ == "__main__":
     if pre_labels is not None and len(pre_labels):
         outside = off_canvas(pre_labels, view)
         print(placement_note(np.delete(pre_labels, outside, axis=0), pre_existing,
-                             a.tolerance, off_canvas_count=len(outside)))
+                             a.tolerance, mm_per_tpl_px,
+                             off_canvas_count=len(outside)))
     else:
         print("[WARN] placement unverified: the truth names no pre-existing "
               "mark to check it against, and the registration correlation is "
@@ -875,6 +909,20 @@ if __name__ == "__main__":
         print(f"   found #{i + 1} -> truth #{j + 1}   {d:5.0f} template px")
     if result["missed"]:
         print(f"   missed: {', '.join(f'truth #{j + 1}' for j in result['missed'])}")
+
+    # SOW 2.3.2 (#123). Internal: this truth shares the footage's print scale
+    # and mapping to the artwork, so errors in those cancel out of it.
+    errors = position_errors(truth, found, result["pairs"], mm_per_tpl_px)
+    print(f"\n[POSITION ERROR] {len(errors)} matched pair(s), mm along the "
+          f"Target's printed axes (X right, Y up), system minus truth, at "
+          f"{mm_per_tpl_px} mm per template px ({entry['capture_setup']}). "
+          f"Internal: against truth in this footage's own frame of reference")
+    for (i, j, _), (dx, dy, radial) in sorted(zip(result["pairs"], errors),
+                                              key=lambda t: t[0][1]):
+        target = run.holes[i]["target"]
+        where = "MISS" if target is None else f"Target {target + 1}"
+        print(f"   found #{i + 1} -> truth #{j + 1}   {where:<9} dX {dx:+6.1f}  "
+              f"dY {dy:+6.1f}  radial {radial:5.1f} mm")
 
     # Under the headline, never in it.
     attribution = attribute(found, result["pairs"], pre_existing, a.tolerance)

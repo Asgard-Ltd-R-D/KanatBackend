@@ -48,6 +48,21 @@ A Bullet Hole on a Board that falls outside every Target on it. A real Hit, and
 counted as one, but carrying no Shot Distance and no score.
 _Avoid_: stray, off-target hit
 
+**Position**:
+A Bullet Hole's offset from its Target's centre, as (X, Y) in millimetres along
+the Target's printed axes, not the camera's. Its length is the Shot Distance. A
+Miss has no Position.
+_Avoid_: hit coordinates, location, point of impact
+
+**Position Error**:
+The error in where the system places a Bullet Hole on the Board, per axis
+along the Target's printed axes: the system's place minus the true one. For a
+Bullet Hole on a Target, it is the error in its Position; a Miss has one too.
+Only as independent as the truth it is measured against: truth carried into
+the footage's own frame of reference shares its registration to the artwork
+and its print scale, so errors in those cancel out of it.
+_Avoid_: accuracy, localisation error, offset error
+
 **Group**:
 The new Bullet Holes on one Target during one Range, after the operator's
 corrections. Bullet Holes that were already on the Board when the Range

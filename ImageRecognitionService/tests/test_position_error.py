@@ -2,6 +2,7 @@
 import numpy as np
 import pytest
 
+from tools.manifest import ManifestError
 from tools.position_error import select, summarise
 
 # (dX, dY, radial) mm, as `evaluate.position_errors` gives them. The third sits
@@ -51,3 +52,11 @@ def test_sealed_recordings_are_skipped_by_role_before_anything_is_opened(tmp_pat
     chosen, sealed = select(entries, str(tmp_path))
     assert [e["file"] for e in chosen] == ["CamA_3.mkv", "CamB_2.mkv"]
     assert sealed == ["CamB_1.mkv"]
+
+
+def test_a_mistyped_role_is_refused_not_read_as_unsealed(tmp_path):
+    """`"Sealed"` is one shift key from `"sealed"`; a guard that lets through
+    what it does not recognise fails open (manifest.py)."""
+    (tmp_path / "camb-1").mkdir()
+    with pytest.raises(ManifestError):
+        select({"a": _entry("CamB_1.mkv", "Sealed")}, str(tmp_path))

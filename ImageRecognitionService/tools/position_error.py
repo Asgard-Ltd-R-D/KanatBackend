@@ -8,7 +8,7 @@ pairs' Position Error over all of them (#123, #126). The headline is at
     python -m tools.position_error --stride 17
     python -m tools.position_error --stride 1
 
-The recordings are read from --videos under their manifest file names, and
+The recordings are read from data/videos under their manifest file names, and
 each truth folder's photograph from wherever its board.source.txt names it.
 
 Internal, and says so under every summary: the truth is photo-derived and
@@ -54,14 +54,16 @@ def select(entries, root=TRUTH_DIR):
     entries that have a truth folder, by file name.
 
     By role, from the manifest alone: nothing here opens or hashes a
-    recording, so a Sealed one is never read (ADR-0005). The gate still rules
-    on every file that is opened.
+    recording, so a Sealed one is never read (ADR-0005). A role that is none of
+    the known ones is refused as the gate refuses it, never read as unsealed.
+    The gate still rules on every file that is opened.
     """
-    with_truth = sorted((e for e in entries.values()
+    with_truth = sorted(((manifest.role_for(entries, sha), e)
+                         for sha, e in entries.items()
                          if os.path.isdir(truth_dir(e, root))),
-                        key=lambda e: e["file"])
-    return ([e for e in with_truth if e["role"] != manifest.SEALED],
-            [e["file"] for e in with_truth if e["role"] == manifest.SEALED])
+                        key=lambda t: t[1]["file"])
+    return ([e for role, e in with_truth if role != manifest.SEALED],
+            [e["file"] for role, e in with_truth if role == manifest.SEALED])
 
 
 def summarise(errors, on_target):
@@ -77,15 +79,16 @@ def summarise(errors, on_target):
     out = {"n": len(e), "on_target": int(np.sum(on_target))}
     if not len(e):
         return out
-    size = np.abs(e[:, :2])
+    absolute = np.abs(e[:, :2])
 
-    def spread(v):
+    def mean_p95_max(v):
         return {"mean": v.mean(), "p95": np.percentile(v, 95), "max": v.max()}
 
     return {**out, "bias": e[:, :2].mean(axis=0),
-            "dx": spread(size[:, 0]), "dy": spread(size[:, 1]),
-            "radial": spread(e[:, 2]),
-            "under": int(np.all(size < LIMIT_MM, axis=1).sum())}
+            "dx": mean_p95_max(absolute[:, 0]),
+            "dy": mean_p95_max(absolute[:, 1]),
+            "radial": mean_p95_max(e[:, 2]),
+            "under": int(np.all(absolute < LIMIT_MM, axis=1).sum())}
 
 
 def print_summary(label, s):
@@ -105,26 +108,39 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(
         "SOW 2.3.2 stage-1 Position Error over the unsealed truth recordings")
     nbh.add_stride_flag(p)
-    p.add_argument("--videos", default=VIDEO_DIR,
-                   help="the directory holding the recordings, under their "
-                        "manifest file names")
     a = p.parse_args()
 
-    chosen, sealed = select(manifest.load())
+    try:
+        entries = manifest.load()
+        chosen, sealed = select(entries)
+    except manifest.ManifestError as why:
+        raise SystemExit(f"[REFUSED] {why}")
+    # A truth folder no manifest entry maps to would drop out of N unsaid.
+    orphans = sorted(set(next(os.walk(TRUTH_DIR))[1])
+                     - {os.path.basename(truth_dir(e)) for e in entries.values()})
     scored = []
     for entry in chosen:
         print(f"\n===== {entry['file']} =====")
         start, end = entry["window"]
-        scored.append((os.path.splitext(entry["file"])[0],
-                       evaluate.score_recording(
-                           os.path.join(a.videos, entry["file"]), start, end,
-                           truth_dir(entry), stride=a.stride)))
+        r = evaluate.score_recording(os.path.join(VIDEO_DIR, entry["file"]),
+                                     start, end, truth_dir(entry),
+                                     stride=a.stride)
+        # Chosen by file name, gated by content: they must be one recording,
+        # or the window and truth belong to another one than the scale.
+        if r["entry"] != entry:
+            raise SystemExit(f"[REFUSED] {entry['file']} holds the bytes of "
+                             f"{r['entry']['file']} in the manifest; its "
+                             f"window and truth folder would be wrong")
+        scored.append((os.path.splitext(entry["file"])[0], r))
 
     stride = a.stride or 1
     print(f"\n\n[POSITION ERROR REPORT] SOW 2.3.2 stage 1, stride {stride}"
           + (" (LIVE_STRIDE, the headline)" if stride == nbh.LIVE_STRIDE else "")
           + f", {len(scored)} recording(s). Sealed, skipped by role: "
           + (", ".join(sealed) or "none"))
+    if orphans:
+        print(f"[WARN] truth folder(s) no manifest entry maps to, not scored: "
+              f"{', '.join(orphans)}")
     print("   mm along the Target's printed axes (X right, Y up), system minus "
           "truth, at the end-of-Range position")
     print(f"   {'recording':<22} {'found':>5} {'truth':>5}  {'where':<9} "
@@ -153,4 +169,4 @@ if __name__ == "__main__":
                 if label in ("pooled", camera) for row in r["rows"]]
         print_summary(label, summarise([row[3:] for row in rows],
                                        [row[2] != "MISS" for row in rows]))
-    print("\n" + NOT_COVERED)
+        print("\n" + NOT_COVERED)

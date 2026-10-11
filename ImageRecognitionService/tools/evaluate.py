@@ -836,7 +836,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
       radial)`, 1-based, mm, in truth order;
     - `unmatched` and `missed`: the detections no truth claimed and the truth
       no detection found;
-    - `placement`: the placement-check note as printed.
+    - `placement`: the placement-check note as printed;
+    - `entry`: the manifest entry the gate found by content hash.
     """
     # The print scale before the gate, looked up as the pipeline looks it up but
     # refused where the pipeline runs on without millimetres: refused after the
@@ -942,7 +943,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
         board.MATCH_TPL_PX, "template px"))
 
     return {"rows": rows, "unmatched": result["fp"], "missed": result["fn"],
-            "placement": placement}
+            "placement": placement, "entry": entry}
 
 
 if __name__ == "__main__":
@@ -969,6 +970,9 @@ if __name__ == "__main__":
     manifest.add_flag(p)
     a = p.parse_args()
     score_recording(a.video, a.start, a.end, a.truth_labels, a.truth_image,
-                    a.model, a.template, a.confidence, not a.no_change_filter,
-                    a.merge_displaced, a.baseline_frames, a.stride,
-                    a.tolerance, a.final_run)
+                    model=a.model, template=a.template,
+                    confidence=a.confidence,
+                    change_filter=not a.no_change_filter,
+                    merge_displaced=a.merge_displaced,
+                    baseline_frames=a.baseline_frames, stride=a.stride,
+                    tolerance=a.tolerance, final_run=a.final_run)

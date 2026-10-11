@@ -43,6 +43,48 @@ it is plainly visible, one may be seen as two, and a Detection may answer to no
 Bullet Hole at all.
 _Avoid_: hit, sighting, hole
 
+**Look**:
+One frame the system examines for Detections. Live, it looks at a fixed
+fraction of the frames and skips the rest (ADR-0007); a skipped frame yields no
+Detections and is a gap, not evidence that nothing was there.
+_Avoid_: processed frame, sample
+
+**Registration**:
+Placing a Look's frame onto the Board as the baseline frame showed it, so that
+positions taken from different frames are comparable.
+_Avoid_: alignment, tracking
+
+**Lost**:
+A Look whose frame could not be registered, or registered onto the wrong scene
+altogether. No evidence either way: unlike a Look that saw nothing, it says
+nothing about what was on the Board.
+_Avoid_: dropped, failed frame, missed frame
+
+**Candidate**:
+Detections from successive Looks at one place on the Board where the baseline
+showed no mark, gathered while the system decides whether they are a new
+Bullet Hole. Most never become one.
+_Avoid_: track, blob, hypothesis
+
+**Persistence**:
+A Candidate being seen in enough of the Looks over a fixed window after its
+first Detection (ADR-0003). It separates a Bullet Hole, which appears once and
+stays, from gravel and shadow, which flicker.
+_Avoid_: tracking, stability
+
+**Change Evidence**:
+A visible change on the Board since the baseline frame, where a Detection lies.
+Evidence for a Detection the model already made, never what chooses where the
+model looks (ADR-0003). A Candidate that Change Evidence saw is corroborated.
+_Avoid_: corroboration, change mask, absdiff
+
+**Confirmed**:
+A Candidate the system has judged to be a new Bullet Hole: it persisted, and
+Change Evidence corroborated it. Reported once and never retracted (ADR-0004).
+A Candidate that persisted but still awaits Change Evidence is persisted, not
+Confirmed.
+_Avoid_: accepted, validated, detected
+
 **Miss**:
 A Bullet Hole on a Board that falls outside every Target on it. A real Hit, and
 counted as one, but carrying no Shot Distance and no score.

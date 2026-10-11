@@ -203,7 +203,7 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
     # gravel whenever the reference contour's apparent size changed.
     reference = last = None
     # Once it exists, every frame is tracked, not only the samples: `track_view`
-    # seeds from the previous frame's homography, as `RegisteredFrames.looks`
+    # seeds from the previous frame's homography, as `Registration.register`
     # does, and one 25 frames old would register moving footage differently.
     while True:
         ok, frame = cap.read()

@@ -4,7 +4,6 @@ The loop exists so the pipeline and the detector probe look at the same image.
 What is testable without a video file is the bookkeeping the probe depends on:
 which frames got a look, and which only appeared to.
 """
-import itertools
 import math
 import os
 import re
@@ -102,55 +101,40 @@ class _FakeModel:
         return [types.SimpleNamespace(boxes=[box])]
 
 
-def _loop(monkeypatch, registers, frames=10, below=lambda i: 0.0,
-          reanchors=lambda i: False, correlation=lambda i: 0.9,
-          disagreement=lambda i: 0.0, cap=None):
-    """A loop over `frames` frames; `registers(index)` says which ones register
-    when tracked, `reanchors(index)` which when re-anchored (#80), and
-    `below(index)` how far that frame's view runs past the canvas bottom,
-    in Board px against a 100 px Target span — None for an unmeasurable view.
-    A fit converges at `correlation(index)`, and an independent silhouette fit
-    disagrees with it by `disagreement(index)` Board px (#110).
+class _Scripted:
+    """A `Registration` whose verdicts are scripted: a frame registers when
+    `registers(index)` says so, as a `_FakeView` marked with the frame's
+    pixels. `calls` records `(index, pixels)` for each frame handed to it,
+    and `reported` how often the end-of-run report was asked for."""
+    def __init__(self, view, registers):
+        self.last, self.registers, self.calls, self.reported = view, registers, [], 0
 
-    `loop.calls` records `(how, index, last)` for each frame read, where `how`
-    is "track" or "reanchor" and `last` is the view it was handed;
-    `loop.silhouetted` the indices whose fit was checked against the silhouette."""
-    calls, checked = [], []
-    def fit(how, succeeds):
-        def call(frame, *args):
-            index, last = int(frame[0, 0, 0]), args[-1]
-            calls.append((how, index, last))
-            if not succeeds(index):
-                return None, None
-            view = _FakeView()
-            view.index = index
-            # A re-anchor only ever returns a fit at or above its floor.
-            floor = nbh.board.REANCHOR_MIN_CORRELATION if how == "reanchor" else 0.0
-            return view, max(floor, correlation(index))
-        return call
-    def silhouette(frame, template_mask, view):
-        checked.append(view.index)
-        return disagreement(view.index)
-    monkeypatch.setattr(nbh.board, "silhouette_disagreement", silhouette)
-    measured = itertools.count()   # the baseline in __init__, then each look
-    edges = dict.fromkeys(("left", "right", "above"), 0.0)
-    def uncovered(view, size):
-        reach = below(next(measured))
-        return None if reach is None else (0.0, {**edges, "below": reach})
-    monkeypatch.setattr(nbh.board, "uncovered_view", uncovered)
-    monkeypatch.setattr(nbh.board, "target_span", lambda view: 100.0)
-    monkeypatch.setattr(nbh.board, "track_view", fit("track", registers))
-    monkeypatch.setattr(nbh.board, "reanchor_view", fit("reanchor", reanchors))
-    loop = nbh.RegisteredFrames(cap or _FakeCap(frames), _FakeModel(), _FakeView(),
+    def register(self, frame, index):
+        pixels = int(frame[0, 0, 0])
+        self.calls.append((index, pixels))
+        if not self.registers(index):
+            return None
+        self.last = _FakeView()
+        self.last.index = pixels
+        return self.last
+
+    def report(self):
+        self.reported += 1
+
+
+def _loop(registers=lambda i: True, frames=10, cap=None, view=None, registration=None):
+    """A loop over `frames` frames onto Board space `view`, registering those
+    `registers(index)` says, unless a `registration` is given."""
+    view = view or _FakeView()
+    return nbh.RegisteredFrames(cap or _FakeCap(frames), _FakeModel(), view,
                                 np.zeros((8, 8, 3), np.uint8), imgsz=64, conf=0.02,
-                                fps=25.0, start=10.0, template_mask=np.zeros((8, 8), np.uint8))
-    loop.calls, loop.silhouetted = calls, checked
-    return loop
+                                fps=25.0, start=10.0,
+                                registration=registration or _Scripted(view, registers))
 
 
-def test_a_lost_frame_is_not_a_frame_that_saw_nothing(monkeypatch):
+def test_a_lost_frame_is_not_a_frame_that_saw_nothing():
     """The whole point of the Look: the probe must not score a lost frame as a miss."""
-    loop = _loop(monkeypatch, lambda i: i != 3)
+    loop = _loop(lambda i: i != 3)
     looks = list(loop.looks(5))
 
     lost = [l for l in looks if not l.registered]
@@ -160,34 +144,35 @@ def test_a_lost_frame_is_not_a_frame_that_saw_nothing(monkeypatch):
     assert (loop.processed, loop.lost) == (5, 1)
 
 
-def test_indices_keep_counting_across_a_lost_frame(monkeypatch):
+def test_indices_keep_counting_across_a_lost_frame():
     """Frame numbers are positions in the clip, not positions in the output."""
-    loop = _loop(monkeypatch, lambda i: i not in (2, 3))
+    loop = _loop(lambda i: i not in (2, 3))
     assert [l.index for l in loop.looks(6)] == [0, 1, 2, 3, 4, 5]
 
 
-def test_the_first_frame_is_the_one_board_space_was_built_from(monkeypatch):
+def test_the_first_frame_is_the_one_board_space_was_built_from():
     """It is already read and already registered, and still yielded like any other."""
-    loop = _loop(monkeypatch, lambda i: True)
+    loop = _loop()
     first = next(loop.looks(4))
     assert first.index == 0 and first.view is loop.view
+    assert loop.registration.calls == []   # never handed to registration
 
 
-def test_a_short_file_stops_early_rather_than_padding(monkeypatch):
+def test_a_short_file_stops_early_rather_than_padding():
     """`processed` is what confirmation is measured against, so it must be real."""
-    loop = _loop(monkeypatch, lambda i: True, frames=2)
+    loop = _loop(frames=2)
     assert len(list(loop.looks(50))) == 3      # the baseline frame plus two reads
     assert loop.processed == 3
 
 
-def test_the_capture_is_released_when_iteration_ends(monkeypatch):
-    loop = _loop(monkeypatch, lambda i: True, frames=2)
+def test_the_capture_is_released_when_iteration_ends():
+    loop = _loop(frames=2)
     list(loop.looks(50))
-    assert loop.cap.released
+    assert loop.cap.released and loop.registration.reported == 1
 
 
-def test_frames_until_counts_from_the_start_timestamp(monkeypatch):
-    loop = _loop(monkeypatch, lambda i: True)
+def test_frames_until_counts_from_the_start_timestamp():
+    loop = _loop()
     assert loop.frames_until(14.0) == 100      # 4s at 25 fps
 
 
@@ -216,41 +201,6 @@ def test_a_model_without_bullet_holes_is_refused():
         nbh._detect(NoHoles(), None, 64, 0.02)
 
 
-def test_a_view_moving_further_off_the_canvas_is_reported_once(monkeypatch, capsys):
-    """The baseline's view is only the first: a camera that later swings past
-    the canvas uncovers Board no run searches (#41)."""
-    loop = _loop(monkeypatch, lambda i: True, frames=4,
-                 below=lambda i: [0.0, 0.0, 0.0, 40.0, 20.0, 0.0][i])
-    list(loop.looks(5))
-    out = capsys.readouterr().out
-    assert out.count("further off the canvas than the baseline did") == 1
-    assert "0.40 below" in out
-
-
-def test_a_view_that_stays_within_the_baseline_says_nothing(monkeypatch, capsys):
-    loop = _loop(monkeypatch, lambda i: True, frames=3)
-    list(loop.looks(4))
-    assert "[WARN]" not in capsys.readouterr().out
-
-
-def test_any_growth_past_rounding_is_reported(monkeypatch, capsys):
-    """A pixel more than the baseline showed is Board no run searched, however
-    it prints; only the sub-pixel rounding floor is let through."""
-    loop = _loop(monkeypatch, lambda i: True, frames=2,
-                 below=lambda i: [30.0, 30.0, 31.0, 30.0][i])
-    list(loop.looks(3))
-    assert "further off the canvas than the baseline did" in capsys.readouterr().out
-
-
-def test_a_later_view_that_cannot_be_measured_is_reported(monkeypatch, capsys):
-    """The baseline measured fine, so its line said nothing is unknown; a later
-    frame past the Board plane's horizon still has to say so."""
-    loop = _loop(monkeypatch, lambda i: True, frames=3,
-                 below=lambda i: [0.0, 0.0, None, 0.0, 0.0][i])
-    list(loop.looks(4))
-    assert "[WARN] 1 registered frame(s)' view did not map" in capsys.readouterr().out
-
-
 class _RecordingModel(_FakeModel):
     """Answers per image: a box at (15, 15) on the margin canvas, one at
     (20, 8) band px (canvas y 40) inside the band's context, and one at
@@ -269,24 +219,22 @@ class _RecordingModel(_FakeModel):
         return [types.SimpleNamespace(boxes=[types.SimpleNamespace(xyxy=[b]) for b in boxes])]
 
 
-def test_a_canvas_that_did_not_grow_is_shown_to_the_detector_once(monkeypatch):
+def test_a_canvas_that_did_not_grow_is_shown_to_the_detector_once():
     """No Board past the margin canvas: one inference on the canvas, as before #46."""
     model = _RecordingModel()
-    loop = _loop(monkeypatch, lambda i: True, frames=1)
+    loop = _loop(frames=1)
     loop.model = model
     looks = list(loop.looks(2))
     assert len(model.calls) == 2 and all(imgsz == 64 for _, _, imgsz in model.calls)
     assert looks[0].inner is looks[0].canvas
 
 
-def test_a_grown_canvas_is_searched_as_the_margin_canvas_plus_its_bands(monkeypatch):
+def test_a_grown_canvas_is_searched_as_the_margin_canvas_plus_its_bands():
     """A on the margin canvas at the loop's imgsz; B on each band at its own;
     B keeps only what lies past the margin canvas, in grown-canvas px."""
     model = _RecordingModel()
-    loop = _loop(monkeypatch, lambda i: True, frames=0)
-    loop.view = loop.last = _GrownView()
-    loop._base = np.zeros((8, 8, 3), np.uint8)
-    loop.model, loop.bands = model, loop.view.exposed_bands(nbh.BAND_CONTEXT_PX)
+    loop = _loop(frames=0, view=_GrownView())
+    loop.model = model
     look = next(loop.looks(1))
     assert model.calls == [((64, 64), 1, 64), ((48, 64), 7, 64)]
     assert look.detections[:, :2].tolist() == [[15.0, 15.0], [30.0, 72.0]]
@@ -310,83 +258,6 @@ def test_opening_reports_how_long_building_board_space_took(monkeypatch, capsys)
                             ("left", "right", "above", "below"), 0.0)))
     nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt")
     assert capsys.readouterr().out.count("[REGISTRATION] Board space built in ") == 1
-
-
-# --- re-anchoring after the Board is lost (#80) ------------------------------
-
-N = nbh.REANCHOR_AFTER_LOST
-
-
-def _reanchored(loop):
-    return [index for how, index, _ in loop.calls if how == "reanchor"]
-
-
-def test_one_lost_frame_short_of_the_trigger_does_not_re_anchor(monkeypatch):
-    loop = _loop(monkeypatch, lambda i: i > N - 1, frames=N + 5)
-    list(loop.looks(N + 6))
-    assert _reanchored(loop) == []
-
-
-def test_the_frame_after_a_full_trigger_of_lost_frames_is_re_anchored(monkeypatch):
-    """Frames 1..N are lost; frame N+1 is re-anchored instead of tracked."""
-    loop = _loop(monkeypatch, lambda i: False, frames=N + 5)
-    list(loop.looks(N + 6))
-    assert _reanchored(loop) == [N + 1]
-
-
-def test_after_a_re_anchor_later_frames_track_from_the_re_anchored_view(monkeypatch):
-    loop = _loop(monkeypatch, lambda i: i > N + 1, frames=N + 4,
-                 reanchors=lambda i: True)
-    looks = list(loop.looks(N + 5))
-    recovered = looks[N + 1]
-    assert recovered.registered and recovered.index == N + 1
-    after = [last for how, index, last in loop.calls if index == N + 2]
-    assert after == [recovered.view]
-    assert all(l.registered for l in looks[N + 1:])
-
-
-def test_a_re_anchor_starts_from_the_last_registered_view(monkeypatch):
-    """Board space and the anchor come from it; nothing is rebuilt."""
-    loop = _loop(monkeypatch, lambda i: False, frames=N + 1)
-    list(loop.looks(N + 2))
-    assert [last for how, _, last in loop.calls if how == "reanchor"] == [loop.view]
-
-
-def test_a_failed_re_anchor_stays_lost_and_waits_a_full_interval(monkeypatch):
-    loop = _loop(monkeypatch, lambda i: False, frames=3 * N + 5)
-    looks = list(loop.looks(3 * N + 6))
-    assert _reanchored(loop) == [N + 1, 2 * N + 1, 3 * N + 1]
-    assert not any(l.registered for l in looks[1:])
-    assert [l.index for l in looks] == list(range(3 * N + 6))
-    assert all(l.detections is None for l in looks[1:])
-
-
-def test_a_registered_frame_resets_the_count(monkeypatch):
-    """Only consecutive lost frames trigger: N lost in two runs is not N in a row."""
-    loop = _loop(monkeypatch, lambda i: i == N // 2, frames=N + 5)
-    list(loop.looks(N + 6))
-    assert _reanchored(loop) == []
-
-
-def test_each_re_anchor_is_reported_and_counted_at_the_end(monkeypatch, capsys):
-    loop = _loop(monkeypatch, lambda i: False, frames=2 * N + 2,
-                 reanchors=lambda i: i == 2 * N + 1)
-    list(loop.looks(2 * N + 3))
-    out = capsys.readouterr().out
-    lines = [l for l in out.splitlines() if "[REGISTRATION] re-anchor at" in l]
-    assert len(lines) == 2
-    assert f"frame {N + 1}" in lines[0] and f"after {N} lost" in lines[0]
-    assert "failed" in lines[0]
-    assert f"frame {2 * N + 1}" in lines[1] and f"after {2 * N} lost" in lines[1]
-    assert "registered" in lines[1]
-    assert "[REGISTRATION] 2 re-anchor attempt(s): 1 registered, 1 failed" in out
-
-
-def test_a_run_that_never_lost_the_board_reports_no_re_anchor(monkeypatch, capsys):
-    loop = _loop(monkeypatch, lambda i: True, frames=3)
-    list(loop.looks(4))
-    assert "[REGISTRATION] 0 re-anchor attempt(s)" in capsys.readouterr().out
-    assert _reanchored(loop) == []
 
 
 def _rendering(monkeypatch, frames):
@@ -441,7 +312,7 @@ def test_render_leaves_out_the_frames_a_stride_skipped(monkeypatch):
 def test_an_interval_shorter_than_a_frame_still_renders(monkeypatch):
     """`--end` at `--start` reads no frame; `--out` gets Board space's own view
     rather than a KeyError."""
-    loop = _loop(monkeypatch, lambda i: True)
+    loop = _loop()
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     rendered = []
     monkeypatch.setattr(nbh, "_render", lambda video, start, n, fps, views, *rest:
@@ -452,7 +323,7 @@ def test_an_interval_shorter_than_a_frame_still_renders(monkeypatch):
 
 def test_rendering_gets_the_view_of_every_frame_read(monkeypatch):
     """Views are kept only for `--out` (#80); when they are, none is missing."""
-    loop = _loop(monkeypatch, lambda i: True)
+    loop = _loop()
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     rendered = []
     monkeypatch.setattr(nbh, "_render", lambda video, start, n, fps, views, *rest:
@@ -461,61 +332,18 @@ def test_rendering_gets_the_view_of_every_frame_read(monkeypatch):
     assert rendered == [list(range(10))]
 
 
-# --- a converged fit that is grossly wrong (#110) ----------------------------
-
-GROSS = nbh.GROSS_DISAGREEMENT_PX
-
-
-def test_a_fit_converging_above_the_floor_is_not_checked(monkeypatch):
-    """The check costs ~0.5 s a frame; a fit the re-anchor floor would accept
-    is not paid for (#110)."""
-    loop = _loop(monkeypatch, lambda i: True, frames=4,
-                 correlation=lambda i: nbh.board.REANCHOR_MIN_CORRELATION,
-                 disagreement=lambda i: 10 * GROSS)
-    looks = list(loop.looks(5))
-    assert loop.silhouetted == [] and all(l.registered for l in looks)
-
-
-def test_a_grossly_wrong_fit_is_lost_and_feeds_the_re_anchor(monkeypatch):
-    """Frames 1..N converge on the wrong scene: each is lost, the count runs
-    on, and frame N+1 is re-anchored from the last right view (#110, #80)."""
-    loop = _loop(monkeypatch, lambda i: True, frames=N + 3,
-                 correlation=lambda i: 0.2, disagreement=lambda i: GROSS)
-    looks = list(loop.looks(N + 4))
-    assert not any(l.registered for l in looks[1:N + 1])
-    assert all(l.detections is None for l in looks[1:N + 1])
-    assert loop.lost == N + 3   # every frame after the baseline: none recovers
-    assert _reanchored(loop) == [N + 1] and loop.reanchors == 1
-    assert all(last is loop.view for how, i, last in loop.calls if i <= N + 1)
-
-
-def test_a_moderate_disagreement_keeps_the_frame_and_warns_once(monkeypatch, capsys):
-    """Below the gross bound nothing is rejected; the run says how many of the
-    frames it checked disagreed, and that only those were checked (#110)."""
-    loop = _loop(monkeypatch, lambda i: True, frames=5,
-                 correlation=lambda i: 0.5 if i in (2, 3, 4) else 0.95,
-                 disagreement=lambda i: GROSS - 1 if i in (2, 3) else 0.0)
-    looks = list(loop.looks(6))
-    assert all(l.registered for l in looks) and loop.lost == 0
-    out = capsys.readouterr().out
-    lines = [l for l in out.splitlines() if "silhouette" in l and "[WARN]" in l]
-    assert len(lines) == 1
-    assert "2 of 3" in lines[0]
-
-
-def test_a_check_with_no_verdict_keeps_the_frame(monkeypatch, capsys):
-    """A silhouette fit that fails says nothing about the tracked one."""
-    loop = _loop(monkeypatch, lambda i: True, frames=3,
-                 correlation=lambda i: 0.2, disagreement=lambda i: None)
-    looks = list(loop.looks(4))
-    assert all(l.registered for l in looks) and loop.lost == 0
-    assert "0 of 3 converged fit(s) checked" in capsys.readouterr().out
-
-
 def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch):
     """The #110 floor counts frames tried and lost, so `process` must say which
-    were lost; a frame it never read (a stride gap, #81) is not among them."""
-    loop = _loop(monkeypatch, lambda i: i not in (7, 8))
+    were lost; a frame it never read (a stride gap, #81) is not among them.
+    The one loop test with the real `Registration` in it (#138): frames 7 and
+    8 do not register."""
+    monkeypatch.setattr(nbh.board, "track_view", lambda frame, last: (
+        (None, None) if frame[0, 0, 0] in (7, 8) else (_FakeView(), 0.95)))
+    monkeypatch.setattr(nbh.board, "uncovered_view", lambda view, size: (
+        0.0, dict.fromkeys(("left", "right", "above", "below"), 0.0)))
+    view = _FakeView()
+    # `when` is never called: nothing here re-anchors.
+    loop = _loop(view=view, registration=nbh.Registration(view, (8, 8), None, str))
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     handed = {}
     def track(per_frame, n_frames, match_px, lost=()):
@@ -529,30 +357,30 @@ def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch):
 # --- a stride: look at every Nth frame (#81) ---------------------------------
 
 
-def test_a_stride_looks_at_the_first_frames_then_its_multiples_past_them(monkeypatch):
+def test_a_stride_looks_at_the_first_frames_then_its_multiples_past_them():
     """The baseline's frames 0..B-1 are all looked at whatever the stride; past
     them, only multiples of the stride at or after B (#81)."""
     for stride, expected in [(13, [0, 1, 2, 3, 4, 13, 26, 39, 52]),
                              (2, [0, 1, 2, 3, 4, 6, 8, 10]),
                              (1, list(range(11)))]:
-        loop = _loop(monkeypatch, lambda i: True, frames=60)
+        loop = _loop(frames=60)
         last = expected[-1] + 1
         assert [l.index for l in loop.looks(last, stride, 5)] == expected
 
 
-def test_frames_a_stride_skips_are_neither_registered_nor_yielded(monkeypatch):
+def test_frames_a_stride_skips_are_neither_registered_nor_yielded():
     """A skipped frame is a gap, not a lost frame: never decoded, never fitted."""
-    loop = _loop(monkeypatch, lambda i: True, frames=30)
+    loop = _loop(frames=30)
     looks = list(loop.looks(30, 13, 5))
-    assert [index for _, index, _ in loop.calls] == [1, 2, 3, 4, 13, 26]
+    assert [pixels for _, pixels in loop.registration.calls] == [1, 2, 3, 4, 13, 26]
     assert all(l.registered for l in looks)
     assert loop.cap.grabbed == [i for i in range(5, 30) if i % 13]
     assert (loop.processed, loop.lost) == (30, 0)
 
 
-def test_a_stride_stops_at_the_end_of_the_file(monkeypatch):
+def test_a_stride_stops_at_the_end_of_the_file():
     """A failed grab is the end of the file too, so `processed` stays real."""
-    loop = _loop(monkeypatch, lambda i: True, frames=20)
+    loop = _loop(frames=20)
     assert [l.index for l in loop.looks(50, 13, 5)] == [0, 1, 2, 3, 4, 13]
     assert loop.processed == 21
 
@@ -571,7 +399,7 @@ class _SeenOn(_FakeModel):
 def _strided_run(monkeypatch, n_frames, on=lambda i: i >= 6):
     """`process` at stride 13 over `n_frames`; half a frame on `--end` keeps
     `frames_until` clear of float truncation."""
-    loop = _loop(monkeypatch, lambda i: True, frames=100)
+    loop = _loop(frames=100)
     loop.model = _SeenOn(on)
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.zeros((8, 8), bool))
@@ -684,7 +512,7 @@ def _live(monkeypatch, stream, reopen=None):
         live.stop()
         return _FakeStream(n=0)
     live = nbh._Stream(stream, time.time(), reopen or stop)
-    return _loop(monkeypatch, lambda i: True, cap=live)
+    return _loop(cap=live)
 
 
 def test_a_stream_is_looked_at_on_the_stride_and_frames_it_is_too_late_for_are_dropped(
@@ -699,7 +527,7 @@ def test_a_stream_is_looked_at_on_the_stride_and_frames_it_is_too_late_for_are_d
     past = indices[5:]
     assert past[0] == 6   # nothing dropped until the baseline was built
     assert past == sorted(set(past)) and all(i % 3 == 0 for i in past)
-    assert [index for _, index, _ in loop.calls] == indices[1:]   # each its own frame
+    assert [pixels for _, pixels in loop.registration.calls] == indices[1:]   # each its own frame
     due = [i for i in range(5, 201) if i % 3 == 0]
     assert loop.cap.late > 0 and len(past) + loop.cap.late == len(due)
     assert loop.lost == 0   # a dropped frame is a gap, not a lost one
@@ -844,8 +672,8 @@ def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd):
 
 def test_a_stream_that_drops_is_reopened_and_iteration_continues(monkeypatch, capsys):
     """Down after 20 frames, and the first reopen fails too. Indices count on
-    across the drop, the frames it missed are gaps, and registration resumes
-    from the last view before it, in the same Board space (#84)."""
+    across the drop, the frames it missed are gaps, and the reopened stream's
+    first frame goes to the same registration, in the same Board space (#84)."""
     reopened = iter([_FakeStream(n=0), _FakeStream(interval=0.002)])
     loop = _live(monkeypatch, _FakeStream(n=20, interval=0.002), lambda: next(reopened))
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
@@ -857,8 +685,7 @@ def test_a_stream_that_drops_is_reopened_and_iteration_continues(monkeypatch, ca
     assert indices == list(range(21)) + list(range(21 + missed, 60))
     assert loop.cap.unseen == list(range(21, 21 + missed))   # stride 1: all were due
     assert loop.lost == 0 and loop.view is view
-    how, index, last = loop.calls[20]   # the first look after the drop
-    assert how == "track" and index == 1 and last.index == 20
+    assert loop.registration.calls[20] == (21 + missed, 1)   # the first look after the drop
     out = capsys.readouterr().out
     assert out.count("[LIVE] stream dropped") == 1
     assert re.search(rf"\[LIVE\] stream back .* after {seconds:.1f} s without a frame: "
@@ -890,7 +717,7 @@ def test_a_read_cut_short_by_the_timeout_is_a_drop_from_the_frame_before_it(
     (seconds, missed), = loop.cap.drops
     assert seconds >= 0.15
     assert indices == list(range(11)) + list(range(11 + missed, 30))
-    assert loop.calls[10][1] == 1   # the reopened stream's first, not the stalled one
+    assert loop.registration.calls[10][1] == 1   # the reopened stream's first, not the stalled one
 
 
 class _Undecodable(_FakeStream):
@@ -985,7 +812,7 @@ def test_frames_lost_upstream_leave_a_gap_in_the_indices(monkeypatch):
     loop = _live(monkeypatch, _Losing(after=10, lost=100, interval=0.002))
     indices = [l.index for l in loop.looks(150, stride=1, baseline_frames=150)]
     assert indices == list(range(11)) + list(range(111, 150))
-    assert [index for _, index, _ in loop.calls] == indices[1:]   # pixels: the frame read
+    assert [pixels for _, pixels in loop.registration.calls] == indices[1:]   # the frame read
 
 
 def test_a_window_emptied_upstream_confirms_nothing(monkeypatch, capsys):

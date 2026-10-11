@@ -863,32 +863,157 @@ def _looked_at(index, stride, baseline_frames):
     return index < baseline_frames or index % stride == 0
 
 
-def _next_view(cap, last, reanchor_on=None):
-    """Read one frame and re-register Board space onto it.
+class Registration:
+    """Places each Look's frame onto the Board as the baseline frame showed it
+    (CONTEXT.md: Registration, Lost).
 
-    Returns `(frame, view, correlation)`. `view` is None when the Board was not
-    found or ECC failed — no evidence from that frame, either way — and `frame`
-    is None when the read itself failed, which is the end of what the file holds,
-    or on a stream a stop (#83), since a stream recovers from a drop (#84).
+    Board space is fixed once, by the frame at `--start`, and every later frame
+    is registered onto it, tracked from the last registered view. After
+    `REANCHOR_AFTER_LOST` consecutive Lost Looks the next one is re-anchored
+    into that same Board space (#80), here and only here, so evaluation and
+    runtime cannot differ on it. A fit converged on the wrong scene altogether
+    is Lost too (#110). How far each registered view runs off the canvas is
+    kept for the end of the run (#41).
 
-    `reanchor_on` is the Target artwork's mask when this frame is to be
-    re-anchored (`board.reanchor_view`, #80) rather than tracked from `last`.
+    Every caller that DETECTS registers through here, by way of
+    `RegisteredFrames.looks`, on purpose: a second way of registering frames is
+    a silent difference between what one caller measures and what the runtime
+    sees. `_render` registers nothing: it replays the views `looks` produced,
+    re-anchors included (#80).
 
-    Every caller that DETECTS goes through `RegisteredFrames.looks`, on
-    purpose: a second way of reading and registering frames is a silent
-    difference between what one caller measures and what the runtime sees.
-    `_render` still reads the clip itself, but registers nothing: it replays the
-    views `looks` produced, re-anchors included (#80).
+    Built from Board space (the baseline frame's view), the baseline frame's
+    `(width, height)`, the Target artwork's mask a re-anchor seeds from, and
+    `when(index)`, a frame's time as printed.
     """
-    ok, frame = cap.read()
-    if not ok:
-        return None, None, None
-    try:
-        if reanchor_on is None:
-            return (frame, *board.track_view(frame, last))
-        return (frame, *board.reanchor_view(frame, reanchor_on, last))
-    except cv2.error:
-        return frame, None, None
+
+    def __init__(self, view, frame_size, template_mask, when):
+        # Two views, and the difference matters: `_space` is the Board space
+        # everything is registered ONTO, and `last` is the most recently
+        # registered frame, which is what the next ECC fit starts from. Both
+        # carry the baseline's Targets (#33).
+        self._space = self.last = view
+        self._template_mask, self._when = template_mask, when
+        self._lost_run = 0      # consecutive Lost Looks, up to this one
+        self._reanchors = self._reanchored = 0   # attempts, and those that registered (#80)
+        # Converged fits after the first, those checked, and the verdicts (#110).
+        self._converged = self._checked = self._gross = self._moderate = 0
+        # How far past each canvas edge any registered frame's view has run,
+        # in Board px — the baseline's is only the first (#41).
+        uncovered = board.uncovered_view(view, frame_size)
+        self._reach = self._baseline_reach = uncovered and uncovered[1]
+        self._unmeasured = 0   # later frames whose view had no footprint to measure
+
+    def register(self, frame, index):
+        """`frame`'s view, or None for a Lost Look: the Board was not found,
+        ECC failed, or the fit was grossly wrong. No evidence from that frame,
+        either way. `index` is the frame's, for the log."""
+        due = self._lost_run > 0 and self._lost_run % REANCHOR_AFTER_LOST == 0
+        try:
+            view, correlation = (board.reanchor_view(frame, self._template_mask, self.last)
+                                 if due else board.track_view(frame, self.last))
+        except cv2.error:
+            view = None
+        if view is not None and self._grossly_wrong(frame, view, correlation):
+            view = None   # Lost, so it feeds the re-anchor (#110)
+        if due:
+            self._report_reanchor(index, view is not None)
+        if view is None:
+            self._lost_run += 1
+            return None
+        self._lost_run = 0
+        self.last = view
+        self._track_reach(view, frame)
+        return view
+
+    def report(self):
+        """The end-of-run lines."""
+        self._report_reach()
+        print(f"[REGISTRATION] {self._reanchors} re-anchor attempt(s): {self._reanchored} "
+              f"registered, {self._reanchors - self._reanchored} failed (#80)")
+        self._report_checks()
+
+    def _grossly_wrong(self, frame, view, correlation):
+        """Is this converged fit on the wrong scene altogether (#110)?
+
+        Only a fit converging below the re-anchor floor is checked: the check
+        costs ~0.5-1 s a 1080p frame (0.96 on `_141846`, #110), against 0.2-0.6 s
+        for `track_view` itself.
+        Every wrong fit #92 measured converged at 0.82 or less, the gross ones
+        at 0.29 or less; still clips at 0.917 or more.
+
+        ponytail: a gross fit converging at or above the floor passes unchecked;
+        #92 measured none. Check every Nth frame too if one turns up.
+        """
+        self._converged += 1
+        if correlation >= board.REANCHOR_MIN_CORRELATION:
+            return False
+        disagreement = board.silhouette_disagreement(frame, self._template_mask, view)
+        if disagreement is None:
+            return False   # no verdict: the frame keeps its fit
+        self._checked += 1
+        if disagreement >= GROSS_DISAGREEMENT_PX:
+            self._gross += 1
+            return True
+        self._moderate += disagreement > MODERATE_DISAGREEMENT_PX
+        return False
+
+    def _report_checks(self):
+        floor = board.REANCHOR_MIN_CORRELATION
+        print(f"[REGISTRATION] {self._checked} of {self._converged} converged fit(s) checked "
+              f"against an independent silhouette fit (only those converging below "
+              f"{floor}): {self._gross} grossly wrong, at or past {GROSS_DISAGREEMENT_PX:.0f} "
+              f"Board px, counted lost (#110)")
+        if self._moderate:
+            print(f"[WARN] silhouette disagreement of {MODERATE_DISAGREEMENT_PX}-"
+                  f"{GROSS_DISAGREEMENT_PX:.0f} Board px on {self._moderate} of "
+                  f"{self._checked} checked fit(s): moderately wrong, or following real "
+                  f"camera motion, which #92 could not tell apart, so none was rejected. "
+                  f"Fits converging at or above {floor} were not checked (#110)")
+
+    def _report_reanchor(self, index, registered):
+        self._reanchors += 1
+        self._reanchored += registered
+        result = ("registered" if registered else
+                  f"failed, the frame stays lost; next attempt after "
+                  f"{REANCHOR_AFTER_LOST} more")
+        print(f"[REGISTRATION] re-anchor at t={self._when(index)} "
+              f"(frame {index}) after {self._lost_run} lost frame(s): {result} (#80)")
+
+    def _track_reach(self, current, frame):
+        if self._reach is None:
+            return  # the baseline's view was already unmeasurable; said so
+        uncovered = board.uncovered_view(current, (frame.shape[1], frame.shape[0]))
+        if uncovered is None:
+            self._unmeasured += 1
+        else:
+            self._reach = {k: max(v, uncovered[1][k]) for k, v in self._reach.items()}
+
+    def _report_reach(self):
+        """The camera moving can uncover what the baseline's view did not: say
+        so once, at the end, rather than per frame.
+
+        It cannot say the camera moved. Reach is the frame corners, extrapolated
+        far from the Targets, and wanders with registration: on the still CamB
+        close pose (CamB_20260915_102450, 0-3s) the left reach ran 4.4-7.0
+        Target spans frame to frame while the uncovered fraction held at 94%.
+        """
+        if self._reach is None:
+            return
+        if self._unmeasured:
+            print(f"[WARN] {self._unmeasured} registered frame(s)' view did not map "
+                  f"onto the Board plane; how much of it was off the canvas there "
+                  f"is unknown (#41)")
+        # The same rounding floor the baseline's reach is cut at; anything past
+        # it is Board the baseline's view did not show.
+        grew = {k: v for k, v in self._reach.items()
+                if v > self._baseline_reach[k] + board.ROUNDING_PX}
+        if grew:
+            span = board.target_span(self._space)
+            where = ", ".join(f"{v / span:.2f} {k}" for k, v in grew.items())
+            print(f"[WARN] registered frames put the view further off the canvas "
+                  f"than the baseline did, up to {where} (Target spans): the "
+                  f"camera moved, or registration far from the Targets wandered. "
+                  f"A Bullet Hole there is a miss no setting can recover (#41)")
 
 
 class Look(NamedTuple):
@@ -930,10 +1055,7 @@ class RegisteredFrames:
     number about a distribution the runtime never sees.
 
     Board space is fixed once, by the frame at `--start`, and every later frame
-    is registered onto it. After `REANCHOR_AFTER_LOST` consecutive lost frames
-    the next one is re-anchored into that same Board space (#80), here and only
-    here, so evaluation and runtime cannot differ on it. A fit converged on the
-    wrong scene altogether counts as lost too (#110).
+    is registered onto it by `registration`, a `Registration` (#138).
 
     A stream (#83) goes through here too, as a `_Stream` in place of the
     capture: read from where it is, never seeked, at `LIVE_FPS`.
@@ -942,29 +1064,15 @@ class RegisteredFrames:
     iteration can be exercised without a video file or a model.
     """
 
-    def __init__(self, cap, model, view, base, imgsz, conf,
-                 fps, start, template_mask):
+    def __init__(self, cap, model, view, base, imgsz, conf, fps, start, registration):
         self.cap, self.model = cap, model
-        # Two views, and the difference matters: `view` is the Board space
-        # everything is registered ONTO, fixed by the frame at `--start`, and
-        # `last` is the most recently registered frame, which is what the next
-        # ECC fit starts from. Both carry the baseline's Targets (#33).
-        self.view = self.last = view
+        self.view = view   # Board space, fixed by the frame at `--start`
         self.imgsz, self.conf = imgsz, conf
         self.fps, self.start = fps, start
         self._base = base
         self.net_scale = None   # measured by `open`; see the warning there
+        self.registration = registration
         self.processed = self.lost = 0
-        self._template_mask = template_mask   # the artwork a re-anchor seeds from
-        self._lost_run = 0      # consecutive lost frames, up to this one
-        self.reanchors = self.reanchored = 0   # attempts, and those that registered (#80)
-        # Converged fits after the first, those checked, and the verdicts (#110).
-        self.converged = self.checked = self.gross = self.moderate = 0
-        # How far past each canvas edge any registered frame's view has run,
-        # in Board px — the baseline's is only the first (#41).
-        uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
-        self.reach = self._baseline_reach = uncovered and uncovered[1]
-        self.unmeasured = 0   # later frames whose view had no footprint to measure
         # The Board past the margin canvas, searched by a second inference (#46).
         self.bands = view.exposed_bands(BAND_CONTEXT_PX)
 
@@ -1063,11 +1171,19 @@ class RegisteredFrames:
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
+        # Registration logs by the loop's `when`; `loop` is bound by the time
+        # the first frame is registered.
+        registration = Registration(view, (base.shape[1], base.shape[0]), template_mask,
+                                    lambda index: loop.when(index))
         loop = cls(_Stream(cap, arrived, lambda: _open_stream(video)) if live else cap,
-                   model, view, base, imgsz, conf,
-                   fps, start, template_mask)
+                   model, view, base, imgsz, conf, fps, start, registration)
         loop.net_scale = scale
         return loop
+
+    @property
+    def last(self):
+        """The most recently registered view (`Registration.last`)."""
+        return self.registration.last
 
     @property
     def live(self):
@@ -1092,7 +1208,8 @@ class RegisteredFrames:
         callers take `processed` from here rather than assuming `n_frames`.
 
         The first frame is the one Board space was built from, so it is already
-        read and already registered; it is yielded like any other.
+        read and already registered; it is yielded like any other. Each later
+        one is read, then handed to `registration`: two calls, not one.
 
         With a `stride` (#81) the first `baseline_frames` are all looked at,
         and past them only indices that are multiples of `stride`. The rest are
@@ -1119,28 +1236,23 @@ class RegisteredFrames:
                         break  # the end of what the file holds
                     self.processed += 1
                     continue
-                due = self._lost_run > 0 and self._lost_run % REANCHOR_AFTER_LOST == 0
-                if self.processed:
-                    frame, current, correlation = _next_view(
-                        self.cap, self.last, self._template_mask if due else None)
-                    if frame is None:
-                        break  # the end of what the source holds, or a stop
-                    if current is not None and self._grossly_wrong(frame, current, correlation):
-                        current = None   # lost, so it feeds the re-anchor (#110)
+                first = not self.processed
+                if first:
+                    frame = self._base
                 else:
-                    frame, current = self._base, self.view
+                    # A failed read is the end of what the file holds, or on
+                    # a stream a stop (#83), since a stream recovers from a
+                    # drop (#84).
+                    ok, frame = self.cap.read()
+                    if not ok:
+                        break
                 index = self.cap.index if live else self.processed
+                current = self.view if first else self.registration.register(frame, index)
                 self.processed = index + 1
-                if due:
-                    self._report_reanchor(index, current is not None)
                 if current is None:
                     self.lost += 1
-                    self._lost_run += 1
                     yield Look(index, None, None, None)
                     continue
-                self._lost_run = 0
-                self.last = current
-                self._track_reach(current, frame)
                 canvas = current.rectify(frame)
                 if not self.bands:
                     yield Look(index, current, canvas,
@@ -1154,59 +1266,9 @@ class RegisteredFrames:
                 for s, handler in handlers.items():
                     signal.signal(s, handler)
             self.cap.release()
-            self._report_reach()
-            print(f"[REGISTRATION] {self.reanchors} re-anchor attempt(s): {self.reanchored} "
-                  f"registered, {self.reanchors - self.reanchored} failed (#80)")
-            self._report_checks()
+            self.registration.report()
             if live:
                 self.cap.report(self.fps)
-
-    def _grossly_wrong(self, frame, view, correlation):
-        """Is this converged fit on the wrong scene altogether (#110)?
-
-        Only a fit converging below the re-anchor floor is checked: the check
-        costs ~0.5-1 s a 1080p frame (0.96 on `_141846`, #110), against 0.2-0.6 s
-        for `track_view` itself.
-        Every wrong fit #92 measured converged at 0.82 or less, the gross ones
-        at 0.29 or less; still clips at 0.917 or more.
-
-        ponytail: a gross fit converging at or above the floor passes unchecked;
-        #92 measured none. Check every Nth frame too if one turns up.
-        """
-        self.converged += 1
-        if correlation >= board.REANCHOR_MIN_CORRELATION:
-            return False
-        disagreement = board.silhouette_disagreement(frame, self._template_mask, view)
-        if disagreement is None:
-            return False   # no verdict: the frame keeps its fit
-        self.checked += 1
-        if disagreement >= GROSS_DISAGREEMENT_PX:
-            self.gross += 1
-            return True
-        self.moderate += disagreement > MODERATE_DISAGREEMENT_PX
-        return False
-
-    def _report_checks(self):
-        floor = board.REANCHOR_MIN_CORRELATION
-        print(f"[REGISTRATION] {self.checked} of {self.converged} converged fit(s) checked "
-              f"against an independent silhouette fit (only those converging below "
-              f"{floor}): {self.gross} grossly wrong, at or past {GROSS_DISAGREEMENT_PX:.0f} "
-              f"Board px, counted lost (#110)")
-        if self.moderate:
-            print(f"[WARN] silhouette disagreement of {MODERATE_DISAGREEMENT_PX}-"
-                  f"{GROSS_DISAGREEMENT_PX:.0f} Board px on {self.moderate} of "
-                  f"{self.checked} checked fit(s): moderately wrong, or following real "
-                  f"camera motion, which #92 could not tell apart, so none was rejected. "
-                  f"Fits converging at or above {floor} were not checked (#110)")
-
-    def _report_reanchor(self, index, registered):
-        self.reanchors += 1
-        self.reanchored += registered
-        result = ("registered" if registered else
-                  f"failed, the frame stays lost; next attempt after "
-                  f"{REANCHOR_AFTER_LOST} more")
-        print(f"[REGISTRATION] re-anchor at t={self.when(index)} "
-              f"(frame {index}) after {self._lost_run} lost frame(s): {result} (#80)")
 
     def _detect_grown(self, view, canvas, inner):
         """Inference A on the margin canvas, B on each band, merged in canvas px."""
@@ -1220,42 +1282,6 @@ class RegisteredFrames:
             found[:, :2] += (x0, y0)
             hits.append((band, found))
         return merge_band_detections(a, hits, view.match_radius)
-
-    def _track_reach(self, current, frame):
-        if self.reach is None:
-            return  # the baseline's view was already unmeasurable; said so
-        uncovered = board.uncovered_view(current, (frame.shape[1], frame.shape[0]))
-        if uncovered is None:
-            self.unmeasured += 1
-        else:
-            self.reach = {k: max(v, uncovered[1][k]) for k, v in self.reach.items()}
-
-    def _report_reach(self):
-        """The camera moving can uncover what the baseline's view did not: say
-        so once, at the end, rather than per frame.
-
-        It cannot say the camera moved. Reach is the frame corners, extrapolated
-        far from the Targets, and wanders with registration: on the still CamB
-        close pose (CamB_20260915_102450, 0-3s) the left reach ran 4.4-7.0
-        Target spans frame to frame while the uncovered fraction held at 94%.
-        """
-        if self.reach is None:
-            return
-        if self.unmeasured:
-            print(f"[WARN] {self.unmeasured} registered frame(s)' view did not map "
-                  f"onto the Board plane; how much of it was off the canvas there "
-                  f"is unknown (#41)")
-        # The same rounding floor the baseline's reach is cut at; anything past
-        # it is Board the baseline's view did not show.
-        grew = {k: v for k, v in self.reach.items()
-                if v > self._baseline_reach[k] + board.ROUNDING_PX}
-        if grew:
-            span = board.target_span(self.view)
-            where = ", ".join(f"{v / span:.2f} {k}" for k, v in grew.items())
-            print(f"[WARN] registered frames put the view further off the canvas "
-                  f"than the baseline did, up to {where} (Target spans): the "
-                  f"camera moved, or registration far from the Targets wandered. "
-                  f"A Bullet Hole there is a miss no setting can recover (#41)")
 
 
 class Run(NamedTuple):

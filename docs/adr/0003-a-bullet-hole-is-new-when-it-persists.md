@@ -86,6 +86,18 @@ and curled, so the difference at that point is dominated by edge ghosting.
 Change detection is therefore kept only as corroborating evidence for a
 detection the model already made.
 
+*Amended 2026-10-11: Persistence reaches the same verdicts on a recording and
+live, but Change Evidence is checked at different times, on purpose. On a
+recording it is checked once, after the last Look, against every corroborated
+Detection of the run, at each persisted Candidate's final position. Live, it is
+checked when the Candidate persists, against the Detections corroborated so
+far, at its position then; if none corroborates it, it is checked against each
+later Look's, at its position at that Look. Unifying the two is the obvious
+tidy-up, and it changes recording results. The thresholds in this ADR and
+[ADR-0007](0007-live-input-is-sampled-at-a-fixed-stride.md)'s stride table were
+measured with the end-of-run check, and the Sealed recordings cannot be run
+again to re-measure them ([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)).*
+
 ## The thresholds were wrong, and only ground truth showed it
 
 The first values — a 70% persistence bar and a 40 template-px match radius — were

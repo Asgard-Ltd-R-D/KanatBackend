@@ -1861,9 +1861,15 @@ def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
         ts = effective_ref + timedelta(seconds=start_s + hole["first_frame"] / fps)
         ts_utc = ts.astimezone(timezone.utc)
 
-        if "hole_id" not in hole:
-            hole["hole_id"] = uuid.uuid4()
-        idempotency_key = str(hole["hole_id"])
+        # Deterministic key: survives process restarts on the same recording.
+        # Two holes at the same first_frame are separated by ≥ match_px board
+        # pixels (persistence guarantee), so integer-rounded coords are a
+        # collision-free discriminator within the same frame.
+        pos = hole["pos"]
+        idempotency_key = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{session_id}:{hole['first_frame']}:"
+            f"{round(float(pos[0]))}:{round(float(pos[1]))}"))
 
         mm = hole.get("mm")
         payload = {

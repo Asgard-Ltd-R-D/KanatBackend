@@ -1489,7 +1489,13 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                 corroboration += corroborating
         persisted_now = persistence.add(look.index, pts)  # empty is meaningful: looked, saw nothing
         if announce:
+            prev_announced = len(announce.announced)
             announce(persisted_now, corroborating)
+            if session_id:
+                newly = announce.announced[prev_announced:]
+                if newly:
+                    _post_bullets(newly, session_id, backend_url, ref_time,
+                                  None, loop.fps, loop.last)
 
     processed = loop.processed
     if persistence.lost:
@@ -1547,7 +1553,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"at; the frames between are gaps, counting neither for nor against a "
           f"Bullet Hole (#81)")
     _report(new, loop.when, loop.last, mm_per_tpl_px, persistence.looked_at)
-    if session_id:
+    if session_id and not loop.live:
         _post_bullets(new, session_id, backend_url, ref_time, start, loop.fps, loop.last)
     if out_video:
         _render(video, start, processed, fps, views, baseline, new, out_video,
@@ -1697,7 +1703,11 @@ def _report_groups(new, mm_per_tpl_px):
 def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
     """POST each confirmed Bullet Hole to the WebApp backend (api_contract.md v1)."""
     inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
-    wall_now = datetime.now(timezone.utc)
+    # When --ref-time is omitted, treat now as the reference for frame 0 so that
+    # each hole still gets a distinct timestamp (now + start_s + first_frame/fps)
+    # rather than all sharing the same wall_now snapshot.
+    effective_ref = ref_time if ref_time is not None else datetime.now(timezone.utc)
+    start_s = start or 0  # streams have no --start offset; treat as 0
 
     for i, hole in enumerate(holes, 1):
         # Board px -> template px (invert the scale+translate stored in tpl_to_board)
@@ -1706,10 +1716,7 @@ def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
         x = float(np.clip(tpl[0], 0.0, 1405.0))
         y = float(np.clip(tpl[1], 0.0, 1120.0))
 
-        if ref_time is not None:
-            ts = ref_time + timedelta(seconds=start + hole["first_frame"] / fps)
-        else:
-            ts = wall_now
+        ts = effective_ref + timedelta(seconds=start_s + hole["first_frame"] / fps)
 
         mm = hole.get("mm")
         payload = {

@@ -34,6 +34,7 @@ import bisect
 import itertools
 import json
 import math
+import uuid
 import os
 import signal
 import threading
@@ -1473,6 +1474,12 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     persistence = Persistence(match_px, unseen=loop.cap.unseen if loop.live else ())
     announce = (_Announcer(loop, persistence, corroboration, require_change_evidence,
                            mm_per_tpl_px) if loop.live else None)
+    # Capture the frame-0 wall time once so all live posts (including retries)
+    # share the same anchor: ts = ref_time + first_frame/fps → past timestamps.
+    # Re-evaluating inside _post_bullets would push each hole into the future by
+    # its own frame offset.
+    if loop.live and ref_time is None:
+        ref_time = datetime.now(timezone.utc)
     pending_live_posts: list = []  # live holes whose POST failed transiently; retried each look
     for look in looks:
         pts, corroborating = None, []   # None: Lost, no evidence, but it counts towards the floor
@@ -1728,6 +1735,10 @@ def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
         ts = effective_ref + timedelta(seconds=start_s + hole["first_frame"] / fps)
         ts_utc = ts.astimezone(timezone.utc)  # normalise any tz offset before labelling as Z
 
+        # Stable key: same session + same first_frame → same key on every retry.
+        idempotency_key = str(uuid.uuid5(
+            uuid.NAMESPACE_URL, f"{session_id}:{hole['first_frame']}"))
+
         mm = hole.get("mm")
         payload = {
             "version": "v1",
@@ -1737,6 +1748,7 @@ def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
             "x_mm": float(mm[0]) if mm is not None else None,
             "y_mm": float(mm[1]) if mm is not None else None,
             "source": "model",
+            "idempotency_key": idempotency_key,
         }
 
         url = f"{backend_url.rstrip('/')}/sessions/{session_id}/bullets"

@@ -30,6 +30,13 @@ def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> B
             detail="Session is still active; manual bullets can only be added after the session ends",
         )
 
+    if body.idempotency_key is not None:
+        dup = db.query(BulletHole).filter(
+            BulletHole.idempotency_key == body.idempotency_key
+        ).first()
+        if dup is not None:
+            return dup
+
     existing = db.query(func.count(BulletHole.id)).filter(
         BulletHole.session_id == session_id,
         BulletHole.deleted_at.is_(None),
@@ -45,6 +52,7 @@ def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> B
         x_mm=body.x_mm,
         y_mm=body.y_mm,
         source=body.source,
+        idempotency_key=body.idempotency_key,
         rank=existing + 1,
     )
     db.add(bullet)

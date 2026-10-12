@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,6 +16,16 @@ if TYPE_CHECKING:
 
 class BulletHole(Base):
     __tablename__ = "bullet_holes"
+    __table_args__ = (
+        # Partial unique index: allows many NULLs (legacy / manual bullets),
+        # but enforces uniqueness when a key is present.
+        Index(
+            "uq_bullet_holes_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID] = mapped_column(
@@ -28,6 +38,7 @@ class BulletHole(Base):
     x_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
     y_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
     source: Mapped[str] = mapped_column(String, nullable=False, default="model")
+    idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

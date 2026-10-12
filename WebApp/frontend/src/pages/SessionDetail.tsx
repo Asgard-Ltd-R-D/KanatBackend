@@ -51,8 +51,10 @@ function SourceBadge({ source }: { source: 'model' | 'manual' }) {
 }
 
 function locationLabel(b: BulletHole): string {
-  if (b.target_index === null) return 'Miss'
-  return `Target ${b.target_index + 1}`
+  if (b.target_index !== null) return `Target ${b.target_index + 1}`
+  // Model always computes target assignment; null means explicitly outside targets.
+  // Manual bullets never supply target_index, so null means location is unknown.
+  return b.source === 'model' ? 'Miss' : '—'
 }
 
 function mmLabel(b: BulletHole): string {

@@ -1793,6 +1793,8 @@ class _BulletPostWorker:
             ok = self._attempt(data, attempt + 1)
             if ok:
                 return
+            if attempt == self._MAX_ATTEMPTS - 1:
+                break
             delay = min(2 ** (attempt + 1), 60)
             print(f"[POST] retry in {delay}s (attempt {attempt + 1}/{self._MAX_ATTEMPTS})")
             # Use _stop as the sleep so a flush timeout wakes us immediately.
@@ -1859,8 +1861,9 @@ def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
         ts = effective_ref + timedelta(seconds=start_s + hole["first_frame"] / fps)
         ts_utc = ts.astimezone(timezone.utc)
 
-        idempotency_key = str(uuid.uuid5(
-            uuid.NAMESPACE_URL, f"{session_id}:{hole['first_frame']}"))
+        if "hole_id" not in hole:
+            hole["hole_id"] = uuid.uuid4()
+        idempotency_key = str(hole["hole_id"])
 
         mm = hole.get("mm")
         payload = {

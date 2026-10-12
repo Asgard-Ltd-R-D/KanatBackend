@@ -19,6 +19,7 @@ class BulletCreate(BaseModel):
     x_mm: Optional[float] = None
     y_mm: Optional[float] = None
     source: Literal["model", "manual"] = "model"
+    idempotency_key: Optional[str] = None
 
     @field_validator("version")
     @classmethod

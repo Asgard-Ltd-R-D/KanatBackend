@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Layout } from './components/Layout'
 import { SessionList } from './pages/SessionList'
 import { SessionDetail } from './pages/SessionDetail'
+import { useDarkMode } from './hooks/useDarkMode'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -15,9 +16,15 @@ const queryClient = new QueryClient({
   },
 })
 
+function DarkModeInit() {
+  useDarkMode()
+  return null
+}
+
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <DarkModeInit />
       <HashRouter>
         <Routes>
           <Route path="/" element={<Layout />}>

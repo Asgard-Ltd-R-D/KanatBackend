@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.bullet_hole import BulletHole
 
 
 class Session(Base):
@@ -38,3 +44,5 @@ class Session(Base):
         viewonly=True,
         overlaps="bullet_holes,session",
     )
+
+

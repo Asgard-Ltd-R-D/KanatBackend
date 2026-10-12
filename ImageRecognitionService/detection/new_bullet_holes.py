@@ -34,6 +34,7 @@ import bisect
 import itertools
 import json
 import math
+import queue
 import uuid
 import os
 import signal
@@ -1480,7 +1481,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # its own frame offset.
     if loop.live and ref_time is None:
         ref_time = datetime.now(timezone.utc)
-    pending_live_posts: list = []  # live holes whose POST failed transiently; retried each look
+    poster = (_BulletPostWorker(session_id, backend_url, ref_time, loop.fps, loop.last)
+              if loop.live and session_id else None)
     for look in looks:
         pts, corroborating = None, []   # None: Lost, no evidence, but it counts towards the floor
         if look.registered:
@@ -1499,16 +1501,14 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         if announce:
             prev_announced = len(announce.announced)
             announce(persisted_now, corroborating)
-            if session_id:
-                if pending_live_posts:
-                    pending_live_posts = _post_bullets(
-                        pending_live_posts, session_id, backend_url, ref_time,
-                        None, loop.fps, loop.last)
+            if poster:
                 newly = announce.announced[prev_announced:]
                 if newly:
-                    pending_live_posts.extend(_post_bullets(
-                        newly, session_id, backend_url, ref_time,
-                        None, loop.fps, loop.last))
+                    poster.submit(newly)
+
+    if poster:
+        print("[POST] waiting for queued POSTs to finish...")
+        poster.flush()
 
     processed = loop.processed
     if persistence.lost:
@@ -1713,29 +1713,120 @@ def _report_groups(new, mm_per_tpl_px):
         print(f"      Extreme Spread {g['extreme_spread']:.1f} mm (centre to centre)")
 
 
+class _BulletPostWorker:
+    """Background thread that POSTs confirmed bullet holes to the WebApp backend.
+
+    Holes are enqueued from the detection loop and processed asynchronously so
+    that backend latency or outages never block frame processing. Transient
+    failures (5xx / network) are retried with exponential back-off up to
+    _MAX_ATTEMPTS times; permanent failures (4xx) are logged and discarded.
+    Idempotency keys make every retry safe.
+    """
+
+    _MAX_ATTEMPTS = 9   # delays: 2, 4, 8, 16, 32, 60, 60, 60, 60 s
+
+    def __init__(self, session_id, backend_url, ref_time, fps, view):
+        self._session_id = session_id
+        self._url = f"{backend_url.rstrip('/')}/sessions/{session_id}/bullets"
+        self._ref_time = ref_time if ref_time is not None else datetime.now(timezone.utc)
+        self._fps = fps
+        self._inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
+        self._q: queue.Queue = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="BulletPostWorker")
+        self._thread.start()
+
+    def submit(self, holes):
+        """Enqueue holes for posting; returns immediately."""
+        for hole in holes:
+            self._q.put(hole)
+
+    def flush(self, timeout=120):
+        """Block until the queue is empty or timeout expires."""
+        try:
+            self._q.join()
+        except Exception:
+            pass
+
+    def _run(self):
+        while True:
+            hole = self._q.get()
+            if hole is None:
+                self._q.task_done()
+                break
+            self._post_with_retry(hole)
+            self._q.task_done()
+
+    def _post_with_retry(self, hole):
+        payload = self._build_payload(hole)
+        data = json.dumps(payload).encode()
+        for attempt in range(self._MAX_ATTEMPTS):
+            ok = self._attempt(data, attempt + 1)
+            if ok:
+                return
+            delay = min(2 ** (attempt + 1), 60)
+            print(f"[POST] retry in {delay}s (attempt {attempt + 1}/{self._MAX_ATTEMPTS})")
+            time.sleep(delay)
+        print(f"[POST] giving up on hole at frame {hole['first_frame']} "
+              f"after {self._MAX_ATTEMPTS} attempts")
+
+    def _attempt(self, data, n):
+        req = urllib.request.Request(
+            self._url, data=data,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                print(f"[POST] bullet #{n} -> HTTP {resp.status}")
+                return True
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")
+            print(f"[POST] bullet -> HTTP {exc.code}: {body[:200]}")
+            return exc.code < 500  # 4xx is permanent; 5xx retries
+        except Exception as exc:
+            print(f"[POST] bullet -> ERROR: {exc}")
+            return False
+
+    def _build_payload(self, hole):
+        pts = np.array([[hole["pos"]]], dtype=np.float32)
+        tpl = cv2.perspectiveTransform(pts, self._inv_m)[0, 0]
+        x = float(np.clip(tpl[0], 0.0, 1405.0))
+        y = float(np.clip(tpl[1], 0.0, 1120.0))
+        ts = self._ref_time + timedelta(seconds=hole["first_frame"] / self._fps)
+        ts_utc = ts.astimezone(timezone.utc)
+        idempotency_key = str(uuid.uuid5(
+            uuid.NAMESPACE_URL, f"{self._session_id}:{hole['first_frame']}"))
+        mm = hole.get("mm")
+        return {
+            "version": "v1",
+            "first_seen_at": ts_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "position": {"x": x, "y": y},
+            "target_index": hole["target"],
+            "x_mm": float(mm[0]) if mm is not None else None,
+            "y_mm": float(mm[1]) if mm is not None else None,
+            "source": "model",
+            "idempotency_key": idempotency_key,
+        }
+
+
 def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
     """POST each confirmed Bullet Hole to the WebApp backend (api_contract.md v1).
 
-    Returns the subset of holes whose POST failed transiently (5xx or network/
-    timeout error) so the caller can retry them. HTTP 4xx failures are permanent
-    and are not returned.
+    Used for end-of-run (non-live) batches only. Blocks until all POSTs complete;
+    this is acceptable because the detection run is already finished at this point.
     """
     inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
     effective_ref = ref_time if ref_time is not None else datetime.now(timezone.utc)
-    start_s = start or 0  # streams have no --start offset; treat as 0
-    failed = []
+    start_s = start or 0
 
     for i, hole in enumerate(holes, 1):
-        # Board px -> template px (invert the scale+translate stored in tpl_to_board)
         pts = np.array([[hole["pos"]]], dtype=np.float32)
         tpl = cv2.perspectiveTransform(pts, inv_m)[0, 0]
         x = float(np.clip(tpl[0], 0.0, 1405.0))
         y = float(np.clip(tpl[1], 0.0, 1120.0))
 
         ts = effective_ref + timedelta(seconds=start_s + hole["first_frame"] / fps)
-        ts_utc = ts.astimezone(timezone.utc)  # normalise any tz offset before labelling as Z
+        ts_utc = ts.astimezone(timezone.utc)
 
-        # Stable key: same session + same first_frame → same key on every retry.
         idempotency_key = str(uuid.uuid5(
             uuid.NAMESPACE_URL, f"{session_id}:{hole['first_frame']}"))
 
@@ -1762,13 +1853,8 @@ def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
         except urllib.error.HTTPError as exc:
             body = exc.read().decode(errors="replace")
             print(f"[POST] bullet #{i} -> HTTP {exc.code}: {body[:200]}")
-            if exc.code >= 500:  # server-side error — transient, queue for retry
-                failed.append(hole)
         except Exception as exc:
             print(f"[POST] bullet #{i} -> ERROR: {exc}")
-            failed.append(hole)  # timeout / network error — transient, queue for retry
-
-    return failed
 
 
 def _render(video, start, n_frames, fps, views, baseline, new, out_video,

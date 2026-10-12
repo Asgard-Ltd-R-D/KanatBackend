@@ -9,8 +9,10 @@ set -euo pipefail
 ###############################################################################
 
 # --- Inputs ---------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "${SCRIPT_DIR}")"
 ROOT="${ROOT:-$PWD}"
-SRC_FILE="${SRC_FILE:-${ROOT}/H264.mp4}"
+SRC_FILE="${SRC_FILE:-${REPO_ROOT}/ImageRecognitionService/data/videos/CamA_20260914_141546.mkv}"
 
 # MediaMTX envs are passed to runOnInit
 RTSP_PORT="${RTSP_PORT:-8554}"
@@ -127,18 +129,11 @@ encoder_chain() {
   esac
 }
 
-DECODER_CHAIN() {
-  # Use decodebin to let GStreamer pick HW decoders when present (NVDEC/QSV/VAAPI/VT)
-  # For H.264 input files this will decode to raw video; we re-encode to control bitrate.
-  echo "decodebin ! videoconvert"
-}
-
 ###############################################################################
 # Build pipeline
 ###############################################################################
 ENC="$(pick_encoder)"
 ENC_CHAIN="$(encoder_chain "${ENC}")"
-DEC_CHAIN="$(DECODER_CHAIN)"
 
 echo "[INFO] Using encoder: ${ENC}"
 echo "[INFO] Source file : ${SRC_FILE}"
@@ -150,8 +145,7 @@ trap 'exit 0' INT TERM
 while :; do
   "${GSTBIN}" -e \
     filesrc location="${SRC_FILE}" ! \
-    qtdemux name=d \
-    d.video_0 ! ${DEC_CHAIN} ! ${ENC_CHAIN} ! tee name=t \
+    decodebin ! videoconvert ! ${ENC_CHAIN} ! tee name=t \
       t. ! queue max-size-buffers=0 max-size-time=0 max-size-bytes=0 ! \
             rtspclientsink location="${URL}" protocols=tcp \
       t. ! queue max-size-buffers=0 max-size-time=0 max-size-bytes=0 ! \

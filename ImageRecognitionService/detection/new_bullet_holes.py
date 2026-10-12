@@ -1443,6 +1443,13 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # They come off the front of the same iterator the run continues on, so the
     # baseline cannot be built from a differently rectified Board than the one
     # it is subtracted from.
+    # Anchor before the baseline loop so the offset is measured from the moment
+    # frame 0 arrived, not after baseline processing has already consumed time.
+    # loop.cap.first is the wall-clock time.time() recorded when frame 0 was
+    # read inside RegisteredFrames.open(); for non-live runs ref_time is unused.
+    if loop.live and ref_time is None:
+        ref_time = datetime.fromtimestamp(loop.cap.first, tz=timezone.utc)
+
     baseline_canvas, baseline_inner, baseline_detections = None, None, []
     # Frame index -> the view detection used, for `_render`. Seeded with look
     # 0's view, Board space itself, so a run that reads no frame still has one.
@@ -1475,12 +1482,6 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     persistence = Persistence(match_px, unseen=loop.cap.unseen if loop.live else ())
     announce = (_Announcer(loop, persistence, corroboration, require_change_evidence,
                            mm_per_tpl_px) if loop.live else None)
-    # Capture the frame-0 wall time once so all live posts (including retries)
-    # share the same anchor: ts = ref_time + first_frame/fps → past timestamps.
-    # Re-evaluating inside _post_bullets would push each hole into the future by
-    # its own frame offset.
-    if loop.live and ref_time is None:
-        ref_time = datetime.now(timezone.utc)
     poster = (_BulletPostWorker(session_id, backend_url, ref_time, loop.fps, loop.last)
               if loop.live and session_id else None)
     for look in looks:
@@ -1732,6 +1733,7 @@ class _BulletPostWorker:
         self._fps = fps
         self._inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
         self._q: queue.Queue = queue.Queue()
+        self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True, name="BulletPostWorker")
         self._thread.start()
 
@@ -1741,11 +1743,20 @@ class _BulletPostWorker:
             self._q.put(hole)
 
     def flush(self, timeout=120):
-        """Block until the queue is empty or timeout expires."""
-        try:
-            self._q.join()
-        except Exception:
-            pass
+        """Block until the queue drains or timeout expires.
+
+        On timeout, signals the worker to abandon retry sleeps so remaining
+        items are acknowledged quickly, then waits for that final drain.
+        """
+        waiter = threading.Thread(target=self._q.join, daemon=True)
+        waiter.start()
+        waiter.join(timeout)
+        if waiter.is_alive():
+            remaining = self._q.qsize()
+            print(f"[POST] flush timed out after {timeout}s; "
+                  f"interrupting retries ({remaining} hole(s) may not be posted)")
+            self._stop.set()
+            self._q.join()  # drains quickly once _stop is set
 
     def _run(self):
         while True:
@@ -1753,19 +1764,25 @@ class _BulletPostWorker:
             if hole is None:
                 self._q.task_done()
                 break
-            self._post_with_retry(hole)
+            if self._stop.is_set():
+                print(f"[POST] shutdown: skipping hole at frame {hole['first_frame']}")
+            else:
+                self._post_with_retry(hole)
             self._q.task_done()
 
     def _post_with_retry(self, hole):
         payload = self._build_payload(hole)
         data = json.dumps(payload).encode()
         for attempt in range(self._MAX_ATTEMPTS):
+            if self._stop.is_set():
+                return
             ok = self._attempt(data, attempt + 1)
             if ok:
                 return
             delay = min(2 ** (attempt + 1), 60)
             print(f"[POST] retry in {delay}s (attempt {attempt + 1}/{self._MAX_ATTEMPTS})")
-            time.sleep(delay)
+            # Use _stop as the sleep so a flush timeout wakes us immediately.
+            self._stop.wait(timeout=delay)
         print(f"[POST] giving up on hole at frame {hole['first_frame']} "
               f"after {self._MAX_ATTEMPTS} attempts")
 

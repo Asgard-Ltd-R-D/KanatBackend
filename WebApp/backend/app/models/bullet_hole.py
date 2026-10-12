@@ -20,8 +20,8 @@ class BulletHole(Base):
         # Partial unique index: allows many NULLs (legacy / manual bullets),
         # but enforces uniqueness when a key is present.
         Index(
-            "uq_bullet_holes_idempotency_key",
-            "idempotency_key",
+            "uq_bullet_holes_session_idempotency_key",
+            "session_id", "idempotency_key",
             unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),

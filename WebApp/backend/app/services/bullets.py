@@ -32,7 +32,8 @@ def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> B
 
     if body.idempotency_key is not None:
         dup = db.query(BulletHole).filter(
-            BulletHole.idempotency_key == body.idempotency_key
+            BulletHole.idempotency_key == body.idempotency_key,
+            BulletHole.session_id == session_id,
         ).first()
         if dup is not None:
             return dup

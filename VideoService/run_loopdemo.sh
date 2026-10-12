@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "${SCRIPT_DIR}")"
 ROOT="${ROOT:-$PWD}"
-SRC_FILE="${SRC_FILE:-${REPO_ROOT}/ImageRecognitionService/data/videos/CamA_20260914_141546.mkv}"
+SRC_FILE="${SRC_FILE:-${SCRIPT_DIR}/H264.mp4}"
 
 # MediaMTX envs are passed to runOnInit
 RTSP_PORT="${RTSP_PORT:-8554}"

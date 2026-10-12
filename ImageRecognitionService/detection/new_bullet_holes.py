@@ -1473,6 +1473,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     persistence = Persistence(match_px, unseen=loop.cap.unseen if loop.live else ())
     announce = (_Announcer(loop, persistence, corroboration, require_change_evidence,
                            mm_per_tpl_px) if loop.live else None)
+    pending_live_posts: list = []  # live holes whose POST failed transiently; retried each look
     for look in looks:
         pts, corroborating = None, []   # None: Lost, no evidence, but it counts towards the floor
         if look.registered:
@@ -1492,10 +1493,15 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             prev_announced = len(announce.announced)
             announce(persisted_now, corroborating)
             if session_id:
+                if pending_live_posts:
+                    pending_live_posts = _post_bullets(
+                        pending_live_posts, session_id, backend_url, ref_time,
+                        None, loop.fps, loop.last)
                 newly = announce.announced[prev_announced:]
                 if newly:
-                    _post_bullets(newly, session_id, backend_url, ref_time,
-                                  None, loop.fps, loop.last)
+                    pending_live_posts.extend(_post_bullets(
+                        newly, session_id, backend_url, ref_time,
+                        None, loop.fps, loop.last))
 
     processed = loop.processed
     if persistence.lost:
@@ -1701,13 +1707,16 @@ def _report_groups(new, mm_per_tpl_px):
 
 
 def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
-    """POST each confirmed Bullet Hole to the WebApp backend (api_contract.md v1)."""
+    """POST each confirmed Bullet Hole to the WebApp backend (api_contract.md v1).
+
+    Returns the subset of holes whose POST failed transiently (5xx or network/
+    timeout error) so the caller can retry them. HTTP 4xx failures are permanent
+    and are not returned.
+    """
     inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
-    # When --ref-time is omitted, treat now as the reference for frame 0 so that
-    # each hole still gets a distinct timestamp (now + start_s + first_frame/fps)
-    # rather than all sharing the same wall_now snapshot.
     effective_ref = ref_time if ref_time is not None else datetime.now(timezone.utc)
     start_s = start or 0  # streams have no --start offset; treat as 0
+    failed = []
 
     for i, hole in enumerate(holes, 1):
         # Board px -> template px (invert the scale+translate stored in tpl_to_board)
@@ -1717,11 +1726,12 @@ def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
         y = float(np.clip(tpl[1], 0.0, 1120.0))
 
         ts = effective_ref + timedelta(seconds=start_s + hole["first_frame"] / fps)
+        ts_utc = ts.astimezone(timezone.utc)  # normalise any tz offset before labelling as Z
 
         mm = hole.get("mm")
         payload = {
             "version": "v1",
-            "first_seen_at": ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "first_seen_at": ts_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             "position": {"x": x, "y": y},
             "target_index": hole["target"],
             "x_mm": float(mm[0]) if mm is not None else None,
@@ -1740,8 +1750,13 @@ def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
         except urllib.error.HTTPError as exc:
             body = exc.read().decode(errors="replace")
             print(f"[POST] bullet #{i} -> HTTP {exc.code}: {body[:200]}")
+            if exc.code >= 500:  # server-side error — transient, queue for retry
+                failed.append(hole)
         except Exception as exc:
             print(f"[POST] bullet #{i} -> ERROR: {exc}")
+            failed.append(hole)  # timeout / network error — transient, queue for retry
+
+    return failed
 
 
 def _render(video, start, n_frames, fps, views, baseline, new, out_video,
@@ -1876,6 +1891,8 @@ if __name__ == "__main__":
     ref_time = None
     if a.ref_time:
         ref_time = datetime.fromisoformat(a.ref_time.replace("Z", "+00:00"))
+        if ref_time.tzinfo is None:
+            p.error("--ref-time must include a UTC offset (e.g. 2026-10-11T10:30:00Z or +02:00)")
 
     process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
             a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,

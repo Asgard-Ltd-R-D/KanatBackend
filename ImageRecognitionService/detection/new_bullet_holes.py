@@ -27,16 +27,21 @@ Counts are Bullet Holes, never Hits — see
 docs/adr/0001-report-bullet-holes-not-hits.md. Two bullets through one mark are
 one Bullet Hole, and no amount of temporal evidence separates them.
 """
+from __future__ import annotations
+
 import argparse
 import bisect
 import itertools
+import json
 import math
 import os
 import signal
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from urllib.parse import urlsplit, urlunsplit
 
@@ -1412,7 +1417,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES, stride=None):
+            baseline_frames=BASELINE_FRAMES, stride=None,
+            session_id=None, backend_url="http://localhost:8000", ref_time=None):
     """`video` is a recording's path, or a stream's rtsp:// URL (#83), which
     has no `start` or `end`: it runs until stopped, at `LIVE_STRIDE` unless
     `stride` says otherwise, and prints each Bullet Hole as it is confirmed."""
@@ -1541,6 +1547,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"at; the frames between are gaps, counting neither for nor against a "
           f"Bullet Hole (#81)")
     _report(new, loop.when, loop.last, mm_per_tpl_px, persistence.looked_at)
+    if session_id:
+        _post_bullets(new, session_id, backend_url, ref_time, start, loop.fps, loop.last)
     if out_video:
         _render(video, start, processed, fps, views, baseline, new, out_video,
                 stride, baseline_frames)
@@ -1686,6 +1694,49 @@ def _report_groups(new, mm_per_tpl_px):
         print(f"      Extreme Spread {g['extreme_spread']:.1f} mm (centre to centre)")
 
 
+def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
+    """POST each confirmed Bullet Hole to the WebApp backend (api_contract.md v1)."""
+    inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
+    wall_now = datetime.now(timezone.utc)
+
+    for i, hole in enumerate(holes, 1):
+        # Board px -> template px (invert the scale+translate stored in tpl_to_board)
+        pts = np.array([[hole["pos"]]], dtype=np.float32)
+        tpl = cv2.perspectiveTransform(pts, inv_m)[0, 0]
+        x = float(np.clip(tpl[0], 0.0, 1405.0))
+        y = float(np.clip(tpl[1], 0.0, 1120.0))
+
+        if ref_time is not None:
+            ts = ref_time + timedelta(seconds=start + hole["first_frame"] / fps)
+        else:
+            ts = wall_now
+
+        mm = hole.get("mm")
+        payload = {
+            "version": "v1",
+            "first_seen_at": ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "position": {"x": x, "y": y},
+            "target_index": hole["target"],
+            "x_mm": float(mm[0]) if mm is not None else None,
+            "y_mm": float(mm[1]) if mm is not None else None,
+            "source": "model",
+        }
+
+        url = f"{backend_url.rstrip('/')}/sessions/{session_id}/bullets"
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                print(f"[POST] bullet #{i} -> HTTP {resp.status}")
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")
+            print(f"[POST] bullet #{i} -> HTTP {exc.code}: {body[:200]}")
+        except Exception as exc:
+            print(f"[POST] bullet #{i} -> ERROR: {exc}")
+
+
 def _render(video, start, n_frames, fps, views, baseline, new, out_video,
             stride=1, baseline_frames=0):
     """Redraw the clip as the rectified Board. Neither detection nor
@@ -1781,6 +1832,15 @@ if __name__ == "__main__":
     add_stride_flag(p)
     p.add_argument("--out", help="write an annotated video of the rectified Board here. "
                                  "A recording's only: it replays the source")
+    p.add_argument("--session-id",
+                   help="WebApp session UUID; when given, POST each confirmed Bullet Hole "
+                        "to POST /sessions/{id}/bullets on the backend")
+    p.add_argument("--backend-url", default="http://localhost:8000",
+                   help="WebApp backend base URL (default: http://localhost:8000)")
+    p.add_argument("--ref-time",
+                   help="UTC wall-clock time at video t=0, ISO 8601 "
+                        "(e.g. 2026-10-11T10:30:00Z). Derives first_seen_at timestamps. "
+                        "Defaults to current time if omitted.")
     manifest.add_flag(p)
     a = p.parse_args()
     if _is_stream(a.video):
@@ -1806,6 +1866,11 @@ if __name__ == "__main__":
             print(f"[INFO] print scale {scale} mm per template px, configured for "
                   f"{entry['capture_setup']} in config/print_scale.json")
 
+    ref_time = None
+    if a.ref_time:
+        ref_time = datetime.fromisoformat(a.ref_time.replace("Z", "+00:00"))
+
     process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
             a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,
-            a.stride)
+            a.stride, session_id=a.session_id, backend_url=a.backend_url,
+            ref_time=ref_time)

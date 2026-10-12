@@ -1443,12 +1443,16 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # They come off the front of the same iterator the run continues on, so the
     # baseline cannot be built from a differently rectified Board than the one
     # it is subtracted from.
-    # Anchor before the baseline loop so the offset is measured from the moment
-    # frame 0 arrived, not after baseline processing has already consumed time.
-    # loop.cap.first is the wall-clock time.time() recorded when frame 0 was
-    # read inside RegisteredFrames.open(); for non-live runs ref_time is unused.
-    if loop.live and ref_time is None:
-        ref_time = datetime.fromtimestamp(loop.cap.first, tz=timezone.utc)
+    # Capture the ref_time anchor before consuming any frames so the offset
+    # is not shifted forward by baseline or detection processing time.
+    # Live: use the frame-0 wall-clock arrival time already recorded by _Stream.
+    # Recording: snapshot now so video t=0 maps to the moment processing started,
+    # not the moment _post_bullets is called after the entire run finishes.
+    if ref_time is None:
+        if loop.live:
+            ref_time = datetime.fromtimestamp(loop.cap.first, tz=timezone.utc)
+        else:
+            ref_time = datetime.now(timezone.utc)
 
     baseline_canvas, baseline_inner, baseline_detections = None, None, []
     # Frame index -> the view detection used, for `_render`. Seeded with look
@@ -1738,8 +1742,15 @@ class _BulletPostWorker:
         self._thread.start()
 
     def submit(self, holes):
-        """Enqueue holes for posting; returns immediately."""
+        """Enqueue holes for posting; returns immediately.
+
+        Assigns a stable hole_id on first submission so that two holes sharing
+        the same first_frame (e.g. two impacts between live looks) get distinct
+        idempotency keys rather than colliding on the frame number alone.
+        """
         for hole in holes:
+            if "hole_id" not in hole:
+                hole["hole_id"] = uuid.uuid4()
             self._q.put(hole)
 
     def flush(self, timeout=120):
@@ -1756,7 +1767,10 @@ class _BulletPostWorker:
             print(f"[POST] flush timed out after {timeout}s; "
                   f"interrupting retries ({remaining} hole(s) may not be posted)")
             self._stop.set()
-            self._q.join()  # drains quickly once _stop is set
+            # _stop wakes any sleeping retry immediately. An in-flight urlopen
+            # cannot be interrupted, so give it one socket-timeout grace period
+            # before abandoning the wait entirely.
+            waiter.join(10)
 
     def _run(self):
         while True:
@@ -1810,8 +1824,9 @@ class _BulletPostWorker:
         y = float(np.clip(tpl[1], 0.0, 1120.0))
         ts = self._ref_time + timedelta(seconds=hole["first_frame"] / self._fps)
         ts_utc = ts.astimezone(timezone.utc)
-        idempotency_key = str(uuid.uuid5(
-            uuid.NAMESPACE_URL, f"{self._session_id}:{hole['first_frame']}"))
+        # hole_id is a uuid4 assigned once in submit(); using it here means two
+        # holes at the same first_frame get distinct keys instead of colliding.
+        idempotency_key = str(hole["hole_id"])
         mm = hole.get("mm")
         return {
             "version": "v1",

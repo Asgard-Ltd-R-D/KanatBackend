@@ -55,67 +55,67 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-slate-900 border border-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6">
+      <div className="absolute inset-0 bg-black/30 dark:bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-5">
           <div>
-            <h3 className="text-lg font-semibold text-slate-100">Add Bullet Manually</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Correction after session ended</p>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Add Bullet Manually</h3>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Correction after session ended</p>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors">
+          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
             <X size={20} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">Detected At</label>
+            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Detected At</label>
             <input
               type="datetime-local"
               step="1"
               value={form.first_seen_at}
               onChange={e => setForm(f => ({ ...f, first_seen_at: e.target.value }))}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
+              className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500"
             />
-            {errors.first_seen_at && <p className="text-red-400 text-xs mt-1">{errors.first_seen_at}</p>}
+            {errors.first_seen_at && <p className="text-red-500 dark:text-red-400 text-xs mt-1">{errors.first_seen_at}</p>}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Position X (template px)</label>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Position X (template px)</label>
               <input
                 type="number"
                 step="0.1"
                 value={form.position_x}
                 onChange={e => setForm(f => ({ ...f, position_x: e.target.value }))}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 placeholder="0–1405"
               />
-              {errors.position_x && <p className="text-red-400 text-xs mt-1">{errors.position_x}</p>}
+              {errors.position_x && <p className="text-red-500 dark:text-red-400 text-xs mt-1">{errors.position_x}</p>}
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Position Y (template px)</label>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Position Y (template px)</label>
               <input
                 type="number"
                 step="0.1"
                 value={form.position_y}
                 onChange={e => setForm(f => ({ ...f, position_y: e.target.value }))}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 placeholder="0–1120"
               />
-              {errors.position_y && <p className="text-red-400 text-xs mt-1">{errors.position_y}</p>}
+              {errors.position_y && <p className="text-red-500 dark:text-red-400 text-xs mt-1">{errors.position_y}</p>}
             </div>
           </div>
 
           {mutation.isError && (
-            <p className="text-red-400 text-sm">{(mutation.error as Error).message}</p>
+            <p className="text-red-500 dark:text-red-400 text-sm">{(mutation.error as Error).message}</p>
           )}
 
           <div className="flex gap-3 justify-end pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors"
+              className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg transition-colors"
             >
               Cancel
             </button>

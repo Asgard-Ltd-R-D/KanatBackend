@@ -122,13 +122,13 @@ class _Scripted:
         self.reported += 1
 
 
-def _loop(registers=lambda i: True, frames=10, cap=None, view=None, registration=None):
+def _loop(registers=lambda i: True, frames=10, source=None, view=None, registration=None):
     """A loop over `frames` frames onto Board space `view`, registering those
     `registers(index)` says, unless a `registration` is given."""
     view = view or _FakeView()
-    return nbh.RegisteredFrames(cap or _FakeCap(frames), _FakeModel(), view,
-                                np.zeros((8, 8, 3), np.uint8), imgsz=64, conf=0.02,
-                                fps=25.0, start=10.0,
+    return nbh.RegisteredFrames(source or nbh.Recording(_FakeCap(frames), fps=25.0, start=10.0),
+                                _FakeModel(), view, np.zeros((8, 8, 3), np.uint8), imgsz=64,
+                                conf=0.02,
                                 registration=registration or _Scripted(view, registers))
 
 
@@ -168,7 +168,7 @@ def test_a_short_file_stops_early_rather_than_padding():
 def test_the_capture_is_released_when_iteration_ends():
     loop = _loop(frames=2)
     list(loop.looks(50))
-    assert loop.cap.released and loop.registration.reported == 1
+    assert loop.source.cap.released and loop.registration.reported == 1
 
 
 def test_frames_until_counts_from_the_start_timestamp():
@@ -369,7 +369,7 @@ def test_frames_a_stride_skips_are_neither_registered_nor_yielded():
     looks = list(loop.looks(30, 13, 5))
     assert [pixels for _, pixels in loop.registration.calls] == [1, 2, 3, 4, 13, 26]
     assert all(l.registered for l in looks)
-    assert loop.cap.grabbed == [i for i in range(5, 30) if i % 13]
+    assert loop.source.cap.grabbed == [i for i in range(5, 30) if i % 13]
     assert (loop.processed, loop.lost) == (30, 0)
 
 
@@ -506,8 +506,8 @@ def _live(monkeypatch, stream, reopen=None):
     def stop():
         live.stop()
         return _FakeStream(n=0)
-    live = nbh._Stream(stream, time.time(), reopen or stop)
-    return _loop(cap=live)
+    live = nbh.Stream(stream, time.time(), reopen or stop)
+    return _loop(source=live)
 
 
 def test_a_stream_is_looked_at_on_the_stride_and_frames_it_is_too_late_for_are_dropped(
@@ -524,9 +524,9 @@ def test_a_stream_is_looked_at_on_the_stride_and_frames_it_is_too_late_for_are_d
     assert past == sorted(set(past)) and all(i % 3 == 0 for i in past)
     assert [pixels for _, pixels in loop.registration.calls] == indices[1:]   # each its own frame
     due = [i for i in range(5, 201) if i % 3 == 0]
-    assert loop.cap.late > 0 and len(past) + loop.cap.late == len(due)
+    assert loop.source.late > 0 and len(past) + loop.source.late == len(due)
     assert loop.lost == 0   # a dropped frame is a gap, not a lost one
-    assert loop.cap.cap.released
+    assert loop.source.cap.released
 
 
 class _Watching(_FakeModel):
@@ -675,10 +675,10 @@ def test_a_stream_that_drops_is_reopened_and_iteration_continues(monkeypatch, ca
     view = loop.view
     # A baseline as long as the run: each frame waits its turn, none is late.
     indices = [l.index for l in loop.looks(60, stride=1, baseline_frames=60)]
-    (seconds, missed), = loop.cap.drops
+    (seconds, missed), = loop.source.drops
     assert seconds >= 0.2 and missed >= 1
     assert indices == list(range(21)) + list(range(21 + missed, 60))
-    assert loop.cap.unseen == list(range(21, 21 + missed))   # stride 1: all were due
+    assert loop.source.unseen == list(range(21, 21 + missed))   # stride 1: all were due
     assert loop.lost == 0 and loop.view is view
     assert loop.registration.calls[20] == (21 + missed, 1)   # the first look after the drop
     out = capsys.readouterr().out
@@ -709,7 +709,7 @@ def test_a_read_cut_short_by_the_timeout_is_a_drop_from_the_frame_before_it(
     loop = _live(monkeypatch, _Stalling(n=10, seconds=0.15),
                  lambda: _FakeStream(interval=0.002))
     indices = [l.index for l in loop.looks(30, stride=1, baseline_frames=30)]
-    (seconds, missed), = loop.cap.drops
+    (seconds, missed), = loop.source.drops
     assert seconds >= 0.15
     assert indices == list(range(11)) + list(range(11 + missed, 30))
     assert loop.registration.calls[10][1] == 1   # the reopened stream's first, not the stalled one
@@ -735,7 +735,7 @@ def test_a_reopened_stream_that_cannot_decode_is_still_the_same_drop(monkeypatch
     loop = _live(monkeypatch, _FakeStream(n=20, interval=0.002), lambda: next(reopened))
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
     indices = [l.index for l in loop.looks(60, stride=1, baseline_frames=60)]
-    (seconds, missed), = loop.cap.drops
+    (seconds, missed), = loop.source.drops
     assert seconds >= 0.2
     assert indices == list(range(21)) + list(range(21 + missed, 60))
     assert capsys.readouterr().out.count("[LIVE] stream dropped") == 1
@@ -757,7 +757,7 @@ def test_a_window_a_drop_emptied_confirms_nothing(monkeypatch, capsys):
     monkeypatch.setattr(nbh.board, "changed_regions",
                         lambda a, b: np.ones((64, 64), bool))
     run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1)
-    (_, missed), = loop.cap.drops
+    (_, missed), = loop.source.drops
     assert missed >= nbh.PERSIST_FRAMES
     assert "[NEW]" not in capsys.readouterr().out and run.holes == []
 
@@ -769,7 +769,7 @@ def test_a_drop_during_the_baseline_leaves_it_consecutive_frames(monkeypatch):
                  lambda: _FakeStream(interval=0.002))
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
     indices = [l.index for l in loop.looks(60, stride=3, baseline_frames=5)]
-    (_, missed), = loop.cap.drops
+    (_, missed), = loop.source.drops
     back = 3 + missed
     assert missed >= 1 and indices[:5] == [0, 1, 2, back, back + 1]
     assert all(i % 3 == 0 for i in indices[5:])
@@ -821,7 +821,7 @@ def test_a_window_emptied_upstream_confirms_nothing(monkeypatch, capsys):
     monkeypatch.setattr(nbh.board, "changed_regions",
                         lambda a, b: np.ones((64, 64), bool))
     run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1)
-    assert loop.cap.unseen == list(range(31, 131))   # stride 1: all were due
+    assert loop.source.unseen == list(range(31, 131))   # stride 1: all were due
     assert "[NEW]" not in capsys.readouterr().out and run.holes == []
 
 
@@ -924,7 +924,7 @@ def test_a_stream_that_keeps_reconnecting_still_warns_its_timestamps_timed_none(
     timed, received, untimed, resumed, reconnected = _coverage_warning(
         capsys.readouterr().out)
     assert (timed, untimed, resumed) == (0, 0, 0) and received >= 3
-    assert reconnected == len(loop.cap.drops)
+    assert reconnected == len(loop.source.drops)
 
 
 @pytest.mark.parametrize("ms, after, lost", [
@@ -945,9 +945,9 @@ def test_a_loss_after_a_repeated_timestamp_is_still_a_gap(
     end = after + lost + 20
     indices = [l.index for l in loop.looks(end, stride=1, baseline_frames=end)]
     assert indices == list(range(after + 1)) + list(range(after + lost + 1, end))
-    assert loop.cap.upstream == [(lost, lost)] and loop.cap.untimed == 1
-    span = ms(loop.cap.received - 1 + lost) / 1000   # to the last frame received
-    _assert_received_rate(capsys.readouterr().out, loop.cap.received - 1, span)
+    assert loop.source.upstream == [(lost, lost)] and loop.source.untimed == 1
+    span = ms(loop.source.received - 1 + lost) / 1000   # to the last frame received
+    _assert_received_rate(capsys.readouterr().out, loop.source.received - 1, span)
 
 
 def _assert_received_rate(out, frames, span):
@@ -983,14 +983,14 @@ def test_a_gap_upstream_is_kept_when_the_frame_after_it_does_not_decode(
                  lambda: _FakeStream(interval=0.002))
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
     indices = [l.index for l in loop.looks(200, stride=1, baseline_frames=200)]
-    (seconds, missed), = loop.cap.drops
+    (seconds, missed), = loop.source.drops
     assert 0.1 + 1 / nbh.LIVE_FPS <= seconds < 0.5
     back = 111 + missed   # the drop missed frame 111 onwards
     assert indices == list(range(11)) + list(range(back, 200))
-    assert loop.cap.upstream == [(100, 100)] and loop.cap.unseen == list(range(11, back))
+    assert loop.source.upstream == [(100, 100)] and loop.source.unseen == list(range(11, back))
     # Frames 1-10 and 111 span 4.44 s; the new session's frames after its first
     # (frame 0 and it are origins) 40 ms each.
-    received = loop.cap.received
+    received = loop.source.received
     _assert_received_rate(capsys.readouterr().out, received - 2, (received + 99) * 0.04)
 
 
@@ -1016,7 +1016,7 @@ def test_live_times_are_the_stream_timestamps_from_frame_0s_wall_clock(
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
     run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1)
     (hole,) = run.holes
-    at = nbh._clock(loop.cap.times[0] + hole["first_frame"] / 25)
+    at = nbh._clock(loop.source.times[0] + hole["first_frame"] / 25)
     new = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[NEW]")]
     assert len(new) == 1 and f"t={at}" in new[0]
 
@@ -1031,8 +1031,8 @@ def test_a_reconnect_starts_a_session_indexed_by_its_own_timestamps(monkeypatch,
     loop = _live(monkeypatch, _FakeStream(n=40, interval=0.002), lambda: after)
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
     indices = [l.index for l in loop.looks(80, stride=1, baseline_frames=80)]
-    (_, missed), = loop.cap.drops
+    (_, missed), = loop.source.drops
     back = 41 + missed
     assert indices == list(range(41)) + list(range(back, back + 8)) + list(range(back + 13, 80))
-    assert loop.cap.unseen == list(range(41, back)) + list(range(back + 8, back + 13))
-    assert loop.cap.upstream == [(5, 5)] and loop.cap.untimed == 0
+    assert loop.source.unseen == list(range(41, back)) + list(range(back + 8, back + 13))
+    assert loop.source.upstream == [(5, 5)] and loop.source.untimed == 0

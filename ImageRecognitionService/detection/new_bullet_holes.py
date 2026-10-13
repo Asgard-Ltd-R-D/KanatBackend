@@ -509,16 +509,20 @@ class Recording:
     stay positions in the Recording, and `passed` counts every frame passed,
     due or not, gaps after the last due one included. `read` hands back None
     at the end of the file, or once `n_frames` have passed.
+
+    `ref_time` is the wall clock at the Recording's t=0, `--ref-time`, and
+    by default the time the run opened it.
     """
     live = False
     unseen = ()   # a Recording misses no frame
 
-    def __init__(self, cap, fps, start):
+    def __init__(self, cap, fps, start, ref_time=None):
         self.cap, self.fps, self.start_s = cap, fps, start
+        self.ref_time = ref_time or datetime.now(timezone.utc)
         self.passed = 0
 
     @classmethod
-    def open(cls, path, start):
+    def open(cls, path, start, ref_time=None):
         """The Recording at `start` seconds, and frame 0, read there."""
         cap = cv2.VideoCapture(path)
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -526,7 +530,7 @@ class Recording:
         ok, frame = cap.read()
         if not ok:
             raise SystemExit(f"cannot read {path} at {start}s")
-        return cls(cap, fps, start), frame
+        return cls(cap, fps, start, ref_time), frame
 
     def start(self, n_frames, stride, baseline_frames):
         self._wanted, self._stride, self._baseline_frames = n_frames, stride, baseline_frames
@@ -549,6 +553,10 @@ class Recording:
     def when(self, index):
         """Seconds into the Recording, as printed."""
         return f"{self.start_s + index / self.fps:.2f}s"
+
+    def wall_clock(self, index):
+        """The wall clock by `ref_time`, as posted (#152)."""
+        return self.ref_time + timedelta(seconds=self.start_s + index / self.fps)
 
     def close(self):
         self.cap.release()
@@ -585,7 +593,8 @@ class Stream:
     its RTSP session's first frame (#117). Frame 0 is the one `open` read and
     built Board space from. `when` is a looked-at frame's time by the same
     timestamps, from the wall clock frame 0 was read at (a later RTSP
-    session's first frame, after a drop), not when it was read.
+    session's first frame, after a drop), not when it was read, and
+    `wall_clock` the same time as posted to the WebApp (#152).
 
     Frames lost upstream are gaps too (#117). Until the baseline is built
     nothing reads the stream past the frame in hand, and MediaMTX discards
@@ -643,9 +652,10 @@ class Stream:
         self._reader = None
 
     @classmethod
-    def open(cls, url, start=None):
+    def open(cls, url, start=None, ref_time=None):
         """The stream at `url`, read from where it is, and frame 0. `start`
-        is a Recording's: a stream cannot be seeked (#83)."""
+        and `ref_time` are a Recording's: a stream cannot be seeked (#83), and
+        its times are its own (#117)."""
         print(f"[LIVE] {_redacted(url)}: a stream, read from where it is. Board space "
               f"is built from the first frame read, times are the stream's timestamps "
               f"from the wall clock it was read at (#117), and "
@@ -858,6 +868,10 @@ class Stream:
     def when(self, index):
         """The wall clock by the stream's timestamps, as printed (#117)."""
         return _clock(self.times[index])
+
+    def wall_clock(self, index):
+        """`when`, as posted (#152)."""
+        return datetime.fromtimestamp(self.times[index], timezone.utc)
 
     def close(self):
         for s, handler in self._handlers.items():
@@ -1204,7 +1218,8 @@ class RegisteredFrames:
     frame 0; `start` takes the frames wanted, the stride and the baseline's
     frames; `read` hands back each due `Frame`, then None; `close` releases
     it. `passed` is the frames passed, `when` a frame's time as printed,
-    `unseen` the due frames a Stream missed, and `live` which it is.
+    `wall_clock` its time as posted to the WebApp (#152), `unseen` the due
+    frames a Stream missed, and `live` which it is.
 
     Built by `open`. The constructor takes its collaborators directly so the
     iteration can be exercised without a video file or a model.
@@ -1215,6 +1230,7 @@ class RegisteredFrames:
         self.view = view   # Board space, fixed by the frame at `--start`
         self.imgsz, self.conf = imgsz, conf
         self.fps, self.live, self.when = source.fps, source.live, source.when
+        self.wall_clock = source.wall_clock
         self._base = base
         self.net_scale = None   # measured by `open`; see the warning there
         self.registration = registration
@@ -1224,7 +1240,7 @@ class RegisteredFrames:
 
     @classmethod
     def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
-             template_path=board.DEFAULT_TEMPLATE):
+             template_path=board.DEFAULT_TEMPLATE, ref_time=None):
         from ultralytics import YOLO  # imported lazily: pulls in torch
         model = YOLO(model_path)
         _bullet_hole_classes(model)   # refuse a wrong checkpoint before any video work
@@ -1237,7 +1253,7 @@ class RegisteredFrames:
         # How long building Board space takes is measured from opening the
         # source, so the model load above is not in it (#79).
         opened_at = time.perf_counter()
-        source, base = (Stream if _is_stream(video) else Recording).open(video, start)
+        source, base = (Stream if _is_stream(video) else Recording).open(video, start, ref_time)
 
         view, correlation = board.build_view(base, template_mask)
         if view is None:
@@ -1472,7 +1488,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     """`video` is a recording's path, or a stream's rtsp:// URL (#83), which
     has no `start` or `end`: it runs until stopped, at `LIVE_STRIDE` unless
     `stride` says otherwise, and prints each Bullet Hole as it is confirmed."""
-    loop = RegisteredFrames.open(video, start, model_path, conf, template_path)
+    loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time)
     fps, match_px = loop.fps, loop.view.match_radius
     n_frames = math.inf if loop.live else loop.frames_until(end)
     stride = stride or (LIVE_STRIDE if loop.live else 1)
@@ -1491,17 +1507,6 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # They come off the front of the same iterator the run continues on, so the
     # baseline cannot be built from a differently rectified Board than the one
     # it is subtracted from.
-    # Capture the ref_time anchor before consuming any frames so the offset
-    # is not shifted forward by baseline or detection processing time.
-    # Live: use the frame-0 wall-clock arrival time already recorded by the Stream.
-    # Recording: snapshot now so video t=0 maps to the moment processing started,
-    # not the moment _post_bullets is called after the entire run finishes.
-    if ref_time is None:
-        if loop.live:
-            ref_time = datetime.fromtimestamp(loop.source.first, tz=timezone.utc)
-        else:
-            ref_time = datetime.now(timezone.utc)
-
     baseline_canvas, baseline_inner, baseline_detections = None, None, []
     # Frame index -> the view detection used, for `_render`. Seeded with look
     # 0's view, Board space itself, so a run that reads no frame still has one.
@@ -1534,7 +1539,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     persistence = Persistence(match_px, unseen=loop.source.unseen)
     announce = (_Announcer(loop, persistence, corroboration, require_change_evidence,
                            mm_per_tpl_px) if loop.live else None)
-    poster = (_BulletPostWorker(session_id, backend_url, ref_time, loop.fps, loop.last)
+    poster = (_BulletPostWorker(session_id, backend_url, loop.wall_clock, loop.last)
               if loop.live and session_id else None)
     for look in looks:
         pts, corroborating = None, []   # None: Lost, no evidence, but it counts towards the floor
@@ -1620,7 +1625,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"Bullet Hole (#81)")
     _report(new, loop.when, loop.last, mm_per_tpl_px, persistence.looked_at)
     if session_id and not loop.live:
-        _post_bullets(new, session_id, backend_url, ref_time, start, loop.fps, loop.last)
+        _post_bullets(new, session_id, backend_url, loop.wall_clock, loop.last)
     if out_video:
         _render(video, start, processed, fps, views, baseline, new, out_video,
                 stride, baseline_frames)
@@ -1778,11 +1783,10 @@ class _BulletPostWorker:
 
     _MAX_ATTEMPTS = 9   # delays: 2, 4, 8, 16, 32, 60, 60, 60, 60 s
 
-    def __init__(self, session_id, backend_url, ref_time, fps, view):
+    def __init__(self, session_id, backend_url, wall_clock, view):
         self._session_id = session_id
         self._url = f"{backend_url.rstrip('/')}/sessions/{session_id}/bullets"
-        self._ref_time = ref_time if ref_time is not None else datetime.now(timezone.utc)
-        self._fps = fps
+        self._wall_clock = wall_clock
         self._inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
         self._q: queue.Queue = queue.Queue()
         self._stop = threading.Event()
@@ -1833,7 +1837,10 @@ class _BulletPostWorker:
             self._q.task_done()
 
     def _post_with_retry(self, hole):
-        payload = self._build_payload(hole)
+        # hole_id is a uuid4 assigned once in submit(); using it here means two
+        # holes at the same first_frame get distinct keys instead of colliding.
+        payload = _bullet_payload(hole, self._wall_clock(hole["first_frame"]),
+                                  self._inv_m, str(hole["hole_id"]))
         data = json.dumps(payload).encode()
         for attempt in range(self._MAX_ATTEMPTS):
             if self._stop.is_set():
@@ -1867,48 +1874,37 @@ class _BulletPostWorker:
             print(f"[POST] bullet -> ERROR: {exc}")
             return False
 
-    def _build_payload(self, hole):
-        pts = np.array([[hole["pos"]]], dtype=np.float32)
-        tpl = cv2.perspectiveTransform(pts, self._inv_m)[0, 0]
-        x = float(np.clip(tpl[0], 0.0, 1405.0))
-        y = float(np.clip(tpl[1], 0.0, 1120.0))
-        ts = self._ref_time + timedelta(seconds=hole["first_frame"] / self._fps)
-        ts_utc = ts.astimezone(timezone.utc)
-        # hole_id is a uuid4 assigned once in submit(); using it here means two
-        # holes at the same first_frame get distinct keys instead of colliding.
-        idempotency_key = str(hole["hole_id"])
-        mm = hole.get("mm")
-        return {
-            "version": "v1",
-            "first_seen_at": ts_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
-            "position": {"x": x, "y": y},
-            "target_index": hole["target"],
-            "x_mm": float(mm[0]) if mm is not None else None,
-            "y_mm": float(mm[1]) if mm is not None else None,
-            "source": "model",
-            "idempotency_key": idempotency_key,
-        }
+
+def _bullet_payload(hole, seen_at, inv_m, idempotency_key):
+    """A Bullet Hole as POST /sessions/{id}/bullets takes it (api_contract.md
+    v1): `seen_at` is its first frame's `wall_clock` (#152), and `inv_m` maps
+    Board space back onto the template."""
+    pts = np.array([[hole["pos"]]], dtype=np.float32)
+    tpl = cv2.perspectiveTransform(pts, inv_m)[0, 0]
+    utc = seen_at.astimezone(timezone.utc)
+    mm = hole.get("mm")
+    return {
+        "version": "v1",
+        "first_seen_at": utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+        "position": {"x": float(np.clip(tpl[0], 0.0, 1405.0)),
+                     "y": float(np.clip(tpl[1], 0.0, 1120.0))},
+        "target_index": hole["target"],
+        "x_mm": float(mm[0]) if mm is not None else None,
+        "y_mm": float(mm[1]) if mm is not None else None,
+        "source": "model",
+        "idempotency_key": idempotency_key,
+    }
 
 
-def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
+def _post_bullets(holes, session_id, backend_url, wall_clock, view):
     """POST each confirmed Bullet Hole to the WebApp backend (api_contract.md v1).
 
     Used for end-of-run (non-live) batches only. Blocks until all POSTs complete;
     this is acceptable because the detection run is already finished at this point.
     """
     inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
-    effective_ref = ref_time if ref_time is not None else datetime.now(timezone.utc)
-    start_s = start or 0
 
     for i, hole in enumerate(holes, 1):
-        pts = np.array([[hole["pos"]]], dtype=np.float32)
-        tpl = cv2.perspectiveTransform(pts, inv_m)[0, 0]
-        x = float(np.clip(tpl[0], 0.0, 1405.0))
-        y = float(np.clip(tpl[1], 0.0, 1120.0))
-
-        ts = effective_ref + timedelta(seconds=start_s + hole["first_frame"] / fps)
-        ts_utc = ts.astimezone(timezone.utc)
-
         # Deterministic key: survives process restarts on the same recording.
         # Two holes at the same first_frame are separated by ≥ match_px board
         # pixels (persistence guarantee), so integer-rounded coords are a
@@ -1918,18 +1914,8 @@ def _post_bullets(holes, session_id, backend_url, ref_time, start, fps, view):
             uuid.NAMESPACE_URL,
             f"{session_id}:{hole['first_frame']}:"
             f"{round(float(pos[0]))}:{round(float(pos[1]))}"))
-
-        mm = hole.get("mm")
-        payload = {
-            "version": "v1",
-            "first_seen_at": ts_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
-            "position": {"x": x, "y": y},
-            "target_index": hole["target"],
-            "x_mm": float(mm[0]) if mm is not None else None,
-            "y_mm": float(mm[1]) if mm is not None else None,
-            "source": "model",
-            "idempotency_key": idempotency_key,
-        }
+        payload = _bullet_payload(hole, wall_clock(hole["first_frame"]), inv_m,
+                                  idempotency_key)
 
         url = f"{backend_url.rstrip('/')}/sessions/{session_id}/bullets"
         req = urllib.request.Request(
@@ -2047,15 +2033,19 @@ if __name__ == "__main__":
     p.add_argument("--backend-url", default="http://localhost:8000",
                    help="WebApp backend base URL (default: http://localhost:8000)")
     p.add_argument("--ref-time",
-                   help="UTC wall-clock time at video t=0, ISO 8601 "
+                   help="UTC wall-clock time at the recording's t=0, ISO 8601 "
                         "(e.g. 2026-10-11T10:30:00Z). Derives first_seen_at timestamps. "
-                        "Defaults to current time if omitted.")
+                        "Defaults to when the recording is opened. A recording's "
+                        "only: a stream's times are its own timestamps")
     manifest.add_flag(p)
     a = p.parse_args()
     if _is_stream(a.video):
         if a.start is not None or a.end is not None or a.out:
             p.error("a stream takes no --start, --end or --out: it can be neither "
                     "seeked nor replayed (#83)")
+        if a.ref_time:
+            p.error("a stream takes no --ref-time: its times are its own "
+                    "timestamps (#117, #152)")
         if a.merge_displaced:
             p.error("a stream takes no --merge-displaced: it would fold away Bullet "
                     "Holes already announced (ADR-0004)")

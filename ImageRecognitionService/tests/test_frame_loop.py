@@ -4,6 +4,8 @@ The loop exists so the pipeline and the detector probe look at the same image.
 What is testable without a video file is the bookkeeping the probe depends on:
 which frames got a look, and which only appeared to.
 """
+import contextlib
+import json
 import math
 import os
 import re
@@ -12,6 +14,7 @@ import socket
 import sys
 import time
 import types
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -27,6 +30,7 @@ class _FakeView:
     grew = False
     targets = [None]
     board_scale = 1.0
+    tpl_to_board = np.eye(3)
     inner = types.SimpleNamespace(offset=(0, 0), size=(64, 64))
 
     def rectify(self, frame):
@@ -241,9 +245,9 @@ def test_a_grown_canvas_is_searched_as_the_margin_canvas_plus_its_bands():
     assert look.inner.shape == (64, 64, 3) and look.canvas.shape == (80, 64, 3)
 
 
-def test_opening_reports_how_long_building_board_space_took(monkeypatch, capsys):
-    """Wall time from opening the source to Board space built, printed once (#79).
-    The value is the machine's, so only that it is reported is checked."""
+def _openable(monkeypatch):
+    """`RegisteredFrames.open` on a one-frame `_FakeCap`, every Target found
+    and Board space built without a model, artwork or geometry."""
     monkeypatch.setitem(sys.modules, "ultralytics",
                         types.SimpleNamespace(YOLO=lambda path: _FakeModel()))
     monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
@@ -256,8 +260,27 @@ def test_opening_reports_how_long_building_board_space_took(monkeypatch, capsys)
     monkeypatch.setattr(nbh.board, "uncovered_view",
                         lambda view, size: (0.0, dict.fromkeys(
                             ("left", "right", "above", "below"), 0.0)))
+
+
+def test_opening_reports_how_long_building_board_space_took(monkeypatch, capsys):
+    """Wall time from opening the source to Board space built, printed once (#79).
+    The value is the machine's, so only that it is reported is checked."""
+    _openable(monkeypatch)
     nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt")
     assert capsys.readouterr().out.count("[REGISTRATION] Board space built in ") == 1
+
+
+def test_a_recording_times_its_frames_from_ref_time_or_when_it_was_opened(monkeypatch):
+    """`--ref-time` is the wall clock at the Recording's t=0, and without it
+    the time the run opened the Recording (#152)."""
+    _openable(monkeypatch)
+    ref = datetime(2026, 10, 11, 10, 30, tzinfo=timezone.utc)
+    loop = nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt", ref_time=ref)
+    assert loop.wall_clock(13) == ref + timedelta(seconds=10.52)
+    before = datetime.now(timezone.utc)
+    loop = nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt")
+    t0 = loop.wall_clock(0) - timedelta(seconds=10)
+    assert before <= t0 <= datetime.now(timezone.utc)
 
 
 def _rendering(monkeypatch, frames):
@@ -1036,3 +1059,62 @@ def test_a_reconnect_starts_a_session_indexed_by_its_own_timestamps(monkeypatch,
     assert indices == list(range(41)) + list(range(back, back + 8)) + list(range(back + 13, 80))
     assert loop.source.unseen == list(range(41, back)) + list(range(back + 8, back + 13))
     assert loop.source.upstream == [(5, 5)] and loop.source.untimed == 0
+
+
+# --- posting to the WebApp (#152) --------------------------------------------
+
+
+def _posting(monkeypatch):
+    """The payloads POSTed to the WebApp, in order, each accepted."""
+    posted = []
+    def urlopen(request, timeout):
+        posted.append(json.loads(request.data))
+        return contextlib.nullcontext(types.SimpleNamespace(status=201))
+    monkeypatch.setattr(nbh.urllib.request, "urlopen", urlopen)
+    return posted
+
+
+def _seen_at(payload):
+    """A payload's `first_seen_at`, as a datetime."""
+    return datetime.fromisoformat(payload["first_seen_at"])
+
+
+def test_a_live_bullet_hole_is_posted_at_the_time_printed_for_it_after_a_reconnect(
+        monkeypatch):
+    """Down after frame 40, and the Bullet Hole first seen past the reconnect.
+    Its POST is timed as `[NEW]` prints it, by the stream's own time for its
+    first frame, not frame 0's plus its index at 25 fps: past a drop the index
+    is #84's wall-clock count, 1.2 s long on the replay (#152)."""
+    posted = _posting(monkeypatch)
+    after = _FakeStream(interval=0.002)
+    after.at = 100   # its pixels, which `_Watching` goes by, start at 101
+    loop = _live(monkeypatch, _FakeStream(n=40, interval=0.002), lambda: after)
+    loop.model = _Watching(lambda i: i > 100, stop_at=200)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
+    run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1,
+                      session_id="session")
+    (hole,), (payload,) = run.holes, posted
+    assert hole["first_frame"] > 40
+    seen = datetime.fromtimestamp(loop.source.times[hole["first_frame"]], timezone.utc)
+    assert abs(_seen_at(payload) - seen) < timedelta(milliseconds=1)
+
+
+def test_a_recording_posts_each_bullet_hole_at_ref_time_plus_its_time_in_the_recording(
+        monkeypatch):
+    """`--ref-time` is the wall clock at the Recording's t=0: from 10 s, a Bullet
+    Hole first seen on frame 13 is posted 10.52 s past it (#152)."""
+    posted = _posting(monkeypatch)
+    ref = datetime(2026, 10, 11, 10, 30, tzinfo=timezone.utc)
+    def opened(video, start, model_path, conf, template_path, ref_time):
+        loop = _loop(frames=100, source=nbh.Recording(_FakeCap(100), 25.0, start, ref_time))
+        loop.model = _SeenOn(lambda i: i >= 6)
+        return loop
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", opened)
+    monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.zeros((8, 8), bool))
+    run = nbh.process("clip.mp4", 10.0, 10.0 + (13 + nbh.PERSIST_FRAMES + 0.5) / 25,
+                      "model.pt", require_change_evidence=False, stride=13,
+                      session_id="session", ref_time=ref)
+    (hole,), (payload,) = run.holes, posted
+    assert hole["first_frame"] == 13
+    assert _seen_at(payload) == ref + timedelta(seconds=10.52)

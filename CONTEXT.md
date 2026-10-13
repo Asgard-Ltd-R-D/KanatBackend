@@ -96,6 +96,26 @@ alone. Reported once and never retracted (ADR-0004). A Candidate that persisted
 but still awaits Change Evidence is persisted, not Confirmed.
 _Avoid_: accepted, validated, detected
 
+**Inference Time**:
+The time one Look spends in the detector, summed over every call the detector
+makes on that Look. Not the time one call takes: a Look may need several. A Lost
+Look has none, not zero: no detector ran, and its cost is in its Look Time.
+_Avoid_: latency, model time
+
+**Look Time**:
+The time one Look takes from its frame reaching the system until its
+Detections have been judged for persistence: registration, the detector and
+every filter. Excludes receiving and decoding the frame, and the time it waited
+to be looked at. Contains the Look's Inference Time.
+_Avoid_: latency, frame time, processing time
+
+**Frame Wait**:
+How long a live Look's frame, once received and decoded, waited before the
+system started looking at it. Only the wait inside the system: the time the
+frame took to arrive — the camera, the network, the video service, the
+buffering ahead of the decoder — is end-to-end latency, not Frame Wait.
+_Avoid_: latency, lag, buffering, delay
+
 **Miss**:
 A Bullet Hole on a Board that falls outside every Target on it. A real Hit, and
 counted as one, but carrying no Shot Distance and no score.

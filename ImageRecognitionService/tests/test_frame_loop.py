@@ -4,8 +4,10 @@ The loop exists so the pipeline and the detector probe look at the same image.
 What is testable without a video file is the bookkeeping the probe depends on:
 which frames got a look, and which only appeared to.
 """
+import csv
 import math
 import os
+import platform
 import re
 import signal
 import socket
@@ -1115,12 +1117,13 @@ def test_a_recording_publishes_each_bullet_hole_at_ref_time_plus_its_time_in_the
 
 class _OnDevice(_FakeModel):
     """Records the device each call was handed, `None` when it was handed
-    none."""
+    none, and resolves to it as ultralytics' predictor does."""
     def __init__(self):
         self.handed = []
 
     def predict(self, image, imgsz, conf, verbose=False, classes=None, **kwargs):
         self.handed.append(kwargs.get("device"))
+        self.predictor = types.SimpleNamespace(device=f"{kwargs.get('device', 'cpu')}:0")
         return super().predict(image, imgsz, conf)
 
 
@@ -1133,3 +1136,100 @@ def test_the_detector_is_handed_the_device_only_when_one_is_given(monkeypatch):
                             types.SimpleNamespace(YOLO=lambda path: model))
         nbh.process("clip.mkv", 10.0, 10.2, "model.pt", device=device)
         assert model.handed and all(h == handed for h in model.handed)
+
+
+# --- timing each Look (#129) --------------------------------------------------
+# Structure only: the values are the machine's, recorded on the results page.
+
+_STAGES = ("registration_ms", "rectification_ms", "detector_ms", "baseline_strip_ms",
+           "change_filter_ms", "persistence_ms")
+
+
+def _timed(monkeypatch, tmp_path, loop, **kwargs):
+    """`process` over `loop`'s 10 frames with `--timing`: the CSV's rows."""
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
+    path = tmp_path / "timing.csv"
+    nbh.process("clip.mp4", 10.0, 10.4, "model.pt", timing=str(path), **kwargs)
+    with open(path, newline="") as f:
+        assert f.readline().startswith("# WIP")   # the label line, then the CSV
+        return list(csv.DictReader(f))
+
+
+def _calls(row):
+    return [float(v) for k, v in row.items() if k.startswith("call_") and v]
+
+
+def test_a_timed_run_writes_a_row_for_each_look_past_the_baseline(monkeypatch, tmp_path):
+    """The baseline's Looks, 0-4, have none. Inference Time is the sum of the
+    Look's calls and within its Look Time, and the stages add up to it.
+    Frame Wait is a recording's to leave empty (#129)."""
+    rows = _timed(monkeypatch, tmp_path, _loop())
+    assert [int(r["frame"]) for r in rows] == [5, 6, 7, 8, 9]
+    for r in rows:
+        look, calls = float(r["look_ms"]), _calls(r)
+        assert r["registered"] == "1" and len(calls) == 1
+        assert float(r["inference_ms"]) == pytest.approx(sum(calls), abs=1e-3)
+        assert float(r["inference_ms"]) <= look
+        assert sum(float(r[s]) for s in _STAGES) == pytest.approx(look, abs=0.01)
+        assert r["frame_wait_ms"] == ""
+
+
+def test_a_lost_look_has_a_row_with_no_detector_calls(monkeypatch, tmp_path):
+    """Its registration cost counts towards the spread; the stages it never
+    reached are empty, and still the rest add up to its Look Time."""
+    rows = {int(r["frame"]): r for r in _timed(monkeypatch, tmp_path, _loop(lambda i: i != 7))}
+    lost = rows[7]
+    assert lost["registered"] == "0" and _calls(lost) == [] and lost["call_1_ms"] == ""
+    assert lost["inference_ms"] == ""
+    assert all(lost[s] == "" for s in ("rectification_ms", "detector_ms",
+                                       "baseline_strip_ms", "change_filter_ms"))
+    assert float(lost["registration_ms"]) + float(lost["persistence_ms"]) == \
+        pytest.approx(float(lost["look_ms"]), abs=0.01)
+    assert all(rows[i]["registered"] == "1" for i in (5, 6, 8, 9))
+
+
+def test_a_grown_canvas_times_each_detector_call(monkeypatch, tmp_path):
+    """The margin canvas and its band are two calls a Look, each timed, and
+    Inference Time is their sum (#46)."""
+    view = _GrownView()
+    registration = types.SimpleNamespace(last=view, register=lambda frame, index: view,
+                                         report=lambda: None)
+    loop = _loop(view=view, registration=registration)
+    loop.model = _RecordingModel()
+    rows = _timed(monkeypatch, tmp_path, loop)
+    assert rows and all(len(_calls(r)) == 2 for r in rows)
+    for r in rows:
+        assert float(r["inference_ms"]) == pytest.approx(sum(_calls(r)), abs=2e-3)
+        assert float(r["inference_ms"]) <= float(r["look_ms"])
+
+
+def test_the_timing_summary_is_labelled_wip_and_names_where_it_ran(monkeypatch, tmp_path,
+                                                                   capsys):
+    """WIP, never an acceptance result; the host, the platform, the device the
+    detector resolved to and the Looks counted; n/P50/P95/P99/max for each
+    figure, and no comparison with 40 ms (#129)."""
+    loop = _loop()
+    loop.model = _OnDevice()
+    _timed(monkeypatch, tmp_path, loop)
+    lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[TIMING]")]
+    header = lines[0]
+    # The CSV says so too, so a copy passed on alone says where it was measured.
+    assert (tmp_path / "timing.csv").read_text().splitlines()[0] == \
+        "# " + header.removeprefix("[TIMING] ")
+    assert "WIP" in header and "not an acceptance result" in header
+    assert platform.node() in header and platform.platform() in header
+    assert "cpu:0" in header and "5 Look(s)" in header
+    for figure in ("Inference Time", "Look Time", "a detector call", "registration",
+                   "rectification", "detector ", "baseline strip", "change filter",
+                   "persistence"):
+        line = next(l for l in lines[1:] if figure in l)
+        assert re.search(r"n \d+ +P50 [\d.]+ +P95 [\d.]+ +P99 [\d.]+ +max [\d.]+ ms", line)
+    assert not any("40 ms" in l or "pass" in l for l in lines)
+
+
+def test_a_run_without_timing_writes_and_prints_none(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: _loop())
+    nbh.process("clip.mp4", 10.0, 10.4, "model.pt")
+    assert "[TIMING]" not in capsys.readouterr().out
+    assert os.listdir(tmp_path) == []

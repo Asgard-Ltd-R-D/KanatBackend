@@ -154,3 +154,16 @@ def test_a_fit_that_found_no_target_artwork_is_no_board():
     assert not usable_fit((313, 314), 0.47)
     assert usable_fit((313, 314), 0.95)
     assert not usable_fit((5000, 900), 0.99)
+
+
+def test_a_measured_recording_is_refused_whatever_its_role_now_says(tmp_path):
+    """A measured recording stays sealed for good (ADR-0005, #63): relabelling
+    it `spent` must not reopen it to mining."""
+    log = tmp_path / "sealed_runs.log"
+    log.write_text(f"2026-10-01T11:52:23Z  {'a' * 64}  model=x  commit=abc1234  tool=evaluate.py\n")
+
+    with pytest.raises(SystemExit) as why:   # no entry back, so nothing to mine
+        refuse_sealed(MANIFEST, "a" * 64, str(log))
+    assert "2026-10-01T11:52:23Z" in str(why.value) and "abc1234" in str(why.value)
+    assert "--final-run" not in str(why.value)
+    assert refuse_sealed(MANIFEST, "b" * 64, str(log))["role"] == THRESHOLD_WORK

@@ -4,10 +4,14 @@ The probe is only worth running if it gives the known answer where the answer
 is known, so these pin the arithmetic it is read through: what counts as a
 frame that got a look, and what counts as a detection of THIS Bullet Hole.
 """
+import runpy
+import sys
+
 import numpy as np
+import pytest
 
 from detection import new_bullet_holes as nbh
-from tools import probe
+from tools import manifest, probe
 
 HOLE = (100.0, 100.0)
 RADIUS = 5.0
@@ -95,7 +99,64 @@ def test_an_explicit_position_is_template_x_y():
 
 def test_a_malformed_position_is_refused():
     import argparse
-    import pytest
     for bad in ("512.5", "1,2,3", "x,y"):
         with pytest.raises(argparse.ArgumentTypeError):
             probe.parse_point(bad)
+
+
+def _sealed(tmp_path, monkeypatch):
+    """A stand-in sealed recording, the `where` that allocates it, and the log
+    path, not yet written. The commit is pinned so no git runs."""
+    monkeypatch.setattr(manifest, "git_commit", lambda: "abc1234")
+    video, log = tmp_path / "clip.mkv", tmp_path / "sealed_runs.log"
+    video.write_bytes(b"frames")
+    entries = {manifest.content_hash(str(video)): {"role": manifest.SEALED}}
+    return str(video), dict(entries=entries, log_path=str(log)), log
+
+
+def test_a_sealed_final_run_over_two_models_is_one_look(tmp_path, monkeypatch):
+    """Gated once per model, the second gate found the first look in the log
+    and refused: the look spent, nothing measured (#139)."""
+    video, where, log = _sealed(tmp_path, monkeypatch)
+
+    assert probe.gate(video, True, ["a/best.pt", "b/best.pt"], **where)["role"] == manifest.SEALED
+    [line] = log.read_text().splitlines()
+    assert "a/best.pt" in line and "b/best.pt" in line and "tool=probe.py" in line
+
+
+def test_probe_refuses_a_sealed_recording_without_the_flag(tmp_path, monkeypatch):
+    video, where, log = _sealed(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit, match="--final-run"):
+        probe.gate(video, False, ["a/best.pt"], **where)
+    assert not log.exists()
+
+
+def test_probe_refuses_a_measured_recording_flag_or_not(tmp_path, monkeypatch):
+    video, where, log = _sealed(tmp_path, monkeypatch)
+    probe.gate(video, True, ["a/best.pt"], **where)
+    before = log.read_text()
+    for final_run in (True, False):
+        with pytest.raises(SystemExit, match="measured"):
+            probe.gate(video, final_run, ["b/best.pt"], **where)
+    assert log.read_text() == before
+
+
+def test_the_command_line_gates_once_for_every_model(monkeypatch):
+    """The bug lived in `__main__`, not in `gate`: a loop of gates there would
+    pass every test above. Stopped at the first frame read, so no footage."""
+    class _Stop(Exception):
+        pass
+
+    def opened(*args):
+        raise _Stop
+
+    gates = []
+
+    monkeypatch.setattr(manifest, "gate", lambda *args, **where: gates.append(args))
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", opened)
+    monkeypatch.delitem(sys.modules, "tools.probe")   # run afresh, not the imported one
+    monkeypatch.setattr(sys, "argv", ["probe.py", "clip.mkv", "--start", "0", "--end", "1",
+                                      "--at", "1,2", "--model", "a.pt", "b.pt", "--final-run"])
+    with pytest.raises(_Stop):
+        runpy.run_module("tools.probe", run_name="__main__")
+    assert gates == [("clip.mkv", True, "a.pt,b.pt", "probe.py")]

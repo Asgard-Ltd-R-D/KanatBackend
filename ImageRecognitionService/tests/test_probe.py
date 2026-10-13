@@ -4,6 +4,9 @@ The probe is only worth running if it gives the known answer where the answer
 is known, so these pin the arithmetic it is read through: what counts as a
 frame that got a look, and what counts as a detection of THIS Bullet Hole.
 """
+import runpy
+import sys
+
 import numpy as np
 import pytest
 
@@ -136,3 +139,24 @@ def test_probe_refuses_a_measured_recording_flag_or_not(tmp_path, monkeypatch):
         with pytest.raises(SystemExit, match="measured"):
             probe.gate(video, final_run, ["b/best.pt"], **where)
     assert log.read_text() == before
+
+
+def test_the_command_line_gates_once_for_every_model(monkeypatch):
+    """The bug lived in `__main__`, not in `gate`: a loop of gates there would
+    pass every test above. Stopped at the first frame read, so no footage."""
+    class _Stop(Exception):
+        pass
+
+    def opened(*args):
+        raise _Stop
+
+    gates = []
+
+    monkeypatch.setattr(manifest, "gate", lambda *args, **where: gates.append(args))
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", opened)
+    monkeypatch.delitem(sys.modules, "tools.probe")   # run afresh, not the imported one
+    monkeypatch.setattr(sys, "argv", ["probe.py", "clip.mkv", "--start", "0", "--end", "1",
+                                      "--at", "1,2", "--model", "a.pt", "b.pt", "--final-run"])
+    with pytest.raises(_Stop):
+        runpy.run_module("tools.probe", run_name="__main__")
+    assert gates == [("clip.mkv", True, "a.pt,b.pt", "probe.py")]

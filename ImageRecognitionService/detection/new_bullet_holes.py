@@ -1192,8 +1192,8 @@ class RegisteredFrames:
     Board space is fixed once, by the frame at `--start`, and every later frame
     is registered onto it by `registration`, a `Registration` (#138).
 
-    Frames come from `source`, a `Recording` or a `Stream` (#83), through one
-    interface, so nothing here asks which. The source's `open` gives it and
+    Frames come from `source`, a `Recording` or a `Stream`, through one
+    interface (#148), so nothing here asks which. The source's `open` gives it and
     frame 0; `start` takes the frames wanted, the stride and the baseline's
     frames; `read` hands back each due `Frame`, then None; `close` releases
     it. `passed` is the frames passed, `when` a frame's time as printed,
@@ -1348,8 +1348,10 @@ class RegisteredFrames:
                 yield Look(index, current, canvas, self._detect_grown(current, canvas, inner),
                            inner)
         finally:
-            self.registration.report()   # before the source's, the live report
-            self.source.close()
+            try:
+                self.registration.report()   # before the source's, the live report
+            finally:
+                self.source.close()   # whatever the report did: it restores the signals
 
     def _detect_grown(self, view, canvas, inner):
         """Inference A on the margin canvas, B on each band, merged in canvas px."""

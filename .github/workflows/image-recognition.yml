@@ -26,10 +26,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Deliberately NOT requirements.txt: that pulls ultralytics and torch (~2GB).
-      # The tests inject a fake detector, so the model is never loaded here.
+      # requirements.txt minus ultralytics, which pulls torch (~2GB): the tests
+      # inject a fake detector, so the model is never loaded here. The rest comes
+      # from requirements.txt so the OpenCV pin test_environment.py checks holds.
       - name: 🔄 Install test dependencies
-        run: pip install numpy pandas openpyxl opencv-python-headless
+        run: pip install pytest -r <(grep -v '^ultralytics' requirements.txt)
 
-      - name: 🎯 Run de-duplication tests
-        run: PYTHONPATH=. python tests/test_dedup.py
+      # The whole suite, not one file: #150 broke every live run on main while
+      # this job, running only test_dedup.py, stayed green.
+      - name: 🎯 Run tests
+        run: python -m pytest -q

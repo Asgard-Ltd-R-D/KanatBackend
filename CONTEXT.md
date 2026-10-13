@@ -43,6 +43,17 @@ it is plainly visible, one may be seen as two, and a Detection may answer to no
 Bullet Hole at all.
 _Avoid_: hit, sighting, hole
 
+**Recording**:
+Footage saved to a file and read back at will: from any point, every frame
+available, never late. Only a Recording can be Sealed or scored against truth.
+_Avoid_: clip, file, video
+
+**Stream**:
+Footage read live, from wherever it has reached, at the pace it arrives. The
+system can be late for a Stream's frames, and frames can be lost before they
+arrive. A Recording replayed through the video service is a Stream.
+_Avoid_: feed, live source
+
 **Look**:
 One frame the system examines for Detections. Live, it looks at a fixed
 fraction of the frames and skips the rest (ADR-0007); a skipped frame yields no
@@ -152,7 +163,7 @@ is attributed to, beside the detector and `unknown`.
 _Avoid_: drift, registration error, misregistration
 
 **Sealed**:
-A recording held out from every kind of tuning. No pixels of it are used for
+A Recording held out from every kind of tuning. No pixels of it are used for
 anything — not thresholds, not labels, not unlabelled background crops — except
 its one logged final measurement. It stays Sealed after it: it is never opened
 again, and its result may point at a mechanism but never justifies a change.

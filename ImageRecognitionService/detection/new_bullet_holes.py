@@ -492,9 +492,73 @@ def _clock(t):
     return datetime.fromtimestamp(t).strftime("%H:%M:%S.%f")[:-4]
 
 
-class _Stream:
-    """A live source, read on a thread of its own so that frames keep arriving
-    while a look is being processed (#83).
+class Frame(NamedTuple):
+    """A due frame, as a source's `read` hands it over: its index, counted
+    from frame 0, and its image."""
+    index: int
+    image: np.ndarray
+
+
+class Recording:
+    """A Recording's frames from `--start` (CONTEXT.md: Recording), read
+    through the interface every source answers (`RegisteredFrames`).
+
+    With a `stride` (#81) the first `baseline_frames` are all due, and past
+    them only indices that are multiples of `stride`. The rest are grabbed
+    without decoding and never handed over: gaps, not lost frames. Indices
+    stay positions in the Recording, and `passed` counts every frame passed,
+    due or not, gaps after the last due one included. `read` hands back None
+    at the end of the file, or once `n_frames` have passed.
+    """
+    live = False
+    unseen = ()   # a Recording misses no frame
+
+    def __init__(self, cap, fps, start):
+        self.cap, self.fps, self.start_s = cap, fps, start
+        self.passed = 0
+
+    @classmethod
+    def open(cls, path, start):
+        """The Recording at `start` seconds, and frame 0, read there."""
+        cap = cv2.VideoCapture(path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
+        ok, frame = cap.read()
+        if not ok:
+            raise SystemExit(f"cannot read {path} at {start}s")
+        return cls(cap, fps, start), frame
+
+    def start(self, n_frames, stride, baseline_frames):
+        self._wanted, self._stride, self._baseline_frames = n_frames, stride, baseline_frames
+        self.passed = 1 if n_frames > 0 else 0   # frame 0, the one `open` read
+
+    def read(self):
+        while self.passed < self._wanted:
+            index = self.passed
+            if _looked_at(index, self._stride, self._baseline_frames):
+                ok, image = self.cap.read()
+                if not ok:
+                    return None   # the end of what the file holds
+                self.passed += 1
+                return Frame(index, image)
+            if not self.cap.grab():
+                return None
+            self.passed += 1
+        return None
+
+    def when(self, index):
+        """Seconds into the Recording, as printed."""
+        return f"{self.start_s + index / self.fps:.2f}s"
+
+    def close(self):
+        self.cap.release()
+
+
+class Stream:
+    """A Stream (CONTEXT.md: Stream), read on a thread of its own so that
+    frames keep arriving while a look is being processed (#83). `start`
+    makes SIGINT and SIGTERM `stop` it and starts the thread; `close` stops
+    and joins it, restores the handlers and prints the live report.
 
     A failed read is a drop, never the end: the stream closed, or stalled past
     `STREAM_TIMEOUT_MS`. The thread reopens it with `reopen` every
@@ -514,12 +578,14 @@ class _Stream:
     baseline is consecutive frames however slow its looks, and lateness and
     catching up start once it is built.
 
-    `read` answers as `cv2.VideoCapture.read` does, and `index` is then that
-    frame's position in the stream: by its timestamp (`cv2.CAP_PROP_POS_MSEC`),
-    at `LIVE_FPS` from its RTSP session's first frame (#117). Frame 0 is the
-    one `open` read and built Board space from. `times` is each looked-at
-    frame's time by the same timestamps, from the wall clock frame 0 was read
-    at (a later RTSP session's first frame, after a drop), not when it was read.
+    `read` hands back the frame held as a `Frame`, or None once the run is
+    stopped, the thread has ended, or `n_frames` have passed: one past the
+    last frame looked at, `passed`. A frame's index is its position in the
+    stream: by its timestamp (`cv2.CAP_PROP_POS_MSEC`), at `LIVE_FPS` from
+    its RTSP session's first frame (#117). Frame 0 is the one `open` read and
+    built Board space from. `when` is a looked-at frame's time by the same
+    timestamps, from the wall clock frame 0 was read at (a later RTSP
+    session's first frame, after a drop), not when it was read.
 
     Frames lost upstream are gaps too (#117). Until the baseline is built
     nothing reads the stream past the frame in hand, and MediaMTX discards
@@ -546,9 +612,11 @@ class _Stream:
     session (1.4 s over in #85). And `open` reads frame 0 once FFmpeg has
     buffered about 1.2 s of stream (#85), so every time is about that late.
     """
+    live = True
 
     def __init__(self, cap, arrived, reopen):
         self.cap, self.index, self._reopen = cap, 0, reopen
+        self.fps = LIVE_FPS   # the configured rate, not the stream's (ADR-0007)
         self.times = {0: arrived}
         self.received, self.first, self.latest = 1, arrived, arrived
         self.late, self.stopped = 0, False
@@ -574,8 +642,25 @@ class _Stream:
         self._ready = threading.Condition()
         self._reader = None
 
-    def start(self, stride, baseline_frames):
-        self._baseline_frames = baseline_frames
+    @classmethod
+    def open(cls, url, start=None):
+        """The stream at `url`, read from where it is, and frame 0. `start`
+        is a Recording's: a stream cannot be seeked (#83)."""
+        print(f"[LIVE] {_redacted(url)}: a stream, read from where it is. Board space "
+              f"is built from the first frame read, times are the stream's timestamps "
+              f"from the wall clock it was read at (#117), and "
+              f"SIGINT or SIGTERM ends the run with its report (#83)")
+        cap = _open_stream(url)
+        ok, frame = cap.read()
+        arrived = time.time()
+        if not ok:
+            raise SystemExit(f"cannot read {_redacted(url)}")
+        return cls(cap, arrived, lambda: _open_stream(url)), frame
+
+    def start(self, n_frames, stride, baseline_frames):
+        self._wanted, self._baseline_frames = n_frames, baseline_frames
+        self._handlers = {s: signal.signal(s, self.stop)
+                          for s in (signal.SIGINT, signal.SIGTERM)}
         self._reader = threading.Thread(target=self._read, args=(stride, baseline_frames),
                                         daemon=True)
         self._reader.start()
@@ -750,6 +835,8 @@ class _Stream:
               f"look and counted against persistence's floor (#84)")
 
     def read(self):
+        if self.passed >= self._wanted:
+            return None
         with self._ready:
             # Frame 0 was the baseline's first; asked for one past its last,
             # the baseline is built and lateness starts.
@@ -758,18 +845,29 @@ class _Stream:
             while self._held is None and not (self._ended or self.stopped):
                 self._ready.wait(0.1)
             if self.stopped or self._held is None:
-                return False, None
+                return None
             (self.index, frame, self.times[self.index]), self._held = self._held, None
             self._taken += 1
             self._ready.notify()   # the reader may be waiting for its turn
-            return True, frame
+            return Frame(self.index, frame)
 
-    def release(self):
+    @property
+    def passed(self):
+        return self.index + 1   # one past the last frame looked at
+
+    def when(self, index):
+        """The wall clock by the stream's timestamps, as printed (#117)."""
+        return _clock(self.times[index])
+
+    def close(self):
+        for s, handler in self._handlers.items():
+            signal.signal(s, handler)
         self.stopped = True
         if self._reader is not None:
             # A stalled read returns within STREAM_TIMEOUT_MS (#84).
             self._reader.join()
         self.cap.release()
+        self.report(self.fps)
 
     def report(self, fps):
         down = sum(seconds for seconds, _ in self.drops)
@@ -823,8 +921,9 @@ class _Stream:
 
 def _looked_at(index, stride, baseline_frames):
     """Is this frame looked at under a stride (#81)? Every baseline frame is;
-    past them, only multiples of the stride. One rule, so that `looks` and
-    `_render` cannot disagree on which frames are gaps."""
+    past them, only multiples of the stride. One rule, applied by
+    `Recording.read`, `Stream`'s thread and `_render`, so that they cannot
+    disagree on which frames are gaps."""
     return index < baseline_frames or index % stride == 0
 
 
@@ -1084,7 +1183,8 @@ class Look(NamedTuple):
 
 
 class RegisteredFrames:
-    """One iteration over a recording: read, register, rectify, detect.
+    """One iteration over a Recording or a Stream: read, register, rectify,
+    detect.
 
     The pipeline and anything measuring the detector go through here, so that a
     probe cannot silently measure a different image than the runtime does. The
@@ -1099,22 +1199,26 @@ class RegisteredFrames:
     Board space is fixed once, by the frame at `--start`, and every later frame
     is registered onto it by `registration`, a `Registration` (#138).
 
-    A stream (#83) goes through here too, as a `_Stream` in place of the
-    capture: read from where it is, never seeked, at `LIVE_FPS`.
+    Frames come from `source`, a `Recording` or a `Stream`, through one
+    interface (#148), so nothing here asks which. The source's `open` gives it and
+    frame 0; `start` takes the frames wanted, the stride and the baseline's
+    frames; `read` hands back each due `Frame`, then None; `close` releases
+    it. `passed` is the frames passed, `when` a frame's time as printed,
+    `unseen` the due frames a Stream missed, and `live` which it is.
 
     Built by `open`. The constructor takes its collaborators directly so the
     iteration can be exercised without a video file or a model.
     """
 
-    def __init__(self, cap, model, view, base, imgsz, conf, fps, start, registration):
-        self.cap, self.model = cap, model
+    def __init__(self, source, model, view, base, imgsz, conf, registration):
+        self.source, self.model = source, model
         self.view = view   # Board space, fixed by the frame at `--start`
         self.imgsz, self.conf = imgsz, conf
-        self.fps, self.start = fps, start
+        self.fps, self.live, self.when = source.fps, source.live, source.when
         self._base = base
         self.net_scale = None   # measured by `open`; see the warning there
         self.registration = registration
-        self.processed = self.lost = 0
+        self.lost = 0
         # The Board past the margin canvas, searched by a second inference (#46).
         self.bands = view.exposed_bands(BAND_CONTEXT_PX)
 
@@ -1133,23 +1237,7 @@ class RegisteredFrames:
         # How long building Board space takes is measured from opening the
         # source, so the model load above is not in it (#79).
         opened_at = time.perf_counter()
-        live = _is_stream(video)
-        if live:
-            print(f"[LIVE] {_redacted(video)}: a stream, read from where it is. Board space "
-                  f"is built from the first frame read, times are the stream's timestamps "
-                  f"from the wall clock it was read at (#117), and "
-                  f"SIGINT or SIGTERM ends the run with its report (#83)")
-            cap = _open_stream(video)
-            fps = LIVE_FPS
-        else:
-            cap = cv2.VideoCapture(video)
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
-        ok, base = cap.read()
-        arrived = time.time()
-        if not ok:
-            raise SystemExit(f"cannot read {_redacted(video)}" if live else
-                             f"cannot read {video} at {start}s")
+        source, base = (Stream if _is_stream(video) else Recording).open(video, start)
 
         view, correlation = board.build_view(base, template_mask)
         if view is None:
@@ -1213,12 +1301,9 @@ class RegisteredFrames:
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
-        # Registration logs by the loop's `when`; `loop` is bound by the time
-        # the first frame is registered.
         registration = Registration(view, (base.shape[1], base.shape[0]), template_mask,
-                                    lambda index: loop.when(index))
-        loop = cls(_Stream(cap, arrived, lambda: _open_stream(video)) if live else cap,
-                   model, view, base, imgsz, conf, fps, start, registration)
+                                    source.when)
+        loop = cls(source, model, view, base, imgsz, conf, registration)
         loop.net_scale = scale
         return loop
 
@@ -1228,69 +1313,35 @@ class RegisteredFrames:
         return self.registration.last
 
     @property
-    def live(self):
-        return isinstance(self.cap, _Stream)
-
-    def when(self, index):
-        """A looked-at frame's time as printed: seconds into the recording, or
-        on a stream its timestamp from frame 0's wall clock (#83, #117)."""
-        if not self.live:
-            return f"{self.start + index / self.fps:.2f}s"
-        return _clock(self.cap.times[index])
+    def processed(self):
+        """Frames passed, looked at or not: the source's `passed`."""
+        return self.source.passed
 
     def frames_until(self, end):
-        """How many frames lie between `--start` and `end` seconds."""
-        return int((end - self.start) * self.fps)
+        """How many frames of a Recording lie between `--start` and `end` seconds."""
+        return int((end - self.source.start_s) * self.fps)
 
     def looks(self, n_frames, stride=1, baseline_frames=0):
         """Yield a `Look` per frame looked at, up to `n_frames` from `--start`.
 
         Frames that failed to register are yielded too, unregistered — see
-        `Look`. Iteration stops early when the file runs out, which is why
+        `Look`. Iteration stops early when the source runs out, which is why
         callers take `processed` from here rather than assuming `n_frames`.
 
         The first frame is the one Board space was built from, so it is already
         read and already registered; it is yielded like any other. Each later
-        one is read, then handed to `registration`: two calls, not one.
-
-        With a `stride` (#81) the first `baseline_frames` are all looked at,
-        and past them only indices that are multiples of `stride`. The rest are
-        grabbed without decoding and never registered or yielded: gaps, not
-        lost frames. Indices stay positions in the clip, and `processed` counts
-        every frame passed, looked at or not.
-
-        On a stream (#83) the `_Stream`'s thread skips the gaps, and drops the
-        due frames the loop is too late for. Indices jump past those too, and
-        past the frames a drop missed (#84) or that were lost upstream (#117),
-        and `processed` is one past the last frame looked at. A stream has no
-        end but a stop: SIGINT or SIGTERM ends iteration after the look in
-        hand, and callers report as at any end.
+        one is read from the source, then handed to `registration`: two calls,
+        not one. Which frames are read, under a `stride` (#81) past the first
+        `baseline_frames`, is the source's, and so is `processed`: see
+        `Recording` and `Stream`. A stream has no end but a stop: SIGINT or
+        SIGTERM ends iteration after the look in hand, and callers report as
+        at any end.
         """
-        live = self.live
-        if live:
-            handlers = {s: signal.signal(s, self.cap.stop)
-                        for s in (signal.SIGINT, signal.SIGTERM)}
-            self.cap.start(stride, baseline_frames)
+        self.source.start(n_frames, stride, baseline_frames)
         try:
-            while self.processed < n_frames:
-                if not live and not _looked_at(self.processed, stride, baseline_frames):
-                    if not self.cap.grab():
-                        break  # the end of what the file holds
-                    self.processed += 1
-                    continue
-                first = not self.processed
-                if first:
-                    frame = self._base
-                else:
-                    # A failed read is the end of what the file holds, or on
-                    # a stream a stop (#83), since a stream recovers from a
-                    # drop (#84).
-                    ok, frame = self.cap.read()
-                    if not ok:
-                        break
-                index = self.cap.index if live else self.processed
-                current = self.view if first else self.registration.register(frame, index)
-                self.processed = index + 1
+            first = [Frame(0, self._base)] if n_frames > 0 else []
+            for index, frame in itertools.chain(first, iter(self.source.read, None)):
+                current = self.view if index == 0 else self.registration.register(frame, index)
                 if current is None:
                     self.lost += 1
                     yield Look(index, None, None, None)
@@ -1304,13 +1355,10 @@ class RegisteredFrames:
                 yield Look(index, current, canvas, self._detect_grown(current, canvas, inner),
                            inner)
         finally:
-            if live:
-                for s, handler in handlers.items():
-                    signal.signal(s, handler)
-            self.cap.release()
-            self.registration.report()
-            if live:
-                self.cap.report(self.fps)
+            try:
+                self.registration.report()   # before the source's, the live report
+            finally:
+                self.source.close()   # whatever the report did: it restores the signals
 
     def _detect_grown(self, view, canvas, inner):
         """Inference A on the margin canvas, B on each band, merged in canvas px."""
@@ -1483,7 +1531,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # hour (#83). Keep only the persistence window and running totals if a
     # Range ever runs for days.
     corroboration, residuals_per_frame = [], []
-    persistence = Persistence(match_px, unseen=loop.cap.unseen if loop.live else ())
+    persistence = Persistence(match_px, unseen=loop.source.unseen)
     announce = (_Announcer(loop, persistence, corroboration, require_change_evidence,
                            mm_per_tpl_px) if loop.live else None)
     poster = (_BulletPostWorker(session_id, backend_url, ref_time, loop.fps, loop.last)

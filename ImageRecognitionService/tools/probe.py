@@ -154,6 +154,15 @@ def probe(video, start, end, model_path, truth_tpl, radius_tpl,
     return rates
 
 
+def gate(video, final_run, models, **where):
+    """`manifest.gate` once for every checkpoint: one look, naming each model.
+
+    Gated once per model, a sealed `--final-run` logged its look at the first
+    gate and was refused at the second, before any frame was measured (#139).
+    """
+    return manifest.gate(video, final_run, ",".join(models), "probe.py", **where)
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser("Per-Bullet-Hole detection rate, pipeline aside")
     p.add_argument("video")
@@ -182,8 +191,7 @@ if __name__ == "__main__":
     if not a.at and not a.truth_labels:
         p.error("--truth-image needs --truth-labels")
 
-    for model in a.model:
-        manifest.gate(a.video, a.final_run, model, "probe.py")
+    gate(a.video, a.final_run, a.model)
 
     if a.at:
         truth = np.array(a.at, np.float32)

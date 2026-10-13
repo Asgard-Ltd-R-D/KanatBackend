@@ -4,10 +4,13 @@ The probe is only worth running if it gives the known answer where the answer
 is known, so these pin the arithmetic it is read through: what counts as a
 frame that got a look, and what counts as a detection of THIS Bullet Hole.
 """
+import os
+
 import numpy as np
+import pytest
 
 from detection import new_bullet_holes as nbh
-from tools import probe
+from tools import manifest, probe
 
 HOLE = (100.0, 100.0)
 RADIUS = 5.0
@@ -99,3 +102,39 @@ def test_a_malformed_position_is_refused():
     for bad in ("512.5", "1,2,3", "x,y"):
         with pytest.raises(argparse.ArgumentTypeError):
             probe.parse_point(bad)
+
+
+def _recording(tmp_path, role, monkeypatch):
+    """A stand-in recording, its manifest entries and an empty log path."""
+    monkeypatch.setattr(manifest, "git_commit", lambda: "abc1234")
+    video = tmp_path / "clip.mkv"
+    video.write_bytes(b"frames")
+    entries = {manifest.content_hash(str(video)): {"role": role}}
+    return str(video), dict(entries=entries, log_path=str(tmp_path / "sealed_runs.log"))
+
+
+def test_a_sealed_final_run_over_two_models_is_one_look(tmp_path, monkeypatch):
+    """Gated once per model, the second gate found the first look in the log
+    and refused: the look spent, nothing measured (#139)."""
+    video, where = _recording(tmp_path, manifest.SEALED, monkeypatch)
+
+    assert probe.gate(video, True, ["a/best.pt", "b/best.pt"], **where)["role"] == manifest.SEALED
+    [line] = open(where["log_path"]).read().splitlines()
+    assert "a/best.pt" in line and "b/best.pt" in line and "tool=probe.py" in line
+
+
+def test_probe_refuses_a_sealed_recording_without_the_flag(tmp_path, monkeypatch):
+    video, where = _recording(tmp_path, manifest.SEALED, monkeypatch)
+    with pytest.raises(SystemExit, match="--final-run"):
+        probe.gate(video, False, ["a/best.pt"], **where)
+    assert not os.path.exists(where["log_path"])
+
+
+def test_probe_refuses_a_measured_recording_flag_or_not(tmp_path, monkeypatch):
+    video, where = _recording(tmp_path, manifest.SEALED, monkeypatch)
+    probe.gate(video, True, ["a/best.pt"], **where)
+    before = open(where["log_path"]).read()
+    for final_run in (True, False):
+        with pytest.raises(SystemExit, match="measured"):
+            probe.gate(video, final_run, ["b/best.pt"], **where)
+    assert open(where["log_path"]).read() == before

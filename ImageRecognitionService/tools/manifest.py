@@ -197,9 +197,10 @@ def add_flag(parser):
                              "refused either way.")
 
 
-def gate(video, final_run, model, tool):
-    """`authorise` for a command line: refuse with a message, not a traceback."""
+def gate(video, final_run, model, tool, **where):
+    """`authorise` for a command line: refuse with a message, not a traceback.
+    `where` is `authorise`'s `entries` and `log_path`, for a test."""
     try:
-        return authorise(video, final_run, model, tool)
+        return authorise(video, final_run, model, tool, **where)
     except ManifestError as why:
         raise SystemExit(f"[REFUSED] {why}")

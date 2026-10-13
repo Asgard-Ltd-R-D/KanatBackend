@@ -162,7 +162,7 @@ def test_a_measured_recording_is_refused_whatever_its_role_now_says(tmp_path):
     log = tmp_path / "sealed_runs.log"
     log.write_text(f"2026-10-01T11:52:23Z  {'a' * 64}  model=x  commit=abc1234  tool=evaluate.py\n")
 
-    with pytest.raises(SystemExit) as why:   # before any frame, so nothing is mined
+    with pytest.raises(SystemExit) as why:   # no entry back, so nothing to mine
         refuse_sealed(MANIFEST, "a" * 64, str(log))
     assert "2026-10-01T11:52:23Z" in str(why.value) and "abc1234" in str(why.value)
     assert "--final-run" not in str(why.value)

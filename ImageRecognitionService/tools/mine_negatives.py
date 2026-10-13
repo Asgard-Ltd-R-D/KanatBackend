@@ -8,7 +8,8 @@ sources ADR-0005 allows — and makes them safely:
 - **Sealed footage is refused outright.** Every recording is looked up in the
   manifest by content hash; a sealed one stops the run, and unlike scoring
   there is no `--final-run` — a final run measures once, mining trains on it,
-  and a checkpoint cannot un-see it (ADR-0005). An unallocated one stops it too.
+  and a checkpoint cannot un-see it (ADR-0005). An unallocated one stops it too,
+  and so does one in `sealed_runs.log`, whatever its role now says (#63).
 - **The image is the one the runtime shows the model**: the rectified Board
   canvas at detection scale, cut into `TILE_PX` tiles so training does not
   rescale it. `TILE_PX` is the checkpoint's training `imgsz`.

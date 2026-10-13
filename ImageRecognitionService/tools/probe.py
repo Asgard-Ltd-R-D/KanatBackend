@@ -155,10 +155,9 @@ def probe(video, start, end, model_path, truth_tpl, radius_tpl,
 
 
 def gate(video, final_run, models, **where):
-    """`manifest.gate` once for every checkpoint: one look, naming each model.
-
-    Gated once per model, a sealed `--final-run` logged its look at the first
-    gate and was refused at the second, before any frame was measured (#139).
+    """`manifest.gate` once for all checkpoints: a sealed `--final-run` is one
+    look, its log line names every model, and every model is measured on it.
+    A gate per model would refuse at the second, the look already spent (#139).
     """
     return manifest.gate(video, final_run, ",".join(models), "probe.py", **where)
 

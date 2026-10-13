@@ -79,13 +79,22 @@ SOURCE_FIELDS = ["image", "sha256", "file", "capture_setup", "role", "frame",
                  "time_s", "x", "y", "w", "h", "ground_fraction"]
 
 
-def refuse_sealed(entries, sha):
-    """The manifest entry, if the recording may be mined. Sealed never may.
+def refuse_sealed(entries, sha, log_path=manifest.RUN_LOG_PATH):
+    """The manifest entry, if the recording may be mined. Sealed never may, nor
+    may a recording in the run log, whatever its role now says (#63).
 
     Not `manifest.check_allowed`: its refusal offers `--final-run`, and here
     there is none to offer. Role lookup, and its errors, are the manifest's.
     """
-    if manifest.role_for(entries, sha) == manifest.SEALED:
+    role = manifest.role_for(entries, sha)
+    earlier = manifest.previous_look(sha, log_path)
+    if earlier:
+        raise SystemExit(
+            f"[REFUSED] sha256 {sha} was measured on {earlier[0]} at commit "
+            f"{earlier[1]} ({os.path.basename(log_path)}). A measured recording "
+            "stays sealed whatever its manifest role (ADR-0005), and no pixel "
+            "of it may become a negative.")
+    if role == manifest.SEALED:
         raise SystemExit(
             f"[REFUSED] sha256 {sha} is sealed held-out footage (ADR-0005). No "
             "pixel of it may become a negative, not even gravel with an empty "

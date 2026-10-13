@@ -1493,12 +1493,12 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # it is subtracted from.
     # Capture the ref_time anchor before consuming any frames so the offset
     # is not shifted forward by baseline or detection processing time.
-    # Live: use the frame-0 wall-clock arrival time already recorded by _Stream.
+    # Live: use the frame-0 wall-clock arrival time already recorded by the Stream.
     # Recording: snapshot now so video t=0 maps to the moment processing started,
     # not the moment _post_bullets is called after the entire run finishes.
     if ref_time is None:
         if loop.live:
-            ref_time = datetime.fromtimestamp(loop.cap.first, tz=timezone.utc)
+            ref_time = datetime.fromtimestamp(loop.source.first, tz=timezone.utc)
         else:
             ref_time = datetime.now(timezone.utc)
 

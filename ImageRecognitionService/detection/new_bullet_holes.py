@@ -355,8 +355,10 @@ def _count_in(sorted_indices, lo, hi):
     return bisect.bisect_left(sorted_indices, hi) - bisect.bisect_left(sorted_indices, lo)
 
 
-def _detect(model, image, imgsz, conf):
-    """Detections as (cx, cy, w, h) in canvas px.
+def _detect(model, image, imgsz, conf, device=None):
+    """Detections as (cx, cy, w, h) in canvas px, on `device` when one is
+    given. Without one the detector is handed none, so its library's default
+    stands: CUDA if available, else CPU, never MPS (#129).
 
     The size is not decoration: `same_bullet_hole` needs the mark's own
     footprint, because a radius fixed in template px can come out smaller than
@@ -366,9 +368,9 @@ def _detect(model, image, imgsz, conf):
     and a Target box read as a mark is a false positive nothing downstream
     can tell apart.
     """
-    boxes = []
+    boxes, handed = [], {} if device is None else {"device": device}
     for b in model.predict(image, imgsz=imgsz, conf=conf, verbose=False,
-                           classes=_bullet_hole_classes(model))[0].boxes:
+                           classes=_bullet_hole_classes(model), **handed)[0].boxes:
         x0, y0, x1, y1 = (float(v) for v in b.xyxy[0])
         boxes.append([(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0])
     return np.array(boxes, np.float32).reshape(-1, 4)
@@ -1242,12 +1244,14 @@ class RegisteredFrames:
     `wall_clock` its time as posted to the WebApp (#152), `unseen` the due
     frames a Stream missed, and `live` which it is.
 
+    `device`, when given, is handed to the detector on every call (#129).
+
     Built by `open`. The constructor takes its collaborators directly so the
     iteration can be exercised without a video file or a model.
     """
 
-    def __init__(self, source, model, view, base, imgsz, conf, registration):
-        self.source, self.model = source, model
+    def __init__(self, source, model, view, base, imgsz, conf, registration, device=None):
+        self.source, self.model, self.device = source, model, device
         self.view = view   # Board space, fixed by the frame at `--start`
         self.imgsz, self.conf = imgsz, conf
         self.fps, self.live, self.when = source.fps, source.live, source.when
@@ -1261,7 +1265,7 @@ class RegisteredFrames:
 
     @classmethod
     def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
-             template_path=board.DEFAULT_TEMPLATE, ref_time=None):
+             template_path=board.DEFAULT_TEMPLATE, ref_time=None, device=None):
         from ultralytics import YOLO  # imported lazily: pulls in torch
         model = YOLO(model_path)
         _bullet_hole_classes(model)   # refuse a wrong checkpoint before any video work
@@ -1340,7 +1344,7 @@ class RegisteredFrames:
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
         registration = Registration(view, (base.shape[1], base.shape[0]), template_mask,
                                     source.when)
-        loop = cls(source, model, view, base, imgsz, conf, registration)
+        loop = cls(source, model, view, base, imgsz, conf, registration, device)
         loop.net_scale = scale
         return loop
 
@@ -1386,7 +1390,8 @@ class RegisteredFrames:
                 canvas = current.rectify(frame)
                 if not self.bands:
                     yield Look(index, current, canvas,
-                               _detect(self.model, canvas, self.imgsz, self.conf), canvas)
+                               _detect(self.model, canvas, self.imgsz, self.conf, self.device),
+                               canvas)
                     continue
                 inner = current.rectify_inner(frame)
                 yield Look(index, current, canvas, self._detect_grown(current, canvas, inner),
@@ -1399,13 +1404,13 @@ class RegisteredFrames:
 
     def _detect_grown(self, view, canvas, inner):
         """Inference A on the margin canvas, B on each band, merged in canvas px."""
-        a = _detect(self.model, inner, self.imgsz, self.conf).astype(np.float64)
+        a = _detect(self.model, inner, self.imgsz, self.conf, self.device).astype(np.float64)
         a[:, :2] += view.inner.offset
         hits = []
         for band in self.bands:
             x0, y0, x1, y1 = band.crop
             found = _detect(self.model, canvas[y0:y1, x0:x1], _band_imgsz(band.crop),
-                            self.conf).astype(np.float64)
+                            self.conf, self.device).astype(np.float64)
             found[:, :2] += (x0, y0)
             hits.append((band, found))
         return merge_band_detections(a, hits, view.match_radius)
@@ -1504,7 +1509,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, ref_time=None):
+            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, ref_time=None,
+            device=None):
     """`video` is a recording's path, or a stream's rtsp:// URL (#83), which
     has no `start` or `end`: it runs until stopped, at `LIVE_STRIDE` unless
     `stride` says otherwise, and prints each Bullet Hole as it is confirmed.
@@ -1513,8 +1519,10 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     `BulletHoleConfirmed` (#155): a Stream's as it is announced, a
     Recording's after the end-of-run report has measured it, in first-frame
     order. Without it nothing is published. `ref_time` is a Recording's wall
-    clock at its t=0 (`Recording`)."""
-    loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time)
+    clock at its t=0 (`Recording`). `device` is the detector's for every call
+    (`_detect`)."""
+    loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time,
+                                 device)
     fps, match_px = loop.fps, loop.view.match_radius
     n_frames = math.inf if loop.live else loop.frames_until(end)
     stride = stride or (LIVE_STRIDE if loop.live else 1)
@@ -1896,6 +1904,10 @@ if __name__ == "__main__":
                         "(e.g. 2026-10-11T10:30:00Z). Derives first_seen_at timestamps. "
                         "Defaults to when the recording is opened. A recording's "
                         "only: a stream's times are its own timestamps")
+    p.add_argument("--device",
+                   help="the detector's device for every call: cpu, mps, or a CUDA index "
+                        "(#129). Without it, its library's default: CUDA if available, "
+                        "else CPU, never MPS")
     manifest.add_flag(p)
     a = p.parse_args()
     if _is_stream(a.video):
@@ -1936,4 +1948,4 @@ if __name__ == "__main__":
         process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
                 a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,
                 a.stride, publish=publisher.publish if publisher else None,
-                ref_time=ref_time)
+                ref_time=ref_time, device=a.device)

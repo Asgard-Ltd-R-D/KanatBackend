@@ -1092,7 +1092,7 @@ def test_a_recording_publishes_each_bullet_hole_at_ref_time_plus_its_time_in_the
     `--ref-time` was given in (#155)."""
     posted = []
     ref = datetime(2026, 10, 11, 13, 30, tzinfo=timezone(timedelta(hours=3)))
-    def opened(video, start, model_path, conf, template_path, ref_time):
+    def opened(video, start, model_path, conf, template_path, ref_time, device):
         loop = _loop(frames=100, source=nbh.Recording(_FakeCap(100), 25.0, start, ref_time))
         loop.model = _SeenOn(lambda i: i >= 6)
         return loop
@@ -1108,3 +1108,28 @@ def test_a_recording_publishes_each_bullet_hole_at_ref_time_plus_its_time_in_the
     # Board space is the template here (`_FakeView`), and every Bullet Hole a Miss.
     assert value.template_xy == (15.0, 15.0)
     assert value.target is None and value.mm is None
+
+
+# --- the detector's device (#129) ---------------------------------------------
+
+
+class _OnDevice(_FakeModel):
+    """Records the device each call was handed, `None` when it was handed
+    none."""
+    def __init__(self):
+        self.handed = []
+
+    def predict(self, image, imgsz, conf, verbose=False, classes=None, **kwargs):
+        self.handed.append(kwargs.get("device"))
+        return super().predict(image, imgsz, conf)
+
+
+def test_the_detector_is_handed_the_device_only_when_one_is_given(monkeypatch):
+    """Without `--device` it is handed none, so its library's default stands."""
+    _openable(monkeypatch)
+    for device, handed in (("mps", "mps"), (None, None)):
+        model = _OnDevice()
+        monkeypatch.setitem(sys.modules, "ultralytics",
+                            types.SimpleNamespace(YOLO=lambda path: model))
+        nbh.process("clip.mkv", 10.0, 10.2, "model.pt", device=device)
+        assert model.handed and all(h == handed for h in model.handed)

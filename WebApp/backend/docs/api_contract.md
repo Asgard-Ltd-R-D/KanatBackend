@@ -17,7 +17,8 @@ The detection model calls this endpoint once per confirmed Bullet Hole.
   "target_index": 0,
   "x_mm": -12.3,
   "y_mm": 4.1,
-  "source": "model"
+  "source": "model",
+  "idempotency_key": "8c4b7d1e-3f0a-5b6c-9d2e-1a7f4e8b0c35"
 }
 ```
 
@@ -33,12 +34,13 @@ The detection model calls this endpoint once per confirmed Bullet Hole.
 | `x_mm` | float | no | Horizontal offset from Target centre in millimetres. Requires a calibrated print scale. `null` if unavailable. |
 | `y_mm` | float | no | Vertical offset from Target centre in millimetres. Requires a calibrated print scale. `null` if unavailable. |
 | `source` | string | no | `"model"` (default). |
+| `idempotency_key` | string | no | Makes a retry safe. A key the Session already holds stores nothing new: the response is the existing row, with `201`. The `404` and `409` checks come first, so a retry into a completed Session still gets `409`. The model derives the key from the Session, the Bullet Hole's first frame and its template coordinates before clipping, rounded to whole px. A retry, or a rerun of the same Recording, therefore sends the same key. |
 
 ## Responses
 
 | Status | Meaning |
 |---|---|
-| `201` | Bullet hole stored. Response body is the created row. |
+| `201` | Bullet hole stored. Response body is the created row, or the existing row when the Session already holds the `idempotency_key`. |
 | `404` | Session not found. |
 | `409` | Session is completed and `source` is `"model"`. |
 | `422` | Payload validation failed (wrong `version`, missing field, bad type, naive timestamp). |

@@ -91,9 +91,9 @@ _Avoid_: corroboration, change mask, absdiff
 
 **Confirmed**:
 A Candidate the system has judged to be a new Bullet Hole: it persisted, and
-Change Evidence corroborated it. Reported once and never retracted (ADR-0004).
-A Candidate that persisted but still awaits Change Evidence is persisted, not
-Confirmed.
+Change Evidence corroborated it, unless the run was told to accept persistence
+alone. Reported once and never retracted (ADR-0004). A Candidate that persisted
+but still awaits Change Evidence is persisted, not Confirmed.
 _Avoid_: accepted, validated, detected
 
 **Miss**:

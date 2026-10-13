@@ -31,17 +31,13 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import contextlib
 import itertools
-import json
 import math
-import queue
-import uuid
 import os
 import signal
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
@@ -50,7 +46,7 @@ from urllib.parse import urlsplit, urlunsplit
 import cv2
 import numpy as np
 
-from detection import board, groups
+from detection import board, groups, webapp
 from tools import manifest
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
@@ -497,6 +493,31 @@ class Frame(NamedTuple):
     from frame 0, and its image."""
     index: int
     image: np.ndarray
+
+
+class BulletHoleConfirmed(NamedTuple):
+    """A Confirmed Bullet Hole as `process` publishes it (#155): once, built
+    on the detection thread when it is Confirmed, and never updated
+    (ADR-0004). `first_seen_at` is its first frame's `wall_clock`, UTC
+    (#152). `template_xy` is its place on the Board in Template coordinates,
+    unclipped. `target` is None for a Miss, and `mm` its Position, or None
+    without one."""
+    first_frame: int
+    first_seen_at: datetime
+    template_xy: tuple[float, float]
+    target: int | None
+    mm: tuple[float, float] | None
+
+
+def _confirmed(hole, view, wall_clock):
+    """A measured Bullet Hole as published: Board space mapped back onto the
+    template by `view`, its first frame's time by `wall_clock` (#155)."""
+    inv = np.linalg.inv(view.tpl_to_board).astype(np.float32)
+    x, y = cv2.perspectiveTransform(np.array([[hole["pos"]]], dtype=np.float32), inv)[0, 0]
+    mm = hole["mm"]
+    seen = wall_clock(hole["first_frame"]).astimezone(timezone.utc)   # --ref-time's offset, if any
+    return BulletHoleConfirmed(hole["first_frame"], seen, (float(x), float(y)), hole["target"],
+                               None if mm is None else (float(mm[0]), float(mm[1])))
 
 
 class Recording:
@@ -1483,11 +1504,16 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES, stride=None,
-            session_id=None, backend_url="http://localhost:8000", ref_time=None):
+            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, ref_time=None):
     """`video` is a recording's path, or a stream's rtsp:// URL (#83), which
     has no `start` or `end`: it runs until stopped, at `LIVE_STRIDE` unless
-    `stride` says otherwise, and prints each Bullet Hole as it is confirmed."""
+    `stride` says otherwise, and prints each Bullet Hole as it is confirmed.
+
+    `publish`, when given, is handed each Confirmed Bullet Hole once, as a
+    `BulletHoleConfirmed` (#155): a Stream's as it is announced, a
+    Recording's after the end-of-run report has measured it, in first-frame
+    order. Without it nothing is published. `ref_time` is a Recording's wall
+    clock at its t=0 (`Recording`)."""
     loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time)
     fps, match_px = loop.fps, loop.view.match_radius
     n_frames = math.inf if loop.live else loop.frames_until(end)
@@ -1538,9 +1564,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     corroboration, residuals_per_frame = [], []
     persistence = Persistence(match_px, unseen=loop.source.unseen)
     announce = (_Announcer(loop, persistence, corroboration, require_change_evidence,
-                           mm_per_tpl_px) if loop.live else None)
-    poster = (_BulletPostWorker(session_id, backend_url, loop.wall_clock, loop.last)
-              if loop.live and session_id else None)
+                           mm_per_tpl_px, publish) if loop.live else None)
     for look in looks:
         pts, corroborating = None, []   # None: Lost, no evidence, but it counts towards the floor
         if look.registered:
@@ -1557,16 +1581,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                 corroboration += corroborating
         persisted_now = persistence.add(look.index, pts)  # empty is meaningful: looked, saw nothing
         if announce:
-            prev_announced = len(announce.announced)
             announce(persisted_now, corroborating)
-            if poster:
-                newly = announce.announced[prev_announced:]
-                if newly:
-                    poster.submit(newly)
-
-    if poster:
-        print("[POST] waiting for queued POSTs to finish...")
-        poster.flush()
 
     processed = loop.processed
     if persistence.lost:
@@ -1624,8 +1639,9 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"at; the frames between are gaps, counting neither for nor against a "
           f"Bullet Hole (#81)")
     _report(new, loop.when, loop.last, mm_per_tpl_px, persistence.looked_at)
-    if session_id and not loop.live:
-        _post_bullets(new, session_id, backend_url, loop.wall_clock, loop.last)
+    if publish and not loop.live:
+        for hole in new:   # in first-frame order, as `Persistence.end` gave them
+            publish(_confirmed(hole, loop.last, loop.wall_clock))
     if out_video:
         _render(video, start, processed, fps, views, baseline, new, out_video,
                 stride, baseline_frames)
@@ -1646,13 +1662,15 @@ class _Announcer:
     `announced` is what was printed. The end-of-run report lists these and no
     others, at the positions `Persistence.end` refreshes them to: re-deciding
     at the end, on positions averaged since, could drop one already printed,
-    which ADR-0004 rules out.
+    which ADR-0004 rules out. Each is handed to `publish`, when given, right
+    after it is printed, as a `BulletHoleConfirmed` at its position then (#155).
     """
 
     def __init__(self, loop, persistence, corroboration, require_change_evidence,
-                 mm_per_tpl_px):
+                 mm_per_tpl_px, publish):
         self.loop, self.persistence, self.corroboration = loop, persistence, corroboration
         self.require, self.mm_per_tpl_px = require_change_evidence, mm_per_tpl_px
+        self.publish = publish
         self.waiting, self.announced = [], []
 
     def __call__(self, persisted, corroborating):
@@ -1671,6 +1689,8 @@ class _Announcer:
             _measure(hole, self.loop.last, self.mm_per_tpl_px)
             print(f"[NEW] {_bullet_hole_line(hole, self.loop.when, self.mm_per_tpl_px)}")
             self.announced.append(hole)
+            if self.publish:
+                self.publish(_confirmed(hole, self.loop.last, self.loop.wall_clock))
         self.waiting = waiting
 
 
@@ -1769,167 +1789,6 @@ def _report_groups(new, mm_per_tpl_px):
         print(f"      CEP {g['cep']:.1f} mm (CEP50: median distance from the MPI)   "
               f"Mean Radius {g['mean_radius']:.1f} mm   RMS radius {g['rms_radius']:.1f} mm")
         print(f"      Extreme Spread {g['extreme_spread']:.1f} mm (centre to centre)")
-
-
-class _BulletPostWorker:
-    """Background thread that POSTs confirmed bullet holes to the WebApp backend.
-
-    Holes are enqueued from the detection loop and processed asynchronously so
-    that backend latency or outages never block frame processing. Transient
-    failures (5xx / network) are retried with exponential back-off up to
-    _MAX_ATTEMPTS times; permanent failures (4xx) are logged and discarded.
-    Idempotency keys make every retry safe.
-    """
-
-    _MAX_ATTEMPTS = 9   # delays: 2, 4, 8, 16, 32, 60, 60, 60, 60 s
-
-    def __init__(self, session_id, backend_url, wall_clock, view):
-        self._session_id = session_id
-        self._url = f"{backend_url.rstrip('/')}/sessions/{session_id}/bullets"
-        self._wall_clock = wall_clock
-        self._inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
-        self._q: queue.Queue = queue.Queue()
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, daemon=True, name="BulletPostWorker")
-        self._thread.start()
-
-    def submit(self, holes):
-        """Enqueue holes for posting; returns immediately.
-
-        Assigns a stable hole_id on first submission so that two holes sharing
-        the same first_frame (e.g. two impacts between live looks) get distinct
-        idempotency keys rather than colliding on the frame number alone.
-        """
-        for hole in holes:
-            if "hole_id" not in hole:
-                hole["hole_id"] = uuid.uuid4()
-            self._q.put(hole)
-
-    def flush(self, timeout=120):
-        """Block until the queue drains or timeout expires.
-
-        On timeout, signals the worker to abandon retry sleeps so remaining
-        items are acknowledged quickly, then waits for that final drain.
-        """
-        waiter = threading.Thread(target=self._q.join, daemon=True)
-        waiter.start()
-        waiter.join(timeout)
-        if waiter.is_alive():
-            remaining = self._q.qsize()
-            print(f"[POST] flush timed out after {timeout}s; "
-                  f"interrupting retries ({remaining} hole(s) may not be posted)")
-            self._stop.set()
-            # _stop wakes any sleeping retry immediately. An in-flight urlopen
-            # cannot be interrupted, so give it one socket-timeout grace period
-            # before abandoning the wait entirely.
-            waiter.join(10)
-
-    def _run(self):
-        while True:
-            hole = self._q.get()
-            if hole is None:
-                self._q.task_done()
-                break
-            if self._stop.is_set():
-                print(f"[POST] shutdown: skipping hole at frame {hole['first_frame']}")
-            else:
-                self._post_with_retry(hole)
-            self._q.task_done()
-
-    def _post_with_retry(self, hole):
-        # hole_id is a uuid4 assigned once in submit(); using it here means two
-        # holes at the same first_frame get distinct keys instead of colliding.
-        payload = _bullet_payload(hole, self._wall_clock(hole["first_frame"]),
-                                  self._inv_m, str(hole["hole_id"]))
-        data = json.dumps(payload).encode()
-        for attempt in range(self._MAX_ATTEMPTS):
-            if self._stop.is_set():
-                return
-            ok = self._attempt(data, attempt + 1)
-            if ok:
-                return
-            if attempt == self._MAX_ATTEMPTS - 1:
-                break
-            delay = min(2 ** (attempt + 1), 60)
-            print(f"[POST] retry in {delay}s (attempt {attempt + 1}/{self._MAX_ATTEMPTS})")
-            # Use _stop as the sleep so a flush timeout wakes us immediately.
-            self._stop.wait(timeout=delay)
-        print(f"[POST] giving up on hole at frame {hole['first_frame']} "
-              f"after {self._MAX_ATTEMPTS} attempts")
-
-    def _attempt(self, data, n):
-        req = urllib.request.Request(
-            self._url, data=data,
-            headers={"Content-Type": "application/json"}, method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                print(f"[POST] bullet #{n} -> HTTP {resp.status}")
-                return True
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode(errors="replace")
-            print(f"[POST] bullet -> HTTP {exc.code}: {body[:200]}")
-            return exc.code < 500  # 4xx is permanent; 5xx retries
-        except Exception as exc:
-            print(f"[POST] bullet -> ERROR: {exc}")
-            return False
-
-
-def _bullet_payload(hole, seen_at, inv_m, idempotency_key):
-    """A Bullet Hole as POST /sessions/{id}/bullets takes it (api_contract.md
-    v1): `seen_at` is its first frame's `wall_clock` (#152), and `inv_m` maps
-    Board space back onto the template."""
-    pts = np.array([[hole["pos"]]], dtype=np.float32)
-    tpl = cv2.perspectiveTransform(pts, inv_m)[0, 0]
-    utc = seen_at.astimezone(timezone.utc)
-    mm = hole.get("mm")
-    return {
-        "version": "v1",
-        "first_seen_at": utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
-        "position": {"x": float(np.clip(tpl[0], 0.0, 1405.0)),
-                     "y": float(np.clip(tpl[1], 0.0, 1120.0))},
-        "target_index": hole["target"],
-        "x_mm": float(mm[0]) if mm is not None else None,
-        "y_mm": float(mm[1]) if mm is not None else None,
-        "source": "model",
-        "idempotency_key": idempotency_key,
-    }
-
-
-def _post_bullets(holes, session_id, backend_url, wall_clock, view):
-    """POST each confirmed Bullet Hole to the WebApp backend (api_contract.md v1).
-
-    Used for end-of-run (non-live) batches only. Blocks until all POSTs complete;
-    this is acceptable because the detection run is already finished at this point.
-    """
-    inv_m = np.linalg.inv(view.tpl_to_board).astype(np.float32)
-
-    for i, hole in enumerate(holes, 1):
-        # Deterministic key: survives process restarts on the same recording.
-        # Two holes at the same first_frame are separated by ≥ match_px board
-        # pixels (persistence guarantee), so integer-rounded coords are a
-        # collision-free discriminator within the same frame.
-        pos = hole["pos"]
-        idempotency_key = str(uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"{session_id}:{hole['first_frame']}:"
-            f"{round(float(pos[0]))}:{round(float(pos[1]))}"))
-        payload = _bullet_payload(hole, wall_clock(hole["first_frame"]), inv_m,
-                                  idempotency_key)
-
-        url = f"{backend_url.rstrip('/')}/sessions/{session_id}/bullets"
-        req = urllib.request.Request(
-            url, data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}, method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                print(f"[POST] bullet #{i} -> HTTP {resp.status}")
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode(errors="replace")
-            print(f"[POST] bullet #{i} -> HTTP {exc.code}: {body[:200]}")
-        except Exception as exc:
-            print(f"[POST] bullet #{i} -> ERROR: {exc}")
 
 
 def _render(video, start, n_frames, fps, views, baseline, new, out_video,
@@ -2071,7 +1930,10 @@ if __name__ == "__main__":
         if ref_time.tzinfo is None:
             p.error("--ref-time must include a UTC offset (e.g. 2026-10-11T10:30:00Z or +02:00)")
 
-    process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
-            a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,
-            a.stride, session_id=a.session_id, backend_url=a.backend_url,
-            ref_time=ref_time)
+    # Drained on leaving, after the report and even if the run raised (#155).
+    with (webapp.WebAppPublisher(a.session_id, a.backend_url) if a.session_id
+          else contextlib.nullcontext()) as publisher:
+        process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
+                a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,
+                a.stride, publish=publisher.publish if publisher else None,
+                ref_time=ref_time)

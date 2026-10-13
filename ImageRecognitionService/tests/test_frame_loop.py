@@ -4,8 +4,6 @@ The loop exists so the pipeline and the detector probe look at the same image.
 What is testable without a video file is the bookkeeping the probe depends on:
 which frames got a look, and which only appeared to.
 """
-import contextlib
-import json
 import math
 import os
 import re
@@ -1061,31 +1059,16 @@ def test_a_reconnect_starts_a_session_indexed_by_its_own_timestamps(monkeypatch,
     assert loop.source.upstream == [(5, 5)] and loop.source.untimed == 0
 
 
-# --- posting to the WebApp (#152) --------------------------------------------
+# --- publishing Confirmed Bullet Holes (#152, #155) ---------------------------
 
 
-def _posting(monkeypatch):
-    """The payloads POSTed to the WebApp, in order, each accepted."""
-    posted = []
-    def urlopen(request, timeout):
-        posted.append(json.loads(request.data))
-        return contextlib.nullcontext(types.SimpleNamespace(status=201))
-    monkeypatch.setattr(nbh.urllib.request, "urlopen", urlopen)
-    return posted
-
-
-def _seen_at(payload):
-    """A payload's `first_seen_at`, as a datetime."""
-    return datetime.fromisoformat(payload["first_seen_at"])
-
-
-def test_a_live_bullet_hole_is_posted_at_the_time_printed_for_it_after_a_reconnect(
+def test_a_live_bullet_hole_is_published_at_the_time_printed_for_it_after_a_reconnect(
         monkeypatch):
     """Down after frame 40, and the Bullet Hole first seen past the reconnect.
-    Its POST is timed as `[NEW]` prints it, by the stream's own time for its
-    first frame, not frame 0's plus its index at 25 fps: past a drop the index
-    is #84's wall-clock count, 1.2 s long on the replay (#152)."""
-    posted = _posting(monkeypatch)
+    It is published timed as `[NEW]` prints it, by the stream's own time for
+    its first frame, not frame 0's plus its index at 25 fps: past a drop the
+    index is #84's wall-clock count, 1.2 s long on the replay (#152)."""
+    posted = []
     after = _FakeStream(interval=0.002)
     after.at = 100   # its pixels, which `_Watching` goes by, start at 101
     loop = _live(monkeypatch, _FakeStream(n=40, interval=0.002), lambda: after)
@@ -1093,19 +1076,22 @@ def test_a_live_bullet_hole_is_posted_at_the_time_printed_for_it_after_a_reconne
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
     run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1,
-                      session_id="session")
-    (hole,), (payload,) = run.holes, posted
-    assert hole["first_frame"] > 40
-    seen = datetime.fromtimestamp(loop.source.times[hole["first_frame"]], timezone.utc)
-    assert abs(_seen_at(payload) - seen) < timedelta(milliseconds=1)
+                      publish=posted.append)
+    assert [v.first_frame for v in posted] == [h["first_frame"] for h in run.holes]
+    (value,) = posted
+    assert value.first_frame > 40
+    assert value.first_seen_at == datetime.fromtimestamp(
+        loop.source.times[value.first_frame], timezone.utc)
 
 
-def test_a_recording_posts_each_bullet_hole_at_ref_time_plus_its_time_in_the_recording(
+def test_a_recording_publishes_each_bullet_hole_at_ref_time_plus_its_time_in_the_recording(
         monkeypatch):
     """`--ref-time` is the wall clock at the Recording's t=0: from 10 s, a Bullet
-    Hole first seen on frame 13 is posted 10.52 s past it (#152)."""
-    posted = _posting(monkeypatch)
-    ref = datetime(2026, 10, 11, 10, 30, tzinfo=timezone.utc)
+    Hole first seen on frame 13 is published 10.52 s past it (#152), at the
+    end of the run, where the report placed it, and in UTC whatever offset
+    `--ref-time` was given in (#155)."""
+    posted = []
+    ref = datetime(2026, 10, 11, 13, 30, tzinfo=timezone(timedelta(hours=3)))
     def opened(video, start, model_path, conf, template_path, ref_time):
         loop = _loop(frames=100, source=nbh.Recording(_FakeCap(100), 25.0, start, ref_time))
         loop.model = _SeenOn(lambda i: i >= 6)
@@ -1114,7 +1100,11 @@ def test_a_recording_posts_each_bullet_hole_at_ref_time_plus_its_time_in_the_rec
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.zeros((8, 8), bool))
     run = nbh.process("clip.mp4", 10.0, 10.0 + (13 + nbh.PERSIST_FRAMES + 0.5) / 25,
                       "model.pt", require_change_evidence=False, stride=13,
-                      session_id="session", ref_time=ref)
-    (hole,), (payload,) = run.holes, posted
-    assert hole["first_frame"] == 13
-    assert _seen_at(payload) == ref + timedelta(seconds=10.52)
+                      publish=posted.append, ref_time=ref)
+    assert [v.first_frame for v in posted] == [h["first_frame"] for h in run.holes] == [13]
+    (value,) = posted
+    assert value.first_seen_at == ref + timedelta(seconds=10.52)
+    assert value.first_seen_at.tzinfo == timezone.utc
+    # Board space is the template here (`_FakeView`), and every Bullet Hole a Miss.
+    assert value.template_xy == (15.0, 15.0)
+    assert value.target is None and value.mm is None

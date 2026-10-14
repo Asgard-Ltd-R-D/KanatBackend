@@ -505,8 +505,12 @@ def _outputs_clash(timing, out):
     where a write lands, past any symlink, a dangling one too, so only the
     file it made is removed and the link is left as it was."""
     target = os.path.realpath(timing)
-    made = not os.path.exists(target)
-    open(target, "a").close()   # never truncates: it may be an earlier run's
+    made = False
+    # Created only if absent, in one step: a file already there, an earlier
+    # run's or one another process just made, is neither truncated nor removed.
+    with contextlib.suppress(FileExistsError):
+        open(target, "x").close()
+        made = True
     try:
         return _same_file(target, [out])
     finally:

@@ -1,14 +1,17 @@
 """Checks for ground-truth scoring. No model, no video, no torch."""
+import argparse
+
 import cv2
 import numpy as np
 import pytest
 
 from detection import board
+from detection import new_bullet_holes as nbh
 from tools.evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
-                      RAW_NAMES, SOURCE_NAME, UNKNOWN,
+                      RAW_NAMES, SOURCE_NAME, UNKNOWN, Move,
                       attribute, in_the_baseline, load_labels, match, off_canvas,
-                      placement_note, position_errors, pre_existing_labels,
-                      register_photograph, score)
+                      open_moved, parse_move, placement_note, position_errors,
+                      pre_existing_labels, refuse_move, register_photograph, score)
 
 
 def test_greedy_matching_is_one_to_one():
@@ -251,6 +254,136 @@ def test_a_missed_truth_beyond_tolerance_of_every_baseline_mark_is_not_named():
     truth = np.float32([[0, 0]])
     assert in_the_baseline(truth, [0], np.float32([[41, 0, 9, 9]]), 40) == []
     assert in_the_baseline(truth, [0], np.zeros((0, 4), np.float32), 40) == []
+
+
+# --- moving the Board (#164) -------------------------------------------------
+
+
+class _Clip:
+    """A capture over `frames`, read as `Recording.open` reads a file: frame 0
+    at `--start`, then each in turn, `grab` passing one undecoded."""
+    def __init__(self, frames):
+        self.frames, self.at = frames, 0
+
+    def read(self):
+        if self.at >= len(self.frames):
+            return False, None
+        self.at += 1
+        return True, self.frames[self.at - 1].copy()
+
+    def grab(self):
+        return self.read()[0]
+
+    def get(self, prop):
+        return 25.0
+
+    def set(self, prop, value):
+        pass
+
+    def release(self):
+        pass
+
+
+def _noise(n, size=(40, 60)):
+    """`n` frames of texture with no black pixel in them."""
+    rng = np.random.default_rng(164)
+    return [rng.integers(1, 256, (*size, 3), dtype=np.uint8) for _ in range(n)]
+
+
+def _moved(monkeypatch, frames, move, stride=1, baseline_frames=1):
+    """Frame 0 and the frames handed over after it, with `frames` read from
+    `--start` 10 s at 25 fps and the Board moved by `move`."""
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _Clip(frames))
+    source, base = open_moved(move, "clip.mkv", 10.0)
+    source.start(len(frames), stride, baseline_frames)
+    return base, list(iter(source.read, None))
+
+
+def test_frames_before_the_move_come_through_identical(monkeypatch):
+    """Board space, the baseline and the truth placement are the unmoved run's."""
+    frames = _noise(10)
+    base, handed = _moved(monkeypatch, frames, Move(10.2, 3, -2))   # from frame 5
+    assert np.array_equal(base, frames[0])
+    assert [f.index for f in handed] == list(range(1, 10))
+    assert all(np.array_equal(f.image, frames[f.index]) for f in handed if f.index < 5)
+    assert not any(np.array_equal(f.image, frames[f.index]) for f in handed if f.index >= 5)
+
+
+def test_from_the_move_on_an_integer_shift_is_pixel_exact_inside_the_frame(monkeypatch):
+    frames = _noise(10)
+    _, handed = _moved(monkeypatch, frames, Move(10.2, 3, -2))
+    for f in handed[4:]:   # frames 5-9: 3 px right, 2 px up
+        assert np.array_equal(f.image[:-2, 3:], frames[f.index][2:, :-3])
+
+
+def test_the_vacated_border_replicates_the_edge(monkeypatch):
+    """Not black: the move adds no hard edge the scene never had."""
+    frames = _noise(10)
+    _, handed = _moved(monkeypatch, frames, Move(10.2, 3, -2))
+    moved, frame = handed[-1].image, frames[handed[-1].index]
+    assert np.array_equal(moved[:-2, :3], np.repeat(frame[2:, :1], 3, axis=1))
+    assert np.array_equal(moved[-2:, 3:], np.repeat(frame[-1:, :-3], 2, axis=0))
+
+
+def _targets():
+    """Grey, with two green Targets well off the frame's centre."""
+    frame = np.full((240, 320, 3), 128, np.uint8)
+    cv2.rectangle(frame, (30, 30), (110, 130), (0, 200, 0), -1)
+    cv2.rectangle(frame, (150, 40), (230, 120), (0, 200, 0), -1)
+    return frame
+
+
+def _centroid_of_targets(frame):
+    moments = [cv2.moments(c) for c in board.find_targets(frame)[0]]
+    return np.mean([[m["m10"] / m["m00"], m["m01"] / m["m00"]] for m in moments], axis=0)
+
+
+def test_a_rotation_keeps_the_targets_centroid_fixed(monkeypatch):
+    """A rotation of the Board, not a rotation plus a hidden shift: turned
+    about the frame's centre instead, this one moves it ~9 px."""
+    frames = [_targets()] * 3
+    _, handed = _moved(monkeypatch, frames, Move(10.04, 0, 0, 10))   # from frame 1
+    turned = handed[-1].image
+    assert not np.array_equal(turned, frames[0])
+    assert np.linalg.norm(_centroid_of_targets(turned) - _centroid_of_targets(frames[0])) < 1
+
+
+def test_under_a_stride_the_indices_handed_over_are_unchanged(monkeypatch):
+    _, handed = _moved(monkeypatch, _noise(12), Move(10.2, 3, -2), stride=3, baseline_frames=2)
+    assert [f.index for f in handed] == [1, 3, 6, 9]
+
+
+def test_a_move_is_a_time_and_a_shift_with_an_optional_rotation():
+    assert parse_move("25:80,40") == Move(25.0, 80.0, 40.0, 0.0)
+    assert parse_move("29.8:-16,8,2") == Move(29.8, -16.0, 8.0, 2.0)
+
+
+@pytest.mark.parametrize("text", ["25", "25:80", "25:80,40,2,1", "t:80,40",
+                                  "25:80,40,nan", "25;80,40"])
+def test_a_move_that_does_not_parse_is_refused(text):
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_move(text)
+
+
+def test_a_move_inside_the_baseline_window_is_refused():
+    """At 25 fps the 5 baseline frames from 20 s run to 20.16 s, so 20.20 s
+    is the first a move may reach."""
+    with pytest.raises(SystemExit, match="baseline"):
+        refuse_move(Move(20.16, 80, 40), 20, 46, 5, 25.0, final_run=False)
+    refuse_move(Move(20.2, 80, 40), 20, 46, 5, 25.0, final_run=False)
+
+
+def test_a_move_at_or_after_the_end_is_refused():
+    """It would move nothing, and a case that moves nothing must not pass."""
+    with pytest.raises(SystemExit, match="--end"):
+        refuse_move(Move(46, 80, 40), 20, 46, 5, 25.0, final_run=False)
+    refuse_move(Move(45.96, 80, 40), 20, 46, 5, 25.0, final_run=False)
+
+
+def test_a_move_on_a_final_run_is_refused():
+    """A Sealed Recording's one measurement is never spent on a synthetic case."""
+    with pytest.raises(SystemExit, match="ADR-0005"):
+        refuse_move(Move(25, 80, 40), 20, 46, 5, 25.0, final_run=True)
 
 
 # --- placing photograph truth through the baseline frame -------------------

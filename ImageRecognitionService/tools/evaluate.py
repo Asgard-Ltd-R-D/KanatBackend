@@ -349,7 +349,7 @@ def attribute(found, pairs, baseline, tolerance=MATCH_TOLERANCE_TPL):
     detector missed at baseline leaves its displaced sighting looking like a
     detector error, and a baseline phantom lends a genuine detector error the
     look of displacement. Both are bounded by how good the baseline is, which
-    `[INFO] baseline: N pre-existing Bullet Holes` prints on every run.
+    `[INFO] baseline: N Baseline Marks` prints on every run.
     """
     credited = {i for i, _, _ in pairs}
     marks = (np.asarray(baseline, np.float32)[:, :2] if len(baseline)
@@ -363,6 +363,29 @@ def attribute(found, pairs, baseline, tolerance=MATCH_TOLERANCE_TPL):
         cause = (DISPLACEMENT if distance <= tolerance else
                  DETECTOR if distance > UNKNOWN_FACTOR * tolerance else UNKNOWN)
         out.append((i, cause, distance))
+    return out
+
+
+def in_the_baseline(truth, missed, baseline, tolerance=MATCH_TOLERANCE_TPL):
+    """Each missed truth within `tolerance` of a Baseline Mark, as `(truth
+    index, mark index, distance)` with the nearest mark (#163).
+
+    Such a truth is a Bullet Hole on the Board at `--start`, from an earlier
+    Range, which this one rightly never reports as new. The mark index plus one
+    is the report's P number: `baseline` is in the run's order. Template
+    coordinates, `(cx, cy)` or the baseline's own `(cx, cy, w, h)`, as
+    `attribute` reads them, and the same tolerance that credits a detection
+    with a label.
+    """
+    if not len(baseline):
+        return []
+    marks = np.asarray(baseline, np.float32)[:, :2]
+    out = []
+    for j in missed:
+        distances = np.linalg.norm(marks - truth[j], axis=1)
+        k = int(np.argmin(distances))
+        if distances[k] <= tolerance:
+            out.append((j, k, float(distances[k])))
     return out
 
 
@@ -901,6 +924,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
         print(f"   found #{i + 1} -> truth #{j + 1}   {d:5.0f} template px")
     if result["missed"]:
         print(f"   missed: {', '.join(f'truth #{j + 1}' for j in result['missed'])}")
+    for j, k, d in in_the_baseline(truth, result["missed"], pre_existing, tolerance):
+        print(f"   truth #{j + 1} in the baseline at --start, P{k + 1}   {d:5.0f} template px")
 
     # SOW 2.3.2 (#123). Internal: this truth shares the footage's print scale
     # and mapping to the artwork, so errors in those cancel out of it.
@@ -926,12 +951,12 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
                    for c in CAUSES}
         print(f"\n[ATTRIBUTION] {len(attribution)} false positive(s): "
               + ", ".join(f"{n} {c}" for c, n in counted.items())
-              + f" (displacement within {tolerance:.0f} template px of a mark "
-                f"the baseline already held, detector beyond "
+              + f" (displacement within {tolerance:.0f} template px of a "
+                f"Baseline Mark, detector beyond "
                 f"{UNKNOWN_FACTOR * tolerance:.0f})")
         for i, cause, distance in attribution:
             near = "none" if distance == float("inf") else f"{distance:.0f} px"
-            print(f"   found #{i + 1}  {cause:<12} nearest pre-existing mark {near}")
+            print(f"   found #{i + 1}  {cause:<12} nearest Baseline Mark {near}")
 
     # On every score, in the template px a score is read in, and a bar on
     # nothing: no registration-failure threshold has been validated — not

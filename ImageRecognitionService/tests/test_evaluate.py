@@ -6,7 +6,7 @@ import pytest
 from detection import board
 from tools.evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
                       RAW_NAMES, SOURCE_NAME, UNKNOWN,
-                      attribute, load_labels, match, off_canvas,
+                      attribute, in_the_baseline, load_labels, match, off_canvas,
                       placement_note, position_errors, pre_existing_labels,
                       register_photograph, score)
 
@@ -234,6 +234,22 @@ def test_a_baseline_of_boxes_is_read_as_marks():
     boxes = np.float32([[0, 0, 9, 9], [300, 300, 9, 9]])
     assert [(i, c) for i, c, _ in _attribute(np.float32([[23, 0]]), boxes)] \
         == [(0, DISPLACEMENT)]
+
+
+# --- a missed truth on a Baseline Mark (#163) -------------------------------
+
+def test_a_missed_truth_on_a_baseline_mark_names_it_by_its_p_number():
+    """A Bullet Hole from an earlier Range, on the Board at `--start`: the run
+    rightly never reported it, and the score says which P it is."""
+    truth = np.float32([[0, 0], [500, 500]])
+    baseline = np.float32([[300, 300, 9, 9], [495, 510, 9, 9]])
+    assert [(j, k) for j, k, _ in in_the_baseline(truth, [1], baseline, 40)] == [(1, 1)]
+
+
+def test_a_missed_truth_beyond_tolerance_of_every_baseline_mark_is_not_named():
+    truth = np.float32([[0, 0]])
+    assert in_the_baseline(truth, [0], np.float32([[41, 0, 9, 9]]), 40) == []
+    assert in_the_baseline(truth, [0], np.zeros((0, 4), np.float32), 40) == []
 
 
 # --- placing photograph truth through the baseline frame -------------------

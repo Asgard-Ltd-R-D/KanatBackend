@@ -238,9 +238,10 @@ def test_a_baseline_of_boxes_is_read_as_marks():
 
 # --- a missed truth on a Baseline Mark (#163) -------------------------------
 
-def test_a_missed_truth_on_a_baseline_mark_names_it_by_its_p_number():
-    """A Bullet Hole from an earlier Range, on the Board at `--start`: the run
-    rightly never reported it, and the score says which P it is."""
+def test_a_missed_truth_on_a_baseline_mark_names_that_mark():
+    """A Bullet Hole from an earlier Range, on the Board at `--start`: this
+    Range rightly never reported it, and the score says which mark it is (P2,
+    the mark's index plus one)."""
     truth = np.float32([[0, 0], [500, 500]])
     baseline = np.float32([[300, 300, 9, 9], [495, 510, 9, 9]])
     assert [(j, k) for j, k, _ in in_the_baseline(truth, [1], baseline, 40)] == [(1, 1)]

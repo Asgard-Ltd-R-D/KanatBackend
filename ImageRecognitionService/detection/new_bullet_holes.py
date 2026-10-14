@@ -1915,8 +1915,8 @@ def _where(hole):
 
 def _measurement(hole):
     """A measured Bullet Hole's or Baseline Mark's ring score and millimetres,
-    as its line ends. On a Target with no millimetres it says so: the reason
-    is the `[BLOCKED]` line."""
+    as its line ends. On a Target with no millimetres it says so: the end
+    report's `[BLOCKED]` line says why."""
     line = "" if hole["score"] is None else (
         "  outside rings" if hole["score"] == board.OUTSIDE_RINGS
         else f"  scores {hole['score']}")
@@ -1934,9 +1934,10 @@ def _bullet_hole_line(hole, when):
             f"persistence {hole['persistence']:.0%}  [{evidence}]{_measurement(hole)}")
 
 
-def _counted(things):
-    misses = sum(1 for h in things if h["target"] is None)
-    return f"({len(things) - misses} on a Target, {misses} Miss)"
+def _on_target_or_miss(holes):
+    """`(n on a Target, m Miss)`, for a count line."""
+    misses = sum(1 for h in holes if h["target"] is None)
+    return f"({len(holes) - misses} on a Target, {misses} Miss)"
 
 
 def _report(new, baseline, when, view, mm_per_tpl_px, looked_at):
@@ -1955,12 +1956,12 @@ def _report(new, baseline, when, view, mm_per_tpl_px, looked_at):
     if not marks:
         print("[INFO] no Baseline Marks: the detector saw nothing in the baseline Looks")
     else:
-        print(f"[INFO] {len(marks)} Baseline Marks {_counted(marks)}: what the detector "
+        print(f"[INFO] {len(marks)} Baseline Marks {_on_target_or_miss(marks)}: what the detector "
               f"saw in the baseline Looks, not truth")
     for k, mark in enumerate(marks, 1):
         print(f"  P{k}  {_where(mark):<9}{_measurement(mark)}".rstrip())
 
-    print(f"[INFO] {len(new)} new Bullet Holes {_counted(new)}")
+    print(f"[INFO] {len(new)} new Bullet Holes {_on_target_or_miss(new)}")
     for i, hole in enumerate(new, 1):
         print(f"  #{i}  {_bullet_hole_line(hole, when)}")
 

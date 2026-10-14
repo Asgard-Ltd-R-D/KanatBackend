@@ -414,11 +414,11 @@ class _SeenOn(_FakeModel):
             else [types.SimpleNamespace(boxes=[])]
 
 
-def _strided_run(monkeypatch, n_frames, on=lambda i: i >= 6):
-    """`process` at stride 13 over `n_frames`; half a frame on `--end` keeps
-    `frames_until` clear of float truncation."""
+def _strided_run(monkeypatch, n_frames, on=lambda i: i >= 6, model=None):
+    """`process` at stride 13 over `n_frames`, with `model` or a `_SeenOn(on)`;
+    half a frame on `--end` keeps `frames_until` clear of float truncation."""
     loop = _loop(frames=100)
-    loop.model = _SeenOn(on)
+    loop.model = model or _SeenOn(on)
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.zeros((8, 8), bool))
     return nbh.process("clip.mp4", 10.0, 10.0 + (n_frames + 0.5) / 25, "model.pt",
@@ -450,6 +450,74 @@ def test_the_report_states_the_stride(monkeypatch, capsys):
     """A stride-sampled result is only comparable at the same stride (#81)."""
     _strided_run(monkeypatch, 25)
     assert "[INFO] stride 13:" in capsys.readouterr().out
+
+
+# --- the Baseline Marks in the report (#163) ---------------------------------
+
+
+class _Marks(_FakeModel):
+    """A 10 px Bullet Hole centred on each `(x, y, on)` of `marks`, on the
+    frames its `on(index)` says."""
+    def __init__(self, *marks):
+        self.marks = marks
+
+    def predict(self, image, imgsz, conf, verbose=False, classes=None):
+        index = int(image[0, 0, 0])
+        return [types.SimpleNamespace(boxes=[
+            types.SimpleNamespace(xyxy=[[x - 5.0, y - 5.0, x + 5.0, y + 5.0]])
+            for x, y, on in self.marks if on(index)])]
+
+
+def _baseline_and_new(monkeypatch):
+    """Two marks there from frame 0, and one first seen on frame 6, past the
+    baseline (frames 0-4)."""
+    return _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES, model=_Marks(
+        (15, 15, lambda i: True), (45, 45, lambda i: True), (30, 50, lambda i: i >= 6)))
+
+
+def test_a_mark_seen_in_the_baseline_looks_is_listed_as_p1_and_is_not_new(
+        monkeypatch, capsys):
+    run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES, on=lambda i: True)
+    out = capsys.readouterr().out
+    assert run.holes == []
+    assert "[INFO] baseline: 1 Baseline Marks over 5 frame(s)" in out
+    assert "[INFO] 1 Baseline Marks (0 on a Target, 1 Miss)" in out
+    assert re.search(r"^  P1  MISS$", out, re.M)
+    assert "[INFO] 0 new Bullet Holes" in out and "  #1" not in out
+
+
+def test_a_mark_first_seen_after_the_baseline_is_number_1_whatever_the_p_count(
+        monkeypatch, capsys):
+    run = _baseline_and_new(monkeypatch)
+    out = capsys.readouterr().out
+    assert [h["pos"].tolist() for h in run.holes] == [[30, 50]]
+    assert re.findall(r"^  (P\d+|#\d+)  ", out, re.M) == ["P1", "P2", "#1"]
+
+
+def test_the_baseline_mark_block_precedes_the_new_bullet_holes(monkeypatch, capsys):
+    _baseline_and_new(monkeypatch)
+    lines = capsys.readouterr().out.splitlines()
+    first = lambda text: next(n for n, line in enumerate(lines) if line.startswith(text))
+    assert (first("[INFO] 2 Baseline Marks") < first("  P1") < first("  P2")
+            < first("[INFO] 1 new Bullet Holes") < first("  #1"))
+
+
+def test_an_empty_baseline_says_so_in_one_line(monkeypatch, capsys):
+    _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES)
+    out = capsys.readouterr().out
+    assert "[INFO] no Baseline Marks: the detector saw nothing in the baseline Looks" in out
+    assert "  P1" not in out and "Baseline Marks (" not in out
+
+
+def test_without_a_print_scale_a_baseline_mark_on_a_target_has_no_millimetres(
+        monkeypatch, capsys):
+    """As a new Bullet Hole on a Target says (#69): scored, but no mm."""
+    monkeypatch.setattr(_FakeView, "assign", lambda self, pos: 0)
+    monkeypatch.setattr(_FakeView, "ring_centre", lambda self, target: np.float32([15, 15]),
+                        raising=False)
+    _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES, on=lambda i: True)
+    assert re.search(r"^  P1  Target 1 +scores \d+  \(mm unavailable\)$",
+                     capsys.readouterr().out, re.M)
 
 
 def test_a_stride_leaving_one_look_a_window_is_refused():
@@ -622,6 +690,15 @@ def test_the_end_of_a_live_run_reports_what_was_announced_and_nothing_else(
     out = capsys.readouterr().out
     assert out.count("[NEW]") == 1 and len(run.holes) == 1
     assert "[FILTER] change evidence required: 1 -> 1" in out
+
+
+def test_the_end_of_a_live_run_lists_its_baseline_marks(monkeypatch, capsys):
+    """A Range read from a Stream catalogues the Board as a Recording does (#163)."""
+    run = _live_run(monkeypatch, _Watching(lambda i: True, stop_at=80))
+    out = capsys.readouterr().out
+    assert run.holes == [] and "[NEW]" not in out
+    assert "[INFO] 1 Baseline Marks (0 on a Target, 1 Miss)" in out
+    assert re.search(r"^  P1  MISS$", out, re.M)
 
 
 def test_a_confirmed_live_bullet_hole_waits_for_change_evidence(monkeypatch, capsys):

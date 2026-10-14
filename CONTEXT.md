@@ -9,8 +9,9 @@ and detects bullet holes on paper targets from range camera footage.
 
 **Range**:
 One recorded shooting session, from start to stop. Owns the events, hits and
-targets captured during it.
-_Avoid_: session, run
+targets captured during it. A Range may start on a Board that already carries
+Bullet Holes from an earlier Range.
+_Avoid_: session, run, act, firing act
 
 **Shot Distance**:
 The distance from a Bullet Hole to its Target's centre, in millimetres.
@@ -71,9 +72,17 @@ altogether. No evidence either way: unlike a Look that saw nothing, it says
 nothing about what was on the Board.
 _Avoid_: dropped, failed frame, missed frame
 
+**Baseline Mark**:
+A place on the Board where the baseline Looks showed a Detection, taken to be a
+Bullet Hole already there when the Range started. The system's claim, not
+truth: a speck the baseline saw is one, and a Bullet Hole it missed is not. A
+Baseline Mark is never reported as new in that Range.
+_Avoid_: pre-existing Bullet Hole (when the claim is meant), baseline hole,
+prior hit
+
 **Candidate**:
-Detections from successive Looks at one place on the Board where the baseline
-showed no mark, gathered while the system decides whether they are a new
+Detections from successive Looks at one place on the Board with no Baseline
+Mark, gathered while the system decides whether they are a new
 Bullet Hole. Most never become one.
 _Avoid_: track, blob, hypothesis
 

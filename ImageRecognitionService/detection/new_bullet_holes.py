@@ -1645,7 +1645,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     baseline = baseline_marks(baseline_detections, match_px)
     short = ("" if len(baseline_detections) == baseline_frames else
              f" (of {baseline_frames} requested; the rest were lost or unread)")
-    print(f"[INFO] baseline: {len(baseline)} pre-existing Bullet Holes over "
+    print(f"[INFO] baseline: {len(baseline)} Baseline Marks over "
           f"{len(baseline_detections)} frame(s) from "
           f"{loop.when(0) if loop.live else f'{start}s'}{short}")
 
@@ -1739,7 +1739,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"[INFO] stride {stride}: past the baseline, every {stride}th frame looked "
           f"at; the frames between are gaps, counting neither for nor against a "
           f"Bullet Hole (#81)")
-    _report(new, loop.when, loop.last, mm_per_tpl_px, persistence.looked_at)
+    _report(new, baseline, loop.when, loop.last, mm_per_tpl_px, persistence.looked_at)
     if timed is not None:
         _report_timing(timing, timed, loop.model)
     if publish and not loop.live:
@@ -1876,7 +1876,7 @@ class _Announcer:
                 continue
             hole["target"] = self.loop.last.assign(hole["pos"])
             _measure(hole, self.loop.last, self.mm_per_tpl_px)
-            print(f"[NEW] {_bullet_hole_line(hole, self.loop.when, self.mm_per_tpl_px)}")
+            print(f"[NEW] {_bullet_hole_line(hole, self.loop.when)}")
             self.announced.append(hole)
             if self.publish:
                 self.publish(_confirmed(hole, self.loop.last, self.loop.wall_clock))
@@ -1909,34 +1909,61 @@ def _measure(hole, view, mm_per_tpl_px):
     return None
 
 
-def _bullet_hole_line(hole, when, mm_per_tpl_px):
-    """A measured Bullet Hole, as the report lists it and a live run announces it."""
-    where = "MISS" if hole["target"] is None else f"Target {hole['target'] + 1}"
-    evidence = "changed" if hole["corroborated"] else "model only"
-    scored = "" if hole["score"] is None else (
+def _where(hole):
+    return "MISS" if hole["target"] is None else f"Target {hole['target'] + 1}"
+
+
+def _measurement(hole):
+    """A measured Bullet Hole's or Baseline Mark's ring score and millimetres,
+    as its line ends. On a Target with no millimetres it says so: the end
+    report's `[BLOCKED]` line says why."""
+    line = "" if hole["score"] is None else (
         "  outside rings" if hole["score"] == board.OUTSIDE_RINGS
         else f"  scores {hole['score']}")
-    line = (f"t={when(hole['first_frame']):>6}  {where:<9} "
-            f"persistence {hole['persistence']:.0%}  [{evidence}]{scored}")
     if hole["mm"] is not None:
         line += f"  X {hole['mm'][0]:+7.1f} mm  Y {hole['mm'][1]:+7.1f} mm"
-    elif hole["target"] is not None and mm_per_tpl_px is not None:
+    elif hole["target"] is not None:
         line += "  (mm unavailable)"
     return line
 
 
-def _report(new, when, view, mm_per_tpl_px, looked_at):
-    """`when(index)` is a looked-at frame's time as printed (`RegisteredFrames.when`)."""
-    misses = sum(1 for h in new if h["target"] is None)
-    print(f"[INFO] {len(new)} new Bullet Holes ({len(new) - misses} on a Target, {misses} Miss)")
+def _bullet_hole_line(hole, when):
+    """A measured Bullet Hole, as the report lists it and a live run announces it."""
+    evidence = "changed" if hole["corroborated"] else "model only"
+    return (f"t={when(hole['first_frame']):>6}  {_where(hole):<9} "
+            f"persistence {hole['persistence']:.0%}  [{evidence}]{_measurement(hole)}")
 
-    for hole in new:
-        why = _measure(hole, view, mm_per_tpl_px)
-        if why is not None and hole is new[0]:
-            print(f"[BLOCKED] millimetres unavailable: {why}")
 
+def _on_target_or_miss(holes):
+    """`(n on a Target, m Miss)`, for a count line."""
+    misses = sum(1 for h in holes if h["target"] is None)
+    return f"({len(holes) - misses} on a Target, {misses} Miss)"
+
+
+def _report(new, baseline, when, view, mm_per_tpl_px, looked_at):
+    """`when(index)` is a looked-at frame's time as printed (`RegisteredFrames.when`).
+
+    The Baseline Marks come first, P1...Pn in `baseline`'s order, each placed
+    and measured through `view` as a new Bullet Hole is, so the two lists
+    compare directly (#163). Only new Bullet Holes are numbered, and only
+    they make Groups."""
+    marks = [{"pos": m[:2], "target": view.assign(m[:2])} for m in baseline]
+    blocked = [why for why in [_measure(h, view, mm_per_tpl_px) for h in marks + new]
+               if why is not None]
+    if blocked:
+        print(f"[BLOCKED] millimetres unavailable: {blocked[0]}")
+
+    if not marks:
+        print("[INFO] no Baseline Marks: the detector saw nothing in the baseline Looks")
+    else:
+        print(f"[INFO] {len(marks)} Baseline Marks {_on_target_or_miss(marks)}: what the detector "
+              f"saw in the baseline Looks, not truth")
+    for k, mark in enumerate(marks, 1):
+        print(f"  P{k}  {_where(mark):<9}{_measurement(mark)}".rstrip())
+
+    print(f"[INFO] {len(new)} new Bullet Holes {_on_target_or_miss(new)}")
     for i, hole in enumerate(new, 1):
-        print(f"  #{i}  {_bullet_hole_line(hole, when, mm_per_tpl_px)}")
+        print(f"  #{i}  {_bullet_hole_line(hole, when)}")
 
         # Observation facts, not a claim about the mark. A detection ceasing is
         # not evidence that the Bullet Hole ceased: on CamB_20260915_102250 a
@@ -2020,7 +2047,7 @@ def _render(video, start, n_frames, fps, views, baseline, new, out_video,
                         (q[0] + 19, q[1] + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         cv2.putText(vis, f"t {start + idx / fps:5.2f}s", (16, 34),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.putText(vis, f"pre-existing {len(baseline)}", (16, 66),
+        cv2.putText(vis, f"Baseline Marks {len(baseline)}", (16, 66),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (150, 150, 150), 2)
         cv2.putText(vis, f"NEW {shown}", (16, 100),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)

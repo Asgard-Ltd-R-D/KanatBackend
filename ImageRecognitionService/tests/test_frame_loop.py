@@ -283,6 +283,20 @@ def test_a_recording_times_its_frames_from_ref_time_or_when_it_was_opened(monkey
     assert before <= t0 <= datetime.now(timezone.utc)
 
 
+def test_the_pipeline_reads_through_the_opener_it_is_given(monkeypatch):
+    """How the scoring tool hands over a moved Recording (#164). Without one,
+    every other test here runs on today's choice of Stream or Recording."""
+    _openable(monkeypatch)
+    cap, opened = _FakeCap(0), []
+
+    def opener(video, start, ref_time):
+        opened.append((video, start, ref_time))
+        return nbh.Recording(cap, 25.0, start), np.zeros((8, 8, 3), np.uint8)
+
+    nbh.process("clip.mkv", 10.0, 10.2, "model.pt", opener=opener)
+    assert opened == [("clip.mkv", 10.0, None)] and cap.released
+
+
 def _rendering(monkeypatch, frames):
     """`_render` over a `frames`-frame clip. Returns `(named, drawn, written)`:
     `named(name)` is a view that logs `name` to `drawn` when it rectifies, and
@@ -1172,7 +1186,7 @@ def test_a_recording_publishes_each_bullet_hole_at_ref_time_plus_its_time_in_the
     `--ref-time` was given in (#155)."""
     posted = []
     ref = datetime(2026, 10, 11, 13, 30, tzinfo=timezone(timedelta(hours=3)))
-    def opened(video, start, model_path, conf, template_path, ref_time, device):
+    def opened(video, start, model_path, conf, template_path, ref_time, device, opener):
         loop = _loop(frames=100, source=nbh.Recording(_FakeCap(100), 25.0, start, ref_time))
         loop.model = _SeenOn(lambda i: i >= 6)
         return loop

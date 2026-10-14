@@ -998,6 +998,13 @@ class Stream:
               f"one past it (#117)")
 
 
+def _open_source(video, start, ref_time=None):
+    """A Stream for an rtsp:// URL, else a Recording, opened at `start`, and
+    its frame 0: the source opener `process` uses unless handed another
+    (#164)."""
+    return (Stream if _is_stream(video) else Recording).open(video, start, ref_time)
+
+
 def _looked_at(index, stride, baseline_frames):
     """Is this frame looked at under a stride (#81)? Every baseline frame is;
     past them, only multiples of the stride. One rule, applied by
@@ -1305,12 +1312,13 @@ class RegisteredFrames:
     is registered onto it by `registration`, a `Registration` (#138).
 
     Frames come from `source`, a `Recording` or a `Stream`, through one
-    interface (#148), so nothing here asks which. The source's `open` gives it and
-    frame 0; `start` takes the frames wanted, the stride and the baseline's
-    frames; `read` hands back each due `Frame`, then None; `close` releases
-    it. `passed` is the frames passed, `when` a frame's time as printed,
-    `wall_clock` its time as posted to the WebApp (#152), `unseen` the due
-    frames a Stream missed, and `live` which it is.
+    interface (#148), so nothing here asks which. `opener(video, start,
+    ref_time)` gives it and frame 0, by default `_open_source`; `start` takes
+    the frames wanted, the stride and the baseline's frames; `read` hands back
+    each due `Frame`, then None; `close` releases it. `passed` is the frames
+    passed, `when` a frame's time as printed, `wall_clock` its time as posted
+    to the WebApp (#152), `unseen` the due frames a Stream missed, and `live`
+    which it is.
 
     `device`, when given, is handed to the detector on every call (#129).
     `clock` times the Look in hand: `looks` starts it and laps registration,
@@ -1336,7 +1344,7 @@ class RegisteredFrames:
 
     @classmethod
     def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
-             template_path=board.DEFAULT_TEMPLATE, ref_time=None, device=None):
+             template_path=board.DEFAULT_TEMPLATE, ref_time=None, device=None, opener=None):
         from ultralytics import YOLO  # imported lazily: pulls in torch
         model = YOLO(model_path)
         _bullet_hole_classes(model)   # refuse a wrong checkpoint before any video work
@@ -1349,7 +1357,7 @@ class RegisteredFrames:
         # How long building Board space takes is measured from opening the
         # source, so the model load above is not in it (#79).
         opened_at = time.perf_counter()
-        source, base = (Stream if _is_stream(video) else Recording).open(video, start, ref_time)
+        source, base = (opener or _open_source)(video, start, ref_time)
 
         view, correlation = board.build_view(base, template_mask)
         if view is None:
@@ -1588,7 +1596,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
             baseline_frames=BASELINE_FRAMES, stride=None, publish=None, ref_time=None,
-            timing=None, device=None):
+            timing=None, device=None, opener=None):
     """`video` is a recording's path, or a stream's rtsp:// URL (#83), which
     has no `start` or `end`: it runs until stopped, at `LIVE_STRIDE` unless
     `stride` says otherwise, and prints each Bullet Hole as it is confirmed.
@@ -1602,11 +1610,13 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     `timing`, a path, times each Look past the baseline (#129): a CSV row a
     Look there, and n/P50/P95/P99/max printed at the end (`_report_timing`).
     Without it nothing is written, printed or kept. `device` is the
-    detector's for every call (`_detect`)."""
+    detector's for every call (`_detect`). `opener` opens the source
+    (`RegisteredFrames`): the scoring tool's moved Recording comes in this
+    way (#164)."""
     if timing:
         open(timing, "w").close()   # a path it cannot write fails now, not after the run
     loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time,
-                                 device)
+                                 device, opener)
     fps, match_px = loop.fps, loop.view.match_radius
     n_frames = math.inf if loop.live else loop.frames_until(end)
     stride = stride or (LIVE_STRIDE if loop.live else 1)

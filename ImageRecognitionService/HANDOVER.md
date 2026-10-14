@@ -844,7 +844,7 @@ extraction is what keeps sealed pixels out of it.
 | `docs/model_bench.md` | Every checkpoint's training record, the dataset each one trained on, and its bench (#30) |
 | `docs/ring_measurement.md` | The printed 10-ring in millimetres: the print scale for `--mm-per-px`, its readings, and what it depends on (#62) |
 | `docs/live_camera.md` | The AXIS Q6315-LE through VideoService's MediaMTX: its path, stream settings, the fixed-view rule, the manual acceptance and the replay's record (#85) |
-| `docs/latency_wip.md` | SOW 2.3.1, WIP: Inference Time, Look Time, each call and stage on the dev Mac, CPU and MPS side by side, how to re-measure, the open questions for IAI (#131) |
+| `docs/latency_wip.md` | SOW 2.3.1, WIP: Inference Time, Look Time, each call and stage on the dev Mac, CPU and MPS side by side (#131); Frame Wait on a MediaMTX live replay, with what it excludes (#132); how to re-measure, the open questions for IAI |
 | `config/print_scale.json` | The print scale per Capture Setup, each with its source: 0.1763 for every CamA and CamB setup (#69) |
 | `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `data/truth/<recording>/` | Ground truth, one directory per recording |

@@ -1,6 +1,6 @@
 # SOW 2.3.1 latency: a WIP measurement on the development Mac
 
-**Measured 2026-10-14 at `2300284`.** Issue #131, spec #128. **A work-in-progress
+**Measured 2026-10-14: the recordings at `2300284` (#131), the live replay at `4702c0e` (#132).** Spec #128. **A work-in-progress
 measurement on development hardware, not an acceptance result.** SOW 2.3.1 asks for "a latency of less
 than 40 ms per frame" and does not say where the 40 ms starts or stops.
 Asgard asked IAI to agree the measurement points, the statistic (P99 proposed)
@@ -64,7 +64,7 @@ P50 / P99. n is 295 Looks on CamA and 1,145 on CamB, or 295 and 4,580 for a sing
 | Inference Time, a Look's calls summed | 162.8 / 180.0 | 67.7 / 85.9 | 48.6 / 67.0 | 74.6 / 86.9 |
 | Look Time, the whole Look | 297.6 / 2896.5 | 201.9 / 2782.9 | 706.1 / 794.3 | 735.7 / 811.5 |
 | Look Time, mean | 361 | 263 | 507 | 534 |
-| Frame Wait | live only: #132 | | | |
+| Frame Wait | live only: "Frame Wait on a live replay" below | | | |
 
 At 25 fps a frame arrives every 40 ms. So a fourth reading, keeping pace with
 every frame, turns on mean Look Time rather than a percentile. Today the live
@@ -194,7 +194,139 @@ What this means for the live stride: stride 17 at 25 fps looks at a frame every 
 Looks take longer than that, while their mean (495–534) does not. ADR-0007 found 449–488 ms a Look on
 CamB at `1d18891`, by differencing wall times, which also counts reading and decoding. These means are higher,
 and the gap is not reconciled here. How a live run behaves when most of its Looks overrun the stride interval
-is for #132's replay to measure, as Frame Wait and frames dropped late.
+is for #132's replay to measure, as Frame Wait and frames dropped late. It is below.
+
+## Frame Wait on a live replay (#132)
+
+**Measured 2026-10-14 at `4702c0e`, on the host and libraries in "Setup".** A WIP measurement on
+development hardware, not an acceptance result, and the 40 ms is still undefined. A recording cannot show
+Frame Wait, so this is one replay through VideoService's MediaMTX, the path a camera will use.
+
+**What Frame Wait is not.** Frame Wait runs from the reader having a due frame decoded to the loop taking
+it: the wait inside the system, and nothing else. It does not include FFmpeg's buffering ahead of the
+decoder (about 1.2 s at open, #85), how far the reader runs behind the stream, MediaMTX, the network or the
+camera. Those are end-to-end latency (SOW 2.3.4), which is not measured here. A small Frame Wait is not a
+small delay from the camera.
+
+**The replay** followed [`live_camera.md`](live_camera.md)'s procedure (#85), steps 1–4:
+
+- **The copy:** step 1's command, on the spent `CamB_20260915_102250.mkv` (sha256 `ed4c3afd…`), made with
+  ffmpeg 9.0.2 (Homebrew 9.0.2_1) and libx264 r3222. 1,150 frames, H.264 Main, 1920×1080, 25 fps, GOP 25. The copy
+  is spent too, and is not committed. No Sealed recording was opened (ADR-0005), and
+  `data/sealed_runs.log` is unchanged.
+- **MediaMTX** v1.21.1 (darwin arm64), started in `VideoService/` with `mediamtx.yml` unchanged. The
+  `replay` path was added through the Control API and published on demand by `ffmpeg -re … -c copy`.
+- **The run,** at the live stride (17), kept awake with `caffeinate -i`. No sleep was logged. It was stopped
+  with SIGINT when it logged `[LIVE] stream dropped` at the end of the file:
+
+  ```bash
+  .venv/bin/python -m detection.new_bullet_holes rtsp://127.0.0.1:8554/replay \
+      --mm-per-px 0.1763 --device mps --timing live_mps.csv
+  ```
+- **Where it joined:** file frame 25 (1.0 s), the first keyframe after it connected. Its `[BOARD]` line (ECC
+  0.9403, the same canvas and bands) and every Bullet Hole's first-seen time match a file run of the copy
+  from 1.0 s at the same stride. Frames were not hashed. Frame numbers below are the live run's indices, and
+  file frame = index + 25.
+- **The file run** is step 4's `process` call on the copy, with `device="mps"` and a timing path. It is
+  the reference below.
+
+### Frame Wait, with and without frame 17
+
+| Frame Wait | n | P50 | P95 | P99 | max |
+|---|---:|---:|---:|---:|---:|
+| every row past the baseline, as the run printed it | 61 | 0.1 | 176.5 | 458.9 | 827.8 |
+| without frame 17, decoded while the reader blocked for the baseline | 60 | 0.1 | 161.5 | 213.0 | 213.0 |
+
+Neither row includes FFmpeg's buffering, the reader's lag, MediaMTX, the network or the camera (above).
+
+**One row carries the baseline's blocking: frame 17, the first past the baseline, 827.8 ms.** Until the
+baseline is built, the reader blocks instead of dropping (#83), so frame 17 waited out the baseline's last
+Looks. It is the run's max and, with n 61, sets its P99. The reader was holding one more such frame, 34. Frame 51
+replaced it while frame 17 was looked at, so it was dropped late and has no row.
+
+**Did Frame Wait stay within about one Look Time?**
+
+- **Every row: no, because of frame 17, measured against the run's typical Look.** Its 827.8 ms is 5.3× the
+  run's Look Time P50 (155.5). Against the run's longest Look Time (806.4), it is 21.4 ms (3%) over, so about one
+  slow Look. The Looks it waited out were the baseline's, which are not timed.
+- **Without frame 17: yes.** The longest wait was 213.0 ms. No frame waited more than 0.43 of the Look before
+  it, the Look it arrived during. 40 of the 60 waited under 1 ms, because the loop was already waiting for
+  them. Of the other 20, all but frame 85, the first after the reader caught up, followed a Look longer than
+  the 680 ms stride interval. Slow Looks in a row add up: frames 272, 289 and 306 waited 102.6, 160.7 and
+  213.0 ms. A due frame is dropped late only when a newer one arrives first, which needs a wait of 680 ms. No
+  frame came near that.
+
+### The same run's Look Time and Inference Time
+
+n/P50/P95/P99/max, live and in the file run, both on MPS.
+
+| Figure | n | live P50 | P95 | P99 | max | file run n | P50 | P95 | P99 | max |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Inference Time | 61 | 85.0 | 100.3 | 106.5 | 107.0 | 66 | 76.5 | 83.9 | 86.3 | 87.2 |
+| Look Time | 61 | 155.5 | 776.0 | 791.5 | 806.4 | 66 | 142.0 | 756.1 | 784.6 | 801.3 |
+| a detector call | 244 | 21.2 | 32.9 | 38.0 | 46.9 | 264 | 16.3 | 31.8 | 35.2 | 38.2 |
+| registration | 61 | 65.1 | 675.7 | 694.6 | 697.0 | 66 | 61.7 | 674.2 | 703.5 | 726.8 |
+
+None of the 61 Looks was Lost, and each made 4 detector calls. Every other stage stayed under 2.1 ms. Inference Time
+ran 11% higher live at P50, and why is not established.
+
+**These Looks are not comparable with the CamB tables above.** Their baseline is file frame 25 of the H.264
+copy, not frame 0 of the recording. On the copy from 1.0 s, 22 of 66 Looks took longer than 680 ms, against 61–64%
+of CamB's from 0 s. Look Time's P50 is 142.0, against 691.2 for the stride-17 run from 0 s. The two runs differ in the
+baseline frame, the re-encode and the device (MPS against CPU), and the device did not move registration in #131.
+Which of the other two moves it is not established.
+
+### Frames dropped late, frames lost upstream, and MediaMTX
+
+From the run's `[LIVE]` report:
+
+- **66 frames looked at:** the 5 of the baseline and 61 Looks past it. The file run made 71. The 5 fewer are the 3
+  late drops, the 1 due frame lost upstream, and the 1 due frame (1122) held when the run was stopped.
+- **3 due frames dropped late:** 34, 51 and 68. All three fell during frame 17's Look, while the reader caught up on
+  the stream the baseline had held it behind. None was dropped after that, though 20 of the 61 Looks overran the
+  680 ms stride interval: each overrun delayed the next frame's Look instead. That answers part of the question
+  in "The stride" above. Only a third of the Looks overran here, against 61–64% of CamB's from 0 s, so this replay
+  does not show a run where most of them do.
+- **Frames lost upstream:** 1 gap of 16 frames (0.6 s of stream, frames 93–108 by the timestamps), 1 of them due (102).
+  No frame was untimed. The timestamps stepped at 25.00 fps, and frames were received at 24.64 fps over 45.0 s.
+- **A frame that may have decoded corrupt:** `[h264] error while decoding MB 81 56` printed right after the
+  baseline. Frames after a gap decode corrupt up to the next keyframe (#117), and frame 119 (file frame 144)
+  falls in that window. It was not hashed, so whether it decoded corrupt is not established.
+- **Drops:** 1, the end of the file.
+
+**MediaMTX's log for the run** has one discard: `reader is too slow, discarding 471 frames` at 14:05:54, for the
+pipeline's session, in the second the baseline was built in (it finished at 14:05:54.8; MediaMTX logs whole seconds). MediaMTX counts RTP packets here,
+and at #117's 27–28 packets a frame, 471 is about 17 frames, against the 16 the run reported lost. This is #117's
+start-up loss, counted and not prevented (HANDOVER).
+
+### Bullet Holes against #85's replay
+
+| Bullet Hole | #85's run 1, 2026-10-07 | this live run | the copy's file run from 1.0 s |
+|---|---|---|---|
+| #1 | Miss | Miss | Miss |
+| #2 | 7 at +21.0/+65.7 mm | 7 at +21.2/+66.0 | 7 at +21.2/+66.0 |
+| #3 | 8 at −26.7/−35.8 | 8 at −29.1/−36.5 | 8 at −27.9/−36.3 |
+| #4 | 8 at −21.5/−35.7 | 8 at −22.8/−35.8 | 8 at −22.8/−36.0 |
+| #5 | Miss | Miss | Miss |
+
+All three runs report the same 5 Bullet Holes, with the same Targets and scores. Live, each Bullet Hole's first-seen time
+matches the file run's to 0.01 s: 1.68, 29.56, 30.92, 30.92 and 31.60 s. **The positions differ by up to 2.4 mm.** The
+differences are reported here, not tuned away.
+
+- **From #85, up to 1.3 mm comes from the copy.** #85's merge commit, `4a41652`, run on today's copy gives today's file
+  run exactly. It was run on CPU, as #85's run was, and today's file run is identical on CPU and MPS. So neither the
+  code since #85 nor the device moved them. The copy was made with the same command, but this host's ffmpeg is 9.0.2_1,
+  installed 2026-10-11, after #85's replay. Whether that is why the copy differs is not established.
+- **The live path moves #3 by 1.2 mm more.** #85's and #117's replays matched their file runs within 0.1 mm, and this
+  one does not. #3 is 1.2 mm off in X. #4 is seen in 18 Looks live, to 43.84 s, and in only 12 in the file run, to
+  38.40 s. The live run did not look at 34, 51, 68 or 102, and 119 may have decoded corrupt. 7 of the 61 frames both
+  runs looked at took over 600 ms to register in one run and under 220 ms in the other. Frame 136, for example, took
+  31 ms live and 673 ms in the file run, and four of the 7 come after frame 400. #131 found every frame in the same mode
+  across its runs, which all looked at the same frames. Each Look registers against the baseline frame (#50), but its
+  search is seeded from the Look before's fit (`board.track_view`), so the earlier frames looked at may move later fits.
+  That is not established. Frame 119 may have decoded corrupt, and 136 is seeded from it. No frame was hashed. For
+  Target 1's Group, live MPI is −10.2/−2.1 mm, CEP 39.2 mm and Extreme Spread 114.2 mm. The file run gives −9.8/−2.1,
+  38.7 and 113.5.
 
 ## Re-measuring on another host
 
@@ -223,7 +355,8 @@ is for #132's replay to measure, as Frame Wait and frames dropped late.
    sleep. It is not proof on its own: set a run aside only when a sleep is logged inside it, as both runs
    set aside on this page were.
 6. Record the commit, date, host, chip, OS and library versions, as in "Setup" above.
-7. Frame Wait needs a live stream: #132 and [`live_camera.md`](live_camera.md).
+7. Frame Wait needs a live stream: replay as in "Frame Wait on a live replay" above, by
+   [`live_camera.md`](live_camera.md)'s procedure. Read the CSV skipping every `#` line: a live one has two.
 
 ## Open questions for IAI
 
@@ -244,6 +377,6 @@ is for #132's replay to measure, as Frame Wait and frames dropped late.
 
 ## Not here
 
-- **Frame Wait** on a live replay: #132.
+- **End-to-end latency** (SOW 2.3.4): FFmpeg's buffering, the reader's lag, MediaMTX, the network and the camera.
 - **Any optimisation**, any changed threshold, or MPS as the default device (#128, out of scope). The
   default device is unchanged.

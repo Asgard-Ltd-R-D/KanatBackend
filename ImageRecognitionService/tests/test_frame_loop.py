@@ -1236,10 +1236,14 @@ def test_an_output_naming_an_input_under_any_name_is_caught(tmp_path):
     os.link(model, tmp_path / "hard.pt")
     inputs = (str(clip), str(model), "rtsp://mtx:8554/cam")
     for alias in ("clip.mp4", "linked.mp4", "hard.pt"):
-        assert nbh._names_an_input(str(tmp_path / alias), inputs)
+        assert nbh._same_file(str(tmp_path / alias), inputs)
     (tmp_path / "old.csv").write_text("an earlier run's")
     for fresh in ("timing.csv", "old.csv"):
-        assert not nbh._names_an_input(str(tmp_path / fresh), inputs)
+        assert not nbh._same_file(str(tmp_path / fresh), inputs)
+    # Two outputs on one path neither has created yet, however it is spelled
+    # (#158 review): the video would overwrite the CSV.
+    assert nbh._same_file(str(tmp_path / "timing.csv"), [str(tmp_path / "." / "timing.csv")])
+    assert not nbh._same_file(str(tmp_path / "timing.csv"), [str(tmp_path / "out.mp4")])
 
 
 def test_a_run_without_timing_writes_and_prints_none(monkeypatch, tmp_path, capsys):

@@ -487,12 +487,14 @@ def _open_stream(url):
                              cv2.CAP_PROP_READ_TIMEOUT_MSEC, STREAM_TIMEOUT_MS])
 
 
-def _names_an_input(out, inputs):
-    """Is the output path `out` one of `inputs`, under any name: a symlink or
-    a hard link too? Writing it would destroy that input: `--timing` truncates
-    its file before the recording is read (#129). A stream's URL is no file."""
-    return os.path.exists(out) and any(
-        os.path.exists(i) and os.path.samefile(out, i) for i in inputs)
+def _same_file(path, others):
+    """Is `path` one of `others` under any name: a symlink or a hard link too,
+    or a file neither has created yet? Writing an output there would destroy
+    that input or other output: `--timing` truncates its file before the
+    recording is read (#129). A stream's URL is no file."""
+    return any(os.path.realpath(path) == os.path.realpath(o) or
+               os.path.exists(path) and os.path.exists(o) and os.path.samefile(path, o)
+               for o in others)
 
 
 def _clock(t):
@@ -2059,8 +2061,10 @@ if __name__ == "__main__":
         p.error("a recording needs --start and --end")
     # Before the gate, so a refused run spends no sealed recording either.
     for flag, out in (("--timing", a.timing), ("--out", a.out)):
-        if out and _names_an_input(out, (a.video, a.model, a.template)):
+        if out and _same_file(out, (a.video, a.model, a.template)):
             p.error(f"{flag} names an input of the run, which writing it would overwrite")
+    if a.timing and a.out and _same_file(a.timing, [a.out]):
+        p.error("--timing and --out name the same file: the video would overwrite the CSV")
 
     # Split membership before anything is opened: a sealed recording is refused
     # unless this run says it is the final one. See manifest.py and ADR-0005.

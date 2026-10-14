@@ -568,7 +568,7 @@ class _Watching(_FakeModel):
             else [types.SimpleNamespace(boxes=[])]
 
 
-def _live_run(monkeypatch, model, changed=lambda index: True, stride=5):
+def _live_run(monkeypatch, model, changed=lambda index: True, stride=5, timing=None):
     """`process` on an endless stream, a frame every 2 ms; change detection
     sees the mark on the frames `changed(index)` says."""
     loop = _live(monkeypatch, _FakeStream(interval=0.002))
@@ -576,7 +576,8 @@ def _live_run(monkeypatch, model, changed=lambda index: True, stride=5):
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions",
                         lambda a, b: np.full((64, 64), changed(int(b[0, 0, 0])), bool))
-    return nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=stride)
+    return nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=stride,
+                       timing=timing)
 
 
 @pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
@@ -1225,6 +1226,37 @@ def test_the_timing_summary_is_labelled_wip_and_names_where_it_ran(monkeypatch, 
         line = next(l for l in lines[1:] if figure in l)
         assert re.search(r"n \d+ +P50 [\d.]+ +P95 [\d.]+ +P99 [\d.]+ +max [\d.]+ ms", line)
     assert not any("40 ms" in l or "pass" in l for l in lines)
+    assert not any("Frame Wait" in l for l in lines)   # a recording measures none (#130)
+
+
+class _SlowWatching(_Watching):
+    """`_Watching`, taking 30 ms a look: late for the due frames between."""
+    def predict(self, *args, **kwargs):
+        time.sleep(0.03)
+        return super().predict(*args, **kwargs)
+
+
+def test_a_live_timed_run_gives_each_look_past_the_baseline_its_frame_wait(
+        monkeypatch, tmp_path, capsys):
+    """From the reader having the due frame decoded to the loop taking it.
+    A due frame the loop was too late for is no Look and has no row; the live
+    report still counts it. Wherever Frame Wait shows, it says what it
+    excludes: end-to-end latency (#130)."""
+    path = tmp_path / "timing.csv"
+    _live_run(monkeypatch, _SlowWatching(lambda i: False, stop_at=80), timing=str(path))
+    out = capsys.readouterr().out
+    _, looked = _lines_after_looks(out)
+    dropped = int(re.search(r"\[LIVE\] \d+ frame\(s\) looked at; (\d+) due", out)[1])
+    with open(path, newline="") as f:
+        notes = [f.readline(), f.readline()]
+        rows = list(csv.DictReader(f))
+    assert dropped > 0 and [int(r["frame"]) for r in rows] == looked[nbh.BASELINE_FRAMES:]
+    assert rows and all(float(r["frame_wait_ms"]) >= 0 for r in rows)
+    line = next(l for l in out.splitlines() if l.startswith("[TIMING] Frame Wait"))
+    assert re.search(r"n \d+ +P50 [\d.]+ +P95 [\d.]+ +P99 [\d.]+ +max [\d.]+ ms", line)
+    for shown in (line, notes[1]):
+        assert all(e in shown for e in ("FFmpeg", "behind the stream", "MediaMTX", "network",
+                                        "camera", "SOW 2.3.4"))
 
 
 def test_an_output_naming_an_input_under_any_name_is_caught(tmp_path):

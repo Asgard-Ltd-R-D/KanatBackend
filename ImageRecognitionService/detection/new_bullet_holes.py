@@ -525,9 +525,12 @@ def _clock(t):
 
 class Frame(NamedTuple):
     """A due frame, as a source's `read` hands it over: its index, counted
-    from frame 0, and its image."""
+    from frame 0, and its image. `wait` is a Stream's Frame Wait (CONTEXT.md),
+    in seconds from the reader having it decoded to the loop taking it, and
+    None on a Recording, which has none (#130)."""
     index: int
     image: np.ndarray
+    wait: float | None = None
 
 
 class BulletHoleConfirmed(NamedTuple):
@@ -642,7 +645,11 @@ class Stream:
     baseline is consecutive frames however slow its looks, and lateness and
     catching up start once it is built.
 
-    `read` hands back the frame held as a `Frame`, or None once the run is
+    `read` hands back the frame held as a `Frame` with its Frame Wait (#130),
+    about a Look Time at most since a newer frame replaces it. Not so the
+    first past the baseline, or two: decoded while the reader still blocked
+    for the baseline, they waited out its last Looks, and a short run's max
+    and P99 are theirs. Or None once the run is
     stopped, the thread has ended, or `n_frames` have passed: one past the
     last frame looked at, `passed`. A frame's index is its position in the
     stream: by its timestamp (`cv2.CAP_PROP_POS_MSEC`), at `LIVE_FPS` from
@@ -764,6 +771,7 @@ class Stream:
                 if _looked_at(offered if offered < baseline_frames else placed,
                               stride, baseline_frames):
                     ok, frame = self.cap.retrieve()
+                    decoded = time.perf_counter()   # Frame Wait starts here (#130)
                     if not ok:
                         # Not a frame received: a drop stays open until one
                         # is in hand, so a reopened stream that grabs but
@@ -786,7 +794,7 @@ class Stream:
                         self._ready.wait(0.1)
                     if self._held is not None:
                         self.late += 1
-                    self._held = (index, frame, at)
+                    self._held = (index, frame, at, decoded)
                     self._ready.notify()
         finally:
             with self._ready:
@@ -912,10 +920,11 @@ class Stream:
                 self._ready.wait(0.1)
             if self.stopped or self._held is None:
                 return None
-            (self.index, frame, self.times[self.index]), self._held = self._held, None
+            (self.index, frame, self.times[self.index], decoded), self._held = self._held, None
+            wait = time.perf_counter() - decoded
             self._taken += 1
             self._ready.notify()   # the reader may be waiting for its turn
-            return Frame(self.index, frame)
+            return Frame(self.index, frame, wait)
 
     @property
     def passed(self):
@@ -1257,15 +1266,16 @@ class _LookClock:
     `start` once its frame is in hand; each `lap` closes a stage, timed from
     the boundary before it, so a Look's stages add up to its Look Time.
     `calls` is each detector call's wall clock: what the loop waited for,
-    letterboxing, post-processing and, on MPS, the GPU sync included. Only the
-    Look in hand is kept: rows are `process`'s, and only with `timing`."""
+    letterboxing, post-processing and, on MPS, the GPU sync included. `wait`
+    is its frame's Frame Wait, None on a Recording (#130). Only the Look in
+    hand is kept: rows are `process`'s, and only with `timing`."""
 
     def __init__(self):
         self.start()
 
-    def start(self):
+    def start(self, wait=None):
         self.began = self._at = time.perf_counter()
-        self.stages, self.calls = {}, []
+        self.stages, self.calls, self.wait = {}, [], wait
 
     def lap(self, stage):
         now = time.perf_counter()
@@ -1442,8 +1452,8 @@ class RegisteredFrames:
         self.source.start(n_frames, stride, baseline_frames)
         try:
             first = [Frame(0, self._base)] if n_frames > 0 else []
-            for index, frame in itertools.chain(first, iter(self.source.read, None)):
-                self.clock.start()   # the frame is in hand: read, decoded, handed over
+            for index, frame, wait in itertools.chain(first, iter(self.source.read, None)):
+                self.clock.start(wait)   # the frame is in hand: read, decoded, handed over
                 current = self.view if index == 0 else self.registration.register(frame, index)
                 self.clock.lap("registration")
                 if current is None:
@@ -1745,9 +1755,17 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
 # they add up to its Look Time.
 STAGES = ("registration", "rectification", "detector", "baseline strip", "change filter",
           "persistence")
-# A row's times, in ms, each its own CSV column. Frame Wait is live only, and
-# empty until a live run measures it.
+# A row's times, in ms, each its own CSV column. Frame Wait is live only: a
+# Recording's is empty (#130).
 TIMES = ("look", "inference", *STAGES, "frame wait")
+
+# Said wherever Frame Wait shows (#130), so a small one is never read as a
+# small delay from the camera.
+FRAME_WAIT_EXCLUDES = ("Frame Wait is only the wait inside the system, from the reader "
+                       "having the frame decoded to the loop taking it. It excludes "
+                       "FFmpeg's buffering, the reader's lag behind the stream, MediaMTX, "
+                       "the network and the camera: end-to-end latency (SOW 2.3.4), not "
+                       "measured here")
 
 
 class _Timed(NamedTuple):
@@ -1765,6 +1783,7 @@ def _timing_row(look, clock):
     detector ran, so the Looks it is taken over are those that did."""
     ms = {"look": clock.elapsed * 1000,
           "inference": sum(clock.calls) * 1000 if look.registered else None,
+          "frame wait": None if clock.wait is None else clock.wait * 1000,
           **{s: clock.stages[s] * 1000 for s in clock.stages}}
     return _Timed(look.index, look.registered, ms, [c * 1000 for c in clock.calls])
 
@@ -1785,15 +1804,21 @@ def _report_timing(path, rows, model):
     header does, so a copy passed on alone says where it was measured.
 
     The device is the one the detector resolved to, whatever was asked for:
-    ultralytics' predictor's, which it sets up on the first call."""
+    ultralytics' predictor's, which it sets up on the first call.
+
+    A live run's Frame Wait gets a line of its own, and the file a second
+    comment, each saying what it excludes (#130)."""
     device = getattr(getattr(model, "predictor", None), "device", None) or "no device: no call"
     header = (f"WIP, not an acceptance result: {len(rows)} Look(s) past the baseline on "
               f"{platform.node()} ({platform.platform()}), the detector on {device}. Compared "
               f"with no bar: what SOW 2.3.1 measures is not agreed (#128)")
+    waits = [r.ms["frame wait"] for r in rows if r.ms["frame wait"] is not None]
     cell = lambda v: "" if v is None else f"{v:.3f}"
     width = max((len(r.calls) for r in rows), default=0)
     with open(path, "w", newline="") as f:
         f.write(f"# {header}\n")
+        if waits:
+            f.write(f"# {FRAME_WAIT_EXCLUDES}\n")
         out = csv.writer(f)
         out.writerow(["frame", "registered", *(f"{t.replace(' ', '_')}_ms" for t in TIMES),
                       *(f"call_{i}_ms" for i in range(1, width + 1))])
@@ -1807,6 +1832,8 @@ def _report_timing(path, rows, model):
               f"{_percentiles([r.ms[key] for r in rows if r.ms.get(key) is not None])}")
     print(f"[TIMING] {'a detector call':<16} "
           f"{_percentiles([c for r in rows for c in r.calls])}")
+    if waits:
+        print(f"[TIMING] {'Frame Wait':<16} {_percentiles(waits)}. {FRAME_WAIT_EXCLUDES}")
     print(f"[TIMING] -> {path}")
 
 
@@ -2061,7 +2088,8 @@ if __name__ == "__main__":
     p.add_argument("--timing", metavar="PATH",
                    help="time each Look past the baseline: a CSV row a Look here, in ms, "
                         "and n/P50/P95/P99/max printed at the end. A WIP measurement on "
-                        "this host, never an acceptance result (#129)")
+                        "this host, never an acceptance result (#129). On a stream, "
+                        f"each Look's Frame Wait too (#130). {FRAME_WAIT_EXCLUDES}")
     p.add_argument("--device",
                    help="the detector's device for every call: cpu, mps, or a CUDA index "
                         "(#129). Without it, its library's default: CUDA if available, "

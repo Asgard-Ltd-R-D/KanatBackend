@@ -681,7 +681,13 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # prints n/P50/P95/P99/max at the end. The CSV's first line, a # comment, names the
 # host and device. WIP on whatever host ran it, compared with no bar: the SOW 2.3.1
 # 40 ms is undefined (#128). --device cpu|mps|0 hands the detector that device;
-# without it, ultralytics' default (CUDA, else CPU).
+# without it, ultralytics' default (CUDA, else CPU). On a stream each row also
+# has its Frame Wait (#130), decoded to taken, with a Frame Wait summary line and
+# a second # line in the CSV: both say it excludes FFmpeg's buffering, the
+# reader's lag, MediaMTX, the network and the camera (end-to-end, SOW 2.3.4).
+# The first row or two past the baseline waited out the baseline's last Looks
+# (the reader blocks until it is built), about two Look Times where the rest stay
+# under one: on a short replay they are the max and P99. Kept, not dropped.
 .venv/bin/python -m detection.new_bullet_holes CLIP.mkv --start 13 --end 25 --timing t.csv --device mps
 
 # Live (#83): an rtsp:// URL in place of the clip, normally a VideoService path. No

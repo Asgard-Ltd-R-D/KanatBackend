@@ -1227,6 +1227,21 @@ def test_the_timing_summary_is_labelled_wip_and_names_where_it_ran(monkeypatch, 
     assert not any("40 ms" in l or "pass" in l for l in lines)
 
 
+def test_an_output_naming_an_input_under_any_name_is_caught(tmp_path):
+    """`--timing` truncates its path before the recording is read (#158 review)."""
+    clip, model = tmp_path / "clip.mp4", tmp_path / "model.pt"
+    clip.write_bytes(b"a recording")
+    model.write_bytes(b"weights")
+    (tmp_path / "linked.mp4").symlink_to(clip)
+    os.link(model, tmp_path / "hard.pt")
+    inputs = (str(clip), str(model), "rtsp://mtx:8554/cam")
+    for alias in ("clip.mp4", "linked.mp4", "hard.pt"):
+        assert nbh._names_an_input(str(tmp_path / alias), inputs)
+    (tmp_path / "old.csv").write_text("an earlier run's")
+    for fresh in ("timing.csv", "old.csv"):
+        assert not nbh._names_an_input(str(tmp_path / fresh), inputs)
+
+
 def test_a_run_without_timing_writes_and_prints_none(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: _loop())

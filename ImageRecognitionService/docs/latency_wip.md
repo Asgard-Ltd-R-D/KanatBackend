@@ -171,7 +171,7 @@ registration at 36.52 s (frame 913), took 667 ms at that frame on CPU. Its cause
 **Two CamB CPU runs set aside.** The Mac idle-slept through the first two CPU runs of CamB, which
 macOS's power log records at 11:08:20–11:12:16 and 11:42:45–11:47:50. The Look clock (`time.perf_counter`)
 does not count a sleep, but wall time does. Each run's wall time exceeded its summed Look Time by 239 s and 309 s,
-where the quoted runs show 4–8 s for model load, opening the recording and reading and decoding every frame. Each also had its only multi-second Look at the moment of the sleep:
+where the quoted runs show 4–8 s for everything outside the timed Looks (step 5 of "Re-measuring on another host"). Each also had its only multi-second Look at the moment of the sleep:
 registration 4.65 s at frame 689 and 4.24 s at frame 56. The CPU figures above come from a third run under `caffeinate -i`,
 with no sleep logged, 6.5 s outside its Looks and a worst registration of 911 ms. The two set-aside runs agree
 with it up to P99: Look Time P50 703.0 and 702.4 against 706.1, P99 825.1 and 784.8 against 794.3. All three
@@ -215,8 +215,10 @@ is for #132's replay to measure, as Frame Wait and frames dropped late.
 4. Diff each recording's two outputs, leaving out the `[TIMING]` lines and the Board-space build line. A
    difference in Bullet Holes is reported, never tuned away.
 5. Time each run, for example with `/usr/bin/time`, and compare its wall time with the sum of the
-   CSV's `look_ms`. The gap is model load, opening the recording and reading and decoding every frame, none
-   of which the Look clock counts. It was 4–8 s here, but slower storage or decoding makes it larger. So a
+   CSV's `look_ms`. The gap is all the run's work outside the timed Looks past the baseline. That includes
+   hashing the whole recording at the gate, loading the model, building Board space, the baseline's Looks,
+   reading and decoding every frame, and the end-of-run report. It was 4–8 s here. A larger recording,
+   slower storage or decoding, or costlier baseline frames all make it larger. So a
    gap well above the host's other runs is a reason to check its power log (`pmset -g log` on macOS) for a
    sleep. It is not proof on its own: set a run aside only when a sleep is logged inside it, as both runs
    set aside on this page were.

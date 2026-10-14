@@ -1246,6 +1246,23 @@ def test_an_output_naming_an_input_under_any_name_is_caught(tmp_path):
     assert not nbh._same_file(str(tmp_path / "timing.csv"), [str(tmp_path / "out.mp4")])
 
 
+def test_two_outputs_are_one_file_exactly_when_the_filesystem_says_so(tmp_path):
+    """`Run.mp4` and `run.mp4` are one file on a case-insensitive filesystem,
+    macOS's default, and two on Linux's (#158 review). Nothing is left behind,
+    and an earlier run's CSV is not truncated."""
+    (tmp_path / "probe").touch()
+    insensitive = (tmp_path / "PROBE").exists()
+    (tmp_path / "probe").unlink()
+    run, other = str(tmp_path / "Run.mp4"), str(tmp_path / "run.mp4")
+    assert nbh._outputs_clash(run, other) == insensitive
+    assert nbh._outputs_clash(run, str(tmp_path / "." / "Run.mp4"))
+    assert not nbh._outputs_clash(run, str(tmp_path / "out.mp4"))
+    assert os.listdir(tmp_path) == []
+    (tmp_path / "old.csv").write_text("an earlier run's")
+    assert not nbh._outputs_clash(str(tmp_path / "old.csv"), str(tmp_path / "out.mp4"))
+    assert (tmp_path / "old.csv").read_text() == "an earlier run's"
+
+
 def test_a_run_without_timing_writes_and_prints_none(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: _loop())

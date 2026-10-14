@@ -497,6 +497,20 @@ def _same_file(path, others):
                for o in others)
 
 
+def _outputs_clash(timing, out):
+    """Do `--timing` and `--out` name one file? Asked of the filesystem, so
+    `timing` is created for the question if it is missing, and removed again:
+    only the filesystem knows whether two names neither has created yet, such
+    as `Run.mp4` and `run.mp4` on macOS, are one file (#158 review)."""
+    made = not os.path.exists(timing)
+    open(timing, "a").close()   # never truncates: it may be an earlier run's
+    try:
+        return _same_file(timing, [out])
+    finally:
+        if made:
+            os.remove(timing)
+
+
 def _clock(t):
     """A wall-clock time as a live run prints it."""
     return datetime.fromtimestamp(t).strftime("%H:%M:%S.%f")[:-4]
@@ -2063,7 +2077,7 @@ if __name__ == "__main__":
     for flag, out in (("--timing", a.timing), ("--out", a.out)):
         if out and _same_file(out, (a.video, a.model, a.template)):
             p.error(f"{flag} names an input of the run, which writing it would overwrite")
-    if a.timing and a.out and _same_file(a.timing, [a.out]):
+    if a.timing and a.out and _outputs_clash(a.timing, a.out):
         p.error("--timing and --out name the same file: the video would overwrite the CSV")
 
     # Split membership before anything is opened: a sealed recording is refused

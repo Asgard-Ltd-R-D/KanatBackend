@@ -1261,6 +1261,12 @@ def test_two_outputs_are_one_file_exactly_when_the_filesystem_says_so(tmp_path):
     (tmp_path / "old.csv").write_text("an earlier run's")
     assert not nbh._outputs_clash(str(tmp_path / "old.csv"), str(tmp_path / "out.mp4"))
     assert (tmp_path / "old.csv").read_text() == "an earlier run's"
+    # A dangling symlink is left dangling, its target never made (#158 review).
+    link, target = tmp_path / "link.csv", tmp_path / "target.csv"
+    link.symlink_to(target)
+    assert not nbh._outputs_clash(str(link), str(tmp_path / "out.mp4"))
+    assert nbh._outputs_clash(str(link), str(target))
+    assert link.is_symlink() and not target.exists()
 
 
 def test_a_run_without_timing_writes_and_prints_none(monkeypatch, tmp_path, capsys):

@@ -501,14 +501,17 @@ def _outputs_clash(timing, out):
     """Do `--timing` and `--out` name one file? Asked of the filesystem, so
     `timing` is created for the question if it is missing, and removed again:
     only the filesystem knows whether two names neither has created yet, such
-    as `Run.mp4` and `run.mp4` on macOS, are one file (#158 review)."""
-    made = not os.path.exists(timing)
-    open(timing, "a").close()   # never truncates: it may be an earlier run's
+    as `Run.mp4` and `run.mp4` on macOS, are one file (#158 review). Probed
+    where a write lands, past any symlink, a dangling one too, so only the
+    file it made is removed and the link is left as it was."""
+    target = os.path.realpath(timing)
+    made = not os.path.exists(target)
+    open(target, "a").close()   # never truncates: it may be an earlier run's
     try:
-        return _same_file(timing, [out])
+        return _same_file(target, [out])
     finally:
         if made:
-            os.remove(timing)
+            os.remove(target)
 
 
 def _clock(t):

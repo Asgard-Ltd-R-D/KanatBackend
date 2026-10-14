@@ -676,6 +676,14 @@ as a module (`python -m detection.new_bullet_holes`), not as a file path.
 # spent truth recordings (#82): no stride loses a true Bullet Hole. Live default
 # 17 at 25 fps, LIVE_STRIDE; table and timings in ADR-0007.
 
+# --timing PATH (#129) writes a CSV row, in ms, for each Look past the baseline:
+# Look Time, Inference Time, each stage and each detector call (CONTEXT.md), and
+# prints n/P50/P95/P99/max at the end. The CSV's first line, a # comment, names the
+# host and device. WIP on whatever host ran it, compared with no bar: the SOW 2.3.1
+# 40 ms is undefined (#128). --device cpu|mps|0 hands the detector that device;
+# without it, ultralytics' default (CUDA, else CPU).
+.venv/bin/python -m detection.new_bullet_holes CLIP.mkv --start 13 --end 25 --timing t.csv --device mps
+
 # Live (#83): an rtsp:// URL in place of the clip, normally a VideoService path. No
 # --start/--end/--out/--merge-displaced and no manifest gate; stride LIVE_STRIDE unless given.
 # Prints [NEW] per Bullet Hole once confirmed; Ctrl-C/SIGTERM prints the report.

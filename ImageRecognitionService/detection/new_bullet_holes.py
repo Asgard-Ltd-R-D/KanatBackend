@@ -32,9 +32,11 @@ from __future__ import annotations
 import argparse
 import bisect
 import contextlib
+import csv
 import itertools
 import math
 import os
+import platform
 import signal
 import threading
 import time
@@ -355,8 +357,10 @@ def _count_in(sorted_indices, lo, hi):
     return bisect.bisect_left(sorted_indices, hi) - bisect.bisect_left(sorted_indices, lo)
 
 
-def _detect(model, image, imgsz, conf):
-    """Detections as (cx, cy, w, h) in canvas px.
+def _detect(model, image, imgsz, conf, device=None):
+    """Detections as (cx, cy, w, h) in canvas px, on `device` when one is
+    given. Without one the detector is handed none, so its library's default
+    stands: CUDA if available, else CPU, never MPS (#129).
 
     The size is not decoration: `same_bullet_hole` needs the mark's own
     footprint, because a radius fixed in template px can come out smaller than
@@ -366,9 +370,9 @@ def _detect(model, image, imgsz, conf):
     and a Target box read as a mark is a false positive nothing downstream
     can tell apart.
     """
-    boxes = []
+    boxes, handed = [], {} if device is None else {"device": device}
     for b in model.predict(image, imgsz=imgsz, conf=conf, verbose=False,
-                           classes=_bullet_hole_classes(model))[0].boxes:
+                           classes=_bullet_hole_classes(model), **handed)[0].boxes:
         x0, y0, x1, y1 = (float(v) for v in b.xyxy[0])
         boxes.append([(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0])
     return np.array(boxes, np.float32).reshape(-1, 4)
@@ -481,6 +485,37 @@ def _open_stream(url):
     return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
                             [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
                              cv2.CAP_PROP_READ_TIMEOUT_MSEC, STREAM_TIMEOUT_MS])
+
+
+def _same_file(path, others):
+    """Is `path` one of `others` under any name: a symlink or a hard link too,
+    or a file neither has created yet? Writing an output there would destroy
+    that input or other output: `--timing` truncates its file before the
+    recording is read (#129). A stream's URL is no file."""
+    return any(os.path.realpath(path) == os.path.realpath(o) or
+               os.path.exists(path) and os.path.exists(o) and os.path.samefile(path, o)
+               for o in others)
+
+
+def _outputs_clash(timing, out):
+    """Do `--timing` and `--out` name one file? Asked of the filesystem, so
+    `timing` is created for the question if it is missing, and removed again:
+    only the filesystem knows whether two names neither has created yet, such
+    as `Run.mp4` and `run.mp4` on macOS, are one file (#158 review). Probed
+    where a write lands, past any symlink, a dangling one too, so only the
+    file it made is removed and the link is left as it was."""
+    target = os.path.realpath(timing)
+    made = False
+    # Created only if absent, in one step: a file already there, an earlier
+    # run's or one another process just made, is neither truncated nor removed.
+    with contextlib.suppress(FileExistsError):
+        open(target, "x").close()
+        made = True
+    try:
+        return _same_file(target, [out])
+    finally:
+        if made:
+            os.remove(target)
 
 
 def _clock(t):
@@ -1217,6 +1252,31 @@ class Look(NamedTuple):
         return self.view is not None
 
 
+class _LookClock:
+    """One Look's clock (#129, CONTEXT.md: Look Time, Inference Time).
+    `start` once its frame is in hand; each `lap` closes a stage, timed from
+    the boundary before it, so a Look's stages add up to its Look Time.
+    `calls` is each detector call's wall clock: what the loop waited for,
+    letterboxing, post-processing and, on MPS, the GPU sync included. Only the
+    Look in hand is kept: rows are `process`'s, and only with `timing`."""
+
+    def __init__(self):
+        self.start()
+
+    def start(self):
+        self.began = self._at = time.perf_counter()
+        self.stages, self.calls = {}, []
+
+    def lap(self, stage):
+        now = time.perf_counter()
+        self.stages[stage], self._at = now - self._at, now
+
+    @property
+    def elapsed(self):
+        """From `start` to the last lap."""
+        return self._at - self.began
+
+
 class RegisteredFrames:
     """One iteration over a Recording or a Stream: read, register, rectify,
     detect.
@@ -1242,12 +1302,17 @@ class RegisteredFrames:
     `wall_clock` its time as posted to the WebApp (#152), `unseen` the due
     frames a Stream missed, and `live` which it is.
 
+    `device`, when given, is handed to the detector on every call (#129).
+    `clock` times the Look in hand: `looks` starts it and laps registration,
+    rectification and the detector; `process` laps the rest.
+
     Built by `open`. The constructor takes its collaborators directly so the
     iteration can be exercised without a video file or a model.
     """
 
-    def __init__(self, source, model, view, base, imgsz, conf, registration):
-        self.source, self.model = source, model
+    def __init__(self, source, model, view, base, imgsz, conf, registration, device=None):
+        self.source, self.model, self.device = source, model, device
+        self.clock = _LookClock()
         self.view = view   # Board space, fixed by the frame at `--start`
         self.imgsz, self.conf = imgsz, conf
         self.fps, self.live, self.when = source.fps, source.live, source.when
@@ -1261,7 +1326,7 @@ class RegisteredFrames:
 
     @classmethod
     def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
-             template_path=board.DEFAULT_TEMPLATE, ref_time=None):
+             template_path=board.DEFAULT_TEMPLATE, ref_time=None, device=None):
         from ultralytics import YOLO  # imported lazily: pulls in torch
         model = YOLO(model_path)
         _bullet_hole_classes(model)   # refuse a wrong checkpoint before any video work
@@ -1340,7 +1405,7 @@ class RegisteredFrames:
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
         registration = Registration(view, (base.shape[1], base.shape[0]), template_mask,
                                     source.when)
-        loop = cls(source, model, view, base, imgsz, conf, registration)
+        loop = cls(source, model, view, base, imgsz, conf, registration, device)
         loop.net_scale = scale
         return loop
 
@@ -1378,34 +1443,42 @@ class RegisteredFrames:
         try:
             first = [Frame(0, self._base)] if n_frames > 0 else []
             for index, frame in itertools.chain(first, iter(self.source.read, None)):
+                self.clock.start()   # the frame is in hand: read, decoded, handed over
                 current = self.view if index == 0 else self.registration.register(frame, index)
+                self.clock.lap("registration")
                 if current is None:
                     self.lost += 1
                     yield Look(index, None, None, None)
                     continue
                 canvas = current.rectify(frame)
-                if not self.bands:
-                    yield Look(index, current, canvas,
-                               _detect(self.model, canvas, self.imgsz, self.conf), canvas)
-                    continue
-                inner = current.rectify_inner(frame)
-                yield Look(index, current, canvas, self._detect_grown(current, canvas, inner),
-                           inner)
+                inner = current.rectify_inner(frame) if self.bands else canvas
+                self.clock.lap("rectification")
+                detections = (self._detect_grown(current, canvas, inner) if self.bands
+                              else self._call_detector(canvas, self.imgsz))
+                self.clock.lap("detector")
+                yield Look(index, current, canvas, detections, inner)
         finally:
             try:
                 self.registration.report()   # before the source's, the live report
             finally:
                 self.source.close()   # whatever the report did: it restores the signals
 
+    def _call_detector(self, image, imgsz):
+        """`_detect` on the loop's device, timed as one detector call (#129)."""
+        began = time.perf_counter()
+        found = _detect(self.model, image, imgsz, self.conf, self.device)
+        self.clock.calls.append(time.perf_counter() - began)
+        return found
+
     def _detect_grown(self, view, canvas, inner):
         """Inference A on the margin canvas, B on each band, merged in canvas px."""
-        a = _detect(self.model, inner, self.imgsz, self.conf).astype(np.float64)
+        a = self._call_detector(inner, self.imgsz).astype(np.float64)
         a[:, :2] += view.inner.offset
         hits = []
         for band in self.bands:
             x0, y0, x1, y1 = band.crop
-            found = _detect(self.model, canvas[y0:y1, x0:x1], _band_imgsz(band.crop),
-                            self.conf).astype(np.float64)
+            found = self._call_detector(canvas[y0:y1, x0:x1],
+                                        _band_imgsz(band.crop)).astype(np.float64)
             found[:, :2] += (x0, y0)
             hits.append((band, found))
         return merge_band_detections(a, hits, view.match_radius)
@@ -1504,7 +1577,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
             out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, ref_time=None):
+            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, ref_time=None,
+            timing=None, device=None):
     """`video` is a recording's path, or a stream's rtsp:// URL (#83), which
     has no `start` or `end`: it runs until stopped, at `LIVE_STRIDE` unless
     `stride` says otherwise, and prints each Bullet Hole as it is confirmed.
@@ -1513,8 +1587,16 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     `BulletHoleConfirmed` (#155): a Stream's as it is announced, a
     Recording's after the end-of-run report has measured it, in first-frame
     order. Without it nothing is published. `ref_time` is a Recording's wall
-    clock at its t=0 (`Recording`)."""
-    loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time)
+    clock at its t=0 (`Recording`).
+
+    `timing`, a path, times each Look past the baseline (#129): a CSV row a
+    Look there, and n/P50/P95/P99/max printed at the end (`_report_timing`).
+    Without it nothing is written, printed or kept. `device` is the
+    detector's for every call (`_detect`)."""
+    if timing:
+        open(timing, "w").close()   # a path it cannot write fails now, not after the run
+    loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time,
+                                 device)
     fps, match_px = loop.fps, loop.view.match_radius
     n_frames = math.inf if loop.live else loop.frames_until(end)
     stride = stride or (LIVE_STRIDE if loop.live else 1)
@@ -1562,6 +1644,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     # hour (#83). Keep only the persistence window and running totals if a
     # Range ever runs for days.
     corroboration, residuals_per_frame = [], []
+    timed = [] if timing else None   # a row a Look, kept only when asked for (#129)
     persistence = Persistence(match_px, unseen=loop.source.unseen)
     announce = (_Announcer(loop, persistence, corroboration, require_change_evidence,
                            mm_per_tpl_px, publish) if loop.live else None)
@@ -1572,6 +1655,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                 views[look.index] = look.view
             pts, matched = strip_pre_existing(look.detections, baseline, match_px)
             residuals_per_frame.append(matched)
+            loop.clock.lap("baseline strip")
             if len(pts):
                 evidence = change_evidence(
                     pts[:, :2], look.view,
@@ -1579,7 +1663,14 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
                     lambda: board.changed_regions(baseline_canvas, look.canvas), match_px / 2)
                 corroborating = [p for p, seen in zip(pts, evidence) if seen]
                 corroboration += corroborating
+            loop.clock.lap("change filter")
         persisted_now = persistence.add(look.index, pts)  # empty is meaningful: looked, saw nothing
+        # The Look's clock stops once Persistence has taken it: the announcer's
+        # Change Evidence check and print fall outside it, as a recording's
+        # end-of-run check does (#129).
+        loop.clock.lap("persistence")
+        if timed is not None:
+            timed.append(_timing_row(look, loop.clock))
         if announce:
             announce(persisted_now, corroborating)
 
@@ -1639,6 +1730,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
           f"at; the frames between are gaps, counting neither for nor against a "
           f"Bullet Hole (#81)")
     _report(new, loop.when, loop.last, mm_per_tpl_px, persistence.looked_at)
+    if timed is not None:
+        _report_timing(timing, timed, loop.model)
     if publish and not loop.live:
         for hole in new:   # in first-frame order, as `Persistence.end` gave them
             publish(_confirmed(hole, loop.last, loop.wall_clock))
@@ -1646,6 +1739,75 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         _render(video, start, processed, fps, views, baseline, new, out_video,
                 stride, baseline_frames)
     return Run(new, baseline, residuals)
+
+
+# A Look's stages, in order (#129). Each runs from the boundary before it, so
+# they add up to its Look Time.
+STAGES = ("registration", "rectification", "detector", "baseline strip", "change filter",
+          "persistence")
+# A row's times, in ms, each its own CSV column. Frame Wait is live only, and
+# empty until a live run measures it.
+TIMES = ("look", "inference", *STAGES, "frame wait")
+
+
+class _Timed(NamedTuple):
+    """A Look's timing (#129): `ms` its times by `TIMES`, `calls` each
+    detector call's, all in ms."""
+    index: int
+    registered: bool
+    ms: dict
+    calls: list
+
+
+def _timing_row(look, clock):
+    """A Look's `_Timed`. A stage the Look never reached is None, as is a
+    Lost Look's Inference Time: past registration it reached nothing, and no
+    detector ran, so the Looks it is taken over are those that did."""
+    ms = {"look": clock.elapsed * 1000,
+          "inference": sum(clock.calls) * 1000 if look.registered else None,
+          **{s: clock.stages[s] * 1000 for s in clock.stages}}
+    return _Timed(look.index, look.registered, ms, [c * 1000 for c in clock.calls])
+
+
+def _percentiles(ms):
+    """n beside every percentile, so a P99 of a few Looks is read as one."""
+    if not ms:
+        return "n 0"
+    p50, p95, p99 = np.percentile(ms, (50, 95, 99))
+    return f"n {len(ms)}  P50 {p50:.1f}  P95 {p95:.1f}  P99 {p99:.1f}  max {max(ms):.1f} ms"
+
+
+def _report_timing(path, rows, model):
+    """`rows`, `_Timed` each, written to `path` as CSV and their n, P50, P95,
+    P99 and max printed (#129). A measurement on whatever host ran it,
+    compared with nothing: what the 40 ms of SOW 2.3.1 measures is not agreed
+    (#128). The file's first line, a `#` comment, says so as the printed
+    header does, so a copy passed on alone says where it was measured.
+
+    The device is the one the detector resolved to, whatever was asked for:
+    ultralytics' predictor's, which it sets up on the first call."""
+    device = getattr(getattr(model, "predictor", None), "device", None) or "no device: no call"
+    header = (f"WIP, not an acceptance result: {len(rows)} Look(s) past the baseline on "
+              f"{platform.node()} ({platform.platform()}), the detector on {device}. Compared "
+              f"with no bar: what SOW 2.3.1 measures is not agreed (#128)")
+    cell = lambda v: "" if v is None else f"{v:.3f}"
+    width = max((len(r.calls) for r in rows), default=0)
+    with open(path, "w", newline="") as f:
+        f.write(f"# {header}\n")
+        out = csv.writer(f)
+        out.writerow(["frame", "registered", *(f"{t.replace(' ', '_')}_ms" for t in TIMES),
+                      *(f"call_{i}_ms" for i in range(1, width + 1))])
+        for r in rows:
+            out.writerow([r.index, int(r.registered), *(cell(r.ms.get(t)) for t in TIMES),
+                          *map(cell, r.calls), *[""] * (width - len(r.calls))])
+    print(f"[TIMING] {header}")
+    figures = {"Inference Time": "inference", "Look Time": "look", **{s: s for s in STAGES}}
+    for name, key in figures.items():
+        print(f"[TIMING] {name:<16} "
+              f"{_percentiles([r.ms[key] for r in rows if r.ms.get(key) is not None])}")
+    print(f"[TIMING] {'a detector call':<16} "
+          f"{_percentiles([c for r in rows for c in r.calls])}")
+    print(f"[TIMING] -> {path}")
 
 
 class _Announcer:
@@ -1896,6 +2058,14 @@ if __name__ == "__main__":
                         "(e.g. 2026-10-11T10:30:00Z). Derives first_seen_at timestamps. "
                         "Defaults to when the recording is opened. A recording's "
                         "only: a stream's times are its own timestamps")
+    p.add_argument("--timing", metavar="PATH",
+                   help="time each Look past the baseline: a CSV row a Look here, in ms, "
+                        "and n/P50/P95/P99/max printed at the end. A WIP measurement on "
+                        "this host, never an acceptance result (#129)")
+    p.add_argument("--device",
+                   help="the detector's device for every call: cpu, mps, or a CUDA index "
+                        "(#129). Without it, its library's default: CUDA if available, "
+                        "else CPU, never MPS")
     manifest.add_flag(p)
     a = p.parse_args()
     if _is_stream(a.video):
@@ -1910,6 +2080,12 @@ if __name__ == "__main__":
                     "Holes already announced (ADR-0004)")
     elif a.start is None or a.end is None:
         p.error("a recording needs --start and --end")
+    # Before the gate, so a refused run spends no sealed recording either.
+    for flag, out in (("--timing", a.timing), ("--out", a.out)):
+        if out and _same_file(out, (a.video, a.model, a.template)):
+            p.error(f"{flag} names an input of the run, which writing it would overwrite")
+    if a.timing and a.out and _outputs_clash(a.timing, a.out):
+        p.error("--timing and --out name the same file: the video would overwrite the CSV")
 
     # Split membership before anything is opened: a sealed recording is refused
     # unless this run says it is the final one. See manifest.py and ADR-0005.
@@ -1936,4 +2112,4 @@ if __name__ == "__main__":
         process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
                 a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,
                 a.stride, publish=publisher.publish if publisher else None,
-                ref_time=ref_time)
+                ref_time=ref_time, timing=a.timing, device=a.device)

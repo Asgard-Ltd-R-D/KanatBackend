@@ -888,28 +888,31 @@ def parse_move(text):
     return move
 
 
-def moved_from(at, start, fps):
+def first_moved_index(at, start, fps):
     """The first frame index a move at `at` seconds reaches: the first whose
     printed time (`Recording.when`) is `at` or later. Rounded first, so 20.2 s
     from 20 s at 25 fps is frame 5 and not, by float error, frame 6."""
     return math.ceil(round((at - start) * fps, 6))
 
 
-def refuse_move(move, start, end, baseline_frames, fps, final_run):
-    """Refuse a move that would spend a Sealed Recording, move nothing, or
-    move the baseline it is measured against."""
+def refuse_move(move, start, end, fps, baseline_frames, stride, final_run):
+    """Refuse a move that would spend a Sealed Recording, move the baseline it
+    is measured against, or move no frame the run looks at. Counted in frames
+    as `process` reads them: a move between two frames lands on the next."""
     if final_run:
         raise SystemExit("[REFUSED] --move on a final run: a Sealed Recording's one "
                          "measurement is never spent on a synthetic case (ADR-0005)")
-    if move.at >= end:
-        raise SystemExit(f"[REFUSED] --move at {move.at}s is at or after --end {end}s: "
-                         f"it would move nothing, and a case that moves nothing must "
-                         f"not read as a pass")
     baseline_frames = max(1, baseline_frames)   # as `process` counts them
-    if moved_from(move.at, start, fps) < baseline_frames:
-        raise SystemExit(f"[REFUSED] --move at {move.at}s is inside the baseline "
-                         f"window, {baseline_frames} frame(s) from --start: the first "
-                         f"time a move may reach is {start + baseline_frames / fps:.2f}s")
+    first = first_moved_index(move.at, start, fps)
+    if first < baseline_frames:
+        raise SystemExit(f"[REFUSED] --move at {move.at}s is inside the baseline window: "
+                         f"a move must come after its last frame, "
+                         f"t={start + (baseline_frames - 1) / fps:.2f}s")
+    looked = -(-first // stride) * stride   # the first Look moved, past the baseline
+    if looked >= int((end - start) * fps):   # as `RegisteredFrames.frames_until` counts
+        raise SystemExit(f"[REFUSED] --move at {move.at}s moves no frame the run looks "
+                         f"at before --end {end}s (stride {stride}): a case that moves "
+                         f"nothing must not read as a pass")
 
 
 def move_matrix(move, base):
@@ -925,23 +928,23 @@ def move_matrix(move, base):
 
 
 class MovedRecording:
-    """A Recording with the Board moved (#164): every frame from index `at` to
+    """A Recording with the Board moved (#164): every frame from index `first` to
     the end of the run warped by the 2x3 `matrix`, the vacated border filled by
-    replicating the edge. Frame 0 and every frame before `at` are handed over
+    replicating the edge. Frame 0 and every frame before `first` are handed over
     untouched, so Board space, the baseline and the truth placement are the
     unmoved run's. Everything else the frame-source interface answers (#148) is
     the Recording's: indices, gaps under a stride, times. Warped as each frame
     is read, nothing re-encoded, so an integer shift is pixel-exact."""
 
-    def __init__(self, recording, at, matrix):
-        self._recording, self._at, self._matrix = recording, at, matrix
+    def __init__(self, recording, first, matrix):
+        self._recording, self._first, self._matrix = recording, first, matrix
 
     def __getattr__(self, name):
         return getattr(self._recording, name)
 
     def read(self):
         frame = self._recording.read()
-        if frame is None or frame.index < self._at:
+        if frame is None or frame.index < self._first:
             return frame
         height, width = frame.image.shape[:2]
         return frame._replace(image=cv2.warpAffine(
@@ -952,13 +955,13 @@ def open_moved(move, video, start, ref_time=None):
     """The source opener for a run with `move` (`nbh.process`'s `opener`):
     the Recording at `start`, moved, and its frame 0, untouched."""
     recording, base = nbh.Recording.open(video, start, ref_time)
-    at = moved_from(move.at, start, recording.fps)
+    first = first_moved_index(move.at, start, recording.fps)
     turn = (f", then turned {move.deg:g} degrees about the baseline frame's Targets' "
             f"centroid" if move.deg else "")
-    print(f"[MOVE] from t={recording.when(at)} (frame {at}) to the end of the run, every "
+    print(f"[MOVE] from t={recording.when(first)} (frame {first}) to the end of the run, every "
           f"frame shifted {move.dx:g}, {move.dy:g} frame px{turn}; the vacated border "
           f"replicates the edge. Synthetic (#164)")
-    return MovedRecording(recording, at, move_matrix(move, base)), base
+    return MovedRecording(recording, first, move_matrix(move, base)), base
 
 
 def score_recording(video, start, end, truth_labels, truth_image=None,
@@ -994,7 +997,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     # Before the gate too, which logs a final run's Recording as spent. One the
     # manifest does not know is the gate's to refuse.
     if move is not None and peek is not None:
-        refuse_move(move, start, end, baseline_frames, peek["fps"], final_run)
+        refuse_move(move, start, end, peek["fps"], baseline_frames, stride or 1, final_run)
 
     # Split membership before anything is opened: a sealed recording is refused
     # unless this run says it is the final one. See manifest.py and ADR-0005.
@@ -1118,8 +1121,8 @@ if __name__ == "__main__":
                         "the Recording to the end of the run, every frame shifted DX, "
                         "DY frame px, then turned DEG degrees counter-clockwise about "
                         "the baseline frame's Targets' centroid; the vacated border "
-                        "replicates the edge. Refused inside the baseline window, at "
-                        "or after --end, and on a final run")
+                        "replicates the edge. Refused inside the baseline window, past "
+                        "the last frame looked at, and on a final run")
     manifest.add_flag(p)
     a = p.parse_args()
     score_recording(a.video, a.start, a.end, a.truth_labels, a.truth_image,

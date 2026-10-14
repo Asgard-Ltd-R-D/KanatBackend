@@ -7,11 +7,13 @@ import pytest
 
 from detection import board
 from detection import new_bullet_holes as nbh
+from tools import manifest
 from tools.evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
                       RAW_NAMES, SOURCE_NAME, UNKNOWN, Move,
                       attribute, in_the_baseline, load_labels, match, off_canvas,
                       open_moved, parse_move, placement_note, position_errors,
-                      pre_existing_labels, refuse_move, register_photograph, score)
+                      pre_existing_labels, refuse_move, register_photograph, score,
+                      score_recording)
 
 
 def test_greedy_matching_is_one_to_one():
@@ -259,7 +261,7 @@ def test_a_missed_truth_beyond_tolerance_of_every_baseline_mark_is_not_named():
 # --- moving the Board (#164) -------------------------------------------------
 
 
-class _Clip:
+class _Capture:
     """A capture over `frames`, read as `Recording.open` reads a file: frame 0
     at `--start`, then each in turn, `grab` passing one undecoded."""
     def __init__(self, frames):
@@ -293,7 +295,7 @@ def _noise(n, size=(40, 60)):
 def _moved(monkeypatch, frames, move, stride=1, baseline_frames=1):
     """Frame 0 and the frames handed over after it, with `frames` read from
     `--start` 10 s at 25 fps and the Board moved by `move`."""
-    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _Clip(frames))
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _Capture(frames))
     source, base = open_moved(move, "clip.mkv", 10.0)
     source.start(len(frames), stride, baseline_frames)
     return base, list(iter(source.read, None))
@@ -365,25 +367,40 @@ def test_a_move_that_does_not_parse_is_refused(text):
         parse_move(text)
 
 
+def _refuse(at, stride=1, final_run=False):
+    """`refuse_move` on a run from 20 s to 46 s at 25 fps, 5 baseline frames."""
+    refuse_move(Move(at, 80, 40), 20, 46, 25.0, 5, stride, final_run)
+
+
 def test_a_move_inside_the_baseline_window_is_refused():
-    """At 25 fps the 5 baseline frames from 20 s run to 20.16 s, so 20.20 s
-    is the first a move may reach."""
+    """At 25 fps the 5 baseline frames from 20 s are 20.00-20.16 s. A move
+    after the last, even between two frames, first reaches 20.20 s."""
     with pytest.raises(SystemExit, match="baseline"):
-        refuse_move(Move(20.16, 80, 40), 20, 46, 5, 25.0, final_run=False)
-    refuse_move(Move(20.2, 80, 40), 20, 46, 5, 25.0, final_run=False)
+        _refuse(20.16)
+    _refuse(20.17)
 
 
-def test_a_move_at_or_after_the_end_is_refused():
-    """It would move nothing, and a case that moves nothing must not pass."""
-    with pytest.raises(SystemExit, match="--end"):
-        refuse_move(Move(46, 80, 40), 20, 46, 5, 25.0, final_run=False)
-    refuse_move(Move(45.96, 80, 40), 20, 46, 5, 25.0, final_run=False)
+def test_a_move_reaching_no_frame_the_run_looks_at_is_refused():
+    """At or after `--end`, or past the last frame looked at: it would move
+    nothing, and a case that moves nothing must not pass. At 25 fps the run's
+    last frame is 45.96 s, and at stride 17 its last Look 45.84 s."""
+    for at, stride in [(46, 1), (45.97, 1), (45.85, 17)]:
+        with pytest.raises(SystemExit, match="--end"):
+            _refuse(at, stride)
+    _refuse(45.96)
+    _refuse(45.84, stride=17)
 
 
-def test_a_move_on_a_final_run_is_refused():
-    """A Sealed Recording's one measurement is never spent on a synthetic case."""
+def test_a_move_on_a_final_run_is_refused_before_the_gate(monkeypatch):
+    """A Sealed Recording's one measurement is never spent on a synthetic
+    case: refused after the gate, it would already be logged as spent."""
+    monkeypatch.setattr(board, "print_scales", lambda: {"setup": 0.18})
+    monkeypatch.setattr(manifest, "content_hash", lambda video: "sha")
+    monkeypatch.setattr(manifest, "load",
+                        lambda: {"sha": {"capture_setup": "setup", "fps": 25.0}})
+    monkeypatch.setattr(manifest, "gate", lambda *args: pytest.fail("gated"))
     with pytest.raises(SystemExit, match="ADR-0005"):
-        refuse_move(Move(25, 80, 40), 20, 46, 5, 25.0, final_run=True)
+        score_recording("clip.mkv", 20, 46, "truth", move=Move(25, 80, 40), final_run=True)
 
 
 # --- placing photograph truth through the baseline frame -------------------

@@ -890,18 +890,26 @@ def parse_move(text):
 
 def first_moved_index(at, start, fps):
     """The first frame index a move at `at` seconds reaches: the first whose
-    printed time (`Recording.when`) is `at` or later. Rounded first, so 20.2 s
-    from 20 s at 25 fps is frame 5 and not, by float error, frame 6."""
-    return math.ceil(round((at - start) * fps, 6))
+    printed time (`Recording.when`, two decimals) is `at` or later, so a time
+    read off the log moves the frame printed with it. Stepped up from 0.01 s
+    before `at`, below any frame the rounding can print at `at`."""
+    index = max(0, math.floor((at - start - 0.01) * fps))
+    while float(f"{start + index / fps:.2f}") < at:
+        index += 1
+    return index
 
 
 def refuse_move(move, start, end, fps, baseline_frames, stride, final_run):
-    """Refuse a move that would spend a Sealed Recording, move the baseline it
-    is measured against, or move no frame the run looks at. Counted in frames
-    as `process` reads them: a move between two frames lands on the next."""
+    """Refuse a move that would spend a Sealed Recording, move no pixel, move
+    the baseline it is measured against, or move no frame the run looks at.
+    Counted in frames as `process` reads them: a move between two frames lands
+    on the next."""
     if final_run:
         raise SystemExit("[REFUSED] --move on a final run: a Sealed Recording's one "
                          "measurement is never spent on a synthetic case (ADR-0005)")
+    if not move.dx and not move.dy and not move.deg % 360:
+        raise SystemExit(f"[REFUSED] --move {move.dx:g},{move.dy:g},{move.deg:g} moves "
+                         f"no pixel: a case that moves nothing must not read as a pass")
     baseline_frames = max(1, baseline_frames)   # as `process` counts them
     first = first_moved_index(move.at, start, fps)
     if first < baseline_frames:
@@ -1121,8 +1129,9 @@ if __name__ == "__main__":
                         "the Recording to the end of the run, every frame shifted DX, "
                         "DY frame px, then turned DEG degrees counter-clockwise about "
                         "the baseline frame's Targets' centroid; the vacated border "
-                        "replicates the edge. Refused inside the baseline window, past "
-                        "the last frame looked at, and on a final run")
+                        "replicates the edge. AT is on the log's two-decimal clock. "
+                        "Refused when it moves nothing, inside the baseline window, "
+                        "past the last frame looked at, and on a final run")
     manifest.add_flag(p)
     a = p.parse_args()
     score_recording(a.video, a.start, a.end, a.truth_labels, a.truth_image,

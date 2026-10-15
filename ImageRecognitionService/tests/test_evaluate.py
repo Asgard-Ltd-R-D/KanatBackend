@@ -9,7 +9,7 @@ from detection import board
 from detection import new_bullet_holes as nbh
 from tools import manifest
 from tools.evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
-                      RAW_NAMES, SOURCE_NAME, UNKNOWN, Move,
+                      RAW_NAMES, SOURCE_NAME, UNKNOWN, Move, first_moved_index,
                       attribute, in_the_baseline, load_labels, match, off_canvas,
                       open_moved, parse_move, placement_note, position_errors,
                       pre_existing_labels, refuse_move, register_photograph, score,
@@ -389,6 +389,24 @@ def test_a_move_reaching_no_frame_the_run_looks_at_is_refused():
             _refuse(at, stride)
     _refuse(45.96)
     _refuse(45.84, stride=17)
+
+
+@pytest.mark.parametrize("move", [Move(25, 0, 0), Move(25, 0, 0, 360), Move(25, 0, 0, -720)])
+def test_a_move_that_moves_no_pixel_is_refused(move):
+    """It would score the unmoved run, and a case that moves nothing must not pass."""
+    with pytest.raises(SystemExit, match="no pixel"):
+        refuse_move(move, 20, 46, 25.0, 5, 1, False)
+    refuse_move(move._replace(deg=1), 20, 46, 25.0, 5, 1, False)
+
+
+def test_a_move_starts_on_the_frame_the_log_prints_at_its_time():
+    """At 30.004 fps from 20 s, frame 2 is 20.0667 s and printed 20.07 s: a move
+    at 20.07 s, read off the log, starts there and not one Look late."""
+    assert first_moved_index(20.07, 20, 30.004) == 2
+    assert first_moved_index(20.071, 20, 30.004) == 3
+    assert first_moved_index(20.2, 20, 25.0) == 5   # not frame 6 by float error
+    assert first_moved_index(20.17, 20, 25.0) == 5
+    assert first_moved_index(20, 20, 25.0) == 0
 
 
 def test_a_move_on_a_final_run_is_refused_before_the_gate(monkeypatch):

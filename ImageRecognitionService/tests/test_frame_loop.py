@@ -110,6 +110,8 @@ class _Scripted:
     `registers(index)` says so, as a `_FakeView` marked with the frame's
     pixels. `calls` records `(index, pixels)` for each frame handed to it,
     and `reported` how often the end-of-run report was asked for."""
+    reanchors = 0
+
     def __init__(self, view, registers):
         self.last, self.registers, self.calls, self.reported = view, registers, [], 0
 
@@ -1285,7 +1287,7 @@ def test_a_grown_canvas_times_each_detector_call(monkeypatch, tmp_path):
     Inference Time is their sum (#46)."""
     view = _GrownView()
     registration = types.SimpleNamespace(last=view, register=lambda frame, index: view,
-                                         report=lambda: None)
+                                         report=lambda: None, reanchors=0)
     loop = _loop(view=view, registration=registration)
     loop.model = _RecordingModel()
     rows = _timed(monkeypatch, tmp_path, loop)

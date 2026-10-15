@@ -1044,7 +1044,7 @@ class Registration:
         self._space = self.last = view
         self._template_mask, self._when = template_mask, when
         self._lost_run = 0      # consecutive Lost Looks, up to this one
-        self._reanchors = self._reanchored = 0   # attempts, and those that registered (#80)
+        self.reanchors = self._reanchored = 0   # attempts, and those that registered (#80)
         # Converged fits after the first, those checked, and the verdicts (#110).
         self._converged = self._checked = self._gross = self._moderate = 0
         # How far past each canvas edge any registered frame's view has run,
@@ -1078,8 +1078,8 @@ class Registration:
     def report(self):
         """The end-of-run lines."""
         self._report_reach()
-        print(f"[REGISTRATION] {self._reanchors} re-anchor attempt(s): {self._reanchored} "
-              f"registered, {self._reanchors - self._reanchored} failed (#80)")
+        print(f"[REGISTRATION] {self.reanchors} re-anchor attempt(s): {self._reanchored} "
+              f"registered, {self.reanchors - self._reanchored} failed (#80)")
         self._report_checks()
 
     def _grossly_wrong(self, frame, view, correlation):
@@ -1121,7 +1121,7 @@ class Registration:
                   f"Fits converging at or above {floor} were not checked (#110)")
 
     def _report_reanchor(self, index, registered):
-        self._reanchors += 1
+        self.reanchors += 1
         self._reanchored += registered
         result = ("registered" if registered else
                   f"failed, the frame stays lost; next attempt after "
@@ -1510,11 +1510,15 @@ class Run(NamedTuple):
     mark is registration displacement, not a detector error, and nothing
     downstream can tell those apart without the marks that were already on the
     Board. Board space, all three — `baseline` is directly comparable with
-    `holes[i]["pos"]`.
+    `holes[i]["pos"]`. `lost` and `reanchors` are the Lost Looks past the
+    baseline and the re-anchor attempts, as the end-of-run lines count them:
+    what tells a Board move never noticed from one lost and recovered (#165).
     """
     holes: list
     baseline: np.ndarray   # pre-existing marks, (cx, cy, w, h)
     residual: np.ndarray   # distance from a suppressed detection to its mark
+    lost: int
+    reanchors: int
 
 
 # The stride a live 25 fps stream is looked at with (ADR-0007, #82): the
@@ -1758,7 +1762,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
     if out_video:
         _render(video, start, processed, fps, views, baseline, new, out_video,
                 stride, baseline_frames)
-    return Run(new, baseline, residuals)
+    return Run(new, baseline, residuals, len(persistence.lost), loop.registration.reanchors)
 
 
 # A Look's stages, in order (#129). Each runs from the boundary before it, so

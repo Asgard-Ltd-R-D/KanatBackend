@@ -1,0 +1,96 @@
+"""Checks for the Board-move measurement's verdicts (#165). No model, no video."""
+import math
+
+import pytest
+
+from tools import manifest
+from tools.board_move import compare, refuse_sealed, two_acts
+from tools.evaluate import DETECTOR, DISPLACEMENT, UNKNOWN
+
+
+def _score(rows=(), times=(), false_positives=(), in_baseline=(), lost=0, reanchors=0):
+    """A score result as `evaluate.score_recording` returns it, four truths;
+    `rows` as `(found #, truth #, dX, dY)` mm."""
+    return {"rows": [(i, j, "Target 1", dx, dy, math.hypot(dx, dy)) for i, j, dx, dy in rows],
+            "times": list(times), "false_positives": list(false_positives),
+            "in_baseline": list(in_baseline), "lost": lost, "reanchors": reanchors,
+            "truths": 4}
+
+
+# Found #1 is truth #2 at 27 s, #2 a false positive on a Baseline Mark, #3
+# truth #4 at 33 s. Truths #1 and #3 are missed.
+CONTROL = _score(rows=[(1, 2, 0.5, -0.5), (3, 4, 1.0, 1.0)], times=[27.0, 30.0, 33.0],
+                 false_positives=[(2, (100.0, 200.0), DISPLACEMENT, 12.0)])
+
+
+def test_a_case_with_its_controls_hits_and_false_positives_passes():
+    """The control's false positive 11 template px away is the same one, and a
+    truth only the case found is reported, not judged."""
+    case = _score(rows=[(1, 2, 0.8, -0.1), (2, 1, 0.0, 0.0), (4, 4, 1.0, 1.0)],
+                  times=[27.68, 29.0, 31.0, 34.36],
+                  false_positives=[(3, (110.0, 205.0), UNKNOWN, 50.0)], lost=6, reanchors=1)
+    c = compare(CONTROL, case)
+    assert c["passed"] and c["lost"] == [] and c["extra"] == []
+    by_truth = {t["truth"]: t for t in c["truths"]}
+    assert by_truth[1]["control"] is None and by_truth[1]["case"] == (2, 29.0)
+    assert by_truth[3]["control"] is None and by_truth[3]["case"] is None
+    assert by_truth[2]["moved"] == pytest.approx((0.3, 0.4))
+    assert by_truth[2]["delay"] == pytest.approx(0.68)
+    assert by_truth[4]["moved"] == pytest.approx((0.0, 0.0))
+    assert by_truth[4]["delay"] == pytest.approx(1.36)
+
+
+def test_a_true_positive_the_control_found_and_the_case_lost_fails():
+    case = _score(rows=[(1, 2, 0.5, -0.5)], times=[27.0, 30.0],
+                  false_positives=[(2, (100.0, 200.0), DISPLACEMENT, 12.0)])
+    c = compare(CONTROL, case)
+    assert not c["passed"] and c["lost"] == [4] and c["extra"] == []
+    assert next(t for t in c["truths"] if t["truth"] == 4)["case"] is None
+
+
+@pytest.mark.parametrize("cause", [DETECTOR, UNKNOWN, DISPLACEMENT])
+def test_a_false_positive_the_control_lacks_fails_whatever_attribution_calls_it(cause):
+    """A Baseline Mark displaced as far as #92's case reads as the detector:
+    the cause is reported, never a reason to pass."""
+    extra = (3, (300.0, 200.0), cause, 200.0)
+    case = _score(rows=[(1, 2, 0.5, -0.5), (4, 4, 1.0, 1.0)], times=[27.0, 30.0, 31.0, 33.0],
+                  false_positives=[(2, (100.0, 200.0), DISPLACEMENT, 12.0), extra])
+    c = compare(CONTROL, case)
+    assert not c["passed"] and c["lost"] == [] and c["extra"] == [extra]
+
+
+ACT_1 = _score(rows=[(1, 3, 0.2, 0.1)], times=[12.0])
+ACT_2 = _score(rows=[(1, 2, 0.5, -0.5), (3, 4, 1.0, 1.0), (4, 1, 0.0, 0.3)],
+               times=[27.0, 30.0, 33.0, 40.0], in_baseline=[(3, 3)],
+               false_positives=[(2, (100.0, 200.0), DISPLACEMENT, 12.0)])
+
+
+def test_two_acts_that_each_report_their_own_hits_pass():
+    assert all(passed for _, passed in two_acts(ACT_1, ACT_2))
+
+
+def test_an_earlier_acts_bullet_hole_reported_as_new_fails():
+    """Truth #3 back among act 2's new Bullet Holes, not on a P entry."""
+    act_2 = dict(ACT_2, rows=ACT_2["rows"] + [(5, 3, 0.2, 0.1)], times=ACT_2["times"] + [45.0],
+                 in_baseline=[])
+    failed = [what for what, passed in two_acts(ACT_1, act_2) if not passed]
+    assert failed == ["act 2 names truth #3 in the baseline at --start, on a P entry"]
+
+
+def _entry(file, role):
+    return {"file": file, "role": role, "capture_setup": "x", "window": [0, 1]}
+
+
+ENTRIES = {"a": _entry("CamB_1.mkv", "spent"), "b": _entry("CamB_2.mkv", "sealed"),
+           "c": _entry("CamA_3.mkv", "threshold-work")}
+
+
+def test_cases_on_unsealed_recordings_are_let_through():
+    refuse_sealed({"CamB_1.mkv", "CamA_3.mkv"}, ENTRIES)
+
+
+@pytest.mark.parametrize("files", [{"CamB_1.mkv", "CamB_2.mkv"}, {"CamB_1.mkv", "CamA_9.mkv"}])
+def test_a_sealed_or_unallocated_recording_is_refused_before_anything_is_opened(files):
+    """The recordings do not exist here: the refusal must not need them."""
+    with pytest.raises(manifest.ManifestError):
+        refuse_sealed(files, ENTRIES)

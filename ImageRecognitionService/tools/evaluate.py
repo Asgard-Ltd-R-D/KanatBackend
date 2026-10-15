@@ -987,7 +987,19 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     - `unmatched` and `missed`: the detections no truth claimed and the truth
       no detection found;
     - `placement`: the placement-check note as printed;
-    - `entry`: the manifest entry the gate found by content hash.
+    - `entry`: the manifest entry the gate found by content hash;
+
+    and what the Board-move table reads (board_move.py, #165):
+
+    - `truths`: how many truth Bullet Holes there are;
+    - `times`: per found #, in order, the seconds into the Recording it was
+      first seen at;
+    - `false_positives`: per detection no truth claimed, `(found #, (x, y)
+      template px, cause, distance to the nearest Baseline Mark)`, as
+      `attribute` gives them;
+    - `in_baseline`: `(truth #, P #)` per missed truth on a Baseline Mark;
+    - `lost` and `reanchors`: the run's Lost Looks past the baseline and its
+      re-anchor attempts.
     """
     # The print scale before the gate, looked up as the pipeline looks it up but
     # refused where the pipeline runs on without millimetres: refused after the
@@ -1056,7 +1068,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
         print(f"   found #{i + 1} -> truth #{j + 1}   {d:5.0f} template px")
     if result["missed"]:
         print(f"   missed: {', '.join(f'truth #{j + 1}' for j in result['missed'])}")
-    for j, k, d in in_the_baseline(truth, result["missed"], pre_existing, tolerance):
+    in_baseline = in_the_baseline(truth, result["missed"], pre_existing, tolerance)
+    for j, k, d in in_baseline:
         print(f"   truth #{j + 1} in the baseline at --start, P{k + 1}   {d:5.0f} template px")
 
     # SOW 2.3.2 (#123). Internal: this truth shares the footage's print scale
@@ -1100,7 +1113,12 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
         board.MATCH_TPL_PX, "template px"))
 
     return {"rows": rows, "unmatched": result["fp"], "missed": result["fn"],
-            "placement": placement, "entry": entry}
+            "placement": placement, "entry": entry, "truths": len(truth),
+            "times": [start + h["first_frame"] / entry["fps"] for h in run.holes],
+            "false_positives": [(i + 1, tuple(found[i]), cause, distance)
+                                for i, cause, distance in attribution],
+            "in_baseline": [(j + 1, k + 1) for j, k, _ in in_baseline],
+            "lost": run.lost, "reanchors": run.reanchors}
 
 
 if __name__ == "__main__":

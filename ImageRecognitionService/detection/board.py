@@ -380,21 +380,21 @@ def ecc_warp(ref, cur, motion, init, mask=None):
 def board_shift(previous, frame, W, region):
     """The translation, frame px as a 3x3, that takes the Board in `previous`
     onto the Board in `frame` (#171). Read by phase correlation at `ECC_SCALE`,
-    with a Hanning window, over the box round `region` (baseline frame coords)
-    as `W` carries it into `previous`, plus `ECC_CROP_MARGIN`.
+    with a Hanning window, over the bounding box of `region` (baseline frame
+    coords) as `W` carries it into `previous`.
 
-    The box rather than the whole frame: when only the Board moves, the gravel
-    and sky round it stay put and would pull the estimate towards zero.
+    That box and nothing round it: when only the Board moves, the gravel and
+    sky round it stay put and pull the estimate towards zero. On #171's
+    synthetic Board, an `ECC_CROP_MARGIN` of dense gravel round the box held it
+    at zero.
 
     ponytail: no gate on phase correlation's response; the #171 probe found no
     estimate that threw ECC off, and a low-response one read ~zero, leaving
     the seed as it was. Gate on the response if one ever does."""
-    h, w = region.shape
-    moved = cv2.warpPerspective(region, W.astype(np.float32), (w, h), flags=cv2.INTER_NEAREST)
-    x, y, bw, bh = cv2.boundingRect(moved)
-    x0, y0 = max(0, x - ECC_CROP_MARGIN), max(0, y - ECC_CROP_MARGIN)
-    x1, y1 = min(w, x + bw + ECC_CROP_MARGIN), min(h, y + bh + ECC_CROP_MARGIN)
-    small = lambda im: cv2.resize(_gray(im[y0:y1, x0:x1]), None, fx=ECC_SCALE, fy=ECC_SCALE,
+    moved = cv2.warpPerspective(region, W.astype(np.float32), region.shape[::-1],
+                                flags=cv2.INTER_NEAREST)
+    x, y, w, h = cv2.boundingRect(moved)
+    small = lambda im: cv2.resize(_gray(im[y:y + h, x:x + w]), None, fx=ECC_SCALE, fy=ECC_SCALE,
                                   interpolation=cv2.INTER_AREA)
     before, after = small(previous), small(frame)
     (dx, dy), _ = cv2.phaseCorrelate(before, after,

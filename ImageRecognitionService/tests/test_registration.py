@@ -24,13 +24,19 @@ def _registration(monkeypatch, registers, below=lambda i: 0.0,
 
     `reg.calls` records `(how, index, last)` for each fit, where `how` is
     "track" or "reanchor" and `last` is the view it was handed;
+    `reg.previous` records `(index, previous)` for each tracked fit, `previous`
+    the index of the frame it was handed as the one `last` was registered on
+    (#171), frame 0 the baseline frame;
     `reg.silhouetted` the indices whose fit was checked against the silhouette;
     `reg.space` is Board space's own view."""
-    calls, checked = [], []
+    calls, checked, previous = [], [], []
     def fit(how, succeeds):
-        def call(frame, *args):
+        def call(frame, *args, **kwargs):
             index, last = int(frame[0, 0, 0]), args[-1]
             calls.append((how, index, last))
+            if how == "track":
+                handed = kwargs.get("previous")
+                previous.append((index, None if handed is None else int(handed[0, 0, 0])))
             if not succeeds(index):
                 return None, None
             # A re-anchor only ever returns a fit at or above its floor.
@@ -50,16 +56,20 @@ def _registration(monkeypatch, registers, below=lambda i: 0.0,
     monkeypatch.setattr(nbh.board, "track_view", fit("track", registers))
     monkeypatch.setattr(nbh.board, "reanchor_view", fit("reanchor", reanchors))
     space = types.SimpleNamespace(index=0)
-    reg = nbh.Registration(space, (8, 8), np.zeros((8, 8), np.uint8),
+    reg = nbh.Registration(space, _frame(0), np.zeros((8, 8), np.uint8),
                            lambda index: f"{index / 25:.2f}s")
-    reg.calls, reg.silhouetted, reg.space = calls, checked, space
+    reg.calls, reg.silhouetted, reg.space, reg.previous = calls, checked, space, previous
     return reg
 
 
+def _frame(index):
+    """A frame whose pixels are its index, so a fake fit can tell which it was handed."""
+    return np.full((8, 8, 3), index, np.int64)
+
+
 def _register(reg, frames):
-    """Register frames 1..`frames` in order; the view each came back with.
-    A frame's pixels are its index, so a fake fit can tell which it was handed."""
-    return [reg.register(np.full((8, 8, 3), i, np.int64), i) for i in range(1, frames + 1)]
+    """Register frames 1..`frames` in order; the view each came back with."""
+    return [reg.register(_frame(i), i) for i in range(1, frames + 1)]
 
 
 # --- re-anchoring after the Board is lost (#80) ------------------------------
@@ -137,11 +147,29 @@ def test_a_run_that_never_lost_the_board_reports_no_re_anchor(monkeypatch, capsy
 def test_a_fit_that_fails_to_converge_is_lost_and_feeds_the_re_anchor(monkeypatch):
     """ECC raising is no evidence either way, as a Board not found is."""
     reg = _registration(monkeypatch, lambda i: True)
-    def diverges(frame, last):
+    def diverges(frame, last, previous=None):
         raise nbh.cv2.error("ECC did not converge")
     monkeypatch.setattr(nbh.board, "track_view", diverges)
     assert _register(reg, N + 1) == [None] * (N + 1)
     assert _reanchored(reg) == [N + 1]
+
+
+# --- the frame a tracked fit starts from (#171) ------------------------------
+
+
+def test_each_tracked_fit_is_handed_the_frame_its_starting_fit_was_registered_on(monkeypatch):
+    """The Board's shift is read from that frame to this one, so it must be the
+    frame `last` was registered on: the baseline frame first, then the last
+    registered frame. A Lost Look has no fit to start from, so it is skipped."""
+    reg = _registration(monkeypatch, lambda i: i != 2)
+    _register(reg, 4)
+    assert reg.previous == [(1, 0), (2, 1), (3, 1), (4, 3)]
+
+
+def test_after_a_re_anchor_the_next_fit_starts_from_the_re_anchored_frame(monkeypatch):
+    reg = _registration(monkeypatch, lambda i: i > N + 1, reanchors=lambda i: True)
+    _register(reg, N + 2)
+    assert reg.previous[-1] == (N + 2, N + 1)
 
 
 # --- a converged fit that is grossly wrong (#110) ----------------------------

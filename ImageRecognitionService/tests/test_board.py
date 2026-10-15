@@ -350,6 +350,21 @@ def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
     assert second.anchor is anchor and second.targets is reference.targets
 
 
+def test_track_view_follows_a_board_move_past_ecc_s_reach_from_the_last_fit(monkeypatch):
+    """#171: a 40, 20 px jump since the frame the last fit was registered on.
+    Started from that fit, ECC does not converge on this scene; started from it
+    plus the shift phase correlation reads between the two frames, it lands."""
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([_square(100, 100, 50)], None))
+    H0 = np.float32([[1, 0, 20], [0, 1, 10], [0, 0, 1]])
+    anchor = board.Anchor(_scene() / 255, np.full((240, 320), 255, np.uint8), H0)
+    reference = board.BoardView(H0, board._as_matrix(1.0), (300, 300), [], anchor)
+    colour = lambda img: cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+    view, _ = board.track_view(colour(_scene((40.0, 20.0))), reference,
+                               previous=colour(_scene()))
+    assert board._apply(view.H, [[80, 90]])[0] == pytest.approx([140, 120], abs=0.4)
+
+
 def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypatch):
     """#80: the silhouette fit is only the seed; texture ECC against the baseline
     frame moves it onto the Board, and Board space, the Targets and the anchor

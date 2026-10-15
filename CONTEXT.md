@@ -72,6 +72,13 @@ altogether. No evidence either way: unlike a Look that saw nothing, it says
 nothing about what was on the Board.
 _Avoid_: dropped, failed frame, missed frame
 
+**Board Move**:
+A sudden change in where the Board sits in the camera's view that persists
+afterwards: the stand bumped, the Board re-hung, or the camera re-aimed. The
+system cannot tell which moved; only the Board's place in the view changed.
+Distinct from drift, which is gradual, and from sway, which comes back.
+_Avoid_: jump, shift, re-aim (for the general case)
+
 **Baseline Mark**:
 A place on the Board where the baseline Looks showed a Detection, taken to be a
 Bullet Hole already there when the Range started. The system's claim, not

@@ -382,7 +382,8 @@ def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch, capsys):
         0.0, dict.fromkeys(("left", "right", "above", "below"), 0.0)))
     view = _FakeView()
     # `when` is never called: nothing here re-anchors.
-    loop = _loop(view=view, registration=nbh.Registration(view, np.zeros((8, 8, 3), np.uint8), None, str))
+    base = np.zeros((8, 8, 3), np.uint8)
+    loop = _loop(view=view, registration=nbh.Registration(view, base, None, str))
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     nbh.process("clip.mp4", 10.0, 10.4, "model.pt")
     assert "[WARN] Board lost on 2 frame(s);" in capsys.readouterr().out

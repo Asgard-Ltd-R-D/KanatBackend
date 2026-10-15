@@ -1043,8 +1043,9 @@ class Registration:
         # carry the baseline's Targets (#33).
         self._space = self.last = view
         # The frame `last` was registered on: the Board's shift since it seeds
-        # the next fit (#171). One frame, not one a view: `--out` keeps every view.
-        self._previous = base
+        # the next fit (#171). Kept here, one frame at a time, not on each view,
+        # since `--out` keeps every view.
+        self._last_frame = base
         self._template_mask, self._when = template_mask, when
         self._lost_run = 0      # consecutive Lost Looks, up to this one
         self.reanchors = self._reanchored = 0   # attempts, and those that registered (#80)
@@ -1064,7 +1065,7 @@ class Registration:
         try:
             view, correlation = (board.reanchor_view(frame, self._template_mask, self.last)
                                  if due else board.track_view(frame, self.last,
-                                                              previous=self._previous))
+                                                              previous=self._last_frame))
         except cv2.error:
             view = None
         if view is not None and self._grossly_wrong(frame, view, correlation):
@@ -1075,7 +1076,7 @@ class Registration:
             self._lost_run += 1
             return None
         self._lost_run = 0
-        self.last, self._previous = view, frame
+        self.last, self._last_frame = view, frame
         self._track_reach(view, frame)
         return view
 

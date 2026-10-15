@@ -76,8 +76,9 @@ _Avoid_: dropped, failed frame, missed frame
 A sudden change in where the Board sits in the camera's view that persists
 afterwards: the stand bumped, the Board re-hung, or the camera re-aimed. The
 system cannot tell which moved; only the Board's place in the view changed.
-Distinct from drift, which is gradual, and from sway, which comes back.
-_Avoid_: jump, shift, re-aim (for the general case)
+Distinct from the camera creeping, which is gradual, and from the Board swaying
+in wind, which comes back.
+_Avoid_: jump, re-aim (for the general case)
 
 **Baseline Mark**:
 A place on the Board where the baseline Looks showed a Detection, taken to be a

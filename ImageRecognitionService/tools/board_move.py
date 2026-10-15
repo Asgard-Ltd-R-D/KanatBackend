@@ -100,14 +100,21 @@ def two_ranges(range_1, range_2):
     passed)`: Range 1 finds the Hit fired before the cut; Range 2 finds the
     three fired after it and names the first as on the Board at its `--start`.
 
+    Each Range must find exactly its own truths. The truth is the final
+    Board's, so a detection in Range 1 where a later Hit will land scores as a
+    true positive, and so would the earlier Hit coming back in Range 2. False
+    positives are reported, not judged (#162): the unsplit run's own falls on
+    one side of the cut or the other.
+
     That Range 2 numbers from 1 is not checked: a run numbers its own new
     Bullet Holes, and the score numbers them as the report does, so it could
     not fail. The table lists each Range's numbering instead."""
     def truths(score):
         return {j for _, j, *_ in score["rows"]}
 
-    return [("Range 1 reports truth #3 among its new Bullet Holes", 3 in truths(range_1)),
-            ("Range 2 reports truth #2, #4 and #1", {1, 2, 4} <= truths(range_2)),
+    return [("Range 1 reports truth #3, and no other", truths(range_1) == {3}),
+            ("Range 2 reports truth #2, #4 and #1, and no other",
+             truths(range_2) == {1, 2, 4}),
             ("Range 2 names truth #3 in the baseline at --start, on a P entry",
              3 in {j for j, _ in range_2["in_baseline"]})]
 

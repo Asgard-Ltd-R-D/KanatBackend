@@ -74,7 +74,17 @@ def test_an_earlier_ranges_bullet_hole_reported_as_new_fails():
     range_2 = dict(RANGE_2, rows=RANGE_2["rows"] + [(5, 3, 0.2, 0.1)],
                    times=RANGE_2["times"] + [45.0], in_baseline=[])
     failed = [what for what, passed in two_ranges(RANGE_1, range_2) if not passed]
-    assert failed == ["Range 2 names truth #3 in the baseline at --start, on a P entry"]
+    assert failed == ["Range 2 reports truth #2, #4 and #1, and no other",
+                      "Range 2 names truth #3 in the baseline at --start, on a P entry"]
+
+
+def test_a_bullet_hole_reported_before_it_was_fired_fails():
+    """The truth is the final Board's, so a detection in Range 1 where truth #2
+    will be scores as a true positive: it is one only once #2 is fired."""
+    range_1 = dict(RANGE_1, rows=RANGE_1["rows"] + [(2, 2, 0.1, 0.1)],
+                   times=RANGE_1["times"] + [15.0])
+    failed = [what for what, passed in two_ranges(range_1, RANGE_2) if not passed]
+    assert failed == ["Range 1 reports truth #3, and no other"]
 
 
 def _entry(file, role):

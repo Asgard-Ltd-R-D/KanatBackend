@@ -27,12 +27,21 @@ photograph in `board.source.txt`, so `--truth-image` can be left off:
 
 The clip needs a `config/recordings.json` entry; sealed footage needs `--final-run`
 on top of it. See manifest.py.
+
+`--move` moves the Board synthetically (SOW 2.1.6, #164): from 25 s to the end
+of the run, every frame shifted 80, 40 frame px as it is read:
+
+    python -m tools.evaluate CLIP.mkv --start 20 --end 46 --move 25:80,40 \\
+        --truth-labels data/truth/camb-20260915-102250
 """
 import argparse
+import functools
 import glob
 import itertools
+import math
 import os
 import shutil
+from typing import NamedTuple
 
 import cv2
 import networkx
@@ -847,13 +856,131 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance, mm_per_tpl_px,
     return note
 
 
+# --- moving the Board (#164) ------------------------------------------------
+#
+# No Recording holds a Board move, so the scoring tool makes one: every frame
+# from a chosen time to the end of the run warped by one whole-frame transform,
+# as it is read. Tooling, not product: the delivered entrypoint cannot move the
+# Board.
+
+class Move(NamedTuple):
+    """`--move AT:DX,DY[,DEG]`: from `at` seconds into the Recording, on the
+    clock of `--start` and `--end`, every frame shifted `dx`, `dy` frame px,
+    then turned `deg` degrees counter-clockwise, as the frame is viewed, about
+    the centroid of the Targets in the baseline frame."""
+    at: float
+    dx: float
+    dy: float
+    deg: float = 0.0
+
+
+def parse_move(text):
+    """`--move`'s value as a `Move`, for argparse."""
+    try:
+        at, shift = text.split(":")
+        move = Move(float(at), *map(float, shift.split(",")))
+        if not all(map(math.isfinite, move)):
+            raise ValueError
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"a move is AT:DX,DY[,DEG] (seconds into the Recording, frame px, "
+            f"degrees), not {text!r}") from None
+    return move
+
+
+def first_moved_index(at, start, fps):
+    """The first frame index a move at `at` seconds reaches: the first whose
+    printed time (`Recording.when`, two decimals) is `at` or later, so a time
+    read off the log moves the frame printed with it. Stepped up from 0.01 s
+    before `at`, below any frame the rounding can print at `at`."""
+    index = max(0, math.floor((at - start - 0.01) * fps))
+    while float(f"{start + index / fps:.2f}") < at:
+        index += 1
+    return index
+
+
+def refuse_move(move, start, end, fps, baseline_frames, stride, final_run):
+    """Refuse a move that would spend a Sealed Recording, move no pixel, move
+    the baseline it is measured against, or move no frame the run looks at.
+    Counted in frames as `process` reads them: a move between two frames lands
+    on the next."""
+    if final_run:
+        raise SystemExit("[REFUSED] --move on a final run: a Sealed Recording's one "
+                         "measurement is never spent on a synthetic case (ADR-0005)")
+    if not move.dx and not move.dy and not move.deg % 360:
+        raise SystemExit(f"[REFUSED] --move {move.dx:g},{move.dy:g},{move.deg:g} moves "
+                         f"no pixel: a case that moves nothing must not read as a pass")
+    baseline_frames = max(1, baseline_frames)   # as `process` counts them
+    first = first_moved_index(move.at, start, fps)
+    if first < baseline_frames:
+        raise SystemExit(f"[REFUSED] --move at {move.at}s is inside the baseline window: "
+                         f"a move must come after its last frame, "
+                         f"t={start + (baseline_frames - 1) / fps:.2f}s")
+    looked = -(-first // stride) * stride   # the first Look moved, past the baseline
+    if looked >= int((end - start) * fps):   # as `RegisteredFrames.frames_until` counts
+        raise SystemExit(f"[REFUSED] --move at {move.at}s moves no frame the run looks "
+                         f"at before --end {end}s (stride {stride}): a case that moves "
+                         f"nothing must not read as a pass")
+
+
+def move_matrix(move, base):
+    """`move`'s 2x3 warp: the shift, then the turn about the centroid of the
+    Targets found in `base`, the baseline frame, each Target counted once.
+    About any other point a turn adds a hidden shift."""
+    shift = np.float64([[1, 0, move.dx], [0, 1, move.dy], [0, 0, 1]])
+    if not move.deg:
+        return shift[:2]
+    moments = [cv2.moments(c) for c in board.find_targets(base)[0]]
+    cx, cy = np.mean([[m["m10"] / m["m00"], m["m01"] / m["m00"]] for m in moments], axis=0)
+    return cv2.getRotationMatrix2D((float(cx), float(cy)), move.deg, 1.0) @ shift
+
+
+class MovedRecording:
+    """A Recording with the Board moved (#164): every frame from index `first` to
+    the end of the run warped by the 2x3 `matrix`, the vacated border filled by
+    replicating the edge. Frame 0 and every frame before `first` are handed over
+    untouched, so Board space, the baseline and the truth placement are the
+    unmoved run's. Everything else the frame-source interface answers (#148) is
+    the Recording's: indices, gaps under a stride, times. Warped as each frame
+    is read, nothing re-encoded, so an integer shift is pixel-exact."""
+
+    def __init__(self, recording, first, matrix):
+        self._recording, self._first, self._matrix = recording, first, matrix
+
+    def __getattr__(self, name):
+        return getattr(self._recording, name)
+
+    def read(self):
+        frame = self._recording.read()
+        if frame is None or frame.index < self._first:
+            return frame
+        height, width = frame.image.shape[:2]
+        return frame._replace(image=cv2.warpAffine(
+            frame.image, self._matrix, (width, height), borderMode=cv2.BORDER_REPLICATE))
+
+
+def open_moved(move, video, start, ref_time=None):
+    """The source opener for a run with `move` (`nbh.process`'s `opener`):
+    the Recording at `start`, moved, and its frame 0, untouched."""
+    recording, base = nbh.Recording.open(video, start, ref_time)
+    first = first_moved_index(move.at, start, recording.fps)
+    turn = (f", then turned {move.deg:g} degrees about the baseline frame's Targets' "
+            f"centroid" if move.deg else "")
+    print(f"[MOVE] from t={recording.when(first)} (frame {first}) to the end of the run, every "
+          f"frame shifted {move.dx:g}, {move.dy:g} frame px{turn}; the vacated border "
+          f"replicates the edge. Synthetic (#164)")
+    return MovedRecording(recording, first, move_matrix(move, base)), base
+
+
 def score_recording(video, start, end, truth_labels, truth_image=None,
                     model=nbh.DEFAULT_MODEL, template=board.DEFAULT_TEMPLATE,
                     confidence=nbh.DEFAULT_CONFIDENCE, change_filter=True,
                     merge_displaced=False, baseline_frames=nbh.BASELINE_FRAMES,
-                    stride=None, tolerance=MATCH_TOLERANCE_TPL, final_run=False):
+                    stride=None, tolerance=MATCH_TOLERANCE_TPL, final_run=False,
+                    move=None):
     """Score one run of `video` against its truth, printing every line as it
-    goes, and return what a pooled report reads (position_error.py, #126):
+    goes, and return what a pooled report reads (position_error.py, #126).
+    With a `Move`, the run reads a `MovedRecording` (#164). It returns:
 
     - `rows`: per matched pair, `(found #, truth #, Target or "MISS", dX, dY,
       radial)`, 1-based, mm, in truth order;
@@ -875,6 +1002,10 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
             f"scale in config/print_scale.json, so no Position Error can be put "
             f"in mm. docs/ring_measurement.md has how it is measured; every mm "
             f"figure scales linearly with it, so it is not guessed.")
+    # Before the gate too, which logs a final run's Recording as spent. One the
+    # manifest does not know is the gate's to refuse.
+    if move is not None and peek is not None:
+        refuse_move(move, start, end, peek["fps"], baseline_frames, stride or 1, final_run)
 
     # Split membership before anything is opened: a sealed recording is refused
     # unless this run says it is the final one. See manifest.py and ADR-0005.
@@ -895,7 +1026,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
                       template_path=template,
                       require_change_evidence=change_filter,
                       merge_displaced=merge_displaced,
-                      baseline_frames=baseline_frames, stride=stride)
+                      baseline_frames=baseline_frames, stride=stride,
+                      opener=None if move is None else functools.partial(open_moved, move))
 
     to_template = np.linalg.inv(view.tpl_to_board)
     found = board._apply(to_template,
@@ -992,6 +1124,14 @@ if __name__ == "__main__":
     nbh.add_stride_flag(p)
     p.add_argument("--tolerance", type=float, default=MATCH_TOLERANCE_TPL,
                    help="how close a detection must be to claim a label, template px")
+    p.add_argument("--move", type=parse_move, metavar="AT:DX,DY[,DEG]",
+                   help="move the Board, synthetically (#164): from AT seconds into "
+                        "the Recording to the end of the run, every frame shifted DX, "
+                        "DY frame px, then turned DEG degrees counter-clockwise about "
+                        "the baseline frame's Targets' centroid; the vacated border "
+                        "replicates the edge. AT is on the log's two-decimal clock. "
+                        "Refused when it moves nothing, inside the baseline window, "
+                        "past the last frame looked at, and on a final run")
     manifest.add_flag(p)
     a = p.parse_args()
     score_recording(a.video, a.start, a.end, a.truth_labels, a.truth_image,
@@ -1000,4 +1140,4 @@ if __name__ == "__main__":
                     change_filter=not a.no_change_filter,
                     merge_displaced=a.merge_displaced,
                     baseline_frames=a.baseline_frames, stride=a.stride,
-                    tolerance=a.tolerance, final_run=a.final_run)
+                    tolerance=a.tolerance, final_run=a.final_run, move=a.move)

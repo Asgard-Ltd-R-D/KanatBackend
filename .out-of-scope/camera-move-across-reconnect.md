@@ -16,14 +16,18 @@ none of that, so a deliberate move across a reconnect means the Range is already
 invalid.
 
 That leaves an accidental move during an outage, such as a knock or wind on the
-mount. Registration already handles one on every Look, whether or not there
-was a reconnect:
+mount. Registration has two defences that run on every Look, whether or not
+there was a reconnect. They are tested only on synthetic moves, never on a
+physical one:
 
 - **Each tracked fit starts from the Board's shift since the last registered
   Look** (`board.board_shift`, #171). A reconnect leaves `Registration` as it
   was, so the first fit after a drop starts from the last frame registered
   before it. #171's synthetic moves (`tools.board_move`) registered
-  translations up to 80x40 frame px and a 2° turn.
+  translations up to 80x40 frame px and a 2° turn. Those moves warp the whole
+  of a recorded frame. `tools.board_move` says they stand in for a Board move
+  only inside the Board region Registration reads, and lists a camera move as
+  not tested.
 - **A fit converging below `REANCHOR_MIN_CORRELATION` (0.9) is checked**
   against an independent silhouette fit. A grossly wrong one is Lost, and
   re-anchored after `REANCHOR_AFTER_LOST` Lost Looks (#110, #80).
@@ -38,10 +42,15 @@ the PTZ on purpose, which invalidates the Range.
 
 These are accepted, and not measured:
 
+- **Any physical camera move.** Every move tested was a synthetic warp of a
+  recorded frame, with no change in lighting, parallax or exposure.
 - **An accidental move that is not a plain shift:** a zoom, a tilt that changes
   the perspective, or a turn past 2°.
-- **A shift larger than the box `board_shift` reads:** 533x573 frame px on
-  CamB `_102250`, where one Target is about 200 px across.
+- **A shift past 80x40 frame px,** the largest tested (#162's case set). Past
+  that, nothing shows the seed still works. Once most of the Board leaves the
+  box `board_shift` reads, phase correlation has little of it left to match.
+  That box is 533x573 frame px on CamB `_102250`, where one Target is about
+  200 px across.
 - **A wrong fit after one of those that converges at or above 0.9** is never
   checked. One that is 3.1-66 Board px off is kept, with one warning at the
   end of the run.

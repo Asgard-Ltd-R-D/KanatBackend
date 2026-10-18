@@ -91,15 +91,22 @@ REANCHOR_AFTER_LOST = 25   # PROVISIONAL
 # pans off the Board at frame 19 and tracking converges on the Board next over
 # for ~80 frames (#92). At or past this silhouette disagreement
 # (`board.silhouette_disagreement`, Board px at the reference Target's centre)
-# the frame counts as lost, so it feeds the re-anchor above (#110). #92's gap:
-# wrong 180-1008 on `_150248`; right at most 24 on `_141846`'s re-aim, its
-# artefact burst included, and 3.1 on still clips. The bound is the gap's
-# geometric mean, ~2.7x clear of each side. Two CamA clips, at their board scale.
+# the frame counts as lost, so it feeds the re-anchor above (#110). #92's gap,
+# measured before #171: wrong 180-1008 on `_150248`; at most 24 on `_141846`,
+# in an artefact burst at its re-aim where neither fit could be shown right;
+# 3.1 on still clips. The bound is the gap's geometric mean, ~2.7x clear of each
+# side. At 8d45ba7, after #171 (#175), `_141846` 0-53 s reads at most 25.2, in
+# that burst again, and 8.6 in frames 1183-1299 after the re-aim. Two CamA clips,
+# at their board scale.
 GROSS_DISAGREEMENT_PX = 66.0    # PROVISIONAL
 # Below the gross bound nothing is rejected: a moderately wrong fit (`_144747`'s
-# occlusion 2-21, #91's synthetic shift 5.0-6.4) reads like one following a real
-# re-aim (`_141846`, 5-9). Past the most a still clip read, a checked fit is
-# counted and the run warns once.
+# occlusion 2-21, before #171) reads like the fit three checks prefer in
+# `_141846`'s frames 1183-1299, after the re-aim (#171's probe). At 8d45ba7
+# (#175) that fit reads 1.1 median, but 3.4-8.6 on 15 consecutive frames no check
+# settles. #92's 5-9 there, before #171, was most likely a moderately wrong fit,
+# not a right one (#175). #91's synthetic 80x40 shift on `_102250` (5.0-6.4) is
+# pre-#171 too: #171's `tools.board_move` re-run passes `_102250` at 80x40.
+# Past the most a still clip read, a checked fit is counted and the run warns once.
 MODERATE_DISAGREEMENT_PX = 3.1  # PROVISIONAL: the most a right fit read on a still clip
 
 # How many frames the baseline is built from.

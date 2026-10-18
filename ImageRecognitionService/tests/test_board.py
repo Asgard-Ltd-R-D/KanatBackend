@@ -350,6 +350,52 @@ def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
     assert second.anchor is anchor and second.targets is reference.targets
 
 
+def test_track_view_follows_a_board_move_past_ecc_s_reach_from_the_last_fit(monkeypatch):
+    """#171: a 40, 20 px Board Move since the frame the last fit was registered on.
+    Started from that fit, ECC does not converge on this scene; started from it
+    plus the shift phase correlation reads between the two frames, it lands."""
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([_square(100, 100, 50)], None))
+    H0 = np.float32([[1, 0, 20], [0, 1, 10], [0, 0, 1]])
+    anchor = board.Anchor(_scene() / 255, np.full((240, 320), 255, np.uint8), H0)
+    reference = board.BoardView(H0, board._as_matrix(1.0), (300, 300), [], anchor)
+    colour = lambda img: cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+    view, _ = board.track_view(colour(_scene((40.0, 20.0))), reference,
+                               previous=colour(_scene()))
+    assert board._apply(view.H, [[80, 90]])[0] == pytest.approx([140, 120], abs=0.4)
+
+
+def _gravel_and_board(board_at, size=(480, 360)):
+    """Dense gravel that never moves, and a 200x160 px Board at (140, 100)
+    moved by `board_at`, painted over it with a few dark blobs."""
+    img = np.full(size[::-1], 200, np.uint8)
+    for x, y in np.random.default_rng(0).integers(0, size, (900, 2)):
+        cv2.circle(img, (int(x), int(y)), 4, 0, -1)
+    x0, y0 = 140 + board_at[0], 100 + board_at[1]
+    img[y0:y0 + 160, x0:x0 + 200] = 220
+    for x, y in [(30, 30), (150, 40), (60, 120), (170, 130), (100, 80)]:
+        cv2.circle(img, (x0 + x, y0 + y), 10, 40, -1)
+    return cv2.cvtColor(cv2.GaussianBlur(img, (0, 0), 3), cv2.COLOR_GRAY2BGR)
+
+
+def test_track_view_reads_the_board_move_on_the_board_not_the_gravel(monkeypatch):
+    """#171: when only the Board moves, the shift is read inside the texture
+    region where the last fit puts it, 60, 40 px from the baseline frame's.
+    The whole frame, or the region left where the baseline frame had it, is
+    mostly gravel that stays put, and reads no move: ECC does not converge.
+    1 px: this scene's five blobs leave ECC ~0.5 px of play."""
+    monkeypatch.setattr(board, "find_targets", lambda frame: ([_square(100, 100, 50)], None))
+    region = np.zeros((360, 480), np.uint8)
+    region[110:250, 150:330] = 255   # inside the Board, clear of the gravel blurred over its edge
+    anchor = board.Anchor(board._gray(_gravel_and_board((0, 0))), region, np.eye(3, dtype=np.float32))
+    last = np.float32([[1, 0, 60], [0, 1, 40], [0, 0, 1]])
+    reference = board.BoardView(last, board._as_matrix(1.0), (300, 300), [], anchor)
+
+    view, _ = board.track_view(_gravel_and_board((100, 60)), reference,
+                               previous=_gravel_and_board((60, 40)))
+    assert board._apply(view.H, [[0, 0]])[0] == pytest.approx([100, 60], abs=1.0)
+
+
 def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypatch):
     """#80: the silhouette fit is only the seed; texture ECC against the baseline
     frame moves it onto the Board, and Board space, the Targets and the anchor

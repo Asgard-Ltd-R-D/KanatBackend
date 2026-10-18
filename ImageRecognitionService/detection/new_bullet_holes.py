@@ -1031,17 +1031,21 @@ class Registration:
     sees. `_render` registers nothing: it replays the views `looks` produced,
     re-anchors included (#80).
 
-    Built from Board space (the baseline frame's view), the baseline frame's
-    `(width, height)`, the Target artwork's mask a re-anchor seeds from, and
-    `when(index)`, a frame's time as printed.
+    Built from Board space (the baseline frame's view), the baseline frame,
+    the Target artwork's mask a re-anchor seeds from, and `when(index)`, a
+    frame's time as printed.
     """
 
-    def __init__(self, view, frame_size, template_mask, when):
+    def __init__(self, view, base, template_mask, when):
         # Two views, and the difference matters: `_space` is the Board space
         # everything is registered ONTO, and `last` is the most recently
         # registered frame, which is what the next ECC fit starts from. Both
         # carry the baseline's Targets (#33).
         self._space = self.last = view
+        # The frame `last` was registered on: the Board's shift since it seeds
+        # the next fit (#171). Kept here, one frame at a time, not on each view,
+        # since `--out` keeps every view.
+        self._last_frame = base
         self._template_mask, self._when = template_mask, when
         self._lost_run = 0      # consecutive Lost Looks, up to this one
         self.reanchors = self._reanchored = 0   # attempts, and those that registered (#80)
@@ -1049,7 +1053,7 @@ class Registration:
         self._converged = self._checked = self._gross = self._moderate = 0
         # How far past each canvas edge any registered frame's view has run,
         # in Board px — the baseline's is only the first (#41).
-        uncovered = board.uncovered_view(view, frame_size)
+        uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
         self._reach = self._baseline_reach = uncovered and uncovered[1]
         self._unmeasured = 0   # later frames whose view had no footprint to measure
 
@@ -1060,7 +1064,8 @@ class Registration:
         due = self._lost_run > 0 and self._lost_run % REANCHOR_AFTER_LOST == 0
         try:
             view, correlation = (board.reanchor_view(frame, self._template_mask, self.last)
-                                 if due else board.track_view(frame, self.last))
+                                 if due else board.track_view(frame, self.last,
+                                                              previous=self._last_frame))
         except cv2.error:
             view = None
         if view is not None and self._grossly_wrong(frame, view, correlation):
@@ -1071,7 +1076,7 @@ class Registration:
             self._lost_run += 1
             return None
         self._lost_run = 0
-        self.last = view
+        self.last, self._last_frame = view, frame
         self._track_reach(view, frame)
         return view
 
@@ -1421,8 +1426,7 @@ class RegisteredFrames:
         if not 0.5 <= scale <= 1.2:
             print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
                   f"(0.5-1.2, flat within it); detection is zero by ~1.8")
-        registration = Registration(view, (base.shape[1], base.shape[0]), template_mask,
-                                    source.when)
+        registration = Registration(view, base, template_mask, source.when)
         loop = cls(source, model, view, base, imgsz, conf, registration, device)
         loop.net_scale = scale
         return loop

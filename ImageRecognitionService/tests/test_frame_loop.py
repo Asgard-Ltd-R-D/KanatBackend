@@ -376,13 +376,14 @@ def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch, capsys):
     `Persistence` each Lost Look; the Board-lost warning counts what it holds.
     The one loop test with the real `Registration` in it (#138): frames 7 and
     8 do not register."""
-    monkeypatch.setattr(nbh.board, "track_view", lambda frame, last: (
+    monkeypatch.setattr(nbh.board, "track_view", lambda frame, last, previous=None: (
         (None, None) if frame[0, 0, 0] in (7, 8) else (_FakeView(), 0.95)))
     monkeypatch.setattr(nbh.board, "uncovered_view", lambda view, size: (
         0.0, dict.fromkeys(("left", "right", "above", "below"), 0.0)))
     view = _FakeView()
     # `when` is never called: nothing here re-anchors.
-    loop = _loop(view=view, registration=nbh.Registration(view, (8, 8), None, str))
+    base = np.zeros((8, 8, 3), np.uint8)
+    loop = _loop(view=view, registration=nbh.Registration(view, base, None, str))
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     nbh.process("clip.mp4", 10.0, 10.4, "model.pt")
     assert "[WARN] Board lost on 2 frame(s);" in capsys.readouterr().out

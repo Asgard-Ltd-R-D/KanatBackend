@@ -459,6 +459,33 @@ Runtime (`new_bullet_holes`, wall, sequential): `_141546` 13–25s 113.8 →
 111.1 s, `_102250` 0–20s 252.4 → 251.7 s (no fit checked: noise);
 `_141846`, the worst case, 599 → 824 s (+37%, ~0.96 s a check).
 
+**#171, done 2026-10-18: a Board Move no longer leaves ECC on a wrong fit.**
+#166 moved the Board synthetically (#162) and found what #92 predicted. Each
+fit started from the previous one, and after a 40x20 or 80x40 frame px jump
+that start lay outside ECC's reach. The fit converged moderately wrong and was
+never Lost (#171), or right at the reference Target but wrong in scale or
+perspective, where the silhouette check cannot see it (#172, up to 4.9 mm).
+Now `Registration` keeps the frame its last view was registered on, and
+`board.board_shift` reads the Board's translation from that frame to this one
+by phase correlation over the texture region's bounding box under the last fit.
+ECC starts from the last fit moved by it. The box has no margin: in a synthetic
+test, still gravel round it held a Board-only move at zero. A re-anchor keeps
+its silhouette seed, and #110's checks are unchanged.
+
+`tools.board_move` from `449d611`:
+- 28 of 32 moved runs pass, against 19 in #166, and every CamB run passes.
+- The four failures are mid-141546's: #170's at stride 17 (16x8, 40x20) and
+  #173's at stride 1 (80x40, turn2), each under a fit that converged right.
+- The controls have the same TP/FP/FN as in #166, with positions within 0.1 mm.
+- Every truth a moved run finds lies within 0.3 mm of its control's.
+- There are no Lost Looks and no re-anchors.
+
+On `_141846` after the re-aim, `board.residuals` at the reference Target now
+reads 1.6 Board px median, against 7.1 before. The fit there changed, and #175
+asks whether #92's "right" was right. `board_shift` costs ~12 ms a 1080p Look,
+~2% of `track_view`. Not tested: a Board-only move on real footage, which needs
+the camera (#85), or moves past #162's set.
+
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the
 pipeline** — labels thrown up to 58 000 template px off the Board — and it is

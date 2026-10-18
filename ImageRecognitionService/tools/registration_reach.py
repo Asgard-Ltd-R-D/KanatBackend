@@ -23,7 +23,8 @@ through it — placed through the baseline frame as `evaluate.py` places truth.
 scored by the same yardstick:
 
 - `runtime`: `board.track_view` as the pipeline runs it: ECC on the greyscale
-  Board round the Target, each frame against the baseline frame (#50 B).
+  Board round the Target, each frame against the baseline frame (#50 B),
+  started from the last fit moved by the Board's shift since its frame (#171).
   `--cut-marks` cuts the measured marks out of its region, so none of them
   helps register itself; without it the probe sees what the runtime sees.
 - `silhouette`: the chain before #50, an 8-parameter homography fitted to the
@@ -93,22 +94,23 @@ def _frames(video, start, end):
 
 def _registered(video, start, end, view, track):
     """`(index, gray frame, view)` for every frame of the window, the baseline
-    first at index 0, each later one `track(frame, last registered view)`. A
-    frame that fails to register comes with view None."""
-    last = view
+    first at index 0, each later one `track(frame, last registered view, the
+    frame it was registered on)`. A frame that fails to register comes with
+    view None."""
+    last, last_frame = view, None
     for index, frame in _frames(video, start, end):
         try:
-            current = view if index == 0 else track(frame, last)
+            current = view if index == 0 else track(frame, last, last_frame)
         except cv2.error:
             current = None
         if current is not None:
-            last = current
+            last, last_frame = current, frame
         yield index, cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), current
 
 
 def _silhouette(template_mask):
     """The pre-#50 `track_view`: the one Target's green mask, frame to frame."""
-    def track(frame, last):
+    def track(frame, last, last_frame):
         contours, mask = board.find_targets(frame)
         if not contours:
             return None
@@ -121,7 +123,7 @@ def _green_affine(base):
     """#50 A: an affine on the green mask, against the baseline frame's."""
     ref = _green(base)
 
-    def track(frame, last):
+    def track(frame, last, last_frame):
         a = last.anchor
         W, _ = board.ecc_warp(ref, _green(frame), cv2.MOTION_AFFINE,
                               last.H @ np.linalg.inv(a.H))
@@ -274,7 +276,8 @@ if __name__ == "__main__":
     if a.cut_marks:
         view.anchor = cut_marks(view.anchor, marks)
     if a.registration == "runtime":
-        track = lambda frame, last: board.track_view(frame, last)[0]
+        track = lambda frame, last, last_frame: board.track_view(frame, last,
+                                                                 previous=last_frame)[0]
     elif a.registration == "silhouette":
         track = _silhouette(template_mask)
     else:

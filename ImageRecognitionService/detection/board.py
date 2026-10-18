@@ -377,6 +377,31 @@ def ecc_warp(ref, cur, motion, init, mask=None):
     return (np.linalg.inv(D) @ w @ D).astype(np.float32), correlation
 
 
+def board_shift(previous, frame, W, region):
+    """The translation, frame px as a 3x3, that takes the Board in `previous`
+    onto the Board in `frame` (#171). Read by phase correlation at `ECC_SCALE`,
+    with a Hanning window, over the bounding box of `region` (baseline frame
+    coords) as `W` carries it into `previous`.
+
+    That box and nothing round it: when only the Board moves, the gravel and
+    sky round it stay put and pull the estimate towards zero. On #171's
+    synthetic Board, an `ECC_CROP_MARGIN` of dense gravel round the box held it
+    at zero.
+
+    ponytail: no gate on phase correlation's response; the #171 probe found no
+    estimate that threw ECC off, and a low-response one read ~zero, leaving
+    the seed as it was. Gate on the response if one ever does."""
+    moved = cv2.warpPerspective(region, W.astype(np.float32), region.shape[::-1],
+                                flags=cv2.INTER_NEAREST)
+    x, y, w, h = cv2.boundingRect(moved)
+    small = lambda im: cv2.resize(_gray(im[y:y + h, x:x + w]), None, fx=ECC_SCALE, fy=ECC_SCALE,
+                                  interpolation=cv2.INTER_AREA)
+    before, after = small(previous), small(frame)
+    (dx, dy), _ = cv2.phaseCorrelate(before, after,
+                                     cv2.createHanningWindow(before.shape[::-1], cv2.CV_32F))
+    return np.float32([[1, 0, dx / ECC_SCALE], [0, 1, dy / ECC_SCALE], [0, 0, 1]])
+
+
 def texture_region(H, frame_size, template_span):
     """ECC mask in the frame `H` maps the template onto: the square within
     `REGION_SPANS` Target spans of the ring, so gravel and sky, which move
@@ -670,7 +695,7 @@ def uncovered_view(view, frame_size):
                       for k, v in reach.items()}
 
 
-def track_view(frame, reference, seed=None):
+def track_view(frame, reference, seed=None, previous=None):
     """Re-register the reference view's Board space onto a later frame.
 
     Board space — scale, origin, canvas size and the Targets in it — is fixed
@@ -692,6 +717,12 @@ def track_view(frame, reference, seed=None):
     (template -> frame) replaces the previous frame's fit as the starting point;
     `reanchor_view` passes one once the Board has moved out of its reach.
 
+    `previous` is the frame `reference` was registered on. Given, and with no
+    `seed`, the fit starts from `reference`'s moved by `board_shift` from
+    `previous` to `frame`. A Board Move of 40x20 or 80x40 frame px puts the
+    previous fit outside ECC's reach, and it converged to a wrong fit that was
+    never Lost; the shift puts the start back inside it (#171).
+
     ponytail: one fixed reference frame, on purpose. A lost Board re-anchors
     against it (`reanchor_view`, #80) rather than against a recent frame, since
     every hop between frames adds its error to Board space. New Bullet Holes,
@@ -705,9 +736,10 @@ def track_view(frame, reference, seed=None):
     if not find_targets(frame)[0]:
         return None, None
     a = reference.anchor
-    W, correlation = ecc_warp(a.gray, _gray(frame), cv2.MOTION_HOMOGRAPHY,
-                              (reference.H if seed is None else seed) @ np.linalg.inv(a.H),
-                              a.region)
+    W = (reference.H if seed is None else seed) @ np.linalg.inv(a.H)
+    if seed is None and previous is not None:
+        W = board_shift(previous, frame, W, a.region) @ W
+    W, correlation = ecc_warp(a.gray, _gray(frame), cv2.MOTION_HOMOGRAPHY, W, a.region)
     return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
                      reference.targets, a, reference.edges, reference.inner), correlation
 

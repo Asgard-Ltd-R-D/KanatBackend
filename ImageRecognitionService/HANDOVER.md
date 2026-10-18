@@ -523,6 +523,24 @@ New Bullet Holes, 15 → 8, matched by Board position, all first seen at
 
 Baseline Marks went from 21 to 20.
 
+Why they changed: every changed Bullet Hole is first seen at 45.96–47.52s, in
+or just after the artefact burst. From there the old fit mis-registers the
+canvas away from the reference Target by tens of Board px. Overlaid, frames
+1100 and 1323 double the other Target's rings, the Board edge and the dark bar
+before #171, and line them up on `main`. An existing mark put 10–50 Board px
+from its place reads as new, and the change filter passes it, since the
+misaligned region differs from the baseline canvas. For three of the ten gone
+(two at 47.24s, one at 47.28s), frame 0 shows the mark where `main` puts it,
+and the old fit puts it inside the reported Bullet Hole. No filter dropped the
+ten on `main`: its detector fires at their positions on 0–5 frames from their
+first, against 24–50 before #171. The three new ones start in the burst too,
+where `main` still reads 23 of 36 fits moderate. At 45.96 and 47.16s `main`
+shows a dark mark that frame 0 sees too blurred to call; at 47.24s it is a
+ring line cut by the canvas's left edge, most likely a false positive. So the
+drop most likely removes false positives rather than losing detections; with
+no truth, that is inferred, not shown. A second scratch probe, not committed,
+traced each candidate and saved the rectified frames.
+
 #110's three decisions stand on `main`, on this evidence:
 - **No 0.9 correlation floor:** the preferred fit converges at 0.66–0.74 in
   frames 1183–1299, so a floor would drop all 117 of them.

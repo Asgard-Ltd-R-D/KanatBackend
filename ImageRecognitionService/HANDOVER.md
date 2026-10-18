@@ -379,8 +379,8 @@ one real camera move that tracking followed, and #91's synthetic jump:
 |---|---|---|---|---|
 | `CamA_20260914_150248` | frame 19 on: the camera pans off this view onto the black-cross part of the Board (`cama-20260914-close-cross`'s view) | **wrong**, frames 19–99, then lost | 0.00–0.29 | 180–1008 |
 | `CamA_20260914_144747` 866–870 | a person crosses the ECC region; camera still | **wrong** 1–3 frames; frame 868 off by up to 98 Board px at a Target centre, 1454 at a canvas corner | 0.66–0.82 | 2–21 |
-| `CamA_20260914_141846` 1076 on | a real camera re-aim, ~100 Board px | **right** near the Target where checked (overlay, 1200 and 1323) | 0.49–0.71 | 5–9, 24 in an artefact burst |
-| `CamB_20260915_102250`, #91's 80×40 synthetic shift | stale seed | **wrong**, 75–124 | 0.70–0.80 | 5.0–6.4 |
+| `CamA_20260914_141846` 1076 on | a real camera re-aim, ~100 Board px | #92 read it **right** near the Target by overlay (1200 and 1323); #175 found it **most likely moderately wrong**, ~2.5 mm at the reference Target (below) | 0.49–0.71 | 5–9, 24 in an artefact burst |
+| `CamB_20260915_102250`, #91's 80×40 synthetic shift | stale seed | **wrong**, 75–124, before #171; #171's `tools.board_move` passes `_102250` at 80x40 | 0.70–0.80 | 5.0–6.4 |
 
 \* Board px at the reference Target's centre, against an independent silhouette
 fit (`board.register` from a box seed). It sees only that Target, so it
@@ -388,10 +388,13 @@ under-reads error elsewhere on the Board: frame 868 reads 21 while another
 Target's centre is 98 off. The other seven clips, `_102250` unshifted among
 them: no lost frames, disagreement ≤3.1, corr ≥0.917.
 
-**Case 1 of #92 (plain tracking after a jump) was not reproduced on real
-motion.** The one real move, `_141846`'s re-aim, was tracked right; no
-recording has a bumped stand or strong wind. The two real wrong fits are a
-pan off the view and an occlusion, which #92 did not anticipate.
+**#92 found Case 1 (plain tracking after a jump) not reproduced on real
+motion; #175 found it most likely was.** #92 read the one real move,
+`_141846`'s re-aim, as tracked right by overlay. #175's checks (below) say
+that tracking followed it but most likely converged moderately wrong, which is
+Case 1, until #171's seed. No recording has a bumped stand or strong wind. The
+two other real wrong fits are a pan off the view and an occlusion, which #92
+did not anticipate.
 
 The cost is real: `new_bullet_holes` on `_150248` (0–17.72s) reports three
 Misses at 2.20–3.96s, all Registration Displacement from the wrong-fit window.
@@ -412,9 +415,12 @@ silhouette disagreement (≥180 against ≤24 on `_141846`, its artefact burst a
 1151–1180 included); correlation's margin is thin (≤0.29 against 0.68–0.71 on
 the two overlay-checked `_141846` frames, and that clip runs down to 0.49
 unchecked). In that burst a canvas phase correlation finds no peak for either
-fit, so which fit is right there is unknown. **Moderate** wrong fits overlap right
-ones on another clip on both, so no threshold separates them; the re-anchor's
-0.9 floor applied to tracking would drop ~250 right frames of `_141846`.
+fit, so which fit is right there is unknown. **Moderate** wrong fits overlapped
+`_141846`'s fits on both, so #92 found no threshold to separate them; the
+re-anchor's 0.9 floor applied to tracking would drop ~250 frames of `_141846`.
+#92 called those `_141846` fits right. #175 found them most likely moderately
+wrong, which takes that overlap away as evidence, and re-read the three
+decisions on `main` (below).
 Frame-to-frame warp jump fires on both edges of a transient and on real motion
 (46 Board px on a still clip), so it does not say which frame is wrong.
 Baseline-mark residuals were not measured: only the CamB trio carry before-
@@ -431,8 +437,9 @@ The probes were scratch scripts (session transcript of 2026-10-06), not committe
 `REANCHOR_MIN_CORRELATION` (0.9): every wrong fit #92 measured sat at 0.82 or
 less, still clips at 0.917 or more, so a still clip pays nothing. At or past
 `GROSS_DISAGREEMENT_PX` (66, PROVISIONAL: the geometric mean of #92's gap, 24
-right vs 180 wrong, on `_141846` and `_150248`) the frame is lost and feeds the
-re-anchor. From 3.1 up to that bound it is only counted, in one `[WARN]` whose
+on `_141846`'s artefact burst, where neither fit could be shown right, vs 180
+wrong on `_150248`) the frame is lost and feeds the re-anchor. From 3.1 up to
+that bound it is only counted, in one `[WARN]` whose
 denominator is the fits checked. A gross fit converging at 0.9 or above would
 pass unchecked; none was measured (`ponytail:` in `_grossly_wrong`).
 
@@ -450,7 +457,7 @@ this change:
 |---|---|---|
 | `_150248` 0–0.76s | 0 new | 0 new, nothing checked |
 | `_150248` 0–17.72s | 3 Misses at 2.20, 2.20, 3.08s (3.96 above was #92's run), 13 re-anchors | 0 new; 17 fits lost as gross, 2 moderate; 16 re-anchors, all failed |
-| `_141846` 0–53s | 15 new | 15 new; 235 checked, 0 lost, 174 moderate |
+| `_141846` 0–53s | 15 new | 15 new; 235 checked, 0 lost, 174 moderate. Since #171 (#175, `8d45ba7`): 8 new; 235 checked, 0 lost, 38 moderate |
 | `_144747` 0–48.64s | not re-run | 4 new; 75 checked, 0 lost, 24 moderate. No frame lost, so neither change can alter it |
 | CamA `_141546` 13–25s | 5/1/1 | 5/1/1, nothing checked |
 | CamB `_102250` 0–46s | 4/1/0 | 4/1/0, nothing checked |
@@ -481,10 +488,52 @@ its silhouette seed, and #110's checks are unchanged.
 - There are no Lost Looks and no re-anchors.
 
 On `_141846` after the re-aim, `board.residuals` at the reference Target now
-reads 1.6 Board px median, against 7.1 before. The fit there changed, and #175
-asks whether #92's "right" was right. `board_shift` costs ~12 ms a 1080p Look,
+reads 1.6 Board px median, against 7.1 before. The fit there changed; #175,
+below, re-measured it. `board_shift` costs ~12 ms a 1080p Look,
 ~2% of `track_view`. Not tested: a Board-only move on real footage, which needs
 the camera (#85), or moves past #162's set.
+
+**#175, done 2026-10-18: before #171, `_141846`'s re-aim was most likely
+tracked moderately wrong.** `new_bullet_holes` on `_141846` 0–53s at stride 1,
+`main` (`8d45ba7`) against `f8c71d9`, just before #171, which reproduces #110's
+row exactly. Each cell: moderate fits / silhouette disagreement median, max
+(Board px) / correlation median, over the fits checked:
+
+| Frames (checked fits) | Before #171 | `main` |
+|---|---|---|
+| 1000–1146 (57) | 0 / 1.0, 2.8 / 0.79 | 0 / 1.1, 2.9 / 0.79 |
+| Artefact burst, 1147–1182 (36) | 32 / 8.0, 25.2 / 0.60 | 23 / 3.6, 25.2 / 0.59 |
+| After the re-aim, 1183–1299 (117) | 117 / 5.2, 9.7 / 0.70 | 15 / 1.1, 8.6 / 0.73 |
+| 1300–1324 (25) | 25 / 5.9, 9.2 / 0.65 | 0 / 1.6, 2.2 / 0.67 |
+
+No fit before frame 1000 converged below 0.9, so none was checked. After the
+re-aim three checks prefer `main`'s fit (#171's probe, reference Target): its
+own-silhouette residual (`board.residuals`) 1.6 Board px against 7.1, the
+texture residual 2.3 Board px against 17, texture response 0.37 against 0.03.
+The two fits are ~5.8 Board px (~2.5 mm) apart there. The Recording has no
+truth, so which fit is right is inferred, not shown.
+
+New Bullet Holes, 15 → 8, matched by Board position, all first seen at
+43.12–47.52s (frames 1078–1188), during and just after the re-aim:
+- Kept within 1.8 Board px: the Misses at 43.12, 43.60, 44.12 and 44.40s.
+- Kept, moved 6.1 Board px: Target 1 at 47.24s, scores 8, X −8.5 → −10.2 mm,
+  Y −38.1 → −40.2 mm.
+- Gone: the Misses at 46.28, 46.32, 46.60, 47.24 (five), 47.28 and 47.52s.
+- New: Misses at 45.96, 47.16 and 47.24s, the last at the canvas's left edge.
+
+Baseline Marks went from 21 to 20.
+
+#110's three decisions stand on `main`, on this evidence:
+- **No 0.9 correlation floor:** the preferred fit converges at 0.66–0.74 in
+  frames 1183–1299, so a floor would drop all 117 of them.
+- **Gross at 66:** the highest checked fit reads 25.2, frame 1151 in the burst,
+  before #171 and on `main`.
+- **Moderate is warned about, not rejected:** 38 fits still read 3.2–25.2,
+  overlapping `_144747`'s occlusion (2–21). Fifteen of them are one stretch at
+  1268–1282 (3.4–8.6), and nothing here shows whether those are right.
+
+The constants keep their values; their comments now cite these readings. The
+probe was a scratch wrapper round `Registration`, not committed.
 
 The first run of this record, before #40, scored both recordings F1 0.00 with
 probe rate 0.00 on every label. **That was the photograph registration, not the

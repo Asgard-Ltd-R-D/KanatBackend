@@ -17,8 +17,8 @@ invalid.
 
 That leaves an accidental move during an outage, such as a knock or wind on the
 mount. Registration has two defences that run on every Look, whether or not
-there was a reconnect. They are tested only on synthetic moves, never on a
-physical one:
+there was a reconnect. Neither has been tested on a physical move across a
+reconnect, or on any physical move checked against truth:
 
 - **Each tracked fit starts from the Board's shift since the last registered
   Look** (`board.board_shift`, #171). A reconnect leaves `Registration` as it
@@ -32,6 +32,14 @@ physical one:
   against an independent silhouette fit. A grossly wrong one is Lost, and
   re-anchored after `REANCHOR_AFTER_LOST` Lost Looks (#110, #80).
 
+One real camera move has been measured with both: `CamA_20260914_141846`'s
+re-aim, about 100 Board px from frame 1076 (HANDOVER, #92 and #175). On `main`,
+the fits after it read 1.1 Board px median and 8.6 max of silhouette
+disagreement, with 15 of 117 checked fits moderately off. That Recording has no
+truth, so which fit is right is inferred, not shown. The camera also moved
+while being tracked Look by Look at stride 1. It did not move during an outage,
+which would put the whole move between two Looks.
+
 The proposal was to check the first fit after every reconnect whatever its
 correlation, and to log it. On the dev Mac, that one Look would cost 0.7 s
 more on CamB (one Target) and 1.8 s more on CamA (two Targets), against a
@@ -42,8 +50,10 @@ the PTZ on purpose, which invalidates the Range.
 
 These are accepted, and not measured:
 
-- **Any physical camera move.** Every move tested was a synthetic warp of a
-  recorded frame, with no change in lighting, parallax or exposure.
+- **A physical camera move across a reconnect, or any physical move checked
+  against truth.** The moves across a gap between Looks were synthetic warps
+  of recorded frames, with no change in lighting, parallax or exposure. The
+  one real move, `_141846`'s re-aim, crossed no outage and has no truth.
 - **An accidental move that is not a plain shift:** a zoom, a tilt that changes
   the perspective, or a turn past 2°.
 - **A shift past 80x40 frame px,** the largest tested (#162's case set). Past

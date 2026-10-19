@@ -6,6 +6,25 @@ is answered by one gate in `ImageRecognitionService/detection/tagging_bullets.py
 within **0.5x the mean box diagonal**, or they overlap by more than **50% of the
 smaller box's area**. Nothing else in the pipeline merges Bullet Holes.
 
+*Amended 2026-10-19: the delivered gate is `same_bullet_hole` in
+`ImageRecognitionService/detection/new_bullet_holes.py`. `is_duplicate_bullet`
+survives only in `tagging_bullets.py`, which is not delivered (#75). Both arms
+above were ported unchanged (`DUP_CENTER_FACTOR`, `OVERLAP_THRESHOLD`), with a
+floor in front of them: two centres within the match radius (`MATCH_TPL_PX`, in
+Board px) are one Bullet Hole whatever their boxes say. The pipeline first
+shipped with the floor alone, and on CamB_20260915_102250 it reported one torn
+mark twice: the floor came to 2.96 Board px against a mark 13.4 px across. That
+is why the box arms came back. Three other places ask whether two detections are
+one mark, and each uses the floor alone, never a threshold of its own:
+`baseline_marks` folds the baseline frames, `strip_pre_existing` drops what was
+already on the Board, and `merge_band_detections` drops a band's second sighting
+of a mark on the margin canvas's edge (#46). The box arms are kept out of the
+first two on purpose. In the baseline they would fold two distinct pre-existing
+marks into one, and in suppression they swallowed a real new Bullet Hole next to
+a pre-existing one, taking CamB recall from 100% to 75%. `merge_displaced_tracks`
+answers a different question, whether a later track is a displaced sighting of an
+earlier one; it is provisional and off by default (`--merge-displaced`).*
+
 ## Why one gate
 
 Five suppression tests previously ran in sequence, all answering the same

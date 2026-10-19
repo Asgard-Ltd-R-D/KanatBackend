@@ -40,7 +40,7 @@ python composer.py release osx-arm64
 ./build_artifacts.sh linux-x64      # or: clean
 
 # WebApp — backend (FastAPI, http://localhost:8000)
-cd WebApp/backend && uv run uvicorn app.main:app --reload
+cd WebApp/backend && uv run uvicorn app.main:app --reload --timeout-graceful-shutdown 2
 
 # WebApp — frontend (Electron + Vite dev server)
 cd WebApp/frontend && npm run dev

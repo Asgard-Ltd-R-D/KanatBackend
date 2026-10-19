@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
     command: >
       sh -c "uv run --no-dev --frozen alembic upgrade head &&
-             uv run --no-dev --frozen uvicorn app.main:app --host 0.0.0.0 --port 8000"
+             uv run --no-dev --frozen uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 2"
 
 volumes:
   webapp_postgres_data:

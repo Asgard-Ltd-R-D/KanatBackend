@@ -287,6 +287,27 @@ def test_a_recording_times_its_frames_from_ref_time_or_when_it_was_opened(monkey
     assert before <= t0 <= datetime.now(timezone.utc)
 
 
+def test_board_space_is_built_from_frame_0_with_no_model_and_nothing_printed(monkeypatch,
+                                                                            capsys):
+    """The one model-free way to Board space (#184): the source opened at
+    `--start`, keeping its path, frame 0, and Board space built from it."""
+    _openable(monkeypatch)
+    monkeypatch.setitem(sys.modules, "ultralytics", None)   # any model load would fail
+    source, base, view, correlation = nbh.open_board_space("clip.mkv", 10.0, None)
+    assert source.start_s == 10.0
+    assert (base == 1).all()   # `_FakeCap`'s first frame
+    assert isinstance(view, _FakeView) and correlation == 0.95
+    assert capsys.readouterr().out == ""
+
+
+def test_a_baseline_frame_with_no_target_is_refused(monkeypatch):
+    _openable(monkeypatch)
+    monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask: (None, 0.0))
+    with pytest.raises(SystemExit, match="^no Target found in the baseline frame; "
+                                         "cannot locate the Board$"):
+        nbh.open_board_space("clip.mkv", 10.0, None)
+
+
 def test_the_pipeline_reads_through_the_opener_it_is_given(monkeypatch):
     """How the scoring tool hands over a moved Recording (#164). Without one,
     every other test here runs on today's choice of Stream or Recording."""

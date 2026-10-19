@@ -1011,6 +1011,24 @@ def _open_source(video, start, ref_time=None):
     return (Stream if _is_stream(video) else Recording).open(video, start, ref_time)
 
 
+def open_board_space(video, start, template_mask, ref_time=None, opener=None):
+    """The source opened at `start` by `opener` (by default `_open_source`),
+    its frame 0, the baseline frame, Board space built from that frame, and
+    the registration's correlation: `(source, base, view, correlation)`.
+
+    The one way Board space is built for footage (#184): the Run's open
+    (`RegisteredFrames.open`), the scoring tool, the detector probe and the
+    registration-reach tool all come through here, so none of them can build
+    it from a different frame. It needs no model and prints nothing; the
+    caller closes the source.
+    """
+    source, base = (opener or _open_source)(video, start, ref_time)
+    view, correlation = board.build_view(base, template_mask)
+    if view is None:
+        raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+    return source, base, view, correlation
+
+
 def _looked_at(index, stride, baseline_frames):
     """Is this frame looked at under a stride (#81)? Every baseline frame is;
     past them, only multiples of the stride. One rule, applied by
@@ -1319,8 +1337,9 @@ class RegisteredFrames:
     A second loop written beside this one can differ in either and then report a
     number about a distribution the runtime never sees.
 
-    Board space is fixed once, by the frame at `--start`, and every later frame
-    is registered onto it by `registration`, a `Registration` (#138).
+    Board space is fixed once, by the frame at `--start` (`open_board_space`),
+    and every later frame is registered onto it by `registration`, a
+    `Registration` (#138).
 
     Frames come from `source`, a `Recording` or a `Stream`, through one
     interface (#148), so nothing here asks which. `opener(video, start,
@@ -1368,11 +1387,8 @@ class RegisteredFrames:
         # How long building Board space takes is measured from opening the
         # source, so the model load above is not in it (#79).
         opened_at = time.perf_counter()
-        source, base = (opener or _open_source)(video, start, ref_time)
-
-        view, correlation = board.build_view(base, template_mask)
-        if view is None:
-            raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+        source, base, view, correlation = open_board_space(video, start, template_mask,
+                                                           ref_time, opener)
         # A disclosure for agreeing what "fast" means with the customer, and
         # never a gate: no bar is agreed (#77).
         print(f"[REGISTRATION] Board space built in {time.perf_counter() - opened_at:.2f} s, "

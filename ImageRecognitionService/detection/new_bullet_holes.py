@@ -576,26 +576,29 @@ class Recording:
     at the end of the file, or once `n_frames` have passed.
 
     `ref_time` is the wall clock at the Recording's t=0, `--ref-time`, and
-    by default the time the run opened it.
+    by default the time the run opened it. `path` is the file `open` read,
+    kept beside `--start` so `--out` can re-open what the run read (#184).
     """
     live = False
     unseen = ()   # a Recording misses no frame
 
-    def __init__(self, cap, fps, start, ref_time=None):
-        self.cap, self.fps, self.start_s = cap, fps, start
+    def __init__(self, cap, fps, start, ref_time=None, path=None):
+        self.cap, self.fps, self.start_s, self.path = cap, fps, start, path
         self.ref_time = ref_time or datetime.now(timezone.utc)
         self.passed = 0
 
     @classmethod
     def open(cls, path, start, ref_time=None):
-        """The Recording at `start` seconds, and frame 0, read there."""
+        """The Recording at `start` seconds, and frame 0, read there. The one
+        seek to `--start` (#184): everything reading a Recording from there,
+        `--out` and the tools included, opens it here."""
         cap = cv2.VideoCapture(path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
         ok, frame = cap.read()
         if not ok:
             raise SystemExit(f"cannot read {path} at {start}s")
-        return cls(cap, fps, start, ref_time), frame
+        return cls(cap, fps, start, ref_time, path), frame
 
     def start(self, n_frames, stride, baseline_frames):
         self._wanted, self._stride, self._baseline_frames = n_frames, stride, baseline_frames
@@ -1032,8 +1035,8 @@ def open_board_space(video, start, template_mask, ref_time=None, opener=None):
 def _looked_at(index, stride, baseline_frames):
     """Is this frame looked at under a stride (#81)? Every baseline frame is;
     past them, only multiples of the stride. One rule, applied by
-    `Recording.read`, `Stream`'s thread and `_render`, so that they cannot
-    disagree on which frames are gaps."""
+    `Recording.read`, which `_render` reads through too, and `Stream`'s
+    thread, so that they cannot disagree on which frames are gaps."""
     return index < baseline_frames or index % stride == 0
 
 
@@ -1647,7 +1650,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         open(timing, "w").close()   # a path it cannot write fails now, not after the run
     loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time,
                                  device, opener)
-    fps, match_px = loop.fps, loop.view.match_radius
+    match_px = loop.view.match_radius
     n_frames = math.inf if loop.live else loop.frames_until(end)
     stride = stride or (LIVE_STRIDE if loop.live else 1)
     baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
@@ -1786,8 +1789,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         for hole in new:   # in first-frame order, as `Persistence.end` gave them
             publish(_confirmed(hole, loop.last, loop.wall_clock))
     if out_video:
-        _render(video, start, processed, fps, views, baseline, new, out_video,
-                stride, baseline_frames)
+        _render(loop.source.path, loop.source.start_s, processed, views, baseline, new,
+                out_video, stride, baseline_frames)
     return Run(new, baseline, residuals, len(persistence.lost), loop.registration.reanchors)
 
 
@@ -2047,28 +2050,25 @@ def _report_groups(new, mm_per_tpl_px):
         print(f"      Extreme Spread {g['extreme_spread']:.1f} mm (centre to centre)")
 
 
-def _render(video, start, n_frames, fps, views, baseline, new, out_video,
+def _render(video, start, n_frames, views, baseline, new, out_video,
             stride=1, baseline_frames=0):
     """Redraw the clip as the rectified Board. Neither detection nor
     registration is repeated: `views` is what detection used, by frame index,
     and a lost frame is drawn with the last view before it.
 
-    A stride's gaps are left out (#81): no fit was made on them, and the last
+    The Recording at `video` is re-opened at `start` through `Recording`, so
+    the frames drawn are the frames the run looked at (#184). A stride's gaps
+    are left out by its rule (#81): no fit was made on them, and the last
     look's could be stale by up to a stride. The output then plays faster
     than the clip; each frame's own t stays on it."""
-    cap = cv2.VideoCapture(video)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
+    recording, base = Recording.open(video, start)
+    recording.start(n_frames, stride, baseline_frames)
+    fps = recording.fps
     view = views[0]  # Board space's own view; `process` always records it
     w, h = view.canvas_size
     vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
-    for idx in range(n_frames):
-        if not _looked_at(idx, stride, baseline_frames):
-            if not cap.grab():
-                break
-            continue
-        ok, frame = cap.read()
-        if not ok:
-            break
+    first = [Frame(0, base)] if n_frames > 0 else []
+    for idx, frame, _ in itertools.chain(first, iter(recording.read, None)):
         view = views.get(idx, view)
         vis = view.rectify(frame)
         for t in view.targets:
@@ -2092,7 +2092,7 @@ def _render(video, start, n_frames, fps, views, baseline, new, out_video,
         cv2.putText(vis, f"NEW {shown}", (16, 100),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         vw.write(vis)
-    cap.release()
+    recording.close()
     vw.release()
     print(f"[INFO] -> {out_video}")
 

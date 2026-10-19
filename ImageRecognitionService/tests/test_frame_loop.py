@@ -294,7 +294,7 @@ def test_board_space_is_built_from_frame_0_with_no_model_and_nothing_printed(mon
     _openable(monkeypatch)
     monkeypatch.setitem(sys.modules, "ultralytics", None)   # any model load would fail
     source, base, view, correlation = nbh.open_board_space("clip.mkv", 10.0, None)
-    assert source.start_s == 10.0
+    assert (source.path, source.start_s) == ("clip.mkv", 10.0)
     assert (base == 1).all()   # `_FakeCap`'s first frame
     assert isinstance(view, _FakeView) and correlation == 0.95
     assert capsys.readouterr().out == ""
@@ -357,7 +357,7 @@ def test_render_draws_each_frame_with_the_view_detection_used(monkeypatch):
     frame on, and a lost frame keeps the last view before it."""
     named, drawn, _ = _rendering(monkeypatch, 5)
     views = {0: named("base"), 1: named("base"), 3: named("re-anchored")}
-    nbh._render("clip.mp4", 0.0, 5, 25.0, views, [], [], "out.mp4")
+    nbh._render("clip.mp4", 0.0, 5, views, [], [], "out.mp4")
     assert drawn == ["base", "base", "base", "re-anchored", "re-anchored"]
 
 
@@ -366,7 +366,7 @@ def test_render_leaves_out_the_frames_a_stride_skipped(monkeypatch):
     would show stale geometry (#81 review). Only looked-at frames are written."""
     named, drawn, written = _rendering(monkeypatch, 20)
     views = {i: named(i) for i in (0, 1, 2, 3, 4, 13)}
-    nbh._render("clip.mp4", 0.0, 20, 25.0, views, [], [], "out.mp4",
+    nbh._render("clip.mp4", 0.0, 20, views, [], [], "out.mp4",
                 stride=13, baseline_frames=5)
     assert drawn == [0, 1, 2, 3, 4, 13] and len(written) == 6
 
@@ -377,7 +377,7 @@ def test_an_interval_shorter_than_a_frame_still_renders(monkeypatch):
     loop = _loop()
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     rendered = []
-    monkeypatch.setattr(nbh, "_render", lambda video, start, n, fps, views, *rest:
+    monkeypatch.setattr(nbh, "_render", lambda video, start, n, views, *rest:
                         rendered.append((n, views)))
     nbh.process("clip.mp4", 10.0, 10.0, "model.pt", out_video="out.mp4")
     assert rendered == [(0, {0: loop.view})]
@@ -388,7 +388,7 @@ def test_rendering_gets_the_view_of_every_frame_read(monkeypatch):
     loop = _loop()
     monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     rendered = []
-    monkeypatch.setattr(nbh, "_render", lambda video, start, n, fps, views, *rest:
+    monkeypatch.setattr(nbh, "_render", lambda video, start, n, views, *rest:
                         rendered.append(sorted(views)))
     nbh.process("clip.mp4", 10.0, 10.4, "model.pt", out_video="out.mp4")
     assert rendered == [list(range(10))]

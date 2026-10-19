@@ -183,14 +183,14 @@ def truth_in_template(image_path, label_path, frame, view):
     to_template = np.linalg.inv(view.H) @ H @ np.diag([width, height, 1.0])
 
     normalised, damaged = load_labels(label_path)
-    return board._apply(to_template, normalised), to_template, correlation, damaged
+    return board.apply(to_template, normalised), to_template, correlation, damaged
 
 
 def off_canvas(truth, view):
     """Indices of template positions outside the rectified Board the detector
     is shown — positions no run can find, whatever the reason."""
     width, height = view.canvas_size
-    placed = board._apply(view.tpl_to_board, truth)
+    placed = board.apply(view.tpl_to_board, truth)
     return [i for i, (x, y) in enumerate(placed)
             if not (0 <= x < width and 0 <= y < height)]
 
@@ -586,7 +586,7 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
     height, width = after_photo.shape[:2]
     after = after_normalised * [width, height]
     before_px = before_normalised * [before_photo.shape[1], before_photo.shape[0]]
-    before = board._apply(H, before_px)
+    before = board.apply(H, before_px)
 
     pairs, only_before = match(before, after, reach)
 
@@ -810,7 +810,7 @@ def load_truth(image_path, label_path, frame, view):
               f"same, and no run can find them.")
     pre = pre_existing_labels(labels)
     if pre is not None:
-        pre = board._apply(to_template, pre)
+        pre = board.apply(to_template, pre)
     return truth, pre
 
 
@@ -1042,11 +1042,11 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
                       opener=None if move is None else functools.partial(open_moved, move))
 
     to_template = np.linalg.inv(view.tpl_to_board)
-    found = board._apply(to_template,
+    found = board.apply(to_template,
                          np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
     # The marks that were already on the Board, in the same frame of reference —
     # what tells a displaced one of those from a detector false positive.
-    pre_existing = board._apply(
+    pre_existing = board.apply(
         to_template, np.asarray(run.baseline, np.float32)[:, :2])
     if pre_labels is not None and len(pre_labels):
         outside = off_canvas(pre_labels, view)

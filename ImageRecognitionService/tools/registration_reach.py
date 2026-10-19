@@ -140,7 +140,7 @@ def cut_marks(anchor, marks):
     """`anchor` with a hole of PATCH + SEARCH frame px cut round every mark,
     so no mark being measured helps register itself."""
     region = anchor.region.copy()
-    for x, y in board._apply(anchor.H, marks):
+    for x, y in board.apply(anchor.H, marks):
         cv2.circle(region, (int(round(x)), int(round(y))), PATCH + SEARCH, 0, -1)
     return anchor._replace(region=region)
 
@@ -182,7 +182,7 @@ def measure(frames, marks, from_index):
         if current is None:
             lost += 1
             continue
-        predicted = board._apply(current.H, marks)
+        predicted = board.apply(current.H, marks)
         to_template = np.linalg.inv(current.H)
         for i, t in enumerate(marks):
             if index < from_index[i]:
@@ -196,7 +196,7 @@ def measure(frames, marks, from_index):
             if found is None or score < MIN_NCC:
                 skipped[i] += 1  # off the frame, on the search edge, or under MIN_NCC
                 continue
-            here = board._apply(to_template, [found])[0]
+            here = board.apply(to_template, [found])[0]
             errors[i].append(here - t)
             at[i].append(index)
             scores[i].append(score)

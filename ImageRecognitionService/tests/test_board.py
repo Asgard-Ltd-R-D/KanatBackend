@@ -298,7 +298,7 @@ def _scene(shift=(0.0, 0.0), size=(320, 240)):
 @pytest.mark.parametrize("motion", [cv2.MOTION_AFFINE, cv2.MOTION_HOMOGRAPHY])
 def test_the_anchoring_warp_takes_baseline_coordinates_onto_the_frame(motion):
     W, _ = board.ecc_warp(_scene(), _scene((5.0, -3.0)), motion, np.eye(3, dtype=np.float32))
-    moved = board._apply(W, [[100, 100]])[0]
+    moved = board.apply(W, [[100, 100]])[0]
     assert moved == pytest.approx([105, 97], abs=0.3)
 
 
@@ -314,7 +314,7 @@ def test_a_masked_warp_follows_the_scene_not_the_mask(box, monkeypatch):
     mask[y0:y1, x0:x1] = 255
     W, _ = board.ecc_warp(_scene(), _scene((5.0, -3.0)), cv2.MOTION_HOMOGRAPHY,
                           np.eye(3, dtype=np.float32), mask)
-    assert board._apply(W, [[100, 100]])[0] == pytest.approx([105, 97], abs=0.3)
+    assert board.apply(W, [[100, 100]])[0] == pytest.approx([105, 97], abs=0.3)
 
 
 def test_the_mask_follows_the_board_into_the_frame():
@@ -331,7 +331,7 @@ def test_the_mask_follows_the_board_into_the_frame():
     mask[30:210, 150:300] = 255
     seed = np.float32([[1, 0, 40], [0, 1, 0], [0, 0, 1]])
     W, correlation = board.ecc_warp(ref, moved, cv2.MOTION_HOMOGRAPHY, seed, mask)
-    assert board._apply(W, [[225, 120]])[0] == pytest.approx([265, 120], abs=0.05)
+    assert board.apply(W, [[225, 120]])[0] == pytest.approx([265, 120], abs=0.05)
     assert correlation > 0.99
 
 
@@ -346,7 +346,7 @@ def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
 
     first, _ = board.track_view(colour(_scene((2.0, 1.0))), reference)
     second, _ = board.track_view(colour(_scene((5.0, -3.0))), first)
-    assert board._apply(second.H, [[80, 90]])[0] == pytest.approx([105, 97], abs=0.4)
+    assert board.apply(second.H, [[80, 90]])[0] == pytest.approx([105, 97], abs=0.4)
     assert second.anchor is anchor and second.targets is reference.targets
 
 
@@ -362,7 +362,7 @@ def test_track_view_follows_a_board_move_past_ecc_s_reach_from_the_last_fit(monk
 
     view, _ = board.track_view(colour(_scene((40.0, 20.0))), reference,
                                previous=colour(_scene()))
-    assert board._apply(view.H, [[80, 90]])[0] == pytest.approx([140, 120], abs=0.4)
+    assert board.apply(view.H, [[80, 90]])[0] == pytest.approx([140, 120], abs=0.4)
 
 
 def _gravel_and_board(board_at, size=(480, 360)):
@@ -393,7 +393,7 @@ def test_track_view_reads_the_board_move_on_the_board_not_the_gravel(monkeypatch
 
     view, _ = board.track_view(_gravel_and_board((100, 60)), reference,
                                previous=_gravel_and_board((60, 40)))
-    assert board._apply(view.H, [[0, 0]])[0] == pytest.approx([100, 60], abs=1.0)
+    assert board.apply(view.H, [[0, 0]])[0] == pytest.approx([100, 60], abs=1.0)
 
 
 def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypatch):
@@ -410,7 +410,7 @@ def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypa
     colour = lambda img: cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
     view, _ = board.reanchor_view(colour(_scene((12.0, -7.0))), None, reference)
-    assert board._apply(view.H, [[700, 650]])[0] == pytest.approx([112, 83], abs=0.4)
+    assert board.apply(view.H, [[700, 650]])[0] == pytest.approx([112, 83], abs=0.4)
     assert view.anchor is anchor and view.targets is reference.targets
     assert view.tpl_to_board is reference.tpl_to_board
     assert view.canvas_size == reference.canvas_size

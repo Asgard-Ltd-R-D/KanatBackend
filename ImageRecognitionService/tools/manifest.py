@@ -27,9 +27,8 @@ here rather than written down:
 
 The guard sits on the recording, because that is the only place provenance
 exists. A frame already extracted to disk cannot be traced back to the footage
-it came from — `sweep_profile.py` takes one and has nothing to check — so every
-tool that *opens a recording* gates first, and that is what keeps sealed pixels
-from reaching the ones that don't.
+it came from, so every tool that *opens a recording* gates first, and that is
+what keeps sealed pixels from reaching the ones that don't.
 
 The recordings themselves are not version-controlled; they run to hundreds of
 megabytes. The manifest hash is the link between a file on disk and its role.

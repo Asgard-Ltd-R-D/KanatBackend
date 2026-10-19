@@ -919,10 +919,9 @@ renaming a file cannot move it across the split boundary. See `manifest.py` and
 ADR-0005.
 
 The guard sits on the recording, because that is where provenance is.
-`new_bullet_holes.py`, `evaluate.py` and `tagging_bullets.py` all call
-`manifest.gate` before opening one; `sweep_profile.py` takes a frame already on
-disk, which cannot be traced back to the footage it came from. Gating the
-extraction is what keeps sealed pixels out of it.
+`new_bullet_holes.py` and `evaluate.py` both call `manifest.gate` before
+opening one; a frame already on disk cannot be traced back to the footage it
+came from. Gating the extraction is what keeps sealed pixels out of it.
 
 | File | Holds |
 |---|---|
@@ -942,7 +941,6 @@ extraction is what keeps sealed pixels out of it.
 | `config/print_scale.json` | The print scale per Capture Setup, each with its source: 0.1763 for every CamA and CamB setup (#69) |
 | `data/targets/kanat_silhouette_a4.png` | The printed Target artwork; registration depends on it |
 | `data/truth/<recording>/` | Ground truth, one directory per recording |
-| `detection/tagging_bullets.py`, `tools/sweep_profile.py`, `config/capture_profiles.json` | The older pipeline. Still live, still uses the 3-class model, documented by ADR-0002 |
 
 ---
 

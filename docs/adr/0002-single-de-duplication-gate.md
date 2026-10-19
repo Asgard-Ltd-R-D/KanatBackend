@@ -25,6 +25,9 @@ a pre-existing one, taking CamB recall from 100% to 75%. `merge_displaced_tracks
 answers a different question, whether a later track is a displaced sighting of an
 earlier one; it is provisional and off by default (`--merge-displaced`).*
 
+*Amended 2026-10-19: `tagging_bullets.py`, and `is_duplicate_bullet` with it,
+is deleted (#193). Git history holds it; `same_bullet_hole` is the only gate.*
+
 ## Why one gate
 
 Five suppression tests previously ran in sequence, all answering the same

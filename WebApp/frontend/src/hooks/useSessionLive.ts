@@ -13,10 +13,36 @@ const REFUSED_RETRY_MS = 1000
 // The backend pings an idle stream every 15 s. Silence this long means it is
 // frozen: reconnect.
 const SILENCE_MS = 40_000
+// Wait between attempts to refetch the Session after one failed
+const RECONCILE_RETRY_MS = 2000
 
 function upsertBullet(session: Session, bullet: BulletHole): Session {
   const others = (session.bullet_holes ?? []).filter((b) => b.id !== bullet.id)
   return { ...session, bullet_holes: [...others, bullet].sort((a, b) => a.rank - b.rank) }
+}
+
+// As the backend does: the bullets after the deleted one move up a rank
+function removeBullet(session: Session, bulletId: string): Session {
+  const bullets = session.bullet_holes ?? []
+  const gone = bullets.find((b) => b.id === bulletId)
+  if (!gone) return session
+  return {
+    ...session,
+    bullet_holes: bullets
+      .filter((b) => b.id !== bulletId)
+      .map((b) => (b.rank > gone.rank ? { ...b, rank: b.rank - 1 } : b)),
+  }
+}
+
+function applyEvent(session: Session, event: LiveEvent): Session {
+  switch (event.type) {
+    case 'bullet_created':
+      return upsertBullet(session, event.bullet)
+    case 'bullet_deleted':
+      return removeBullet(session, event.bullet_id)
+    case 'session_updated':
+      return { ...session, status: event.status }
+  }
 }
 
 // Keeps the ['session', id] query current from the backend's live events while
@@ -32,6 +58,7 @@ export function useSessionLive(sessionId: string | undefined, enabled: boolean) 
     let source: EventSource | null = null
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     let silenceTimer: ReturnType<typeof setTimeout> | undefined
+    let reconcileTimer: ReturnType<typeof setTimeout> | undefined
     let unknown = 0
     let stopped = false
 
@@ -43,6 +70,16 @@ export function useSessionLive(sessionId: string | undefined, enabled: boolean) 
       }, SILENCE_MS)
     }
 
+    // Refetch the Session, and keep trying until one refetch succeeds: the
+    // stream does not replay an event whose refetch failed
+    const reconcile = async () => {
+      clearTimeout(reconcileTimer)
+      await qc.invalidateQueries({ queryKey: key })
+      if (!stopped && qc.getQueryState(key)?.status === 'error') {
+        reconcileTimer = setTimeout(reconcile, RECONCILE_RETRY_MS)
+      }
+    }
+
     const connect = () => {
       source = openSessionLive(sessionId)
 
@@ -51,7 +88,7 @@ export function useSessionLive(sessionId: string | undefined, enabled: boolean) 
         unknown = 0
         heard()
         // Catch up on anything that happened before this stream was listening
-        qc.invalidateQueries({ queryKey: key })
+        reconcile()
       }
 
       source.addEventListener('ping', heard)
@@ -59,16 +96,13 @@ export function useSessionLive(sessionId: string | undefined, enabled: boolean) 
       source.onmessage = (msg) => {
         heard()
         const event = JSON.parse(msg.data) as LiveEvent
-        if (event.type === 'bullet_created' && !qc.isFetching({ queryKey: key })) {
-          qc.setQueryData<Session>(key, (s) => s && upsertBullet(s, event.bullet))
-        } else {
-          // A fetch already in flight may have read the database before this
-          // event, and would overwrite it: restart it instead. A delete
-          // renumbers the bullets after it, and a status change ends the live
-          // view: take the backend's word for both.
-          qc.invalidateQueries({ queryKey: key })
-          if (event.type === 'session_updated') qc.invalidateQueries({ queryKey: ['sessions'] })
-        }
+        // On screen at once, even if the backend cannot be refetched right now
+        qc.setQueryData<Session>(key, (s) => s && applyEvent(s, event))
+        // Then confirm with the backend, except for a plain new bullet. A fetch
+        // already in flight may have read the database before this event and
+        // would overwrite it: reconcile restarts it.
+        if (event.type !== 'bullet_created' || qc.isFetching({ queryKey: key })) reconcile()
+        if (event.type === 'session_updated') qc.invalidateQueries({ queryKey: ['sessions'] })
       }
 
       source.onerror = () => {
@@ -100,6 +134,7 @@ export function useSessionLive(sessionId: string | undefined, enabled: boolean) 
       stopped = true
       clearTimeout(retryTimer)
       clearTimeout(silenceTimer)
+      clearTimeout(reconcileTimer)
       source?.close()
     }
   }, [sessionId, enabled, qc])

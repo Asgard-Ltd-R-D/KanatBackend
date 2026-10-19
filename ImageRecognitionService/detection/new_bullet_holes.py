@@ -1009,7 +1009,7 @@ class Stream:
 
 def _open_source(video, start, ref_time=None):
     """A Stream for an rtsp:// URL, else a Recording, opened at `start`, and
-    its frame 0: the source opener `process` uses unless handed another
+    its frame 0: the source opener the Run's open uses unless handed another
     (#164)."""
     return (Stream if _is_stream(video) else Recording).open(video, start, ref_time)
 
@@ -1634,32 +1634,27 @@ def registration_note(residual, radius, unit="Board px"):
             f"threshold. Not a pass/fail bar; none is validated")
 
 
-def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
-            out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
+def process(loop, end, out_video=None, mm_per_tpl_px=None,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, ref_time=None,
-            timing=None, device=None, opener=None):
-    """`video` is a recording's path, or a stream's rtsp:// URL (#83), which
-    has no `start` or `end`: it runs until stopped, at `LIVE_STRIDE` unless
-    `stride` says otherwise, and prints each Bullet Hole as it is confirmed.
+            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, timing=None):
+    """The Run `loop`, opened by `RegisteredFrames.open`, to `end` seconds
+    into its Recording. Whoever opens it chooses the source, the model and
+    the Board space everything is registered onto, and can use that Board
+    space first. A Stream has no `end`: it runs until stopped, at
+    `LIVE_STRIDE` unless `stride` says otherwise, and prints each Bullet Hole
+    as it is confirmed.
 
     `publish`, when given, is handed each Confirmed Bullet Hole once, as a
     `BulletHoleConfirmed` (#155): a Stream's as it is announced, a
     Recording's after the end-of-run report has measured it, in first-frame
-    order. Without it nothing is published. `ref_time` is a Recording's wall
-    clock at its t=0 (`Recording`).
+    order. Without it nothing is published.
 
     `timing`, a path, times each Look past the baseline (#129): a CSV row a
     Look there, and n/P50/P95/P99/max printed at the end (`_report_timing`).
-    Without it nothing is written, printed or kept. `device` is the
-    detector's for every call (`_detect`). `opener` opens the source
-    (`RegisteredFrames`): the scoring tool's moved Recording comes in this
-    way (#164)."""
+    Without it nothing is written, printed or kept."""
     if timing:
         open(timing, "w").close()   # a path it cannot write fails now, not after the run
-    loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time,
-                                 device, opener)
     match_px = loop.view.match_radius
     n_frames = math.inf if loop.live else loop.frames_until(end)
     stride = stride or (LIVE_STRIDE if loop.live else 1)
@@ -1700,7 +1695,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
              f" (of {baseline_frames} requested; the rest were lost or unread)")
     print(f"[INFO] baseline: {len(baseline)} Baseline Marks over "
           f"{len(baseline_detections)} frame(s) from "
-          f"{loop.when(0) if loop.live else f'{start}s'}{short}")
+          f"{loop.when(0) if loop.live else f'{loop.source.start_s}s'}{short}")
 
     # ponytail: a live run still keeps every look's index, time and
     # residuals, and every candidate, for the end-of-run report: a few MB an
@@ -2212,7 +2207,8 @@ if __name__ == "__main__":
     # Drained on leaving, after the report and even if the run raised (#155).
     with (webapp.WebAppPublisher(a.session_id, a.backend_url) if a.session_id
           else contextlib.nullcontext()) as publisher:
-        process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
-                a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,
-                a.stride, publish=publisher.publish if publisher else None,
-                ref_time=ref_time, timing=a.timing, device=a.device)
+        loop = RegisteredFrames.open(a.video, a.start, a.model, a.confidence, a.template,
+                                     ref_time, a.device)
+        process(loop, a.end, a.out, scale, not a.no_change_filter, a.merge_displaced,
+                a.baseline_frames, a.stride, publish=publisher.publish if publisher else None,
+                timing=a.timing)

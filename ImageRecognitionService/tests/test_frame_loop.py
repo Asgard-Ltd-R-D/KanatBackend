@@ -308,7 +308,7 @@ def test_a_baseline_frame_with_no_target_is_refused(monkeypatch):
         nbh.open_board_space("clip.mkv", 10.0, None)
 
 
-def test_the_pipeline_reads_through_the_opener_it_is_given(monkeypatch):
+def test_a_run_reads_through_the_opener_it_is_opened_with(monkeypatch):
     """How the scoring tool hands over a moved Recording (#164). Without one,
     every other test here runs on today's choice of Stream or Recording."""
     _openable(monkeypatch)
@@ -318,7 +318,7 @@ def test_the_pipeline_reads_through_the_opener_it_is_given(monkeypatch):
         opened.append((video, start, ref_time))
         return nbh.Recording(cap, 25.0, start), np.zeros((8, 8, 3), np.uint8)
 
-    nbh.process("clip.mkv", 10.0, 10.2, "model.pt", opener=opener)
+    nbh.process(nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt", opener=opener), 10.2)
     assert opened == [("clip.mkv", 10.0, None)] and cap.released
 
 
@@ -375,22 +375,20 @@ def test_an_interval_shorter_than_a_frame_still_renders(monkeypatch):
     """`--end` at `--start` reads no frame; `--out` gets Board space's own view
     rather than a KeyError."""
     loop = _loop()
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     rendered = []
     monkeypatch.setattr(nbh, "_render", lambda video, start, n, views, *rest:
                         rendered.append((n, views)))
-    nbh.process("clip.mp4", 10.0, 10.0, "model.pt", out_video="out.mp4")
+    nbh.process(loop, 10.0, out_video="out.mp4")
     assert rendered == [(0, {0: loop.view})]
 
 
 def test_rendering_gets_the_view_of_every_frame_read(monkeypatch):
     """Views are kept only for `--out` (#80); when they are, none is missing."""
     loop = _loop()
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     rendered = []
     monkeypatch.setattr(nbh, "_render", lambda video, start, n, views, *rest:
                         rendered.append(sorted(views)))
-    nbh.process("clip.mp4", 10.0, 10.4, "model.pt", out_video="out.mp4")
+    nbh.process(loop, 10.4, out_video="out.mp4")
     assert rendered == [list(range(10))]
 
 
@@ -407,8 +405,7 @@ def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch, capsys):
     # `when` is never called: nothing here re-anchors.
     base = np.zeros((8, 8, 3), np.uint8)
     loop = _loop(view=view, registration=nbh.Registration(view, base, None, str))
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
-    nbh.process("clip.mp4", 10.0, 10.4, "model.pt")
+    nbh.process(loop, 10.4)
     assert "[WARN] Board lost on 2 frame(s);" in capsys.readouterr().out
 
 
@@ -459,9 +456,8 @@ def _strided_run(monkeypatch, n_frames, on=lambda i: i >= 6, model=None):
     half a frame on `--end` keeps `frames_until` clear of float truncation."""
     loop = _loop(frames=100)
     loop.model = model or _SeenOn(on)
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.zeros((8, 8), bool))
-    return nbh.process("clip.mp4", 10.0, 10.0 + (n_frames + 0.5) / 25, "model.pt",
+    return nbh.process(loop, 10.0 + (n_frames + 0.5) / 25,
                        require_change_evidence=False, stride=13)
 
 
@@ -681,11 +677,9 @@ def _live_run(monkeypatch, model, changed=lambda index: True, stride=5, timing=N
     sees the mark on the frames `changed(index)` says."""
     loop = _live(monkeypatch, _FakeStream(interval=0.002))
     loop.model = model
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions",
                         lambda a, b: np.full((64, 64), changed(int(b[0, 0, 0])), bool))
-    return nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=stride,
-                       timing=timing)
+    return nbh.process(loop, None, stride=stride, timing=timing)
 
 
 @pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
@@ -894,10 +888,9 @@ def test_a_window_a_drop_emptied_confirms_nothing(monkeypatch, capsys):
     loop = _live(monkeypatch, _FakeStream(n=30, interval=0.002), lambda: after)
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
     loop.model = _Watching(lambda i: 20 <= i < 1000, stop_at=1200)
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions",
                         lambda a, b: np.ones((64, 64), bool))
-    run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1)
+    run = nbh.process(loop, None, stride=1)
     (_, missed), = loop.source.drops
     assert missed >= nbh.PERSIST_FRAMES
     assert "[NEW]" not in capsys.readouterr().out and run.holes == []
@@ -958,10 +951,9 @@ def test_a_window_emptied_upstream_confirms_nothing(monkeypatch, capsys):
     lost count against the floor, so it is unconfirmable (#117)."""
     loop = _live(monkeypatch, _Losing(after=30, lost=100, interval=0.002))
     loop.model = _Watching(lambda i: i >= 20, stop_at=200)
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions",
                         lambda a, b: np.ones((64, 64), bool))
-    run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1)
+    run = nbh.process(loop, None, stride=1)
     assert loop.source.unseen == list(range(31, 131))   # stride 1: all were due
     assert "[NEW]" not in capsys.readouterr().out and run.holes == []
 
@@ -1153,9 +1145,8 @@ def test_live_times_are_the_stream_timestamps_from_frame_0s_wall_clock(
     read (#117)."""
     loop = _live(monkeypatch, _FakeStream(interval=0.002))
     loop.model = _Watching(lambda i: i >= 6, stop_at=120)
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
-    run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1)
+    run = nbh.process(loop, None, stride=1)
     (hole,) = run.holes
     at = nbh._clock(loop.source.times[0] + hole["first_frame"] / 25)
     new = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[NEW]")]
@@ -1193,10 +1184,8 @@ def test_a_live_bullet_hole_is_published_at_the_time_printed_for_it_after_a_reco
     after.at = 100   # its pixels, which `_Watching` goes by, start at 101
     loop = _live(monkeypatch, _FakeStream(n=40, interval=0.002), lambda: after)
     loop.model = _Watching(lambda i: i > 100, stop_at=200)
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
-    run = nbh.process("rtsp://mtx:8554/cam", None, None, "model.pt", stride=1,
-                      publish=posted.append)
+    run = nbh.process(loop, None, stride=1, publish=posted.append)
     assert [v.first_frame for v in posted] == [h["first_frame"] for h in run.holes]
     (value,) = posted
     assert value.first_frame > 40
@@ -1212,15 +1201,11 @@ def test_a_recording_publishes_each_bullet_hole_at_ref_time_plus_its_time_in_the
     `--ref-time` was given in (#155)."""
     posted = []
     ref = datetime(2026, 10, 11, 13, 30, tzinfo=timezone(timedelta(hours=3)))
-    def opened(video, start, model_path, conf, template_path, ref_time, device, opener):
-        loop = _loop(frames=100, source=nbh.Recording(_FakeCap(100), 25.0, start, ref_time))
-        loop.model = _SeenOn(lambda i: i >= 6)
-        return loop
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", opened)
+    loop = _loop(frames=100, source=nbh.Recording(_FakeCap(100), 25.0, 10.0, ref))
+    loop.model = _SeenOn(lambda i: i >= 6)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.zeros((8, 8), bool))
-    run = nbh.process("clip.mp4", 10.0, 10.0 + (13 + nbh.PERSIST_FRAMES + 0.5) / 25,
-                      "model.pt", require_change_evidence=False, stride=13,
-                      publish=posted.append, ref_time=ref)
+    run = nbh.process(loop, 10.0 + (13 + nbh.PERSIST_FRAMES + 0.5) / 25,
+                      require_change_evidence=False, stride=13, publish=posted.append)
     assert [v.first_frame for v in posted] == [h["first_frame"] for h in run.holes] == [13]
     (value,) = posted
     assert value.first_seen_at == ref + timedelta(seconds=10.52)
@@ -1252,7 +1237,7 @@ def test_the_detector_is_handed_the_device_only_when_one_is_given(monkeypatch):
         model = _OnDevice()
         monkeypatch.setitem(sys.modules, "ultralytics",
                             types.SimpleNamespace(YOLO=lambda path: model))
-        nbh.process("clip.mkv", 10.0, 10.2, "model.pt", device=device)
+        nbh.process(nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt", device=device), 10.2)
         assert model.handed and all(h == handed for h in model.handed)
 
 
@@ -1263,11 +1248,10 @@ _STAGES = ("registration_ms", "rectification_ms", "detector_ms", "baseline_strip
            "change_filter_ms", "persistence_ms")
 
 
-def _timed(monkeypatch, tmp_path, loop, **kwargs):
+def _timed(tmp_path, loop, **kwargs):
     """`process` over `loop`'s 10 frames with `--timing`: the CSV's rows."""
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: loop)
     path = tmp_path / "timing.csv"
-    nbh.process("clip.mp4", 10.0, 10.4, "model.pt", timing=str(path), **kwargs)
+    nbh.process(loop, 10.4, timing=str(path), **kwargs)
     with open(path, newline="") as f:
         assert f.readline().startswith("# WIP")   # the label line, then the CSV
         return list(csv.DictReader(f))
@@ -1277,11 +1261,11 @@ def _calls(row):
     return [float(v) for k, v in row.items() if k.startswith("call_") and v]
 
 
-def test_a_timed_run_writes_a_row_for_each_look_past_the_baseline(monkeypatch, tmp_path):
+def test_a_timed_run_writes_a_row_for_each_look_past_the_baseline(tmp_path):
     """The baseline's Looks, 0-4, have none. Inference Time is the sum of the
     Look's calls and within its Look Time, and the stages add up to it.
     Frame Wait is a recording's to leave empty (#129)."""
-    rows = _timed(monkeypatch, tmp_path, _loop())
+    rows = _timed(tmp_path, _loop())
     assert [int(r["frame"]) for r in rows] == [5, 6, 7, 8, 9]
     for r in rows:
         look, calls = float(r["look_ms"]), _calls(r)
@@ -1292,10 +1276,10 @@ def test_a_timed_run_writes_a_row_for_each_look_past_the_baseline(monkeypatch, t
         assert r["frame_wait_ms"] == ""
 
 
-def test_a_lost_look_has_a_row_with_no_detector_calls(monkeypatch, tmp_path):
+def test_a_lost_look_has_a_row_with_no_detector_calls(tmp_path):
     """Its registration cost counts towards the spread; the stages it never
     reached are empty, and still the rest add up to its Look Time."""
-    rows = {int(r["frame"]): r for r in _timed(monkeypatch, tmp_path, _loop(lambda i: i != 7))}
+    rows = {int(r["frame"]): r for r in _timed(tmp_path, _loop(lambda i: i != 7))}
     lost = rows[7]
     assert lost["registered"] == "0" and _calls(lost) == [] and lost["call_1_ms"] == ""
     assert lost["inference_ms"] == ""
@@ -1306,7 +1290,7 @@ def test_a_lost_look_has_a_row_with_no_detector_calls(monkeypatch, tmp_path):
     assert all(rows[i]["registered"] == "1" for i in (5, 6, 8, 9))
 
 
-def test_a_grown_canvas_times_each_detector_call(monkeypatch, tmp_path):
+def test_a_grown_canvas_times_each_detector_call(tmp_path):
     """The margin canvas and its band are two calls a Look, each timed, and
     Inference Time is their sum (#46)."""
     view = _GrownView()
@@ -1314,21 +1298,20 @@ def test_a_grown_canvas_times_each_detector_call(monkeypatch, tmp_path):
                                          report=lambda: None, reanchors=0)
     loop = _loop(view=view, registration=registration)
     loop.model = _RecordingModel()
-    rows = _timed(monkeypatch, tmp_path, loop)
+    rows = _timed(tmp_path, loop)
     assert rows and all(len(_calls(r)) == 2 for r in rows)
     for r in rows:
         assert float(r["inference_ms"]) == pytest.approx(sum(_calls(r)), abs=2e-3)
         assert float(r["inference_ms"]) <= float(r["look_ms"])
 
 
-def test_the_timing_summary_is_labelled_wip_and_names_where_it_ran(monkeypatch, tmp_path,
-                                                                   capsys):
+def test_the_timing_summary_is_labelled_wip_and_names_where_it_ran(tmp_path, capsys):
     """WIP, never an acceptance result; the host, the platform, the device the
     detector resolved to and the Looks counted; n/P50/P95/P99/max for each
     figure, and no comparison with 40 ms (#129)."""
     loop = _loop()
     loop.model = _OnDevice()
-    _timed(monkeypatch, tmp_path, loop)
+    _timed(tmp_path, loop)
     lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[TIMING]")]
     header = lines[0]
     # The CSV says so too, so a copy passed on alone says where it was measured.
@@ -1420,7 +1403,6 @@ def test_two_outputs_are_one_file_exactly_when_the_filesystem_says_so(tmp_path):
 
 def test_a_run_without_timing_writes_and_prints_none(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(nbh.RegisteredFrames, "open", lambda *args: _loop())
-    nbh.process("clip.mp4", 10.0, 10.4, "model.pt")
+    nbh.process(_loop(), 10.4)
     assert "[TIMING]" not in capsys.readouterr().out
     assert os.listdir(tmp_path) == []

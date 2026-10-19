@@ -1016,12 +1016,12 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     truth, pre_labels = load_truth(truth_image, truth_labels,
                                    baseline_frame, view)
 
-    run = nbh.process(video, start, end, model, confidence,
-                      template_path=template,
-                      require_change_evidence=change_filter,
+    loop = nbh.RegisteredFrames.open(
+        video, start, model, confidence, template,
+        opener=None if move is None else functools.partial(open_moved, move))
+    run = nbh.process(loop, end, require_change_evidence=change_filter,
                       merge_displaced=merge_displaced,
-                      baseline_frames=baseline_frames, stride=stride,
-                      opener=None if move is None else functools.partial(open_moved, move))
+                      baseline_frames=baseline_frames, stride=stride)
 
     found = view.board_to_template(
         np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))

@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.deps import get_db
+from app.core.live import hub
+from app.schemas.live import SessionUpdatedEvent
 from app.schemas.session import SessionCreate, SessionListItem, SessionResponse, SessionUpdate
 from app.services import sessions as svc
 
@@ -27,7 +29,12 @@ def get_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
 
 @router.patch("/{session_id}", response_model=SessionResponse)
 def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = Depends(get_db)):
-    return svc.update_session(session_id, body, db)
+    session = svc.update_session(session_id, body, db)
+    hub.publish_from_thread(
+        session_id,
+        SessionUpdatedEvent(name=session.name, status=session.status, ended_at=session.ended_at),
+    )
+    return session
 
 
 @router.delete("/{session_id}", status_code=204)

@@ -1,9 +1,7 @@
 // WHEP signalling against MediaMTX's WebRTC server. The video itself flows
 // over WebRTC (UDP, webrtcLocalUDPAddress); these calls only open and close it.
 import { WhepSession } from '../types'
-
-// MediaMTX's WebRTC server, on the same PC
-const MEDIA_URL = 'http://localhost:8889'
+import { MEDIA_URL } from '../utils/config'
 
 export async function whepConnect(path: string, offerSdp: string): Promise<WhepSession> {
   const url = `${MEDIA_URL}/${encodeURIComponent(path)}/whep`

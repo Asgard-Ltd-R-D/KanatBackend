@@ -11,7 +11,7 @@ and detects bullet holes on paper targets from range camera footage.
 One recorded shooting session, from start to stop. Owns the events, hits and
 targets captured during it. A Range may start on a Board that already carries
 Bullet Holes from an earlier Range.
-_Avoid_: session, run (the system's pass over footage is a Run), act, firing act
+_Avoid_: session, run (the system watching footage is a Run), act, firing act
 
 **Shot Distance**:
 The distance from a Bullet Hole to its Target's centre, in millimetres.
@@ -56,11 +56,11 @@ arrive. A Recording replayed through the video service is a Stream.
 _Avoid_: feed, live source
 
 **Run**:
-One pass of the system over footage, from its baseline frame to its end. The
-baseline frame fixes where on the Board everything the Run reports is placed:
-positions from one Run compare directly, positions from two Runs only once each
-is placed on the Target artwork. A Range is watched live by one Run; a
-Recording may have many.
+The system watching footage once, from its baseline frame to its end. The
+baseline frame fixes where on the Board the Run places everything it reports:
+places from one Run compare directly, places from two Runs only once each is
+mapped onto the Target artwork. A Range is watched live by one Run; a Recording
+may have many.
 _Avoid_: pass, execution, session
 
 **Look**:

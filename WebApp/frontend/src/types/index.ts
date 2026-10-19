@@ -33,6 +33,8 @@ export interface BulletCreatePayload {
   source: 'model' | 'manual'
 }
 
+export type StreamStatus = 'loading' | 'playing' | 'error'
+
 export interface WhepSession {
   answerSdp: string
   resourceUrl: string | null // DELETE this to end the session

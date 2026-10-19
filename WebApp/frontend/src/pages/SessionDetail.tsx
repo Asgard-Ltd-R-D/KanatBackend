@@ -12,6 +12,7 @@ import { BulletHole } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { AddBulletModal } from '../components/AddBulletModal'
+import { WhepPlayer } from '../components/Camera/WhepPlayer'
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -217,12 +218,76 @@ export function SessionDetail() {
         </div>
       </div>
 
-      {/* Active placeholder */}
+      {/* Active: stats + stream + live bullet feed */}
       {session.status === 'active' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl flex flex-col items-center justify-center py-24 gap-3 shadow-sm dark:shadow-none">
-          <Crosshair size={36} className="text-slate-300 dark:text-slate-700" />
-          <p className="text-slate-600 dark:text-slate-400 font-medium">Session in progress</p>
-          <p className="text-slate-400 dark:text-slate-600 text-sm">Results will be shown once the session is ended.</p>
+        <div className="flex flex-col gap-4">
+          {/* Mini stats */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <StatTile label="Total Bullets" value={bullets.length} />
+            <StatTile label="AI Detected" value={bullets.filter(b => b.source === 'model').length} />
+            <StatTile label="Manual" value={bullets.filter(b => b.source === 'manual').length} />
+            <StatTile label="Duration" value={formatDuration(session.started_at, null)} />
+          </div>
+
+          {/* Stream + feed — fixed layout, neither column grows */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+            {/* Camera feed — 2/3 */}
+            <div className="lg:col-span-2">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Camera Feed</p>
+              <WhepPlayer path="loopdemo" />
+            </div>
+
+            {/* Live bullet feed — 1/3, fixed height matching approx. video */}
+            <div>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Live Detections</p>
+              <div className="h-[420px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm dark:shadow-none flex flex-col">
+                {/* Panel header */}
+                <div className="shrink-0 px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    Newest first
+                  </span>
+                  <span className="text-[10px] tabular-nums text-slate-400 dark:text-slate-500">
+                    {bullets.length} detected
+                  </span>
+                </div>
+
+                {/* Scrollable list or empty state */}
+                {bullets.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3">
+                    <Crosshair size={28} className="text-slate-300 dark:text-slate-700" />
+                    <p className="text-slate-400 dark:text-slate-600 text-sm">Waiting for detections…</p>
+                  </div>
+                ) : (
+                  <ul className="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {[...bullets].reverse().map(b => (
+                      <li key={b.id} className="px-4 py-2.5 flex items-start gap-3">
+                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-600 w-5 shrink-0 pt-0.5 text-right">
+                          {b.rank}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <SourceBadge source={b.source} />
+                            <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                              {locationLabel(b)}
+                            </span>
+                          </div>
+                          <p className="text-[10px] font-mono text-slate-400 dark:text-slate-600">
+                            {formatTime(b.first_seen_at)}
+                            {b.x_mm != null && b.y_mm != null && (
+                              <>
+                                <span className="mx-1 text-slate-300 dark:text-slate-700">·</span>
+                                {mmLabel(b)}
+                              </>
+                            )}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

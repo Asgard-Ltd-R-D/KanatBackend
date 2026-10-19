@@ -1,10 +1,10 @@
-export const BASE_URL = window.kanat?.apiUrl ?? 'http://localhost:8000'
+import { API_URL } from '../utils/config'
 
 export async function apiFetch<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${API_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...options?.headers,

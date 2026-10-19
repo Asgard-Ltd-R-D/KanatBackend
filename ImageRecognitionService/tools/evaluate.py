@@ -284,9 +284,8 @@ def position_errors(truth, found, pairs, mm_per_tpl_px):
     the artwork — this truth was carried through all three (CONTEXT.md,
     Position Error).
     """
-    d = np.array([found[i] - truth[j] for i, j, _ in pairs],
-                 np.float64).reshape(-1, 2) * mm_per_tpl_px
-    d[:, 1] *= -1  # template y grows downward, the printed Target's Y grows up
+    d = board.to_printed_axes(np.array([found[i] - truth[j] for i, j, _ in pairs],
+                                       np.float64).reshape(-1, 2), mm_per_tpl_px)
     return np.column_stack([d, np.hypot(d[:, 0], d[:, 1])])
 
 

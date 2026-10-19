@@ -925,10 +925,22 @@ def to_millimetres(board_points, view, mm_per_tpl_px=None, target_index=None):
             "ruler reading. Everything downstream scales linearly with it, so "
             "it is not guessed.")
     mm_per_board_px = mm_per_tpl_px / view.board_scale
-    offset = (np.asarray(board_points, np.float32).reshape(-1, 2)
-              - view.ring_centre(target_index)) * mm_per_board_px
-    offset[:, 1] *= -1  # image y grows downward, physical y grows up
-    return offset
+    return to_printed_axes(np.asarray(board_points, np.float32).reshape(-1, 2)
+                           - view.ring_centre(target_index), mm_per_board_px)
+
+
+def to_printed_axes(offsets, mm_per_unit):
+    """Image-axis offsets as millimetres along the Target's printed axes, X
+    right and Y up, at `mm_per_unit` millimetres per unit of `offsets`.
+
+    A Position and its Position Error both take Y up from here, so dY cannot
+    change sign against its Position. Each caller's offsets keep their own
+    precision: float32 Board px for a Position, float64 template px for a
+    Position Error.
+    """
+    mm = offsets * mm_per_unit
+    mm[:, 1] *= -1  # image y grows downward, the printed Target's Y grows up
+    return mm
 
 
 def score(board_points, view, target_index=None):

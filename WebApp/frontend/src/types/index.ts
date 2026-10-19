@@ -44,4 +44,4 @@ export interface WhepSession {
 export type LiveEvent =
   | { type: 'bullet_created'; bullet: BulletHole }
   | { type: 'bullet_deleted'; bullet_id: string }
-  | { type: 'session_updated'; status: Session['status'] }
+  | { type: 'session_updated'; name: string; status: Session['status']; ended_at: string | null }

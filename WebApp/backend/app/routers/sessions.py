@@ -30,7 +30,10 @@ def get_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
 @router.patch("/{session_id}", response_model=SessionResponse)
 def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = Depends(get_db)):
     session = svc.update_session(session_id, body, db)
-    hub.publish_from_thread(session_id, SessionUpdatedEvent(status=session.status))
+    hub.publish_from_thread(
+        session_id,
+        SessionUpdatedEvent(name=session.name, status=session.status, ended_at=session.ended_at),
+    )
     return session
 
 

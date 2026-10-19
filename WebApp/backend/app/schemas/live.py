@@ -1,5 +1,6 @@
 import uuid
-from typing import Literal
+from datetime import datetime
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -21,8 +22,13 @@ class BulletDeletedEvent(BaseModel):
 
 
 class SessionUpdatedEvent(BaseModel):
+    """Every field PATCH /sessions/{id} can change, so the event alone is enough
+    to show it: the frontend stops listening as soon as a Session completes."""
+
     type: Literal["session_updated"] = "session_updated"
+    name: str
     status: Literal["active", "completed"]
+    ended_at: Optional[datetime]
 
 
 LiveEvent = BulletCreatedEvent | BulletDeletedEvent | SessionUpdatedEvent

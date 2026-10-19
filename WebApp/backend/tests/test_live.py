@@ -97,12 +97,15 @@ def test_a_deleted_bullet_is_published(client, subscribed, monkeypatch):
     assert next_event(subscribed) == {"type": "bullet_deleted", "bullet_id": str(bullet_id)}
 
 
-def test_ending_the_session_is_published(client, subscribed, monkeypatch):
-    monkeypatch.setattr(session_svc, "update_session", lambda session_id, body, db: make_session("completed"))
+def test_ending_the_session_is_published_with_its_end_time(client, subscribed, monkeypatch):
+    ended = SimpleNamespace(**{**vars(make_session("completed")), "ended_at": NOW})
+    monkeypatch.setattr(session_svc, "update_session", lambda session_id, body, db: ended)
 
     assert client.patch(f"/sessions/{SESSION_ID}", json={"status": "completed"}).status_code == 200
+    event = next_event(subscribed)
 
-    assert next_event(subscribed) == {"type": "session_updated", "status": "completed"}
+    assert (event["type"], event["name"], event["status"]) == ("session_updated", "Range 1", "completed")
+    assert datetime.fromisoformat(event["ended_at"]) == NOW
 
 
 def test_an_unknown_session_answers_404(client):

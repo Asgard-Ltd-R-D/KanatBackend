@@ -506,10 +506,10 @@ class BoardView:
         silent, large error, so callers pass the Target the Bullet Hole is on.
         """
         if target_index is None or not self.targets:
-            return apply(self.tpl_to_board, [RING_CENTRE_TPL])[0]
+            return self.template_to_board([RING_CENTRE_TPL])[0]
         moments = cv2.moments(self.targets[target_index])
         if moments["m00"] == 0:
-            return apply(self.tpl_to_board, [RING_CENTRE_TPL])[0]
+            return self.template_to_board([RING_CENTRE_TPL])[0]
         centroid = np.array([moments["m10"] / moments["m00"],
                              moments["m01"] / moments["m00"]], np.float32)
         return centroid + RING_OFFSET_TPL.astype(np.float32) * self.board_scale
@@ -518,6 +518,12 @@ class BoardView:
     def match_radius(self):
         """`MATCH_TPL_PX` expressed in Board-space pixels."""
         return MATCH_TPL_PX * self.board_scale
+
+    def template_to_board(self, points):
+        return apply(self.tpl_to_board, points)
+
+    def board_to_template(self, points):
+        return apply(np.linalg.inv(self.tpl_to_board), points)
 
     def _frame_to_board(self):
         return self.tpl_to_board @ np.linalg.inv(self.H)

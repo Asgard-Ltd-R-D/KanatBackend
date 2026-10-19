@@ -190,7 +190,7 @@ def off_canvas(truth, view):
     """Indices of template positions outside the rectified Board the detector
     is shown — positions no run can find, whatever the reason."""
     width, height = view.canvas_size
-    placed = board.apply(view.tpl_to_board, truth)
+    placed = view.template_to_board(truth)
     return [i for i, (x, y) in enumerate(placed)
             if not (0 <= x < width and 0 <= y < height)]
 
@@ -1041,13 +1041,11 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
                       baseline_frames=baseline_frames, stride=stride,
                       opener=None if move is None else functools.partial(open_moved, move))
 
-    to_template = np.linalg.inv(view.tpl_to_board)
-    found = board.apply(to_template,
-                         np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
+    found = view.board_to_template(
+        np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
     # The marks that were already on the Board, in the same frame of reference —
     # what tells a displaced one of those from a detector false positive.
-    pre_existing = board.apply(
-        to_template, np.asarray(run.baseline, np.float32)[:, :2])
+    pre_existing = view.board_to_template(np.asarray(run.baseline, np.float32)[:, :2])
     if pre_labels is not None and len(pre_labels):
         outside = off_canvas(pre_labels, view)
         placement = placement_note(np.delete(pre_labels, outside, axis=0),

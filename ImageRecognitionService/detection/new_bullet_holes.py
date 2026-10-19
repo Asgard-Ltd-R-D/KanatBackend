@@ -557,8 +557,7 @@ class BulletHoleConfirmed(NamedTuple):
 def _confirmed(hole, view, wall_clock):
     """A measured Bullet Hole as published: Board space mapped back onto the
     template by `view`, its first frame's time by `wall_clock` (#155)."""
-    inv = np.linalg.inv(view.tpl_to_board).astype(np.float32)
-    x, y = cv2.perspectiveTransform(np.array([[hole["pos"]]], dtype=np.float32), inv)[0, 0]
+    x, y = view.board_to_template([hole["pos"]])[0]
     mm = hole["mm"]
     seen = wall_clock(hole["first_frame"]).astimezone(timezone.utc)   # --ref-time's offset, if any
     return BulletHoleConfirmed(hole["first_frame"], seen, (float(x), float(y)), hole["target"],

@@ -190,6 +190,18 @@ def test_physical_y_grows_upward():
     assert board.to_millimetres([above], view, mm_per_tpl_px=0.2)[0][1] == pytest.approx(20.0)
 
 
+def test_a_template_position_survives_template_to_board_and_back():
+    """The two conversions are inverses, on a Board space that is neither
+    unit-scale nor at the template's origin."""
+    view = board.BoardView(H=np.eye(3, dtype=np.float32),
+                           tpl_to_board=board._as_matrix(2.5, (40, -30)),
+                           canvas_size=(1000, 1000), targets=[])
+    position = [[412.0, 287.0]]
+    on_board = view.template_to_board(position)
+    assert on_board[0] == pytest.approx([1070.0, 687.5])
+    assert view.board_to_template(on_board)[0] == pytest.approx(position[0], abs=1e-3)
+
+
 def test_each_target_has_its_own_ring_centre():
     """Measuring a Bullet Hole on Target 2 against Target 1's centre is a big,
     silent error — the Targets are hundreds of Board px apart."""

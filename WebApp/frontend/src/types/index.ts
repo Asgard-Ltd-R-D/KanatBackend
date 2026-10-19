@@ -39,3 +39,9 @@ export interface WhepSession {
   answerSdp: string
   resourceUrl: string | null // DELETE this to end the session
 }
+
+// Pushed by the backend as Server-Sent Events from /sessions/{id}/live
+export type LiveEvent =
+  | { type: 'bullet_created'; bullet: BulletHole }
+  | { type: 'bullet_deleted'; bullet_id: string }
+  | { type: 'session_updated'; status: Session['status'] }

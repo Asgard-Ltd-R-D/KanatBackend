@@ -32,3 +32,8 @@ export interface BulletCreatePayload {
   y_mm?: number | null
   source: 'model' | 'manual'
 }
+
+export interface WhepSession {
+  answerSdp: string
+  resourceUrl: string | null // DELETE this to end the session
+}

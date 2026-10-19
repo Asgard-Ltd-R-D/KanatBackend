@@ -38,12 +38,14 @@ and jitter (the rest) (#50 C): they point at re-anchoring and at smoothing.
 Measurement only: changes nothing in the pipeline.
 """
 import argparse
+import itertools
 import os
 
 import cv2
 import numpy as np
 
 from detection import board
+from detection import new_bullet_holes as nbh
 from tools import evaluate, manifest
 
 PATCH = 10        # half-size of a mark's patch, frame px: a hole plus its rim
@@ -77,28 +79,26 @@ def locate(frame_gray, patch, predicted):
     return np.array([x - SEARCH + px + dx, y - SEARCH + py + dy]), score
 
 
-def _frames(video, start, end):
-    """`(index, frame)` over the window, the frame at `start` first."""
-    cap = cv2.VideoCapture(video)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
+def _frames(source, base, n_frames):
+    """`(index, frame)` over the first `n_frames` of `source`, every one of
+    them (stride 1, no baseline window), `base`, its frame 0, first: the
+    baseline frame by construction (#184)."""
+    source.start(n_frames, 1, 0)
     try:
-        for index in range(int((end - start) * fps)):
-            ok, frame = cap.read()
-            if not ok:
-                break
+        first = [nbh.Frame(0, base)] if n_frames > 0 else []
+        for index, frame, _ in itertools.chain(first, iter(source.read, None)):
             yield index, frame
     finally:
-        cap.release()
+        source.close()
 
 
-def _registered(video, start, end, view, track):
+def _registered(source, base, n_frames, view, track):
     """`(index, gray frame, view)` for every frame of the window, the baseline
     first at index 0, each later one `track(frame, last registered view, the
     frame it was registered on)`. A frame that fails to register comes with
     view None."""
     last, last_frame = view, None
-    for index, frame in _frames(video, start, end):
+    for index, frame in _frames(source, base, n_frames):
         try:
             current = view if index == 0 else track(frame, last, last_frame)
         except cv2.error:
@@ -259,7 +259,7 @@ if __name__ == "__main__":
 
     _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
     span = board.contour_span(board.template_contour(template_mask))
-    base, view = evaluate.baseline_view(a.video, a.start, template_mask)
+    source, base, view, _ = nbh.open_board_space(a.video, a.start, template_mask)
     if a.appeared is None:
         marks, _ = evaluate.load_truth(
             None, os.path.join(a.truth_labels, evaluate.RAW_NAMES["before"]), base, view)
@@ -269,8 +269,7 @@ if __name__ == "__main__":
         times = [float(t) for t in a.appeared.split(",")]
         if len(times) != len(marks):
             raise SystemExit(f"--appeared has {len(times)} times for {len(marks)} new Bullet Holes")
-        fps = cv2.VideoCapture(a.video).get(cv2.CAP_PROP_FPS)
-        from_index = [int(round((t - a.start) * fps)) for t in times]
+        from_index = [int(round((t - a.start) * source.fps)) for t in times]
         label = "wander after appearance (NOT baseline marks)"
 
     if a.cut_marks:
@@ -283,5 +282,5 @@ if __name__ == "__main__":
     else:
         track = _green_affine(base)
     print(f"[REACH] registration: {a.registration}{', marks cut' if a.cut_marks else ''}")
-    frames = _registered(a.video, a.start, a.end, view, track)
+    frames = _registered(source, base, int((a.end - a.start) * source.fps), view, track)
     _report(measure(frames, marks, from_index), span, label)

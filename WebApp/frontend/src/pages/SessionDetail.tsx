@@ -9,10 +9,11 @@ import { format } from 'date-fns'
 import { getSession, updateSession, exportUrl } from '../api/sessions'
 import { deleteBullet } from '../api/bullets'
 import { BulletHole } from '../types'
-import { StatusBadge } from '../components/StatusBadge'
-import { ConfirmDialog } from '../components/ConfirmDialog'
-import { AddBulletModal } from '../components/AddBulletModal'
+import { StatusBadge } from '../components/UI/StatusBadge'
+import { ConfirmDialog } from '../components/UI/ConfirmDialog'
+import { AddBulletModal } from '../components/Session/AddBulletModal'
 import { WhepPlayer } from '../components/Camera/WhepPlayer'
+import { useSessionLive } from '../hooks/useSessionLive'
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -73,11 +74,13 @@ export function SessionDetail() {
   const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [, setTick] = useState(0)
 
-  const { data: session, isLoading, isError, refetch } = useQuery({
+  const { data: session, isLoading, refetch } = useQuery({
     queryKey: ['session', id],
     queryFn: () => getSession(id!),
     enabled: !!id,
   })
+
+  useSessionLive(id, session?.status === 'active')
 
   useEffect(() => {
     if (session?.status !== 'active') return
@@ -120,7 +123,8 @@ export function SessionDetail() {
     )
   }
 
-  if (isError || !session) {
+  // Only when there is nothing to show: a failed refetch keeps the session on screen
+  if (!session) {
     return (
       <div className="p-8 flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <AlertCircle size={40} className="text-red-500 dark:text-red-400" />

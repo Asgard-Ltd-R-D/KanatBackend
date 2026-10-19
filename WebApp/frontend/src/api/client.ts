@@ -1,10 +1,20 @@
-export const BASE_URL = window.kanat?.apiUrl ?? 'http://localhost:8000'
+import { API_URL } from '../utils/config'
+
+// A request the backend answered with an error status
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+  }
+}
 
 export async function apiFetch<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${API_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...options?.headers,
@@ -20,7 +30,7 @@ export async function apiFetch<T>(
     } catch {
       // ignore parse error
     }
-    throw new Error(message)
+    throw new ApiError(message, res.status)
   }
 
   if (res.status === 204) return undefined as T

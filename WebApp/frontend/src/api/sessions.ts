@@ -1,5 +1,6 @@
 import { Session } from '../types'
-import { apiFetch, BASE_URL } from './client'
+import { apiFetch } from './client'
+import { API_URL } from '../utils/config'
 
 export function getSessions(): Promise<Session[]> {
   return apiFetch<Session[]>('/sessions')
@@ -31,5 +32,5 @@ export function deleteSession(id: string): Promise<void> {
 }
 
 export function exportUrl(id: string, format: 'pdf' | 'csv' | 'excel'): string {
-  return `${BASE_URL}/sessions/${id}/export/${format}`
+  return `${API_URL}/sessions/${id}/export/${format}`
 }

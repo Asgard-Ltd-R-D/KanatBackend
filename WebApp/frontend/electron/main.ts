@@ -1,9 +1,12 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { GET_CONFIG } from './channels'
 import { readConfig } from './config'
+import { APP_ORIGIN, registerAppScheme, serveApp } from './protocol'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+registerAppScheme()
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -29,7 +32,7 @@ function createWindow() {
     win.loadURL('http://localhost:5173')
     win.webContents.openDevTools({ mode: 'detach' })
   } else {
-    win.loadFile(join(__dirname, '../dist/index.html'))
+    win.loadURL(`${APP_ORIGIN}/index.html`)
   }
 }
 
@@ -40,18 +43,7 @@ app.whenReady().then(() => {
     event.returnValue = config
   })
 
-  if (!isDev) {
-    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-      callback({
-        responseHeaders: {
-          ...details.responseHeaders,
-          'Content-Security-Policy': [
-            `default-src 'self' ${config.apiUrl} ${config.mediaUrl} https://fonts.googleapis.com https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; script-src 'self' 'unsafe-eval'`,
-          ],
-        },
-      })
-    })
-  }
+  if (!isDev) serveApp(config)
 
   createWindow()
 

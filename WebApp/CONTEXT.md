@@ -54,7 +54,9 @@ Camera
             │
             ├─► PostgreSQL — sessions + bullet_holes tables
             │
-            └─► GET /sessions, GET /sessions/{id}, GET /sessions/{id}/export/pdf
+            ├─► GET /sessions, GET /sessions/{id}, GET /sessions/{id}/export/pdf
+            │
+            └─► GET /sessions/{id}/live (Server-Sent Events) — pushes each change to the frontend
                         ▲
                WebApp/frontend (Electron)
 ```
@@ -63,7 +65,7 @@ Camera
 
 ## Key design decisions
 
-**The system is not real-time.** The UI does not update while a Session is active. The operator starts a Session, the model runs, and when the operator closes the Session the results are fetched and displayed. There is no polling, no WebSocket, and no live bullet feed to the frontend. The only real-time element is the WebRTC camera stream, which is handled entirely by the browser's video player.
+**Live detections are pushed, not polled.** While a Session is active, the frontend holds a Server-Sent Events stream from `/sessions/{id}/live` (`backend/app/routers/live.py`). Live traffic only ever goes backend → frontend: corrections to a Session's Bullet Holes happen after it ends. The backend pushes an event when a Bullet Hole is created or deleted, or the Session's status changes (`backend/app/schemas/live.py`); the frontend applies it to the session it already holds (`frontend/src/hooks/useSessionLive.ts`). The browser reconnects a dropped stream by itself, and on every (re)connect the frontend refetches the Session once, so nothing published while it was not listening is lost. The backend pings an idle stream every 15 s; after 40 s without a ping or an event the frontend assumes a frozen backend and reconnects. uvicorn must run with `--timeout-graceful-shutdown`: an open stream never finishes, and without it a restarting backend never exits and keeps the frontend attached to it. It must also run a single worker: the open streams live in that process's memory, so with several workers a bullet reported to one never reaches a frontend listening on another. A detection reaches the screen as soon as the backend stores it; the delay that remains is the model's own persistence window. The camera stream is separate: WebRTC, handled by the browser's video player.
 
 **Bullet Holes arrive slowly.** The detection model requires a 50-frame persistence window (~2 seconds at 25 fps) before confirming a Bullet Hole. Confirmed detections arrive seconds apart, not milliseconds. The backend endpoint for receiving them does not need a queue or any special throughput design.
 
@@ -78,7 +80,6 @@ Camera
 ## What is deliberately out of scope
 
 - Starting, stopping, or configuring the detection model or mediamtx from the WebApp.
-- Real-time bullet feed to the UI during an active Session.
 - Multi-user or multi-range deployments.
 - Millimetre-accuracy positioning (blocked upstream — see `ImageRecognitionService/HANDOVER.md`, "Blocked" section).
 - Any interaction with `PacketProcessingService/`, `Composer_cli/`, or `MotionSimulator/`.

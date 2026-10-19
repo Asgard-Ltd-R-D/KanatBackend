@@ -11,7 +11,7 @@ and detects bullet holes on paper targets from range camera footage.
 One recorded shooting session, from start to stop. Owns the events, hits and
 targets captured during it. A Range may start on a Board that already carries
 Bullet Holes from an earlier Range.
-_Avoid_: session, run, act, firing act
+_Avoid_: session, run (the system's pass over footage is a Run), act, firing act
 
 **Shot Distance**:
 The distance from a Bullet Hole to its Target's centre, in millimetres.
@@ -54,6 +54,14 @@ Footage read live, from wherever it has reached, at the pace it arrives. The
 system can be late for a Stream's frames, and frames can be lost before they
 arrive. A Recording replayed through the video service is a Stream.
 _Avoid_: feed, live source
+
+**Run**:
+One pass of the system over footage, from its baseline frame to its end. The
+baseline frame fixes where on the Board everything the Run reports is placed:
+positions from one Run compare directly, positions from two Runs only once each
+is placed on the Target artwork. A Range is watched live by one Run; a
+Recording may have many.
+_Avoid_: pass, execution, session
 
 **Look**:
 One frame the system examines for Detections. Live, it looks at a fixed
@@ -108,7 +116,7 @@ _Avoid_: corroboration, change mask, absdiff
 
 **Confirmed**:
 A Candidate the system has judged to be a new Bullet Hole: it persisted, and
-Change Evidence corroborated it, unless the run was told to accept persistence
+Change Evidence corroborated it, unless the Run was told to accept persistence
 alone. Reported once and never retracted (ADR-0004). A Candidate that persisted
 but still awaits Change Evidence is persisted, not Confirmed.
 _Avoid_: accepted, validated, detected

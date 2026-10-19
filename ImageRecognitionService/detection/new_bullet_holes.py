@@ -1020,10 +1020,11 @@ def open_board_space(video, start, template_mask, ref_time=None, opener=None):
     the registration's correlation: `(source, base, view, correlation)`.
 
     The one way a Run's Board space is built (#184): the Run's open
-    (`RegisteredFrames.open`), the scoring tool, the detector probe and the
-    registration-reach tool all come through here, so none of them can build
-    it from a different frame. The negatives miner's per-frame build is no
-    Run's. It needs no model and prints nothing; the caller closes the source.
+    (`RegisteredFrames.open`, which the scoring tool opens its Run with,
+    #185), the detector probe and the registration-reach tool all come
+    through here, so none of them can build it from a different frame. The
+    negatives miner's per-frame build is no Run's. It needs no model and
+    prints nothing; the caller closes the source.
     """
     source, base = (opener or _open_source)(video, start, ref_time)
     view, correlation = board.build_view(base, template_mask)
@@ -1059,9 +1060,10 @@ class Registration:
     is registered onto it, tracked from the last registered view. After
     `REANCHOR_AFTER_LOST` consecutive Lost Looks the next one is re-anchored
     into that same Board space (#80), here and only here, so evaluation and
-    runtime cannot differ on it. A fit converged on the wrong scene altogether
-    is Lost too (#110). How far each registered view runs off the canvas is
-    kept for the end of the run (#41).
+    runtime cannot differ on it. That holds for scoring too: the scoring tool
+    places its truth through the Run's own Board space (#185). A fit
+    converged on the wrong scene altogether is Lost too (#110). How far each
+    registered view runs off the canvas is kept for the end of the run (#41).
 
     Every caller that DETECTS registers through here, by way of
     `RegisteredFrames.looks`, on purpose: a second way of registering frames is
@@ -1353,7 +1355,10 @@ class RegisteredFrames:
 
     Board space is fixed once, by the frame at `--start` (`open_board_space`),
     and every later frame is registered onto it by `registration`, a
-    `Registration` (#138).
+    `Registration` (#138). `view` is Board space and `base` that frame, the
+    baseline frame: the scoring tool places its truth through both before
+    handing the Run to `process`, so a scored Run builds Board space once
+    (#185).
 
     Frames come from `source`, a `Recording` or a `Stream`, through one
     interface (#148), so nothing here asks which. `opener(video, start,
@@ -1641,9 +1646,9 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
     """The Run `loop`, opened by `RegisteredFrames.open`, to `end` seconds
     into its Recording. Whoever opens it chooses the source, the model and
     the Board space everything is registered onto, and can use that Board
-    space first. A Stream has no `end`: it runs until stopped, at
-    `LIVE_STRIDE` unless `stride` says otherwise, and prints each Bullet Hole
-    as it is confirmed.
+    space first: the scoring tool places its truth through it (#185). A
+    Stream has no `end`: it runs until stopped, at `LIVE_STRIDE` unless
+    `stride` says otherwise, and prints each Bullet Hole as it is confirmed.
 
     `publish`, when given, is handed each Confirmed Bullet Hole once, as a
     `BulletHoleConfirmed` (#155): a Stream's as it is announced, a

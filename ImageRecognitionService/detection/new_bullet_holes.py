@@ -576,26 +576,29 @@ class Recording:
     at the end of the file, or once `n_frames` have passed.
 
     `ref_time` is the wall clock at the Recording's t=0, `--ref-time`, and
-    by default the time the run opened it.
+    by default the time the run opened it. `path` is the file `open` read,
+    kept beside `--start` so `--out` can re-open what the Run read (#184).
     """
     live = False
     unseen = ()   # a Recording misses no frame
 
-    def __init__(self, cap, fps, start, ref_time=None):
-        self.cap, self.fps, self.start_s = cap, fps, start
+    def __init__(self, cap, fps, start, ref_time=None, path=None):
+        self.cap, self.fps, self.start_s, self.path = cap, fps, start, path
         self.ref_time = ref_time or datetime.now(timezone.utc)
         self.passed = 0
 
     @classmethod
     def open(cls, path, start, ref_time=None):
-        """The Recording at `start` seconds, and frame 0, read there."""
+        """The Recording at `start` seconds, and frame 0, read there. The one
+        seek to `--start` (#184): everything reading a Recording from there,
+        `--out` and the tools included, opens it here."""
         cap = cv2.VideoCapture(path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
         ok, frame = cap.read()
         if not ok:
             raise SystemExit(f"cannot read {path} at {start}s")
-        return cls(cap, fps, start, ref_time), frame
+        return cls(cap, fps, start, ref_time, path), frame
 
     def start(self, n_frames, stride, baseline_frames):
         self._wanted, self._stride, self._baseline_frames = n_frames, stride, baseline_frames
@@ -1011,11 +1014,40 @@ def _open_source(video, start, ref_time=None):
     return (Stream if _is_stream(video) else Recording).open(video, start, ref_time)
 
 
+def open_board_space(video, start, template_mask, ref_time=None, opener=None):
+    """The source opened at `start` by `opener` (by default `_open_source`),
+    its frame 0, the baseline frame, Board space built from that frame, and
+    the registration's correlation: `(source, base, view, correlation)`.
+
+    The one way a Run's Board space is built (#184): the Run's open
+    (`RegisteredFrames.open`), the scoring tool, the detector probe and the
+    registration-reach tool all come through here, so none of them can build
+    it from a different frame. The negatives miner's per-frame build is no
+    Run's. It needs no model and prints nothing; the caller closes the source.
+    """
+    source, base = (opener or _open_source)(video, start, ref_time)
+    view, correlation = board.build_view(base, template_mask)
+    if view is None:
+        raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+    return source, base, view, correlation
+
+
+def frames_from(source, base, n_frames, stride=1, baseline_frames=0):
+    """Each due `Frame` of `source`'s first `n_frames`, frame 0 first: `base`,
+    the one its open read, then what `read` hands over, under `stride` past
+    `baseline_frames` (#81). Starts the source; the caller closes it. The
+    Run's Looks, `--out` and the registration-reach tool all read through
+    here, so they cannot disagree on the frames (#184).
+    """
+    source.start(n_frames, stride, baseline_frames)
+    return itertools.chain([Frame(0, base)] if n_frames > 0 else [], iter(source.read, None))
+
+
 def _looked_at(index, stride, baseline_frames):
     """Is this frame looked at under a stride (#81)? Every baseline frame is;
     past them, only multiples of the stride. One rule, applied by
-    `Recording.read`, `Stream`'s thread and `_render`, so that they cannot
-    disagree on which frames are gaps."""
+    `Recording.read` and `Stream`'s thread, so that they cannot disagree on
+    which frames are gaps."""
     return index < baseline_frames or index % stride == 0
 
 
@@ -1319,8 +1351,9 @@ class RegisteredFrames:
     A second loop written beside this one can differ in either and then report a
     number about a distribution the runtime never sees.
 
-    Board space is fixed once, by the frame at `--start`, and every later frame
-    is registered onto it by `registration`, a `Registration` (#138).
+    Board space is fixed once, by the frame at `--start` (`open_board_space`),
+    and every later frame is registered onto it by `registration`, a
+    `Registration` (#138).
 
     Frames come from `source`, a `Recording` or a `Stream`, through one
     interface (#148), so nothing here asks which. `opener(video, start,
@@ -1368,11 +1401,8 @@ class RegisteredFrames:
         # How long building Board space takes is measured from opening the
         # source, so the model load above is not in it (#79).
         opened_at = time.perf_counter()
-        source, base = (opener or _open_source)(video, start, ref_time)
-
-        view, correlation = board.build_view(base, template_mask)
-        if view is None:
-            raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+        source, base, view, correlation = open_board_space(video, start, template_mask,
+                                                           ref_time, opener)
         # A disclosure for agreeing what "fast" means with the customer, and
         # never a gate: no bar is agreed (#77).
         print(f"[REGISTRATION] Board space built in {time.perf_counter() - opened_at:.2f} s, "
@@ -1467,10 +1497,9 @@ class RegisteredFrames:
         SIGTERM ends iteration after the look in hand, and callers report as
         at any end.
         """
-        self.source.start(n_frames, stride, baseline_frames)
+        frames = frames_from(self.source, self._base, n_frames, stride, baseline_frames)
         try:
-            first = [Frame(0, self._base)] if n_frames > 0 else []
-            for index, frame, wait in itertools.chain(first, iter(self.source.read, None)):
+            for index, frame, wait in frames:
                 self.clock.start(wait)   # the frame is in hand: read, decoded, handed over
                 current = self.view if index == 0 else self.registration.register(frame, index)
                 self.clock.lap("registration")
@@ -1631,7 +1660,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         open(timing, "w").close()   # a path it cannot write fails now, not after the run
     loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time,
                                  device, opener)
-    fps, match_px = loop.fps, loop.view.match_radius
+    match_px = loop.view.match_radius
     n_frames = math.inf if loop.live else loop.frames_until(end)
     stride = stride or (LIVE_STRIDE if loop.live else 1)
     baseline_frames = max(1, baseline_frames)  # 0 or less would mean no baseline at all
@@ -1770,8 +1799,8 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
         for hole in new:   # in first-frame order, as `Persistence.end` gave them
             publish(_confirmed(hole, loop.last, loop.wall_clock))
     if out_video:
-        _render(video, start, processed, fps, views, baseline, new, out_video,
-                stride, baseline_frames)
+        _render(loop.source.path, loop.source.start_s, processed, views, baseline, new,
+                out_video, stride, baseline_frames)
     return Run(new, baseline, residuals, len(persistence.lost), loop.registration.reanchors)
 
 
@@ -2031,28 +2060,23 @@ def _report_groups(new, mm_per_tpl_px):
         print(f"      Extreme Spread {g['extreme_spread']:.1f} mm (centre to centre)")
 
 
-def _render(video, start, n_frames, fps, views, baseline, new, out_video,
+def _render(video, start, n_frames, views, baseline, new, out_video,
             stride=1, baseline_frames=0):
     """Redraw the clip as the rectified Board. Neither detection nor
     registration is repeated: `views` is what detection used, by frame index,
     and a lost frame is drawn with the last view before it.
 
-    A stride's gaps are left out (#81): no fit was made on them, and the last
-    look's could be stale by up to a stride. The output then plays faster
-    than the clip; each frame's own t stays on it."""
-    cap = cv2.VideoCapture(video)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * fps))
+    The Recording at `video` is re-opened at `start` through `Recording` and
+    read by `frames_from`, as the Run read it (#184). A stride's gaps are
+    left out (#81): no fit was made on them, and the last look's could be
+    stale by up to a stride. The output then plays faster than the clip; each
+    frame's own t stays on it."""
+    recording, base = Recording.open(video, start)
+    fps = recording.fps
     view = views[0]  # Board space's own view; `process` always records it
     w, h = view.canvas_size
     vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
-    for idx in range(n_frames):
-        if not _looked_at(idx, stride, baseline_frames):
-            if not cap.grab():
-                break
-            continue
-        ok, frame = cap.read()
-        if not ok:
-            break
+    for idx, frame, _ in frames_from(recording, base, n_frames, stride, baseline_frames):
         view = views.get(idx, view)
         vis = view.rectify(frame)
         for t in view.targets:
@@ -2076,7 +2100,7 @@ def _render(video, start, n_frames, fps, views, baseline, new, out_video,
         cv2.putText(vis, f"NEW {shown}", (16, 100),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         vw.write(vis)
-    cap.release()
+    recording.close()
     vw.release()
     print(f"[INFO] -> {out_video}")
 

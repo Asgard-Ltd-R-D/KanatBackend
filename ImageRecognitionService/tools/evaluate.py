@@ -195,24 +195,6 @@ def off_canvas(truth, view):
             if not (0 <= x < width and 0 <= y < height)]
 
 
-def baseline_view(video, start, template_mask):
-    """The frame Board space is built from, and that Board space.
-
-    Rebuilt from exactly the frame at `start` — reading frame 0 instead would
-    silently use a different origin.
-    """
-    cap = cv2.VideoCapture(video)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start * cap.get(cv2.CAP_PROP_FPS)))
-    ok, frame = cap.read()
-    cap.release()
-    if not ok:
-        raise SystemExit(f"cannot re-read {video} at {start}s")
-    view, _ = board.build_view(frame, template_mask)
-    if view is None:
-        raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
-    return frame, view
-
-
 def match(truth, found, tolerance):
     """Minimum-distance maximum-cardinality one-to-one matching.
 
@@ -781,7 +763,7 @@ def load_truth(image_path, label_path, frame, view):
     derived truth's pre-existing marks placed the same way (None otherwise).
 
     `frame` and `view` are the baseline frame and its Board space
-    (`baseline_view`). Shared by the scoring and the detector probe: both
+    (`nbh.open_board_space`). Shared by the scoring and the detector probe: both
     report recall, and a label the recording could never have found
     understates it in either.
     """
@@ -1029,7 +1011,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     # The run's positions are in Board space; ground truth is in template space.
     # Board space is fixed by the BASELINE frame, and the truth is placed
     # through that same frame.
-    baseline_frame, view = baseline_view(video, start, template_mask)
+    source, baseline_frame, view, _ = nbh.open_board_space(video, start, template_mask)
+    source.close()
     truth, pre_labels = load_truth(truth_image, truth_labels,
                                    baseline_frame, view)
 

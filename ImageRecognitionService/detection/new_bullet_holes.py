@@ -1379,7 +1379,7 @@ class RegisteredFrames:
         self.imgsz, self.conf = imgsz, conf
         self.fps, self.live, self.when = source.fps, source.live, source.when
         self.wall_clock = source.wall_clock
-        self._base = base
+        self.base = base   # the baseline frame Board space was built from
         self.net_scale = None   # measured by `open`; see the warning there
         self.registration = registration
         self.lost = 0
@@ -1497,7 +1497,7 @@ class RegisteredFrames:
         SIGTERM ends iteration after the look in hand, and callers report as
         at any end.
         """
-        frames = frames_from(self.source, self._base, n_frames, stride, baseline_frames)
+        frames = frames_from(self.source, self.base, n_frames, stride, baseline_frames)
         try:
             for index, frame, wait in frames:
                 self.clock.start(wait)   # the frame is in hand: read, decoded, handed over

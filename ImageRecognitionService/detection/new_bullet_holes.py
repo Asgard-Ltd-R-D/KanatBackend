@@ -577,7 +577,7 @@ class Recording:
 
     `ref_time` is the wall clock at the Recording's t=0, `--ref-time`, and
     by default the time the run opened it. `path` is the file `open` read,
-    kept beside `--start` so `--out` can re-open what the run read (#184).
+    kept beside `--start` so `--out` can re-open what the Run read (#184).
     """
     live = False
     unseen = ()   # a Recording misses no frame
@@ -1019,11 +1019,11 @@ def open_board_space(video, start, template_mask, ref_time=None, opener=None):
     its frame 0, the baseline frame, Board space built from that frame, and
     the registration's correlation: `(source, base, view, correlation)`.
 
-    The one way Board space is built for footage (#184): the Run's open
+    The one way a Run's Board space is built (#184): the Run's open
     (`RegisteredFrames.open`), the scoring tool, the detector probe and the
     registration-reach tool all come through here, so none of them can build
-    it from a different frame. It needs no model and prints nothing; the
-    caller closes the source.
+    it from a different frame. The negatives miner's per-frame build is no
+    Run's. It needs no model and prints nothing; the caller closes the source.
     """
     source, base = (opener or _open_source)(video, start, ref_time)
     view, correlation = board.build_view(base, template_mask)

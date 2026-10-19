@@ -1032,11 +1032,22 @@ def open_board_space(video, start, template_mask, ref_time=None, opener=None):
     return source, base, view, correlation
 
 
+def frames_from(source, base, n_frames, stride=1, baseline_frames=0):
+    """Each due `Frame` of `source`'s first `n_frames`, frame 0 first: `base`,
+    the one its open read, then what `read` hands over, under `stride` past
+    `baseline_frames` (#81). Starts the source; the caller closes it. The
+    Run's Looks, `--out` and the registration-reach tool all read through
+    here, so they cannot disagree on the frames (#184).
+    """
+    source.start(n_frames, stride, baseline_frames)
+    return itertools.chain([Frame(0, base)] if n_frames > 0 else [], iter(source.read, None))
+
+
 def _looked_at(index, stride, baseline_frames):
     """Is this frame looked at under a stride (#81)? Every baseline frame is;
     past them, only multiples of the stride. One rule, applied by
-    `Recording.read`, which `_render` reads through too, and `Stream`'s
-    thread, so that they cannot disagree on which frames are gaps."""
+    `Recording.read` and `Stream`'s thread, so that they cannot disagree on
+    which frames are gaps."""
     return index < baseline_frames or index % stride == 0
 
 
@@ -1486,10 +1497,9 @@ class RegisteredFrames:
         SIGTERM ends iteration after the look in hand, and callers report as
         at any end.
         """
-        self.source.start(n_frames, stride, baseline_frames)
+        frames = frames_from(self.source, self._base, n_frames, stride, baseline_frames)
         try:
-            first = [Frame(0, self._base)] if n_frames > 0 else []
-            for index, frame, wait in itertools.chain(first, iter(self.source.read, None)):
+            for index, frame, wait in frames:
                 self.clock.start(wait)   # the frame is in hand: read, decoded, handed over
                 current = self.view if index == 0 else self.registration.register(frame, index)
                 self.clock.lap("registration")
@@ -2056,19 +2066,17 @@ def _render(video, start, n_frames, views, baseline, new, out_video,
     registration is repeated: `views` is what detection used, by frame index,
     and a lost frame is drawn with the last view before it.
 
-    The Recording at `video` is re-opened at `start` through `Recording`, so
-    the frames drawn are the frames the run looked at (#184). A stride's gaps
-    are left out by its rule (#81): no fit was made on them, and the last
-    look's could be stale by up to a stride. The output then plays faster
-    than the clip; each frame's own t stays on it."""
+    The Recording at `video` is re-opened at `start` through `Recording` and
+    read by `frames_from`, as the Run read it (#184). A stride's gaps are
+    left out (#81): no fit was made on them, and the last look's could be
+    stale by up to a stride. The output then plays faster than the clip; each
+    frame's own t stays on it."""
     recording, base = Recording.open(video, start)
-    recording.start(n_frames, stride, baseline_frames)
     fps = recording.fps
     view = views[0]  # Board space's own view; `process` always records it
     w, h = view.canvas_size
     vw = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
-    first = [Frame(0, base)] if n_frames > 0 else []
-    for idx, frame, _ in itertools.chain(first, iter(recording.read, None)):
+    for idx, frame, _ in frames_from(recording, base, n_frames, stride, baseline_frames):
         view = views.get(idx, view)
         vis = view.rectify(frame)
         for t in view.targets:

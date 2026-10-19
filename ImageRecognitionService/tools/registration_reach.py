@@ -38,7 +38,6 @@ and jitter (the rest) (#50 C): they point at re-anchoring and at smoothing.
 Measurement only: changes nothing in the pipeline.
 """
 import argparse
-import itertools
 import os
 
 import cv2
@@ -83,10 +82,8 @@ def _frames(source, base, n_frames):
     """`(index, frame)` over the first `n_frames` of `source`, every one of
     them (stride 1, no baseline window), `base`, its frame 0, first: the
     baseline frame by construction (#184)."""
-    source.start(n_frames, 1, 0)
     try:
-        first = [nbh.Frame(0, base)] if n_frames > 0 else []
-        for index, frame, _ in itertools.chain(first, iter(source.read, None)):
+        for index, frame, _ in nbh.frames_from(source, base, n_frames):
             yield index, frame
     finally:
         source.close()

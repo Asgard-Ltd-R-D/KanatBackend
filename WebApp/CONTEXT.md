@@ -32,7 +32,7 @@ The coordinate system of the printed Target artwork (`ImageRecognitionService/da
 A Bullet Hole is a **Target** hit if it landed on a scoring silhouette. It is a **Miss** if it hit the Board outside any Target. Ring scores 6–10 are Target hits; score 0 is a Miss.
 
 **Capture Setup / mediamtx**
-The video pipeline is outside the WebApp's scope. The WebApp does not start, stop, or control the camera or the detection model. It only receives results the model pushes to it. The live camera view in the frontend is an HLS stream from mediamtx, displayed as-is with no interaction.
+The video pipeline is outside the WebApp's scope. The WebApp does not start, stop, or control the camera or the detection model. It only receives results the model pushes to it. The live camera view in the frontend is a WebRTC stream from mediamtx (WHEP, `frontend/src/components/Camera/WhepPlayer.tsx`), displayed as-is with no interaction beyond reconnecting.
 
 **API contract**
 The JSON schema the detection model uses when calling `POST /sessions/{id}/bullets`. Defined in `backend/docs/api_contract.md` and versioned (`v1`). The backend rejects any payload whose `version` field does not match.
@@ -43,7 +43,7 @@ The JSON schema the detection model uses when calling `POST /sessions/{id}/bulle
 
 ```
 Camera
-  └─► mediamtx (VideoService) ──HLS──► Frontend (Electron) — operator watches live
+  └─► mediamtx (VideoService) ──WebRTC (WHEP)──► Frontend (Electron) — operator watches live
             │
             ▼ RTSP stream
   ImageRecognitionService (detection model)
@@ -63,7 +63,7 @@ Camera
 
 ## Key design decisions
 
-**The system is not real-time.** The UI does not update while a Session is active. The operator starts a Session, the model runs, and when the operator closes the Session the results are fetched and displayed. There is no polling, no WebSocket, and no live bullet feed to the frontend. The only real-time element is the HLS camera stream, which is handled entirely by the browser's video player.
+**The system is not real-time.** The UI does not update while a Session is active. The operator starts a Session, the model runs, and when the operator closes the Session the results are fetched and displayed. There is no polling, no WebSocket, and no live bullet feed to the frontend. The only real-time element is the WebRTC camera stream, which is handled entirely by the browser's video player.
 
 **Bullet Holes arrive slowly.** The detection model requires a 50-frame persistence window (~2 seconds at 25 fps) before confirming a Bullet Hole. Confirmed detections arrive seconds apart, not milliseconds. The backend endpoint for receiving them does not need a queue or any special throughput design.
 

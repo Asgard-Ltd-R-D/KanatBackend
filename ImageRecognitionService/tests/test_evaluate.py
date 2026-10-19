@@ -447,7 +447,7 @@ def test_a_photograph_registers_to_the_frame_far_from_the_artwork():
     far = np.float32([[1100, 80], [1100, 620], [700, 350]])
 
     def miss(H):
-        return np.abs(board._apply(H, far) - board._apply(true, far)).max()
+        return np.abs(board.apply(H, far) - board.apply(true, far)).max()
 
     photo_targets, photo_mask = board.find_targets(photo)
     frame_targets, frame_mask = board.find_targets(frame)
@@ -465,7 +465,7 @@ def test_registration_survives_the_largest_target_changing():
     frame = cv2.warpPerspective(photo, true, (1600, 900))
     far = np.float32([[1100, 80], [1100, 620], [700, 350], [100, 100]])
     H, _ = register_photograph(photo, frame)
-    assert np.abs(board._apply(H, far) - board._apply(true, far)).max() < 5
+    assert np.abs(board.apply(H, far) - board.apply(true, far)).max() < 5
 
 
 def test_registration_survives_the_largest_target_being_cropped_out():
@@ -477,7 +477,7 @@ def test_registration_survives_the_largest_target_being_cropped_out():
     frame = cv2.warpPerspective(photo, true, (720, 700))
     far = np.float32([[1100, 80], [1100, 620], [700, 350], [600, 600]])
     H, _ = register_photograph(photo, frame)
-    assert np.abs(board._apply(H, far) - board._apply(true, far)).max() < 5
+    assert np.abs(board.apply(H, far) - board.apply(true, far)).max() < 5
 
 
 def test_a_label_off_the_rectified_board_is_named():

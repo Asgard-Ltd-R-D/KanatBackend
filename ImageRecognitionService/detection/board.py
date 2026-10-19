@@ -158,7 +158,7 @@ def _as_matrix(scale, offset=(0.0, 0.0)):
                      [0.0, 0.0, 1.0]], np.float32)
 
 
-def _apply(matrix, points):
+def apply(matrix, points):
     pts = np.asarray(points, np.float32).reshape(-1, 1, 2)
     if not len(pts):
         return np.zeros((0, 2), np.float32)
@@ -231,7 +231,7 @@ def find_board_edges(frame, H, template_span):
     seen = cv2.warpPerspective(np.full(frame.shape[:2], 255, np.uint8), to_work, (n, n),
                                flags=cv2.INTER_NEAREST)
     seen = cv2.erode(seen, np.ones((17, 17), np.uint8)) > 0   # the blur reaches the border
-    placed = np.vstack([_apply(to_work, c.reshape(-1, 2)) for c in contours])
+    placed = np.vstack([apply(to_work, c.reshape(-1, 2)) for c in contours])
     (x0, y0), (x1, y1) = np.clip(placed.min(axis=0), 0, n - 1).astype(int), \
         np.clip(placed.max(axis=0), 0, n - 1).astype(int)
     rows = cv2.Sobel(grey, cv2.CV_32F, 0, 1)[:, x0:x1 + 1].mean(axis=1)
@@ -409,7 +409,7 @@ def texture_region(H, frame_size, template_span):
     square = RING_CENTRE_TPL + REGION_SPANS * template_span * np.array(
         [[-1, -1], [1, -1], [1, 1], [-1, 1]])
     region = np.zeros(frame_size[::-1], np.uint8)
-    cv2.fillConvexPoly(region, _apply(H, square).astype(np.int32), 255)
+    cv2.fillConvexPoly(region, apply(H, square).astype(np.int32), 255)
     return region
 
 
@@ -506,10 +506,10 @@ class BoardView:
         silent, large error, so callers pass the Target the Bullet Hole is on.
         """
         if target_index is None or not self.targets:
-            return _apply(self.tpl_to_board, [RING_CENTRE_TPL])[0]
+            return self.template_to_board([RING_CENTRE_TPL])[0]
         moments = cv2.moments(self.targets[target_index])
         if moments["m00"] == 0:
-            return _apply(self.tpl_to_board, [RING_CENTRE_TPL])[0]
+            return self.template_to_board([RING_CENTRE_TPL])[0]
         centroid = np.array([moments["m10"] / moments["m00"],
                              moments["m01"] / moments["m00"]], np.float32)
         return centroid + RING_OFFSET_TPL.astype(np.float32) * self.board_scale
@@ -519,14 +519,20 @@ class BoardView:
         """`MATCH_TPL_PX` expressed in Board-space pixels."""
         return MATCH_TPL_PX * self.board_scale
 
+    def template_to_board(self, points):
+        return apply(self.tpl_to_board, points)
+
+    def board_to_template(self, points):
+        return apply(np.linalg.inv(self.tpl_to_board), points)
+
     def _frame_to_board(self):
         return self.tpl_to_board @ np.linalg.inv(self.H)
 
     def frame_to_board(self, points):
-        return _apply(self._frame_to_board(), points)
+        return apply(self._frame_to_board(), points)
 
     def board_to_frame(self, points):
-        return _apply(self.H @ np.linalg.inv(self.tpl_to_board), points)
+        return apply(self.H @ np.linalg.inv(self.tpl_to_board), points)
 
     def rectify(self, frame):
         """The Board viewed square-on, at the scale detection wants."""
@@ -612,7 +618,7 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
 
     # Where the Targets land before the origin is chosen.
     unshifted = _as_matrix(board_scale) @ np.linalg.inv(H)
-    placed = [_apply(unshifted, c.reshape(-1, 2)) for c in contours]
+    placed = [apply(unshifted, c.reshape(-1, 2)) for c in contours]
     allpts = np.vstack(placed)
 
     # The canvas spans every Target plus a margin, so Bullet Holes on the Board
@@ -629,7 +635,7 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
                   layout.inner_size, layout.offset)
     edges = moved(edges, lambda k, v: v - lo[AXIS[k]])
 
-    targets = [(_apply(_as_matrix(1.0, (-lo[0], -lo[1])), p)
+    targets = [(apply(_as_matrix(1.0, (-lo[0], -lo[1])), p)
                 .reshape(-1, 1, 2).astype(np.float32)) for p in placed]
     anchor = Anchor(_gray(frame), texture_region(H, frame.shape[1::-1], tpl_span), H)
     return BoardView(H, tpl_to_board, size, targets, anchor, edges, inner), correlation
@@ -803,7 +809,7 @@ def silhouette_disagreement(frame, template_mask, view):
     except cv2.error:
         return None
     centre = view.targets[0].reshape(-1, 2).mean(axis=0, keepdims=True)
-    own = _apply(view.tpl_to_board @ np.linalg.inv(own_H), view.board_to_frame(centre))
+    own = apply(view.tpl_to_board @ np.linalg.inv(own_H), view.board_to_frame(centre))
     return float(np.linalg.norm(own - centre))
 
 
@@ -828,8 +834,8 @@ def residuals(frame, template_mask, view):
         except cv2.error:
             out.append(None)
             continue
-        own_centre = _apply(view.tpl_to_board @ np.linalg.inv(own_H),
-                            [contour.reshape(-1, 2).mean(axis=0)])[0]
+        own_centre = apply(view.tpl_to_board @ np.linalg.inv(own_H),
+                           [contour.reshape(-1, 2).mean(axis=0)])[0]
         out.append(float(np.linalg.norm(centre_board - own_centre)))
     return out
 
@@ -919,10 +925,22 @@ def to_millimetres(board_points, view, mm_per_tpl_px=None, target_index=None):
             "ruler reading. Everything downstream scales linearly with it, so "
             "it is not guessed.")
     mm_per_board_px = mm_per_tpl_px / view.board_scale
-    offset = (np.asarray(board_points, np.float32).reshape(-1, 2)
-              - view.ring_centre(target_index)) * mm_per_board_px
-    offset[:, 1] *= -1  # image y grows downward, physical y grows up
-    return offset
+    return to_printed_axes(np.asarray(board_points, np.float32).reshape(-1, 2)
+                           - view.ring_centre(target_index), mm_per_board_px)
+
+
+def to_printed_axes(offsets, mm_per_unit):
+    """Image-axis offsets as millimetres along the Target's printed axes, X
+    right and Y up, at `mm_per_unit` millimetres per unit of `offsets`.
+
+    A Position and its Position Error both take Y up from here, so dY cannot
+    change sign against its Position. Each caller's offsets keep their own
+    precision: float32 Board px for a Position, float64 template px for a
+    Position Error.
+    """
+    mm = offsets * mm_per_unit
+    mm[:, 1] *= -1  # image y grows downward, the printed Target's Y grows up
+    return mm
 
 
 def score(board_points, view, target_index=None):

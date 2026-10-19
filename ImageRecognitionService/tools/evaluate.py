@@ -183,14 +183,14 @@ def truth_in_template(image_path, label_path, frame, view):
     to_template = np.linalg.inv(view.H) @ H @ np.diag([width, height, 1.0])
 
     normalised, damaged = load_labels(label_path)
-    return board._apply(to_template, normalised), to_template, correlation, damaged
+    return board.apply(to_template, normalised), to_template, correlation, damaged
 
 
 def off_canvas(truth, view):
     """Indices of template positions outside the rectified Board the detector
     is shown — positions no run can find, whatever the reason."""
     width, height = view.canvas_size
-    placed = board._apply(view.tpl_to_board, truth)
+    placed = view.template_to_board(truth)
     return [i for i, (x, y) in enumerate(placed)
             if not (0 <= x < width and 0 <= y < height)]
 
@@ -284,9 +284,8 @@ def position_errors(truth, found, pairs, mm_per_tpl_px):
     the artwork — this truth was carried through all three (CONTEXT.md,
     Position Error).
     """
-    d = np.array([found[i] - truth[j] for i, j, _ in pairs],
-                 np.float64).reshape(-1, 2) * mm_per_tpl_px
-    d[:, 1] *= -1  # template y grows downward, the printed Target's Y grows up
+    d = board.to_printed_axes(np.array([found[i] - truth[j] for i, j, _ in pairs],
+                                       np.float64).reshape(-1, 2), mm_per_tpl_px)
     return np.column_stack([d, np.hypot(d[:, 0], d[:, 1])])
 
 
@@ -586,7 +585,7 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
     height, width = after_photo.shape[:2]
     after = after_normalised * [width, height]
     before_px = before_normalised * [before_photo.shape[1], before_photo.shape[0]]
-    before = board._apply(H, before_px)
+    before = board.apply(H, before_px)
 
     pairs, only_before = match(before, after, reach)
 
@@ -810,7 +809,7 @@ def load_truth(image_path, label_path, frame, view):
               f"same, and no run can find them.")
     pre = pre_existing_labels(labels)
     if pre is not None:
-        pre = board._apply(to_template, pre)
+        pre = board.apply(to_template, pre)
     return truth, pre
 
 
@@ -1041,13 +1040,11 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
                       baseline_frames=baseline_frames, stride=stride,
                       opener=None if move is None else functools.partial(open_moved, move))
 
-    to_template = np.linalg.inv(view.tpl_to_board)
-    found = board._apply(to_template,
-                         np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
+    found = view.board_to_template(
+        np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
     # The marks that were already on the Board, in the same frame of reference —
     # what tells a displaced one of those from a detector false positive.
-    pre_existing = board._apply(
-        to_template, np.asarray(run.baseline, np.float32)[:, :2])
+    pre_existing = view.board_to_template(np.asarray(run.baseline, np.float32)[:, :2])
     if pre_labels is not None and len(pre_labels):
         outside = off_canvas(pre_labels, view)
         placement = placement_note(np.delete(pre_labels, outside, axis=0),

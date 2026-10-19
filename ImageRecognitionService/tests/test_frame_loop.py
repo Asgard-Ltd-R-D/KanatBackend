@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pytest
 
+from detection import board
 from detection import new_bullet_holes as nbh
 
 
@@ -32,6 +33,7 @@ class _FakeView:
     board_scale = 1.0
     tpl_to_board = np.eye(3)
     inner = types.SimpleNamespace(offset=(0, 0), size=(64, 64))
+    board_to_template = board.BoardView.board_to_template
 
     def rectify(self, frame):
         return frame

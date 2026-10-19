@@ -92,4 +92,4 @@ The WebApp has its own domain context at `WebApp/CONTEXT.md`. Read it before wor
 
 ### Commit conventions
 
-One commit per issue, subject `<scope>: <imperative description>`, mandatory 1–2 sentence body explaining what the files implement together, footer `Refs #<number>`. See `docs/agents/commit-conventions.md`.
+One commit per concern, so an issue usually takes several. Subject `<scope>: <imperative description>`, mandatory 1–2 sentence body explaining what the files implement together, footer `Refs #<number>`. See `docs/agents/commit-conventions.md`.

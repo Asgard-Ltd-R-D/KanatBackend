@@ -129,7 +129,7 @@ def probe(video, start, end, model_path, truth_tpl, radius_tpl,
     view = loop.view
     radius = radius_tpl * view.board_scale
     rates = detection_rates(loop.looks(loop.frames_until(end)),
-                            board._apply(view.tpl_to_board, truth_tpl), radius)
+                            view.template_to_board(truth_tpl), radius)
     # Net scale goes on every result: detection is zero by 1.81, so a rate is
     # only comparable with another taken at the same scale.
     print(f"[PROBE] {loop.processed - loop.lost} registered frame(s) of "

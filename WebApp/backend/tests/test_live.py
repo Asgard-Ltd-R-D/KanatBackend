@@ -12,6 +12,7 @@ from app.core import live
 from app.core.deps import get_db
 from app.core.live import event_stream, hub
 from app.main import app
+from app.routers import live as live_router
 from app.schemas.live import BulletDeletedEvent
 from app.services import bullets as bullet_svc
 from app.services import sessions as session_svc
@@ -107,6 +108,29 @@ def test_ending_the_session_is_published(client, subscribed, monkeypatch):
 def test_an_unknown_session_answers_404(client):
     # A 404 is what makes the browser's EventSource stop reconnecting
     assert client.get(f"/sessions/{uuid.uuid4()}/live").status_code == 404
+
+
+def test_a_closed_stream_unsubscribes_on_the_event_loop(client, monkeypatch):
+    # The hub is only safe to change from the event loop, which owns it
+    unsubscribe, ran_on = hub.unsubscribe, []
+
+    def record(session_id, queue):
+        try:
+            asyncio.get_running_loop()
+            ran_on.append("event loop")
+        except RuntimeError:
+            ran_on.append("worker thread")
+        unsubscribe(session_id, queue)
+
+    async def one_event(queue):
+        yield "data: {}\n\n"
+
+    monkeypatch.setattr(hub, "unsubscribe", record)
+    monkeypatch.setattr(live_router, "event_stream", one_event)
+
+    assert client.get(f"/sessions/{SESSION_ID}/live").status_code == 200
+    assert ran_on == ["event loop"]
+    assert SESSION_ID not in hub._subscribers
 
 
 def test_events_reach_only_their_own_session():

@@ -26,10 +26,16 @@ async def session_live(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
     # Subscribed before the response starts, so the frontend's catch-up fetch
     # when the stream opens cannot miss an event published in between
     queue = hub.subscribe(session_id)
+
+    # Async so Starlette runs it on the event loop, which owns the hub; a sync
+    # function would run in the threadpool, racing subscribe and publish
+    async def unsubscribe() -> None:
+        hub.unsubscribe(session_id, queue)
+
     return StreamingResponse(
         event_stream(queue),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache"},
         # Runs however the stream ends, the frontend disconnecting included
-        background=BackgroundTask(hub.unsubscribe, session_id, queue),
+        background=BackgroundTask(unsubscribe),
     )

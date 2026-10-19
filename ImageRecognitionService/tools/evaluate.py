@@ -763,9 +763,10 @@ def load_truth(image_path, label_path, frame, view):
     derived truth's pre-existing marks placed the same way (None otherwise).
 
     `frame` and `view` are the baseline frame and its Board space
-    (`nbh.open_board_space`). Shared by the scoring and the detector probe: both
-    report recall, and a label the recording could never have found
-    understates it in either.
+    (`nbh.open_board_space`): the Run's own when scoring (`base` and `view`
+    on `nbh.RegisteredFrames`, #185). Shared by the scoring and the detector
+    probe: both report recall, and a label the recording could never have
+    found understates it in either.
     """
     labels = truth_labels(label_path)
     photograph = truth_photograph(image_path, labels)
@@ -941,7 +942,7 @@ class MovedRecording:
 
 
 def open_moved(move, video, start, ref_time=None):
-    """The source opener for a run with `move` (`nbh.process`'s `opener`):
+    """The source opener for a run with `move` (the Run's open's `opener`):
     the Recording at `start`, moved, and its frame 0, untouched."""
     recording, base = nbh.Recording.open(video, start, ref_time)
     first = first_moved_index(move.at, start, recording.fps)
@@ -1005,20 +1006,16 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     entry = manifest.gate(video, final_run, model, "evaluate.py")
     mm_per_tpl_px = scales[entry["capture_setup"]]
 
-    template_image = cv2.imread(template)
-    _, template_mask = board.find_targets(template_image, min_area=1)
-
     # The run's positions are in Board space; ground truth is in template space.
-    # Board space is fixed by the BASELINE frame, and the truth is placed
-    # through that same frame.
-    source, baseline_frame, view, _ = nbh.open_board_space(video, start, template_mask)
-    source.close()
-    truth, pre_labels = load_truth(truth_image, truth_labels,
-                                   baseline_frame, view)
-
+    # The truth is placed through the Run's own baseline frame and Board space,
+    # so a scored Run builds Board space once, and before its first Look, so a
+    # truth that cannot be placed fails before any (#185).
     loop = nbh.RegisteredFrames.open(
         video, start, model, confidence, template,
         opener=None if move is None else functools.partial(open_moved, move))
+    view = loop.view
+    truth, pre_labels = load_truth(truth_image, truth_labels, loop.base, view)
+
     run = nbh.process(loop, end, require_change_evidence=change_filter,
                       merge_displaced=merge_displaced,
                       baseline_frames=baseline_frames, stride=stride)

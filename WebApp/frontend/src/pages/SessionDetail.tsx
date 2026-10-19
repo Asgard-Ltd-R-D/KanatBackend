@@ -9,9 +9,9 @@ import { format } from 'date-fns'
 import { getSession, updateSession, exportUrl } from '../api/sessions'
 import { deleteBullet } from '../api/bullets'
 import { BulletHole } from '../types'
-import { StatusBadge } from '../components/StatusBadge'
-import { ConfirmDialog } from '../components/ConfirmDialog'
-import { AddBulletModal } from '../components/AddBulletModal'
+import { StatusBadge } from '../components/UI/StatusBadge'
+import { ConfirmDialog } from '../components/UI/ConfirmDialog'
+import { AddBulletModal } from '../components/Session/AddBulletModal'
 import { WhepPlayer } from '../components/Camera/WhepPlayer'
 
 function formatTime(iso: string): string {

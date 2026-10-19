@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
-import { createBullet } from '../api/bullets'
+import { createBullet } from '../../api/bullets'
 
 interface Props {
   open: boolean

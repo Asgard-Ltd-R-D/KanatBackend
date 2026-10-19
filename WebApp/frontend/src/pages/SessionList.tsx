@@ -5,8 +5,8 @@ import { Plus, Pencil, Trash2, ChevronRight, Target, AlertCircle, X, Check } fro
 import { format } from 'date-fns'
 import { getSessions, createSession, updateSession, deleteSession } from '../api/sessions'
 import { Session } from '../types'
-import { StatusBadge } from '../components/StatusBadge'
-import { ConfirmDialog } from '../components/ConfirmDialog'
+import { StatusBadge } from '../components/UI/StatusBadge'
+import { ConfirmDialog } from '../components/UI/ConfirmDialog'
 
 function formatDuration(startedAt: string, endedAt: string | null): string {
   const start = new Date(startedAt).getTime()

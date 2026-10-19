@@ -140,7 +140,8 @@ Each drop is logged when it starts, and again when the stream is back with that 
 4. **File-run the copy** at the same stride, from the frame the live run started on. That is the first IDR after the reader joined. With nothing else reading the path it was file frame 25 (1.0 s) in both runs that started the publisher; the record below identified it by hashing frames. The copy is not in the manifest, so the CLI refuses it; call `process` directly. **Only ever on a copy of a spent recording:** the gate cannot trace a copy to its source, so check the source's role in `config/recordings.json` first (`_102250` is sha256 `ed4c3afd…`, spent).
    ```bash
    .venv/bin/python -c "from detection import new_bullet_holes as n; \
-     n.process('replay.h264.mkv', 1.0, 46, n.DEFAULT_MODEL, mm_per_tpl_px=0.1763, stride=17)"
+     n.process(n.RegisteredFrames.open('replay.h264.mkv', 1.0, n.DEFAULT_MODEL), 46, \
+               mm_per_tpl_px=0.1763, stride=17)"
    ```
 5. **Compare** the Bullet Holes, their positions, and the number of looks: live, the `[LIVE] … frame(s) looked at` line; in the file run, the `[REGISTRATION] … of N converged fit(s)` count plus 1 for frame 0, plus any Board-lost frames. The only allowed differences are the counted late drops and the one due frame held when the stream ended.
 

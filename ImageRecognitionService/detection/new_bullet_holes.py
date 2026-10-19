@@ -1009,7 +1009,7 @@ class Stream:
 
 def _open_source(video, start, ref_time=None):
     """A Stream for an rtsp:// URL, else a Recording, opened at `start`, and
-    its frame 0: the source opener `process` uses unless handed another
+    its frame 0: the source opener the Run's open uses unless handed another
     (#164)."""
     return (Stream if _is_stream(video) else Recording).open(video, start, ref_time)
 
@@ -1020,10 +1020,11 @@ def open_board_space(video, start, template_mask, ref_time=None, opener=None):
     the registration's correlation: `(source, base, view, correlation)`.
 
     The one way a Run's Board space is built (#184): the Run's open
-    (`RegisteredFrames.open`), the scoring tool, the detector probe and the
-    registration-reach tool all come through here, so none of them can build
-    it from a different frame. The negatives miner's per-frame build is no
-    Run's. It needs no model and prints nothing; the caller closes the source.
+    (`RegisteredFrames.open`, which the scoring tool opens its Run with,
+    #185), the detector probe and the registration-reach tool all come
+    through here, so none of them can build it from a different frame. The
+    negatives miner's per-frame build is no Run's. It needs no model and
+    prints nothing; the caller closes the source.
     """
     source, base = (opener or _open_source)(video, start, ref_time)
     view, correlation = board.build_view(base, template_mask)
@@ -1059,9 +1060,10 @@ class Registration:
     is registered onto it, tracked from the last registered view. After
     `REANCHOR_AFTER_LOST` consecutive Lost Looks the next one is re-anchored
     into that same Board space (#80), here and only here, so evaluation and
-    runtime cannot differ on it. A fit converged on the wrong scene altogether
-    is Lost too (#110). How far each registered view runs off the canvas is
-    kept for the end of the run (#41).
+    runtime cannot differ on it. That holds for scoring too: the scoring tool
+    places its truth through the Run's own Board space (#185). A fit
+    converged on the wrong scene altogether is Lost too (#110). How far each
+    registered view runs off the canvas is kept for the end of the run (#41).
 
     Every caller that DETECTS registers through here, by way of
     `RegisteredFrames.looks`, on purpose: a second way of registering frames is
@@ -1353,7 +1355,10 @@ class RegisteredFrames:
 
     Board space is fixed once, by the frame at `--start` (`open_board_space`),
     and every later frame is registered onto it by `registration`, a
-    `Registration` (#138).
+    `Registration` (#138). `view` is Board space and `base` that frame, the
+    baseline frame: the scoring tool places its truth through both before
+    handing the Run to `process`, so a scored Run builds Board space once
+    (#185).
 
     Frames come from `source`, a `Recording` or a `Stream`, through one
     interface (#148), so nothing here asks which. `opener(video, start,
@@ -1379,7 +1384,7 @@ class RegisteredFrames:
         self.imgsz, self.conf = imgsz, conf
         self.fps, self.live, self.when = source.fps, source.live, source.when
         self.wall_clock = source.wall_clock
-        self._base = base
+        self.base = base   # the baseline frame Board space was built from
         self.net_scale = None   # measured by `open`; see the warning there
         self.registration = registration
         self.lost = 0
@@ -1497,7 +1502,7 @@ class RegisteredFrames:
         SIGTERM ends iteration after the look in hand, and callers report as
         at any end.
         """
-        frames = frames_from(self.source, self._base, n_frames, stride, baseline_frames)
+        frames = frames_from(self.source, self.base, n_frames, stride, baseline_frames)
         try:
             for index, frame, wait in frames:
                 self.clock.start(wait)   # the frame is in hand: read, decoded, handed over
@@ -1634,32 +1639,27 @@ def registration_note(residual, radius, unit="Board px"):
             f"threshold. Not a pass/fail bar; none is validated")
 
 
-def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
-            out_video=None, mm_per_tpl_px=None, template_path=board.DEFAULT_TEMPLATE,
+def process(loop, end, out_video=None, mm_per_tpl_px=None,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, ref_time=None,
-            timing=None, device=None, opener=None):
-    """`video` is a recording's path, or a stream's rtsp:// URL (#83), which
-    has no `start` or `end`: it runs until stopped, at `LIVE_STRIDE` unless
+            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, timing=None):
+    """The Run `loop`, opened by `RegisteredFrames.open`, to `end` seconds
+    into its Recording. Whoever opens it chooses the source, the model and
+    the Board space everything is registered onto, and can use that Board
+    space first: the scoring tool places its truth through it (#185). A
+    Stream has no `end`: it runs until stopped, at `LIVE_STRIDE` unless
     `stride` says otherwise, and prints each Bullet Hole as it is confirmed.
 
     `publish`, when given, is handed each Confirmed Bullet Hole once, as a
     `BulletHoleConfirmed` (#155): a Stream's as it is announced, a
     Recording's after the end-of-run report has measured it, in first-frame
-    order. Without it nothing is published. `ref_time` is a Recording's wall
-    clock at its t=0 (`Recording`).
+    order. Without it nothing is published.
 
     `timing`, a path, times each Look past the baseline (#129): a CSV row a
     Look there, and n/P50/P95/P99/max printed at the end (`_report_timing`).
-    Without it nothing is written, printed or kept. `device` is the
-    detector's for every call (`_detect`). `opener` opens the source
-    (`RegisteredFrames`): the scoring tool's moved Recording comes in this
-    way (#164)."""
+    Without it nothing is written, printed or kept."""
     if timing:
         open(timing, "w").close()   # a path it cannot write fails now, not after the run
-    loop = RegisteredFrames.open(video, start, model_path, conf, template_path, ref_time,
-                                 device, opener)
     match_px = loop.view.match_radius
     n_frames = math.inf if loop.live else loop.frames_until(end)
     stride = stride or (LIVE_STRIDE if loop.live else 1)
@@ -1700,7 +1700,7 @@ def process(video, start, end, model_path, conf=DEFAULT_CONFIDENCE,
              f" (of {baseline_frames} requested; the rest were lost or unread)")
     print(f"[INFO] baseline: {len(baseline)} Baseline Marks over "
           f"{len(baseline_detections)} frame(s) from "
-          f"{loop.when(0) if loop.live else f'{start}s'}{short}")
+          f"{loop.when(0) if loop.live else f'{loop.source.start_s}s'}{short}")
 
     # ponytail: a live run still keeps every look's index, time and
     # residuals, and every candidate, for the end-of-run report: a few MB an
@@ -2212,7 +2212,8 @@ if __name__ == "__main__":
     # Drained on leaving, after the report and even if the run raised (#155).
     with (webapp.WebAppPublisher(a.session_id, a.backend_url) if a.session_id
           else contextlib.nullcontext()) as publisher:
-        process(a.video, a.start, a.end, a.model, a.confidence, a.out, scale,
-                a.template, not a.no_change_filter, a.merge_displaced, a.baseline_frames,
-                a.stride, publish=publisher.publish if publisher else None,
-                ref_time=ref_time, timing=a.timing, device=a.device)
+        loop = RegisteredFrames.open(a.video, a.start, a.model, a.confidence, a.template,
+                                     ref_time, a.device)
+        process(loop, a.end, a.out, scale, not a.no_change_filter, a.merge_displaced,
+                a.baseline_frames, a.stride, publish=publisher.publish if publisher else None,
+                timing=a.timing)

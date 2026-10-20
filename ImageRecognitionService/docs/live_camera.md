@@ -43,6 +43,15 @@ unset AXIS_USER AXIS_PASS
 
 MediaMTX decodes the percent-encoding before it authenticates. This was checked on v1.21.1 against a stand-in RTSP server that requires user `view@er`, password `p#ss@x&y`. The encoded source went ready, and the stand-in refused no credentials or wrong ones with 401. The same source unencoded was rejected with a 400, and that error echoes the URL, password and all, back to the caller.
 
+**If the camera has anonymous viewing on,** the source needs no account at all. Test it first, against the camera itself:
+
+```bash
+ffprobe -v error -rtsp_transport tcp -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate \
+  'rtsp://<camera-ip>:554/axis-media/media.amp?videocodec=h264&resolution=1920x1080&fps=25'
+```
+
+If that prints the stream instead of `401 Unauthorized`, add the path with the same JSON and no account in the URL. Nothing secret is then held by MediaMTX, so #89's leak has nothing to leak. Whoever can reach the camera can watch it, and that is the camera's setting, not ours. The unit used for acceptance (2026-10-20) arrived with anonymous viewing on.
+
 Check the path before running anything on it:
 
 ```bash

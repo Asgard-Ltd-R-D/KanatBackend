@@ -74,22 +74,10 @@ Packet capture needs raw-socket rights: `sudo setcap cap_net_raw,cap_net_admin=e
 - Frontend API calls are centralised in `WebApp/frontend/src/api/` — components never call `fetch` directly.
 - The detection model's API contract is versioned (`v1`). The version is checked on every inbound bullet payload; unknown versions are rejected with `422`.
 
-## Agent skills
+## Domain docs
 
-### Issue tracker
+`CONTEXT.md` + `docs/adr/` at the repo root. The WebApp has its own domain context at `WebApp/CONTEXT.md`. Read it before working on anything in `WebApp/`.
 
-GitHub Issues on `Asgard-Ltd-R-D/KanatBackend`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-The five canonical roles, each label string equal to its name. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
-
-The WebApp has its own domain context at `WebApp/CONTEXT.md`. Read it before working on anything in `WebApp/`.
-
-### Commit conventions
+## Commit conventions
 
 One commit per concern, so an issue usually takes several. Subject `<scope>: <imperative description>`, mandatory 1–2 sentence body explaining what the files implement together, footer `Refs #<number>`. See `docs/agents/commit-conventions.md`.

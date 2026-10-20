@@ -1,6 +1,6 @@
 # The AXIS Q6315-LE through the video service
 
-**Issue #85.** This page covers how the production camera reaches the pipeline, the stream settings selected for it, and the rule that keeps its view fixed for a Range. It also covers the manual acceptance. The replay half of the acceptance ran on 2026-10-07 and is recorded at the end. The camera half is **blocked, waiting for the physical camera**.
+**Issue #85.** This page covers how the production camera reaches the pipeline, the stream settings selected for it, and the rule that keeps its view fixed for a Range. It also covers the manual acceptance. Both halves of the acceptance are recorded at the end: the replay ran on 2026-10-07, and the camera on 2026-10-20. The camera's Zipstream strength is still to be read.
 
 Credentials never go in this file, in an issue, or on a pipeline command line. `<user>`, `<password>`, `<camera-ip>`, `<mtx-host>` and `<alias>` are placeholders.
 
@@ -42,6 +42,15 @@ unset AXIS_USER AXIS_PASS
 ```
 
 MediaMTX decodes the percent-encoding before it authenticates. This was checked on v1.21.1 against a stand-in RTSP server that requires user `view@er`, password `p#ss@x&y`. The encoded source went ready, and the stand-in refused no credentials or wrong ones with 401. The same source unencoded was rejected with a 400, and that error echoes the URL, password and all, back to the caller.
+
+**If the camera has anonymous viewing on,** the source needs no account at all. Test it first, against the camera itself:
+
+```bash
+ffprobe -v error -rtsp_transport tcp -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate \
+  'rtsp://<camera-ip>:554/axis-media/media.amp?videocodec=h264&resolution=1920x1080&fps=25'
+```
+
+If that prints the stream instead of `401 Unauthorized`, add the path with the same JSON and no account in the URL. Nothing secret is then held by MediaMTX, so #89's leak has nothing to leak. Whoever can reach the camera can watch it, and that is the camera's setting, not ours. The unit used for acceptance (2026-10-20) arrived with anonymous viewing on.
 
 Check the path before running anything on it:
 
@@ -147,15 +156,17 @@ Each drop is logged when it starts, and again when the stream is back with that 
 
 The results are recorded below and were posted to #78.
 
-### 2. The camera: blocked, waiting for the physical AXIS Q6315-LE
+### 2. The camera: run 2026-10-20, Zipstream strength still to read
 
-**To confirm before the camera run:**
+The steps below ran on 2026-10-20. The results are recorded below and were posted to #78. Of the four items to confirm, the Zipstream strength is still open: see the record.
+
+**To confirm before the camera run** (the 2026-10-20 answers are in the record below):
 - **The 50 Hz or 60 Hz variant.** On a 60 Hz unit, 25 fps does not divide the capture rate, so frames would arrive unevenly spaced. If 25 fps cannot be held, #82's stop condition applies.
 - **How the site delivers the camera to the video service:** RTSP pull (above), or multicast through the existing KanatFrontend camera entry.
 - **Whether another consumer**, such as the customer's VMS, already uses the camera's default stream or its multicast. The selected settings must not disturb it.
 - **The camera's Zipstream strength.** Note it. If Bullet Holes are missed on camera footage, `videozstrength=off` is the first thing to rule out.
 
-**Steps.** Each one is blocked until the camera is available:
+**Steps:**
 
 1. **Measured 25 fps.** With the camera at a fixed preset looking at a Board, add the path. Then check it: `ready` in the path list, and ffprobe showing H.264 at 1920x1080, `r_frame_rate` 25/1, and keyframes 1.000 s apart.
 2. **The real AXIS → MediaMTX → pipeline path.** Run the pipeline live on `rtsp://<mtx-host>:8554/<alias>` for at least 10 minutes. Keep MediaMTX's log.
@@ -221,3 +232,38 @@ Footage from this camera is a new Capture Setup. Its role under ADR-0005 (spent,
 - **Times follow the timestamps.** Each Bullet Hole's time after frame 0 is the file run's to 0.01 s (28.56 s, for example), with frame 0's wall clock as the origin.
 - **The rate.** 25.00 fps by the timestamps on every run, for the step and, with nothing lost, for the frames received too. 21.33 fps received in the 30-frame run.
 - **What is still uncounted.** In the last run MediaMTX discarded 25 packets, less than one frame. That left no gap in the timestamps, only a frame that decoded corrupt (`error while decoding`) and the frames after it up to the next keyframe. In both default-baseline runs one look, index 68 (file frame 93), landed on such a frame. The Bullet Holes were the file run's all the same. Skipping corrupt frames stays out of scope until the camera run shows a gap followed by false Detections.
+
+## The camera, 2026-10-20
+
+**Setup.**
+- **Camera:** AXIS Q6315-LE, 50 Hz unit, AXIS OS 10.9.4. It came with a static IP set by whoever configured it, on a subnet other than the office LAN. It was cabled through its PoE injector straight to the development Mac, which was given an address on the camera's subnet.
+- **MediaMTX:** v1.21.1 with `VideoService/mediamtx.yml` unchanged, run as `./mediamtx` from `VideoService/` (no Docker on that Mac).
+- **Path:** `axis1`, an RTSP pull with the URL options in the table above. The camera has anonymous viewing on, so the source carries no account.
+- **Pipeline:** `main` 9ff6d53, `--mm-per-px 0.1763`, default stride 17.
+- **Scene:** an A4 print of the Target propped up on a desk, indoors. No shots were fired.
+
+**To confirm: three answered, one open.**
+- **Variant:** 50 Hz. So 25 fps divides the capture rate.
+- **Delivery:** RTSP pull.
+- **Other consumers:** none. The camera was on a direct cable.
+- **Zipstream strength: open.** It could not be read without an account. With anonymous viewing, `param.cgi` lists only a few `root.Image` parameters (resolution and rotation), and asking for `Image.I0.Appearance.ZStrength` returns `Error -1 getting param`. No camera account was available. Someone with the camera's admin account reads it in the web interface, under Video → Stream → Zipstream, and records it here. These runs fired no shots, so no result here depends on it. It has to be known before footage from this camera is scored, because it is the first suspect if Bullet Holes are missed.
+
+**Stream (step 1).** The path is ready. ffprobe through MediaMTX shows H.264 Main, 1920x1080, `r_frame_rate` 25/1, no B-frames, and keyframes 1.000 s apart over 10 s.
+
+| | Run 1 | Run 2, the acceptance run |
+|---|---|---|
+| Wall time | 11:43:00 to 11:53:05 | 11:56:18 to 12:06:24 |
+| Rate: configured, step, received | 25, 25.00, 25.00 fps over 583.1 s | 25, 25.00, 25.00 fps over 589.6 s |
+| Looked at | 737 | 712 |
+| Late drops | 125 of 862 due (15%) | 161 of 873 due (18%) |
+| Forced drop: the Mac↔injector cable pulled | 22.2 s, 554 frames missed, 33 due | 17.0 s, 423 frames missed, 24 due |
+| Board-lost frames after the reconnect | none | none |
+| Lost upstream | none | none; 1 frame untimed |
+| Board space built in | 2.31 s | 2.05 s |
+| Baseline Marks / Bullet Holes | 0 / 0 | 2, both Miss / 0 |
+| WebRTC view of `axis1` | not open: the camera's own web page was watched instead, which bypasses MediaMTX | open from 11:55:57; closed by the drop at 12:01:27, back at 12:01:45 after a page reload |
+
+- **Stride 17 does not keep up on this Mac.** 15–18% of due looks were dropped as late. That is about 0.8 s a look, against the 646 ms ADR-0007 sized the stride on. Late drops are counted and are gaps for persistence (#83), so the run is still correct, only thinner.
+- **A drop ends every reader of the path.** MediaMTX closes the WebRTC session along with the pipeline's when the camera goes. The pipeline reopens on its own (#84). MediaMTX's player page needed a reload.
+- **#117 on the camera.** MediaMTX logged no `reader is too slow, discarding` in either run. There were no upstream gaps and no `error while decoding`. From frame 0 to the `[INFO] baseline` line took 0.98 s and 1.11 s.
+- **The desk scene is not a range Board.** The top of the white sheet sits against a white wall, so the Board edge was found differently in each run. Run 2 put 6.2% of the view off the canvas at the baseline, and its end-of-run check warned of up to 1.52 Target spans below; the camera did not move. Its 2 Baseline Marks are dots off the Target. None of this measures detection.

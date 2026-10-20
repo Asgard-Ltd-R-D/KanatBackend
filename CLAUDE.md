@@ -77,3 +77,7 @@ Packet capture needs raw-socket rights: `sudo setcap cap_net_raw,cap_net_admin=e
 ## Domain docs
 
 The WebApp has its own domain context at `WebApp/CONTEXT.md`. Read it before working on anything in `WebApp/`.
+
+## Commit conventions
+
+One commit per concern, so an issue usually takes several. Subject `<scope>: <imperative description>`, mandatory 1–2 sentence body explaining what the files implement together, footer `Refs #<number>`. See `docs/agents/commit-conventions.md`.

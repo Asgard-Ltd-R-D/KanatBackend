@@ -1,6 +1,6 @@
 # The AXIS Q6315-LE through the video service
 
-**Issue #85.** This page covers how the production camera reaches the pipeline, the stream settings selected for it, and the rule that keeps its view fixed for a Range. It also covers the manual acceptance. Both halves of the acceptance are recorded at the end: the replay ran on 2026-10-07, and the camera on 2026-10-20.
+**Issue #85.** This page covers how the production camera reaches the pipeline, the stream settings selected for it, and the rule that keeps its view fixed for a Range. It also covers the manual acceptance. Both halves of the acceptance are recorded at the end: the replay ran on 2026-10-07, and the camera on 2026-10-20. The camera's Zipstream strength is still to be read.
 
 Credentials never go in this file, in an issue, or on a pipeline command line. `<user>`, `<password>`, `<camera-ip>`, `<mtx-host>` and `<alias>` are placeholders.
 
@@ -156,9 +156,9 @@ Each drop is logged when it starts, and again when the stream is back with that 
 
 The results are recorded below and were posted to #78.
 
-### 2. The camera: done 2026-10-20
+### 2. The camera: run 2026-10-20, Zipstream strength still to read
 
-The results are recorded below and were posted to #78.
+The steps below ran on 2026-10-20. The results are recorded below and were posted to #78. Of the four items to confirm, the Zipstream strength is still open: see the record.
 
 **To confirm before the camera run** (the 2026-10-20 answers are in the record below):
 - **The 50 Hz or 60 Hz variant.** On a 60 Hz unit, 25 fps does not divide the capture rate, so frames would arrive unevenly spaced. If 25 fps cannot be held, #82's stop condition applies.
@@ -242,11 +242,11 @@ Footage from this camera is a new Capture Setup. Its role under ADR-0005 (spent,
 - **Pipeline:** `main` 9ff6d53, `--mm-per-px 0.1763`, default stride 17.
 - **Scene:** an A4 print of the Target propped up on a desk, indoors. No shots were fired.
 
-**To confirm, answered.**
+**To confirm: three answered, one open.**
 - **Variant:** 50 Hz. So 25 fps divides the capture rate.
 - **Delivery:** RTSP pull.
 - **Other consumers:** none. The camera was on a direct cable.
-- **Zipstream strength:** not read. No camera account was used.
+- **Zipstream strength: open.** It could not be read without an account. With anonymous viewing, `param.cgi` lists only a few `root.Image` parameters (resolution and rotation), and asking for `Image.I0.Appearance.ZStrength` returns `Error -1 getting param`. No camera account was available. Someone with the camera's admin account reads it in the web interface, under Video → Stream → Zipstream, and records it here. These runs fired no shots, so no result here depends on it. It has to be known before footage from this camera is scored, because it is the first suspect if Bullet Holes are missed.
 
 **Stream (step 1).** The path is ready. ffprobe through MediaMTX shows H.264 Main, 1920x1080, `r_frame_rate` 25/1, no B-frames, and keyframes 1.000 s apart over 10 s.
 

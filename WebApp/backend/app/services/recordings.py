@@ -210,8 +210,12 @@ def _file_start(file: Path) -> datetime | None:
 def _camera_folders(root: Path) -> list[Path]:
     """The recording folders of every camera that recorded, present or past:
     all of them except those of the paths mediamtx.yml defines, which MediaMTX
-    keeps and expires itself."""
-    config_names = mediamtx.config_path_names() or set()
+    keeps and expires itself. Empty when mediamtx.yml cannot be read: which
+    folders are MediaMTX's own is then unknown, so none is touched."""
+    config_names = mediamtx.config_path_names()
+    if config_names is None:
+        log.warning("mediamtx.yml unreadable (MEDIAMTX_CONFIG?): no recording folder is cleaned or deleted")
+        return []
     return [folder for folder in root.iterdir() if folder.is_dir() and folder.name not in config_names]
 
 

@@ -262,6 +262,19 @@ def test_a_session_that_did_not_record_deletes_and_replays_nothing(monkeypatch, 
     assert others.exists()
 
 
+def test_with_mediamtx_yml_unreadable_no_recording_folder_is_touched(monkeypatch, tmp_path):
+    # Which folders are MediaMTX's own is unknown, so none is deleted from
+    monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
+    monkeypatch.setattr(mediamtx, "config_path_names", lambda: None)
+    start = NOW - timedelta(days=2)
+    inside = _recording(tmp_path / "recordings" / "static", start + timedelta(minutes=5))
+
+    assert recording_svc.delete_session_video([(start, start + timedelta(minutes=20))], []) == 0
+    assert recording_svc.remove_unused_recordings([]) == 0
+    assert inside.exists()
+
+
 def test_without_a_recordings_folder_deleting_a_session_skips_its_files(monkeypatch):
     # e.g. the backend in a container, where the repo layout is not there
     monkeypatch.setattr(settings, "recordings_dir", "")

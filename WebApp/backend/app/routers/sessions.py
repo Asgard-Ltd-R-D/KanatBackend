@@ -55,8 +55,12 @@ def delete_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
     # Stop the recording first if this Session was recording, then delete its
     # video: no Session is left to replay it
     camera_sync.sync_soon(db)
+    others = svc.other_recorded_windows(session_id, db)
+    # Deleting may wait for a replay download of the same part: the connection
+    # goes back to the pool first
+    db.close()
     try:
-        recording_svc.delete_session_video(windows, svc.other_recorded_windows(session_id, db))
+        recording_svc.delete_session_video(windows, others)
     except OSError:
         # The Session is already deleted; its files expire with MediaMTX's
         # recordDeleteAfter anyway

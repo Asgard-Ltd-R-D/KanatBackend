@@ -250,6 +250,37 @@ def test_only_a_part_listed_for_the_session_is_served(monkeypatch, tmp_path, ali
     assert res.status_code == status
 
 
+def test_deleting_a_sessions_video_holds_no_database_connection(monkeypatch):
+    # The video's deletion may wait for a replay download: by then the
+    # request's session is closed, the other sessions' windows already read
+    from fastapi.testclient import TestClient
+    from app.core.deps import get_db
+    from app.main import app
+    from app.services import sessions as session_svc
+
+    request_db = SimpleNamespace(open=True)
+    request_db.close = lambda: setattr(request_db, "open", False)
+    mine, others = [(NOW - timedelta(hours=1), NOW)], [(NOW - timedelta(hours=3), NOW - timedelta(hours=2))]
+    monkeypatch.setattr(session_svc, "delete_session", lambda sid, db: mine)
+    monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
+    monkeypatch.setattr(session_svc, "other_recorded_windows", lambda sid, db: db.open and others)
+    deleted = []
+
+    def delete_session_video(windows, other_windows):
+        assert not request_db.open
+        deleted.append((windows, other_windows))
+
+    monkeypatch.setattr(recording_svc, "delete_session_video", delete_session_video)
+    app.dependency_overrides[get_db] = lambda: request_db
+    try:
+        with TestClient(app) as client:
+            res = client.delete(f"/sessions/{uuid.uuid4()}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert res.status_code == 204 and deleted == [(mine, others)]
+
+
 def test_a_replay_download_holds_no_database_connection(monkeypatch, tmp_path):
     # The request's session is closed before the part is fetched, and the
     # check under the part's lock uses a session of its own, just for it

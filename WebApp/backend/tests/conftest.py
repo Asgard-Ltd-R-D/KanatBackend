@@ -6,7 +6,7 @@ from app.config.settings import settings
 from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as sessions_repo
 from app.services import cameras as camera_svc
-from app.services import mediamtx
+from app.services import detection, mediamtx
 from app.services import recordings as recording_svc
 
 
@@ -20,6 +20,12 @@ def no_camera_sync_loop(monkeypatch):
 def fresh_traffic():
     """Each test starts with no remembered byte counters."""
     camera_svc._traffic.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_detection_states():
+    """Each test starts with no Session's detection remembered."""
+    detection._states.clear()
 
 
 @pytest.fixture(autouse=True)

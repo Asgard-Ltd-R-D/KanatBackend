@@ -18,8 +18,9 @@ def exists(db: DBSession, session_id: uuid.UUID) -> bool:
 
 def get_for_update(db: DBSession, session_id: uuid.UUID) -> Session | None:
     """The Session, its row locked until commit: bullets are ranked, and its
-    recording interval opened or closed, under it."""
-    return db.query(Session).filter(Session.id == session_id).with_for_update().first()
+    recording interval opened or closed, under it. Read afresh, even when `db`
+    loaded it before the lock (a Session's end waits for its Run first)."""
+    return db.query(Session).filter(Session.id == session_id).with_for_update().populate_existing().first()
 
 
 def get_with_bullets(db: DBSession, session_id: uuid.UUID) -> Session | None:

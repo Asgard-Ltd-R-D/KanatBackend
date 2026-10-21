@@ -1,9 +1,9 @@
-"""Stand-ins shared by the camera and recording tests."""
+"""Stand-ins shared by the camera, recording and detection tests."""
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.services import mediamtx
+from app.services import detection_service, mediamtx
 
 NOW = datetime.now(timezone.utc)
 
@@ -37,3 +37,27 @@ class FakeMediaMTX:
     def _delete(self, name):
         self.calls.append(("delete", name))
         del self.paths[name]
+
+
+class FakeDetectionService:
+    """The Detection Service's control API (services/detection_service.py):
+    every call made to it, and a start answered with `start_error` raised, or
+    else as watching. `on_start` and `on_end` see each call as it happens."""
+
+    def __init__(self, monkeypatch):
+        self.calls = []
+        self.start_error = None
+        self.on_start = self.on_end = lambda session_id: None
+        monkeypatch.setattr(detection_service, "start_run", self._start)
+        monkeypatch.setattr(detection_service, "end_run", self._end)
+
+    def _start(self, session_id, stream_url):
+        self.calls.append(("start", session_id, stream_url))
+        self.on_start(session_id)
+        if self.start_error:
+            raise self.start_error
+        return {"session_id": str(session_id), "state": "watching", "since": NOW.isoformat(), "baseline_marks": 0}
+
+    def _end(self, session_id):
+        self.calls.append(("end", session_id))
+        self.on_end(session_id)

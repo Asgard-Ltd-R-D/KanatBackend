@@ -30,10 +30,12 @@ rtspAddress: :8554
 rtspAuthMethods: [basic]
 
 webrtc: yes
-webrtcAddress: :8889
+# The WebApp on this PC is the only viewer, so signalling listens on this PC
+# only: no other host can open a stream, whatever Origin it sends
+webrtcAddress: 127.0.0.1:8889
 webrtcEncryption: no
-# Only the Kanat app may open a stream: the packaged app (app://kanat) and the
-# dev server
+# Which pages may read the answers (CORS): the packaged app (app://kanat) and
+# the dev server. A browser rule, not access control; the bind above is.
 webrtcAllowOrigins: ["app://kanat", "http://localhost:5173"]
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: ""

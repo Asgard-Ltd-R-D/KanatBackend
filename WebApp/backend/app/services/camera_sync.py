@@ -42,6 +42,9 @@ RECORDING = {
 _RECORD_SCRIPT = "./run_record.sh"
 
 _lock = threading.Lock()
+# The loop's clock. It counts from an arbitrary start (on Linux, the boot), so
+# the loop never compares it with a fixed time
+_clock = time.monotonic
 # Aliases already reported as clashing with a mediamtx.yml path, so the sync
 # loop logs each once rather than every round
 _conflicts: set[str] = set()
@@ -165,14 +168,14 @@ async def run_forever() -> None:
     changes, not on every failed attempt. Every CACHE_CLEAN_INTERVAL_S it also
     cleans the replay cache."""
     failing = False
-    cleaned_at = 0.0
+    cleaned_at: float | None = None  # first round cleans, whatever the clock reads
     while True:
-        if time.monotonic() - cleaned_at >= recordings.CACHE_CLEAN_INTERVAL_S:
+        if cleaned_at is None or _clock() - cleaned_at >= recordings.CACHE_CLEAN_INTERVAL_S:
             try:
                 await run_in_threadpool(recordings.clean_cache)
             except OSError as e:
                 log.warning("Cleaning the replay cache failed: %s", e)
-            cleaned_at = time.monotonic()
+            cleaned_at = _clock()
         try:
             await run_in_threadpool(_sync_once)
             if failing:

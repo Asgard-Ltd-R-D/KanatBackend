@@ -285,6 +285,9 @@ def test_the_sync_loop_cleans_the_cache_once_per_interval(monkeypatch):
             pass
 
     monkeypatch.setattr(recording_svc, "CACHE_CLEAN_INTERVAL_S", 600)
+    # A machine booted 5 s ago, as a fresh CI runner or range PC: the clock
+    # reads less than the interval, and the first round must still clean
+    monkeypatch.setattr(camera_sync, "_clock", lambda: 5.0)
     asyncio.run(run_for(0.2))  # about 20 rounds
     assert len(cleaned) == 1   # on the first round only
 

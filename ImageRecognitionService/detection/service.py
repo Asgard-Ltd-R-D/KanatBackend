@@ -16,6 +16,7 @@ import argparse
 import json
 import signal
 import threading
+import time
 import traceback
 import uuid
 from datetime import datetime, timezone
@@ -28,6 +29,13 @@ from detection import webapp
 # and clear of MediaMTX's, whose RTP and RTCP default to UDP 8000 and 8001.
 DEFAULT_PORT = 8010
 
+# How long a start waits for its Run to be watching before it ends the Run and
+# fails: the Stream's open and first read, each bounded by STREAM_TIMEOUT_MS,
+# then Board space and the baseline, ~2 s on the development Mac (#220). Past
+# it the Stream gave frame 0 and then dropped, and reconnecting would hold the
+# one Run for good.
+START_TIMEOUT_S = 15   # PROVISIONAL
+
 
 class _Run:
     """A Run as `/status` reports it: its Session, its state (`starting`,
@@ -37,6 +45,7 @@ class _Run:
     def __init__(self, session_id):
         self.session_id, self.baseline_marks, self.error = session_id, None, None
         self.loop, self.ready, self.ended = None, threading.Event(), threading.Event()
+        self.deadline = time.monotonic() + START_TIMEOUT_S
         self.enter("starting")
 
     def enter(self, state):
@@ -67,8 +76,10 @@ class DetectionService:
 
     def start(self, session_id, stream_url):
         """The Session's Run, started unless it is already active, answered
-        once it is watching. Another Session's active is a 409. A Run that
-        fails to start is a 502 naming why, and leaves nothing behind."""
+        once it is watching. Another Session's active is a 409, and so is
+        this Session's once it is ending. A Run that fails to start, or is
+        not watching by `START_TIMEOUT_S`, is a 502 naming why, and leaves
+        nothing behind."""
         with self._lock:
             run = self._run
             if run is None:
@@ -78,10 +89,15 @@ class DetectionService:
                                  name=f"Run {session_id}").start()
             elif run.session_id != session_id:
                 return 409, {"detail": "another Session's Run is active", "run": run.view()}
-        run.ready.wait()
-        if run.error:
-            return 502, {"detail": run.error}
+        if not run.ready.wait(max(0.0, run.deadline - time.monotonic())):
+            self._end(run)
+            return 502, {"detail": f"not watching within {START_TIMEOUT_S:g} s: "
+                                   f"no baseline was built"}
         with self._lock:
+            if run.error:
+                return 502, {"detail": run.error}
+            if run.state != "watching":
+                return 409, {"detail": "the Session's Run is ending", "run": run.view()}
             return 200, run.view()
 
     def end(self, session_id):
@@ -91,13 +107,24 @@ class DetectionService:
             run = self._run
             if run is None or run.session_id != session_id:
                 return 404, {"detail": "no such Run"}
+        self._end(run)
+        return 200, {"session_id": session_id, "state": "ended"}
+
+    def close(self):
+        """End the Run, if any, as `end` does: how the service shuts down."""
+        with self._lock:
+            run = self._run
+        if run:
+            self._end(run)
+
+    def _end(self, run):
+        with self._lock:
             if run.state != "ending":   # a repeat end keeps the first one's time
                 run.enter("ending")
             loop = run.loop
         if loop:
             loop.stop()
         run.ended.wait()
-        return 200, {"session_id": session_id, "state": "ended"}
 
     def _work(self, run, stream_url):
         try:
@@ -134,7 +161,7 @@ class DetectionService:
 
 def _start_body(raw):
     """`(session_id, stream_url)` from a start's body, the Session's UUID
-    normalised, or None unless it is a Session's UUID and an rtsp:// URL."""
+    normalised, or None unless it is a Session's UUID and a Stream's URL."""
     try:
         body = json.loads(raw)
         session_id, url = str(uuid.UUID(body["session_id"])), body["stream_url"]
@@ -160,7 +187,7 @@ def serve(service, port=DEFAULT_PORT):
                 body = _start_body(self.rfile.read(int(self.headers.get("Content-Length", 0))))
                 self._answer(*service.start(*body) if body else
                              (400, {"detail": "a JSON body with the Session's UUID as "
-                                              "session_id and an rtsp:// stream_url"}))
+                                              "session_id and an rtsp:// or rtsps:// stream_url"}))
             elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "end":
                 try:
                     self._answer(*service.end(str(uuid.UUID(parts[1]))))
@@ -200,6 +227,4 @@ if __name__ == "__main__":
         pass
     finally:
         server.server_close()
-        run = service.status()
-        if run:
-            service.end(run["session_id"])
+        service.close()

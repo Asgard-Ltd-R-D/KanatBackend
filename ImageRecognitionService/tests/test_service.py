@@ -54,7 +54,8 @@ class _Api:
         return contextlib.nullcontext(types.SimpleNamespace(status=201))
 
     def call(self, method, path, body=None):
-        data = None if body is None else json.dumps(body).encode()
+        """`body` is sent as JSON, or as it is when it is bytes."""
+        data = body if body is None or isinstance(body, bytes) else json.dumps(body).encode()
         request = Request(f"http://127.0.0.1:{self.server.server_address[1]}{path}",
                           data=data, method=method)
         try:
@@ -68,9 +69,7 @@ class _Api:
 
     def close(self):
         self.posting.set()
-        run = self.service.status()
-        if run:
-            self.service.end(run["session_id"])
+        self.service.close()
         self.server.shutdown()
         self.server.server_close()
 
@@ -198,9 +197,37 @@ def test_the_control_api_answers_on_the_loopback_only(api):
     json.dumps({"session_id": "not-a-uuid", "stream_url": URL}).encode(),
     json.dumps({"session_id": SESSION, "stream_url": "http://127.0.0.1/cam"}).encode()])
 def test_a_start_without_a_sessions_uuid_and_an_rtsp_url_is_refused(api, body):
-    request = Request(f"http://127.0.0.1:{api.server.server_address[1]}/runs", data=body,
-                      method="POST")
-    with pytest.raises(HTTPError) as refused:
-        urlopen(request, timeout=10)
-    assert refused.value.code == 400
+    assert api.call("POST", "/runs", body)[0] == 400
     assert _status(api) is None and api.opened == []
+
+
+def test_a_start_whose_run_is_ended_before_it_is_watching_is_refused(api):
+    """An end while the Stream opens: the start is answered 409 with the
+    Run `ending`, never as watching."""
+    opening, stream = threading.Event(), api.opener
+    api.opener = lambda *args: (opening.wait(10), stream(*args))[1]
+    answers = []
+    starting = threading.Thread(target=lambda: answers.append(api.start()))
+    starting.start()
+    _until(lambda: _status(api))
+    ending = threading.Thread(target=api.call, args=("POST", f"/runs/{SESSION}/end"))
+    ending.start()
+    _until(lambda: _status(api)["state"] == "ending")
+    opening.set()
+    starting.join(10)
+    ending.join(10)
+    ((status, body),) = answers
+    assert (status, body["run"]["state"]) == (409, "ending")
+    assert _status(api) is None
+
+
+def test_a_run_not_watching_within_the_start_timeout_is_ended_and_fails(monkeypatch, api):
+    """Frame 0 arrives and then nothing, so the baseline is never built and
+    the Stream reconnects for good: the start fails past START_TIMEOUT_S,
+    and the Run is ended rather than left holding the one Run."""
+    monkeypatch.setattr(service, "START_TIMEOUT_S", 0.3)
+    api.opener = lambda url, start, ref_time: (
+        nbh.Stream(_FakeStream(n=0), time.time(), lambda: _FakeStream(n=0)),
+        np.zeros((8, 8, 3), np.int64))
+    assert api.start() == (502, {"detail": "not watching within 0.3 s: no baseline was built"})
+    assert _status(api) is None

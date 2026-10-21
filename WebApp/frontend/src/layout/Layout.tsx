@@ -1,7 +1,28 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Crosshair, LayoutList, Sun, Moon } from 'lucide-react'
+import { ReactNode } from 'react'
+import { Crosshair, LayoutList, Settings as SettingsIcon, Sun, Moon } from 'lucide-react'
 import clsx from 'clsx'
 import { useDarkMode } from '../hooks/useDarkMode'
+
+function NavItem({ to, icon, label, end = false }: { to: string; icon: ReactNode; label: string; end?: boolean }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        clsx(
+          'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+          isActive
+            ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-600/30'
+            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800',
+        )
+      }
+    >
+      {icon}
+      {label}
+    </NavLink>
+  )
+}
 
 export function Layout() {
   const { dark, toggle } = useDarkMode()
@@ -29,21 +50,8 @@ export function Layout() {
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-1">
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) =>
-              clsx(
-                'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                isActive
-                  ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-600/30'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800',
-              )
-            }
-          >
-            <LayoutList size={16} />
-            Sessions
-          </NavLink>
+          <NavItem to="/" icon={<LayoutList size={16} />} label="Sessions" end />
+          <NavItem to="/settings" icon={<SettingsIcon size={16} />} label="Settings" />
         </nav>
 
         {/* Footer */}

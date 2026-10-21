@@ -10,7 +10,7 @@ Six independent pieces, one git repo:
 - `Composer_cli/` + `composer.py` + `build_artifacts.sh` — Python packaging/lifecycle CLI (`composer`) that builds the service, starts the Docker stack, and produces installers. Deployment docs: `Composer_cli/DEPLOY_README.md`.
 - `MotionSimulator/` — standalone Python TCP/UDP simulator + pcap replay, used to feed the service without real hardware.
 - `ImageRecognitionService/` — Python Bullet Hole detection (OpenCV + YOLO), not wired into the .NET service. Pipeline in `detection/`, scoring/truth tooling in `tools/`, both run as modules from the service root (`python -m tools.evaluate ...`). Start at `ImageRecognitionService/HANDOVER.md`.
-- `VideoService/` — the video service: MediaMTX config (`mediamtx.yml`: RTSP 8554, Control API 127.0.0.1:9997, Playback 127.0.0.1:9996, WebRTC 127.0.0.1:8889) plus GStreamer scripts (`run_record.sh` multicast ingest, `run_loopdemo.sh`). Formerly the standalone `Asgard-Ltd-R-D/KanatVideo` repo, imported with its history; it is ordinary repo content now, not a submodule. `composer up --mediamtx` runs it with `VideoService/` as the working directory, which is what the relative paths in `mediamtx.yml` and KanatFrontend's `./run_record.sh` hooks rely on. The `mediamtx` binary is not committed (git-ignored). Start at `VideoService/README.md`.
+- `VideoService/` — the video service: MediaMTX config (`mediamtx.yml`: RTSP 8554, Control API 127.0.0.1:9997, Playback 127.0.0.1:9996, WebRTC 127.0.0.1:8889) plus GStreamer scripts (`run_record.sh` multicast ingest, `run_loopdemo.sh`). Formerly the standalone `Asgard-Ltd-R-D/KanatVideo` repo, imported with its history; it is ordinary repo content now, not a submodule. `composer up --mediamtx` runs it with `VideoService/` as the working directory, which is what the relative paths in `mediamtx.yml` and the `./run_record.sh` hooks the WebApp backend adds per camera rely on. The `mediamtx` binary is not committed (git-ignored). Start at `VideoService/README.md`.
 - `WebApp/` — Electron desktop app (session management UI) + FastAPI backend. The two active components for day-to-day range operation. Start at `WebApp/CONTEXT.md`.
 
 ## Commands
@@ -70,7 +70,7 @@ Packet capture needs raw-socket rights: `sudo setcap cap_net_raw,cap_net_admin=e
 ### WebApp (FastAPI + Electron)
 - Backend routers live in `WebApp/backend/app/routers/`, one file per resource (`sessions.py`, `bullets.py`).
 - All DB access goes through the SQLAlchemy session injected via FastAPI's `Depends` — no raw queries outside of migrations.
-- Queries live in `WebApp/backend/app/repositories/`, one module per table (`sessions.py`, `bullets.py`); services hold the rules and call them, and nothing else touches the session's query API.
+- Queries live in `WebApp/backend/app/repositories/`, one module per table (`sessions.py`, `bullets.py`, `cameras.py`); services hold the rules and call them, and nothing else touches the session's query API.
 - Every schema change requires an Alembic migration; never mutate the DB by hand.
 - Frontend API calls are centralised in `WebApp/frontend/src/api/` — components never call `fetch` directly.
 - The detection model's API contract is versioned (`v1`). The version is checked on every inbound bullet payload; unknown versions are rejected with `422`.

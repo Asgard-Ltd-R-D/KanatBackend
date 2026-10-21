@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # VideoService/), so a deleted Session's video is deleted with it; empty
     # means this repo's VideoService/recordings
     recordings_dir: str = ""
+    # MediaMTX's config file, whose paths the backend never changes or deletes;
+    # empty means this repo's VideoService/mediamtx.yml
+    mediamtx_config: str = ""
 
 
 settings = Settings()

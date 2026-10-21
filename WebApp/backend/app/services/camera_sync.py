@@ -88,25 +88,31 @@ def playback_only_config() -> dict:
     }
 
 
-def is_camera_path(config: dict) -> bool:
-    """Whether a path is one of the cameras', so paths from mediamtx.yml are
-    never deleted. A camera's path runs run_record.sh, or (disabled) carries
-    RECORDING's part and segment durations, which differ from MediaMTX's
-    defaults (1s, 1h0m0s)."""
+def is_camera_path(name: str, config: dict, config_names: set[str] | None) -> bool:
+    """Whether a path is one of the cameras', which the sync may patch and
+    delete. A path mediamtx.yml defines never is, whatever its settings. Of the
+    rest, a camera's path runs run_record.sh, or (disabled) is the playback-only
+    path; without mediamtx.yml's names, only the first counts."""
     if _RECORD_SCRIPT in (config.get("runOnInit") or ""):
-        return True
-    return all(config.get(key) == RECORDING[key] for key in ("recordPartDuration", "recordSegmentDuration"))
+        return config_names is None or name not in config_names
+    if config_names is None or name in config_names:
+        return False
+    return all(config.get(key) == value for key, value in playback_only_config().items())
 
 
 def taken_by_config(alias: str) -> bool:
-    """Whether a path of that name comes from mediamtx.yml (e.g. loopdemo): a
-    camera of that name would overwrite it, and deleting the camera delete it.
-    False when MediaMTX cannot be asked; the sync never deletes such paths."""
+    """Whether a path of that name belongs to MediaMTX itself (e.g. loopdemo in
+    mediamtx.yml): a camera of that name would overwrite it, and deleting the
+    camera delete it. False when neither mediamtx.yml nor MediaMTX says so; the
+    sync never touches such paths anyway."""
+    config_names = mediamtx.config_path_names()
+    if config_names is not None and alias in config_names:
+        return True
     try:
         config = mediamtx.list_path_configs().get(alias)
     except mediamtx.MediaMTXUnreachable:
         return False
-    return config is not None and not is_camera_path(config)
+    return config is not None and not is_camera_path(alias, config, config_names)
 
 
 def sync(db: DBSession) -> None:
@@ -119,13 +125,14 @@ def sync(db: DBSession) -> None:
             for c in cameras_repo.list_all(db)
         }
         current = mediamtx.list_path_configs()
+        config_names = mediamtx.config_path_names()
 
         for name, config in wanted.items():
             existing = current.get(name)
             if existing is None:
                 mediamtx.add_path(name, config)
                 continue
-            if not is_camera_path(existing):
+            if not is_camera_path(name, existing, config_names):
                 # mediamtx.yml owns this name (the API refuses it, but a camera
                 # can get it while MediaMTX was down or the YAML changes later):
                 # patching would turn the static path into this camera, and
@@ -139,7 +146,7 @@ def sync(db: DBSession) -> None:
                 mediamtx.patch_path(name, changed)
 
         for name, existing in current.items():
-            if name not in wanted and is_camera_path(existing):
+            if name not in wanted and is_camera_path(name, existing, config_names):
                 mediamtx.delete_path(name)
 
 

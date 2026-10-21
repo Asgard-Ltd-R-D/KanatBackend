@@ -6,6 +6,7 @@ from app.config.settings import settings
 from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as sessions_repo
 from app.services import cameras as camera_svc
+from app.services import mediamtx
 
 
 @pytest.fixture(autouse=True)
@@ -27,3 +28,10 @@ def db_state(monkeypatch):
     monkeypatch.setattr(cameras_repo, "list_all", lambda db: state.cameras)
     monkeypatch.setattr(sessions_repo, "recording_session_active", lambda db: state.record)
     return state
+
+
+@pytest.fixture(autouse=True)
+def no_mediamtx_yml_paths(monkeypatch):
+    """Tests do not read the repo's mediamtx.yml; one that needs its path names
+    sets them."""
+    monkeypatch.setattr(mediamtx, "config_path_names", lambda: set())

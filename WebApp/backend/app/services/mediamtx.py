@@ -1,5 +1,7 @@
 """MediaMTX (VideoService) on this PC: its Control API (v3) and playback server."""
+import re
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 
@@ -20,6 +22,29 @@ def _api(method: str, path: str, **kwargs) -> httpx.Response:
     if res.is_error:
         raise MediaMTXUnreachable(f"{method} {path}: HTTP {res.status_code} {res.text[:200]}")
     return res
+
+
+def config_path_names() -> set[str] | None:
+    """The paths mediamtx.yml defines (e.g. loopdemo): MediaMTX's own, which the
+    WebApp must never patch or delete, whatever their settings. None when the
+    file cannot be read, so callers can stay on the safe side."""
+    if settings.mediamtx_config:
+        path = Path(settings.mediamtx_config)
+    else:
+        parents = Path(__file__).resolve().parents
+        # app/services/mediamtx.py -> KanatBackend/
+        if len(parents) <= 4:
+            return None
+        path = parents[4] / "VideoService" / "mediamtx.yml"
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+    # The keys indented one level under the top-level "paths:" key
+    match = re.search(r"^paths:[ \t]*\n((?:(?:[ \t]+.*|#.*|[ \t]*)\n?)*)", text, re.M)
+    if not match:
+        return set()
+    return set(re.findall(r"^  ([^\s#:][^:]*):", match.group(1), re.M))
 
 
 def list_path_configs() -> dict[str, dict]:

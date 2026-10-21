@@ -32,7 +32,9 @@ The coordinate system of the printed Target artwork (`ImageRecognitionService/da
 A Bullet Hole is a **Target** hit if it landed on a scoring silhouette. It is a **Miss** if it hit the Board outside any Target. Ring scores 6–10 are Target hits; score 0 is a Miss.
 
 **Capture Setup / mediamtx**
-The video pipeline is outside the WebApp's scope. The WebApp does not start, stop, or control the camera or the detection model. It only receives results the model pushes to it. The live camera view in the frontend is a WebRTC stream from mediamtx (WHEP, `frontend/src/components/Camera/WhepPlayer.tsx`), displayed as-is with no interaction beyond reconnecting.
+The WebApp configures the cameras but not the detection model, which it only receives results from. The operator enters each camera (alias, multicast group and port, network interface) in Settings; the backend stores them in the `cameras` table and keeps mediamtx in step through its Control API (`backend/app/services/camera_sync.py`): each enabled camera becomes a mediamtx path whose `run_record.sh` (GStreamer) joins the camera's H.264 RTP multicast and publishes it as RTSP, as KanatFrontend set it up. Paths added through the API live only in mediamtx's memory, so the backend re-applies them on startup and every 5 s. The live camera view in the frontend is a WebRTC stream from mediamtx (WHEP, `frontend/src/components/Camera/WhepPlayer.tsx`), displayed as-is with no interaction beyond reconnecting.
+
+**The backend runs on the same PC as mediamtx, not in a container.** It reaches mediamtx's Control API on 127.0.0.1. So the compose files run only its database; the backend is started on the PC (`uv run uvicorn ...`, see CLAUDE.md), as the installer will.
 
 **API contract**
 The JSON schema the detection model uses when calling `POST /sessions/{id}/bullets`. Defined in `backend/docs/api_contract.md` and versioned (`v1`). The backend rejects any payload whose `version` field does not match.
@@ -52,7 +54,9 @@ Camera
             ▼
        WebApp/backend  (FastAPI)
             │
-            ├─► PostgreSQL — sessions + bullet_holes tables
+            ├─► PostgreSQL — sessions, bullet_holes, cameras tables
+            │
+            ├─► mediamtx Control API (127.0.0.1:9997) — camera paths
             │
             ├─► GET /sessions, GET /sessions/{id}, GET /sessions/{id}/export/pdf
             │
@@ -79,7 +83,7 @@ Camera
 
 ## What is deliberately out of scope
 
-- Starting, stopping, or configuring the detection model or mediamtx from the WebApp.
+- Starting, stopping, or configuring the detection model from the WebApp. (The WebApp does configure mediamtx's camera paths; mediamtx itself is started outside it.)
 - Multi-user or multi-range deployments.
 - Millimetre-accuracy positioning (blocked upstream — see `ImageRecognitionService/HANDOVER.md`, "Blocked" section).
 - Any interaction with `PacketProcessingService/`, `Composer_cli/`, or `MotionSimulator/`.

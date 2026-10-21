@@ -9,6 +9,7 @@ import { getSession, updateSession, exportUrl } from '../api/sessions'
 import { deleteBullet } from '../api/bullets'
 import { BulletHole } from '../types'
 import { StatusBadge } from '../components/UI/StatusBadge'
+import { DetectionBadge } from '../components/Session/DetectionBadge'
 import { StatTile } from '../components/UI/StatTile'
 import { ConfirmDialog } from '../components/UI/ConfirmDialog'
 import { AddBulletModal } from '../components/Session/AddBulletModal'
@@ -124,6 +125,7 @@ export function SessionDetail() {
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{session.name}</h1>
               <StatusBadge status={session.status} />
+              {active && session.detection && <DetectionBadge detection={session.detection} />}
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
               {format(new Date(session.started_at), 'EEEE, MMM d yyyy · HH:mm')}

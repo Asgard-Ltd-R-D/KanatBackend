@@ -42,6 +42,8 @@ function applyEvent(session: Session, event: LiveEvent): Session {
       return removeBullet(session, event.bullet_id)
     case 'session_updated':
       return { ...session, name: event.name, status: event.status, ended_at: event.ended_at, record: event.record }
+    case 'detection_updated':
+      return { ...session, detection: event.detection }
   }
 }
 

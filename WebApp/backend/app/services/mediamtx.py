@@ -26,13 +26,44 @@ def _api(method: str, path: str, **kwargs) -> httpx.Response:
     return res
 
 
+# The regular-expression syntax that means the same in Python (with re.ASCII)
+# as in Go, MediaMTX's language, one piece at a time: literals, ".", anchors,
+# quantifiers, groups, alternation, \d \w and their negations, escaped
+# punctuation, and bracket classes of those. Anything else (POSIX classes such
+# as [[:digit:]], flags, \b, \z, \p...) may differ, so is not trusted.
+_ESCAPE = r"\\[dDwW]|\\[!-/:-@\[-`{-~]"
+_SAME_IN_GO = re.compile(
+    rf"{_ESCAPE}"
+    rf"|\[\^?(?:{_ESCAPE}|[^\\\[\]])+\]"
+    r"|\(\?:|\((?!\?)|[)|^$.*+?]"
+    r"|\{\d+(?:,\d*)?\}"
+    r"|[^\\\[\](){}|^$.*+?]"
+)
+
+
+def _go_regexp(pattern: str) -> re.Pattern | None:
+    """The pattern compiled to match as Go does, or None when it uses syntax
+    outside _SAME_IN_GO, or does not compile."""
+    pos = 0
+    while pos < len(pattern):
+        piece = _SAME_IN_GO.match(pattern, pos)
+        if piece is None:
+            return None
+        pos = piece.end()
+    try:
+        return re.compile(pattern, re.ASCII)
+    except re.error:
+        return None
+
+
 @dataclass(frozen=True)
 class ConfigPaths:
     """The paths mediamtx.yml defines: MediaMTX's own, which the WebApp must
     never patch, delete or take the name of, whatever their settings. A key is
     a name (loopdemo), a regular expression after "~" (~^external[0-9]+$) that
     applies to every name it matches, or all_others (formerly all), which
-    applies to every name nothing else defines."""
+    applies to every name nothing else defines. Every key is in names too, as
+    MediaMTX lists each definition under its key."""
     names: frozenset[str] = frozenset()
     patterns: tuple[re.Pattern, ...] = ()
     catch_all: bool = False
@@ -45,7 +76,7 @@ class ConfigPaths:
 
 def config_paths() -> ConfigPaths | None:
     """The paths mediamtx.yml defines. None when the file cannot be read, or
-    holds a regular expression Python reads differently from MediaMTX (Go),
+    holds a regular expression Python may read differently from MediaMTX (Go),
     so callers can stay on the safe side."""
     if settings.mediamtx_config:
         path = Path(settings.mediamtx_config)
@@ -64,15 +95,14 @@ def config_paths() -> ConfigPaths | None:
         return ConfigPaths()
     names, patterns, catch_all = set(), [], False
     for key in map(str, paths):
+        names.add(key)
         if key.startswith("~"):
-            try:
-                patterns.append(re.compile(key[1:]))  # unanchored, as Go's MatchString
-            except re.error:
+            pattern = _go_regexp(key[1:])
+            if pattern is None:
                 return None
+            patterns.append(pattern)  # searched unanchored, as Go's MatchString
         elif key in ("all_others", "all"):
             catch_all = True
-        else:
-            names.add(key)
     return ConfigPaths(frozenset(names), tuple(patterns), catch_all)
 
 

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 import threading
@@ -437,8 +438,44 @@ def test_a_regexp_path_in_mediamtx_yml_defines_every_name_it_matches(monkeypatch
     assert paths.catch_all and not paths.defines("anything")   # the catch-all leaves names to cameras
 
 
-def test_a_regexp_python_cannot_read_leaves_mediamtx_yml_unknown(monkeypatch, tmp_path):
-    assert _config_paths(monkeypatch, tmp_path, 'paths:\n  "~(?P<x":\n') is None
+@pytest.mark.parametrize("pattern", [
+    "(?P<x",                 # not even valid
+    "^external[[:digit:]]+$",  # Go's POSIX class; Python reads a different set
+    "(?i)^external1$",       # flags
+    "\\bexternal",            # word boundary: Unicode in Python, ASCII in Go
+    "^external\\pN$",         # Unicode classes
+    "^external1\\z",          # \z: Go only
+    "(?P<n>external)1",      # named groups
+])
+def test_a_regexp_python_may_read_differently_leaves_mediamtx_yml_unknown(monkeypatch, tmp_path, pattern):
+    text = "paths:\n  " + json.dumps("~" + pattern) + ":\n"
+    assert _config_paths(monkeypatch, tmp_path, text) is None
+
+
+@pytest.mark.parametrize("pattern, matching, other", [
+    ("^external[0-9]+$", "external1", "external"),
+    ("^cam\\d{2}$", "cam12", "cam\u0661\u0662"),   # \d is ASCII digits, as in Go
+    ("^(?:door|gate)_[a-z]+$", "gate_east", "gate_East"),
+    ("ext[^0-9]", "my-extA", "ext1"),          # unanchored, as Go's MatchString
+])
+def test_a_regexp_with_the_same_meaning_in_go_is_matched(monkeypatch, tmp_path, pattern, matching, other):
+    paths = _config_paths(monkeypatch, tmp_path, "paths:\n  " + json.dumps("~" + pattern) + ":\n")
+
+    assert paths.defines(matching) and not paths.defines(other)
+
+
+def test_regexp_and_all_others_definitions_are_never_deleted_by_the_sync(monkeypatch, tmp_path, db_state):
+    # MediaMTX lists each definition under its key; these look like camera paths
+    _config_paths(monkeypatch, tmp_path, 'paths:\n  "~^external[0-9]+$":\n  all_others:\n')
+    monkeypatch.setattr(mediamtx, "config_paths", read_config_paths)
+    mtx = FakeMediaMTX(monkeypatch, {
+        "~^external[0-9]+$": camera_sync.path_config(make_camera("external"), record=False),
+        "all_others": camera_sync.playback_only_config(),
+    })
+
+    camera_sync.sync(None)
+
+    assert mtx.calls == []
 
 
 def test_a_camera_named_like_a_regexp_path_is_refused_and_never_applied(monkeypatch, db_state):

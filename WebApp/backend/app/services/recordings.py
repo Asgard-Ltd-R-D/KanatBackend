@@ -2,6 +2,8 @@ import logging
 import tempfile
 import threading
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -74,8 +76,15 @@ def is_listed_part(
 # duration. Each part is therefore fetched once into a file, which is served
 # with range support.
 
-_locks: dict[Path, threading.Lock] = {}
+# A part's lock and how many requests are using it: an entry exists only while
+# someone holds or waits for it, so the registry stays as small as the
+# downloads in progress, and deletion only looks at those
+_locks: dict[Path, list] = {}  # path -> [Lock, users]
 _locks_guard = threading.Lock()
+
+
+class PartWithdrawn(Exception):
+    """The part's session was deleted after the request was authorised."""
 
 
 def _cache_dir() -> Path:
@@ -150,22 +159,41 @@ def clean_cache() -> None:
     _prune_cache(_cache_dir())
 
 
-def _download_lock(path: Path) -> threading.Lock:
-    """The lock a part's download holds from start to finish; deleting the
-    part takes it too, so it cannot overtake a download in progress."""
+@contextmanager
+def _part_lock(path: Path) -> Iterator[None]:
+    """Holds the part's lock: its download holds it from start to finish, and
+    deleting the part takes it too, so neither overtakes the other. The entry
+    is dropped when its last user leaves."""
     with _locks_guard:
-        return _locks.setdefault(path, threading.Lock())
+        entry = _locks.setdefault(path, [threading.Lock(), 0])
+        entry[1] += 1
+    try:
+        with entry[0]:
+            yield
+    finally:
+        with _locks_guard:
+            entry[1] -= 1
+            if entry[1] == 0 and _locks.get(path) is entry:
+                del _locks[path]
 
 
-def replay_file(alias: str, start: datetime, duration_s: float) -> Path:
+def replay_file(alias: str, start: datetime, duration_s: float, still_allowed: Callable[[], bool]) -> Path:
     """The part as an MP4 file, fetched from the playback server the first time.
-    Raises MediaMTXUnreachable if it cannot be fetched."""
+
+    still_allowed is asked once the part's lock is held, and must read the
+    database afresh (e.g. that the session still exists). Deletion commits
+    before it looks at the locks in use, so a request either holds its lock
+    when deletion looks, and deletion waits and removes its result, or takes it
+    after, and sees the deletion here. Raises PartWithdrawn then, and
+    MediaMTXUnreachable if the part cannot be fetched."""
     directory = _cache_dir()
     path = directory / _cache_name(alias, start, duration_s)
 
     # The player asks for several ranges at once; one request fetches the file,
     # the others wait for it
-    with _download_lock(path):
+    with _part_lock(path):
+        if not still_allowed():
+            raise PartWithdrawn(path.name)
         if path.exists():
             path.touch()  # played again: keep it over parts not played lately
         else:
@@ -300,6 +328,8 @@ def delete_session_video(
     # Replay copies: finished ones, half-written ones, and downloads just begun
     # (known only by their lock). Each is deleted under its download lock, so a
     # download in progress finishes first and its result goes too.
+    # The caller has committed the session's deletion before this, so a replay
+    # whose lock is not in _locks yet will see the deletion (replay_file)
     cache = _cache_dir()
     with _locks_guard:
         downloading = list(_locks)
@@ -310,7 +340,7 @@ def delete_session_video(
             continue
         _, began, length_s = named
         if belongs(began, began + timedelta(seconds=length_s)):
-            with _download_lock(copy):
+            with _part_lock(copy):
                 copy.unlink(missing_ok=True)
                 copy.with_suffix(".part").unlink(missing_ok=True)
     return deleted

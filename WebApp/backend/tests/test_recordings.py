@@ -145,7 +145,7 @@ def test_a_replayed_part_is_fetched_once_however_many_ask(monkeypatch, tmp_path)
     monkeypatch.setattr(mediamtx, "open_recording", open_recording)
     paths = []
     threads = [
-        threading.Thread(target=lambda: paths.append(recording_svc.replay_file("cam1", NOW, 12.5)))
+        threading.Thread(target=lambda: paths.append(recording_svc.replay_file("cam1", NOW, 12.5, still_allowed=lambda: True)))
         for _ in range(4)
     ]
     for t in threads:
@@ -174,7 +174,7 @@ def test_a_download_that_breaks_leaves_no_file_and_reports_unreachable(monkeypat
     monkeypatch.setattr(mediamtx, "open_recording", lambda alias, start, duration_s: BrokenVideo())
 
     with pytest.raises(mediamtx.MediaMTXUnreachable):
-        recording_svc.replay_file("cam1", NOW, 10.0)
+        recording_svc.replay_file("cam1", NOW, 10.0, still_allowed=lambda: True)
 
     assert list(tmp_path.iterdir()) == []
 
@@ -202,7 +202,7 @@ def test_only_a_part_listed_for_the_session_is_served(monkeypatch, tmp_path, ali
     monkeypatch.setattr(mediamtx, "list_recordings", lambda path, s, e: [span])
     part = tmp_path / "part.mp4"
     part.write_bytes(b"video")
-    monkeypatch.setattr(recording_svc, "replay_file", lambda alias, start, duration_s: part)
+    monkeypatch.setattr(recording_svc, "replay_file", lambda alias, start, duration_s, still_allowed: part)
     app.dependency_overrides[get_db] = lambda: None
     try:
         with TestClient(app) as client:
@@ -444,7 +444,7 @@ def test_a_part_larger_than_the_cache_limit_is_still_served(monkeypatch, tmp_pat
     older.write_bytes(b"older video")
     monkeypatch.setattr(mediamtx, "open_recording", lambda alias, start, duration_s: FakeVideo())
 
-    path = recording_svc.replay_file("cam1", NOW - timedelta(minutes=5), 60)
+    path = recording_svc.replay_file("cam1", NOW - timedelta(minutes=5), 60, still_allowed=lambda: True)
 
     assert path.exists() and path.read_bytes() == b"mp4 bytes"   # kept, though over the limit
     assert not older.exists()                                     # the rest goes
@@ -469,7 +469,7 @@ def test_deleting_a_session_waits_for_a_replay_download_in_progress(monkeypatch,
 
     monkeypatch.setattr(mediamtx, "open_recording", lambda alias, start, duration_s: SlowVideo())
     part_start = NOW - timedelta(minutes=5)
-    download = threading.Thread(target=lambda: recording_svc.replay_file("cam1", part_start, 60))
+    download = threading.Thread(target=lambda: recording_svc.replay_file("cam1", part_start, 60, still_allowed=lambda: True))
     download.start()
     started.wait(5)
     deleting = threading.Thread(target=lambda: recording_svc.delete_session_video([(part_start, NOW)], []))
@@ -481,3 +481,28 @@ def test_deleting_a_session_waits_for_a_replay_download_in_progress(monkeypatch,
     download.join(5)
     deleting.join(5)
     assert list(tmp_path.glob("*.mp4")) == [] and list(tmp_path.glob("*.part")) == []
+
+
+def test_a_replay_that_starts_after_its_session_was_deleted_fetches_nothing(monkeypatch, tmp_path):
+    # Authorised before the delete committed, but reaching the part only after
+    # the delete had looked at the downloads in progress: the session is gone
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path))
+    fetched = []
+    monkeypatch.setattr(mediamtx, "open_recording", lambda *a: fetched.append(a) or FakeVideo())
+
+    with pytest.raises(recording_svc.PartWithdrawn):
+        recording_svc.replay_file("cam1", NOW, 60, still_allowed=lambda: False)
+
+    assert fetched == [] and list(tmp_path.iterdir()) == []
+
+
+def test_part_locks_are_released_once_nobody_uses_them(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path))
+    monkeypatch.setattr(mediamtx, "open_recording", lambda alias, start, duration_s: FakeVideo())
+
+    for minutes in range(5):  # five different parts, each played twice
+        for _ in range(2):
+            recording_svc.replay_file("cam1", NOW - timedelta(minutes=minutes), 60, still_allowed=lambda: True)
+    recording_svc.delete_session_video([(NOW - timedelta(hours=1), NOW)], [])
+
+    assert recording_svc._locks == {}

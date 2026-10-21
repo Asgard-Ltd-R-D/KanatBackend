@@ -10,6 +10,12 @@ def get(db: DBSession, session_id: uuid.UUID) -> Session | None:
     return db.get(Session, session_id)
 
 
+def exists(db: DBSession, session_id: uuid.UUID) -> bool:
+    """Whether the Session exists now, asked of the database rather than the
+    identity map, so a deletion committed since is seen."""
+    return db.query(Session.id).filter(Session.id == session_id).first() is not None
+
+
 def get_for_update(db: DBSession, session_id: uuid.UUID) -> Session | None:
     """The Session, its row locked until commit: bullets are ranked, and its
     recording interval opened or closed, under it."""

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.core.deps import get_db
 from app.core.ranges import file_response
+from app.repositories import sessions as session_repo
 from app.schemas.camera import Alias
 from app.schemas.recording import CameraRecording
 from app.services import cameras as camera_svc
@@ -55,7 +56,10 @@ def recording_video(
     # one more fetch is allowed.
     for attempt in range(2):
         try:
-            return file_response(svc.replay_file(alias, start, duration_s), range_header, "video/mp4")
+            path = svc.replay_file(alias, start, duration_s, still_allowed=lambda: session_repo.exists(db, session_id))
+            return file_response(path, range_header, "video/mp4")
+        except svc.PartWithdrawn:
+            raise HTTPException(status_code=404, detail="Session not found")
         except mediamtx.MediaMTXUnreachable:
             raise HTTPException(status_code=404, detail="Recording not available")
         except FileNotFoundError:

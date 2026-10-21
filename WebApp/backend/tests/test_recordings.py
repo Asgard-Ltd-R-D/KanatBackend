@@ -229,7 +229,7 @@ def test_only_a_part_listed_for_the_session_is_served(monkeypatch, tmp_path, ali
     part = tmp_path / "part.mp4"
     part.write_bytes(b"video")
     monkeypatch.setattr(recording_svc, "replay_file", lambda alias, start, duration_s, still_allowed: part)
-    app.dependency_overrides[get_db] = lambda: None
+    app.dependency_overrides[get_db] = lambda: SimpleNamespace(close=lambda: None)
     try:
         with TestClient(app) as client:
             res = client.get(
@@ -240,6 +240,59 @@ def test_only_a_part_listed_for_the_session_is_served(monkeypatch, tmp_path, ali
         app.dependency_overrides.clear()
 
     assert res.status_code == status
+
+
+def test_a_replay_download_holds_no_database_connection(monkeypatch, tmp_path):
+    # The request's session is closed before the part is fetched, and the
+    # check under the part's lock uses a session of its own, just for it
+    from contextlib import contextmanager
+
+    from fastapi.testclient import TestClient
+    from app.core.deps import get_db
+    from app.main import app
+    from app.repositories import sessions as sessions_repo
+    from app.routers import recordings as recordings_router
+    from app.services import cameras as camera_svc
+    from app.services import sessions as session_svc
+
+    start = NOW - timedelta(minutes=10)
+    recorded = SimpleNamespace(recording_intervals=[SimpleNamespace(started_at=start, ended_at=NOW)])
+    monkeypatch.setattr(session_svc, "get_session_or_404", lambda sid, db: recorded)
+    monkeypatch.setattr(camera_svc, "list_cameras", lambda db: [make_camera("cam1")])
+    monkeypatch.setattr(mediamtx, "list_recordings", lambda path, s, e: [{"start": start.isoformat(), "duration": 600.0}])
+    request_db = SimpleNamespace(open=True)
+    request_db.close = lambda: setattr(request_db, "open", False)
+    check_db = SimpleNamespace(open=False)
+
+    @contextmanager
+    def short_db():
+        check_db.open = True
+        yield check_db
+        check_db.open = False
+
+    monkeypatch.setattr(recordings_router, "short_db", short_db)
+    monkeypatch.setattr(sessions_repo, "exists", lambda db, sid: db is check_db and db.open)
+    part = tmp_path / "part.mp4"
+    part.write_bytes(b"video")
+
+    def replay_file(alias, start, duration_s, still_allowed):
+        assert not request_db.open        # released before the download
+        assert still_allowed()
+        assert not check_db.open          # and the check's session closed after it
+        return part
+
+    monkeypatch.setattr(recording_svc, "replay_file", replay_file)
+    app.dependency_overrides[get_db] = lambda: request_db
+    try:
+        with TestClient(app) as client:
+            res = client.get(
+                f"/sessions/{uuid.uuid4()}/recordings/cam1/video",
+                params={"start": start.isoformat(), "duration_s": 600.0},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert res.status_code == 200 and res.content == b"video"
 
 
 # --- deleting a session's video ---

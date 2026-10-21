@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
 from pydantic import AwareDatetime
 from sqlalchemy.orm import Session as DBSession
 
-from app.core.deps import get_db
+from app.core.deps import get_db, short_db
 from app.core.ranges import file_response
 from app.repositories import sessions as session_repo
 from app.schemas.camera import Alias
@@ -51,12 +51,21 @@ def recording_video(
     if not listed:
         raise HTTPException(status_code=404, detail="Not one of this session's recordings")
 
+    # The part may take a while to download (or to wait for another request
+    # downloading it): the request's connection goes back to the pool first,
+    # and the check under the part's lock takes one only for its query
+    db.close()
+
+    def still_allowed() -> bool:
+        with short_db() as check:
+            return session_repo.exists(check, session_id)
+
     # In byte ranges, which the player needs to seek. The cache may drop the
     # file between fetching and serving it (its cleaning runs on its own), so
     # one more fetch is allowed.
     for attempt in range(2):
         try:
-            path = svc.replay_file(alias, start, duration_s, still_allowed=lambda: session_repo.exists(db, session_id))
+            path = svc.replay_file(alias, start, duration_s, still_allowed=still_allowed)
             return file_response(path, range_header, "video/mp4")
         except svc.PartWithdrawn:
             raise HTTPException(status_code=404, detail="Session not found")

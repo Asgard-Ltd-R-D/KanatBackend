@@ -45,3 +45,23 @@ export type LiveEvent =
   | { type: 'bullet_created'; bullet: BulletHole }
   | { type: 'bullet_deleted'; bullet_id: string }
   | { type: 'session_updated'; name: string; status: Session['status']; ended_at: string | null }
+
+// live: MediaMTX is receiving the stream. no_signal: configured, but nothing
+// arrives on its multicast group. disabled: switched off in Settings.
+// unreachable: the video service did not answer.
+export type CameraStatus = 'live' | 'no_signal' | 'disabled' | 'unreachable'
+
+// What the operator enters for a camera multicasting H.264 RTP
+export interface CameraInput {
+  alias: string
+  mcast_ip: string
+  mcast_port: number
+  iface: string | null // network interface to join the group on; null: the OS chooses
+  enabled: boolean
+}
+
+export interface Camera extends CameraInput {
+  id: string
+  created_at: string
+  status: CameraStatus
+}

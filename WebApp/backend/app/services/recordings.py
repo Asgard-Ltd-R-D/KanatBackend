@@ -150,17 +150,22 @@ def clean_cache() -> None:
     _prune_cache(_cache_dir())
 
 
+def _download_lock(path: Path) -> threading.Lock:
+    """The lock a part's download holds from start to finish; deleting the
+    part takes it too, so it cannot overtake a download in progress."""
+    with _locks_guard:
+        return _locks.setdefault(path, threading.Lock())
+
+
 def replay_file(alias: str, start: datetime, duration_s: float) -> Path:
     """The part as an MP4 file, fetched from the playback server the first time.
     Raises MediaMTXUnreachable if it cannot be fetched."""
     directory = _cache_dir()
     path = directory / _cache_name(alias, start, duration_s)
 
-    with _locks_guard:
-        lock = _locks.setdefault(path, threading.Lock())
     # The player asks for several ranges at once; one request fetches the file,
     # the others wait for it
-    with lock:
+    with _download_lock(path):
         if path.exists():
             path.touch()  # played again: keep it over parts not played lately
         else:
@@ -236,8 +241,7 @@ def _camera_folders(root: Path) -> list[Path]:
 
 def remove_unused_recordings(aliases: list[str]) -> int:
     """Deletes day-old recordings in folders no camera uses any more (a deleted
-    or renamed camera): MediaMTX only expires the recordings of paths it still
-    has. Returns how many files were deleted."""
+    camera): MediaMTX only expires the recordings of paths it still has. Returns how many files were deleted."""
     root = _recordings_dir()
     if root is None or not root.is_dir():
         return 0
@@ -273,7 +277,7 @@ def delete_session_video(
     """Deletes the recordings that started within the windows a Session
     recorded, and their replay copies, keeping any that runs on into what
     another Session recorded. Every camera's folder counts, including those of
-    cameras since renamed or deleted. Returns how many recordings were deleted."""
+    cameras since deleted. Returns how many recordings were deleted."""
 
     def belongs(began: datetime, ended: datetime) -> bool:
         """Overlaps what this Session recorded, and nothing a remaining Session
@@ -293,11 +297,20 @@ def delete_session_video(
                 file.unlink(missing_ok=True)
                 deleted += 1
 
-    for file in _cache_dir().glob("*.mp4"):
-        named = _read_cache_name(file)
+    # Replay copies: finished ones, half-written ones, and downloads just begun
+    # (known only by their lock). Each is deleted under its download lock, so a
+    # download in progress finishes first and its result goes too.
+    cache = _cache_dir()
+    with _locks_guard:
+        downloading = list(_locks)
+    copies = {f.with_suffix(".mp4") for f in [*cache.glob("*.mp4"), *cache.glob("*.part"), *downloading]}
+    for copy in copies:
+        named = _read_cache_name(copy)
         if named is None:
             continue
         _, began, length_s = named
         if belongs(began, began + timedelta(seconds=length_s)):
-            file.unlink(missing_ok=True)
+            with _download_lock(copy):
+                copy.unlink(missing_ok=True)
+                copy.with_suffix(".part").unlink(missing_ok=True)
     return deleted

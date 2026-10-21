@@ -235,7 +235,7 @@ def test_deleting_a_session_deletes_only_its_own_video(monkeypatch, tmp_path):
 
     inside = _recording(tmp_path / "recordings" / "cam1", start + timedelta(minutes=5))
     other_camera = _recording(tmp_path / "recordings" / "cam2", start + timedelta(minutes=6))
-    # A camera renamed or deleted since: its folder no camera row names any more
+    # A camera deleted since: its folder no camera row names any more
     renamed = _recording(tmp_path / "recordings" / "old-name", start + timedelta(minutes=4))
     # mediamtx.yml's own path: MediaMTX keeps and expires it
     static = _recording(tmp_path / "recordings" / "loopdemo", start + timedelta(minutes=8))
@@ -448,3 +448,36 @@ def test_a_part_larger_than_the_cache_limit_is_still_served(monkeypatch, tmp_pat
 
     assert path.exists() and path.read_bytes() == b"mp4 bytes"   # kept, though over the limit
     assert not older.exists()                                     # the rest goes
+
+
+def test_deleting_a_session_waits_for_a_replay_download_in_progress(monkeypatch, tmp_path):
+    # The part is still downloading when its session is deleted: the delete
+    # waits for it, and the finished copy goes too
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
+    started, release = threading.Event(), threading.Event()
+
+    class SlowVideo:
+        def iter_bytes(self):
+            yield b"first half "
+            started.set()
+            release.wait(5)
+            yield b"second half"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mediamtx, "open_recording", lambda alias, start, duration_s: SlowVideo())
+    part_start = NOW - timedelta(minutes=5)
+    download = threading.Thread(target=lambda: recording_svc.replay_file("cam1", part_start, 60))
+    download.start()
+    started.wait(5)
+    deleting = threading.Thread(target=lambda: recording_svc.delete_session_video([(part_start, NOW)], []))
+    deleting.start()
+    deleting.join(0.2)
+    assert deleting.is_alive()          # waiting for the download, not overtaking it
+
+    release.set()
+    download.join(5)
+    deleting.join(5)
+    assert list(tmp_path.glob("*.mp4")) == [] and list(tmp_path.glob("*.part")) == []

@@ -36,6 +36,15 @@ def list_with_bullet_counts(db: DBSession) -> list[tuple[Session, int]]:
     )
 
 
+def list_all(db: DBSession) -> list[Session]:
+    return db.query(Session).all()
+
+
+def recording_session_active(db: DBSession) -> bool:
+    """Whether an active Session has recording on."""
+    return db.query(Session.id).filter(Session.status == "active", Session.record.is_(True)).first() is not None
+
+
 def add(db: DBSession, session: Session) -> Session:
     db.add(session)
     db.commit()

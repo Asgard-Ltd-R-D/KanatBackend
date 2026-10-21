@@ -39,6 +39,7 @@ def create_session(body: SessionCreate, db: DBSession) -> Session:
         name=body.name,
         status="active",
         started_at=datetime.now(timezone.utc),
+        record=body.record,
     )
     return repo.add(db, session)
 
@@ -48,6 +49,8 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) ->
 
     if body.name is not None:
         session.name = body.name
+    if body.record is not None:
+        session.record = body.record
     if body.status is not None:
         session.status = body.status
         if body.status == "completed" and session.ended_at is None:
@@ -59,5 +62,16 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) ->
     return get_session_detail(session_id, db)
 
 
-def delete_session(session_id: uuid.UUID, db: DBSession) -> None:
-    repo.delete(db, get_session_or_404(session_id, db))
+def delete_session(session_id: uuid.UUID, db: DBSession) -> tuple[datetime, datetime]:
+    """Deletes the Session and returns the window it covered, so its video can
+    be deleted too (routers/sessions.py)."""
+    session = get_session_or_404(session_id, db)
+    window = (session.started_at, session.ended_at or datetime.now(timezone.utc))
+    repo.delete(db, session)
+    return window
+
+
+def session_windows(db: DBSession) -> list[tuple[datetime, datetime]]:
+    """The window every remaining Session covers, an active one up to now."""
+    now = datetime.now(timezone.utc)
+    return [(s.started_at, s.ended_at or now) for s in repo.list_all(db)]

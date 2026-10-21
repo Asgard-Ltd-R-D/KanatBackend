@@ -252,8 +252,6 @@ def test_a_grown_canvas_is_searched_as_the_margin_canvas_plus_its_bands():
 def _openable(monkeypatch):
     """`RegisteredFrames.open` on a one-frame `_FakeCap`, every Target found
     and Board space built without a model, artwork or geometry."""
-    monkeypatch.setitem(sys.modules, "ultralytics",
-                        types.SimpleNamespace(YOLO=lambda path: _FakeModel()))
     monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
     monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _FakeCap(1))
     monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
@@ -270,7 +268,7 @@ def test_opening_reports_how_long_building_board_space_took(monkeypatch, capsys)
     """Wall time from opening the source to Board space built, printed once (#79).
     The value is the machine's, so only that it is reported is checked."""
     _openable(monkeypatch)
-    nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt")
+    nbh.RegisteredFrames.open("clip.mkv", 10.0, _FakeModel())
     assert capsys.readouterr().out.count("[REGISTRATION] Board space built in ") == 1
 
 
@@ -279,10 +277,10 @@ def test_a_recording_times_its_frames_from_ref_time_or_when_it_was_opened(monkey
     the time the run opened the Recording (#152)."""
     _openable(monkeypatch)
     ref = datetime(2026, 10, 11, 10, 30, tzinfo=timezone.utc)
-    loop = nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt", ref_time=ref)
+    loop = nbh.RegisteredFrames.open("clip.mkv", 10.0, _FakeModel(), ref_time=ref)
     assert loop.wall_clock(13) == ref + timedelta(seconds=10.52)
     before = datetime.now(timezone.utc)
-    loop = nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt")
+    loop = nbh.RegisteredFrames.open("clip.mkv", 10.0, _FakeModel())
     t0 = loop.wall_clock(0) - timedelta(seconds=10)
     assert before <= t0 <= datetime.now(timezone.utc)
 
@@ -308,6 +306,29 @@ def test_a_baseline_frame_with_no_target_is_refused(monkeypatch):
         nbh.open_board_space("clip.mkv", 10.0, None)
 
 
+def test_a_run_opened_with_a_detector_loads_no_weights(monkeypatch):
+    """The Detection Service loads the detector once and hands it to every
+    Run it opens (#221): opening one imports and loads nothing."""
+    _openable(monkeypatch)
+    monkeypatch.setitem(sys.modules, "ultralytics", None)   # any model load would fail
+    model = _FakeModel()
+    assert nbh.RegisteredFrames.open("clip.mkv", 10.0, model).model is model
+
+
+def test_the_command_line_loads_its_model_and_refuses_one_without_bullet_holes(monkeypatch):
+    """`--model` is loaded by `load_model`, which refuses a wrong checkpoint
+    before any video work, as opening a Run did before #221."""
+    class NoHoles(_FakeModel):
+        names = {0: "target"}
+
+    loaded = {"good.pt": _FakeModel(), "wrong.pt": NoHoles()}
+    monkeypatch.setitem(sys.modules, "ultralytics",
+                        types.SimpleNamespace(YOLO=lambda path: loaded[path]))
+    assert nbh.load_model("good.pt") is loaded["good.pt"]
+    with pytest.raises(SystemExit, match="model has no 'bullet_hole' class"):
+        nbh.load_model("wrong.pt")
+
+
 def test_a_run_reads_through_the_opener_it_is_opened_with(monkeypatch):
     """How the scoring tool hands over a moved Recording (#164). Without one,
     every other test here runs on today's choice of Stream or Recording."""
@@ -318,7 +339,7 @@ def test_a_run_reads_through_the_opener_it_is_opened_with(monkeypatch):
         opened.append((video, start, ref_time))
         return nbh.Recording(cap, 25.0, start), np.zeros((8, 8, 3), np.uint8)
 
-    nbh.process(nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt", opener=opener), 10.2)
+    nbh.process(nbh.RegisteredFrames.open("clip.mkv", 10.0, _FakeModel(), opener=opener), 10.2)
     assert opened == [("clip.mkv", 10.0, None)] and cap.released
 
 
@@ -780,8 +801,6 @@ def test_an_unregistered_file_is_still_refused(tmp_path):
 def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd):
     """Through real OpenCV, on a port nothing listens on: OpenCV's default
     backends print a URL they cannot open, password and all (#83)."""
-    monkeypatch.setitem(sys.modules, "ultralytics",
-                        types.SimpleNamespace(YOLO=lambda path: _FakeModel()))
     monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
     monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
     with socket.socket() as s:
@@ -789,7 +808,7 @@ def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd):
         port = s.getsockname()[1]
     with pytest.raises(SystemExit) as refused:
         nbh.RegisteredFrames.open(f"rtsp://operator:secret@127.0.0.1:{port}/cam",
-                                  None, "model.pt")
+                                  None, _FakeModel())
     out, err = capfd.readouterr()
     shown = out + err + str(refused.value)
     url = f"rtsp://127.0.0.1:{port}/cam"
@@ -1235,9 +1254,7 @@ def test_the_detector_is_handed_the_device_only_when_one_is_given(monkeypatch):
     _openable(monkeypatch)
     for device, handed in (("mps", "mps"), (None, None)):
         model = _OnDevice()
-        monkeypatch.setitem(sys.modules, "ultralytics",
-                            types.SimpleNamespace(YOLO=lambda path: model))
-        nbh.process(nbh.RegisteredFrames.open("clip.mkv", 10.0, "model.pt", device=device), 10.2)
+        nbh.process(nbh.RegisteredFrames.open("clip.mkv", 10.0, model, device=device), 10.2)
         assert model.handed and all(h == handed for h in model.handed)
 
 

@@ -392,6 +392,15 @@ def _bullet_hole_classes(model):
     return classes
 
 
+def load_model(path):
+    """The detector at `path`, for `RegisteredFrames.open` (#221). A wrong
+    checkpoint is refused here, before any video work."""
+    from ultralytics import YOLO  # imported lazily: pulls in torch
+    model = YOLO(path)
+    _bullet_hole_classes(model)
+    return model
+
+
 def _round32(x):
     return max(32, int(round(x / 32)) * 32)
 
@@ -1392,19 +1401,17 @@ class RegisteredFrames:
         self.bands = view.exposed_bands(BAND_CONTEXT_PX)
 
     @classmethod
-    def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
+    def open(cls, video, start, model, conf=DEFAULT_CONFIDENCE,
              template_path=board.DEFAULT_TEMPLATE, ref_time=None, device=None, opener=None):
-        from ultralytics import YOLO  # imported lazily: pulls in torch
-        model = YOLO(model_path)
-        _bullet_hole_classes(model)   # refuse a wrong checkpoint before any video work
-
+        """The Run on `model`, a detector `load_model` loaded: whoever opens
+        Runs loads it, once for all of them if it likes (#221)."""
         template = cv2.imread(template_path)
         if template is None:
             raise SystemExit(f"cannot read Target artwork at {template_path}")
         _, template_mask = board.find_targets(template, min_area=1)
 
         # How long building Board space takes is measured from opening the
-        # source, so the model load above is not in it (#79).
+        # source, so no model load is in it (#79).
         opened_at = time.perf_counter()
         source, base, view, correlation = open_board_space(video, start, template_mask,
                                                            ref_time, opener)
@@ -2212,8 +2219,8 @@ if __name__ == "__main__":
     # Drained on leaving, after the report and even if the run raised (#155).
     with (webapp.WebAppPublisher(a.session_id, a.backend_url) if a.session_id
           else contextlib.nullcontext()) as publisher:
-        loop = RegisteredFrames.open(a.video, a.start, a.model, a.confidence, a.template,
-                                     ref_time, a.device)
+        loop = RegisteredFrames.open(a.video, a.start, load_model(a.model), a.confidence,
+                                     a.template, ref_time, a.device)
         process(loop, a.end, a.out, scale, not a.no_change_filter, a.merge_displaced,
                 a.baseline_frames, a.stride, publish=publisher.publish if publisher else None,
                 timing=a.timing)

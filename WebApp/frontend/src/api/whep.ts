@@ -12,7 +12,13 @@ export async function whepConnect(path: string, offerSdp: string): Promise<WhepS
   })
 
   if (res.status !== 200 && res.status !== 201) {
-    throw new Error(res.status === 404 ? 'Stream not found' : `Connection error (HTTP ${res.status})`)
+    // 404: the path exists but nothing is publishing to it. 400: the video
+    // service does not have the camera yet (the backend adds it within seconds)
+    const reason =
+      res.status === 404 ? 'No signal from camera'
+      : res.status === 400 ? 'Camera not set up in the video service yet'
+      : `Connection error (HTTP ${res.status})`
+    throw new Error(reason)
   }
 
   // MediaMTX returns a relative Location; resolve it against MediaMTX, not the app

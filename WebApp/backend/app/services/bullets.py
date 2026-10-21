@@ -2,20 +2,17 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session as DBSession
 
-from app.models import BulletHole, Session
+from app.models import BulletHole
+from app.repositories import bullets as repo
+from app.repositories import sessions as session_repo
 from app.schemas.bullet_hole import BulletCreate
 
 
 def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> BulletHole:
-    session = (
-        db.query(Session)
-        .filter(Session.id == session_id)
-        .with_for_update()
-        .first()
-    )
+    # Locked, so two bullets reported at once cannot take the same rank
+    session = session_repo.get_for_update(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -31,17 +28,9 @@ def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> B
         )
 
     if body.idempotency_key is not None:
-        dup = db.query(BulletHole).filter(
-            BulletHole.idempotency_key == body.idempotency_key,
-            BulletHole.session_id == session_id,
-        ).first()
+        dup = repo.find_by_idempotency_key(db, session_id, body.idempotency_key)
         if dup is not None:
             return dup
-
-    existing = db.query(func.count(BulletHole.id)).filter(
-        BulletHole.session_id == session_id,
-        BulletHole.deleted_at.is_(None),
-    ).scalar()
 
     bullet = BulletHole(
         id=uuid.uuid4(),
@@ -54,40 +43,21 @@ def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> B
         y_mm=body.y_mm,
         source=body.source,
         idempotency_key=body.idempotency_key,
-        rank=existing + 1,
+        rank=repo.count_active(db, session_id) + 1,
     )
-    db.add(bullet)
-    db.commit()
-    db.refresh(bullet)
-    return bullet
+    return repo.add(db, bullet)
 
 
 def delete_bullet(session_id: uuid.UUID, bullet_id: uuid.UUID, db: DBSession) -> None:
-    session = (
-        db.query(Session)
-        .filter(Session.id == session_id)
-        .with_for_update()
-        .first()
-    )
+    session = session_repo.get_for_update(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    bullet = db.query(BulletHole).filter(
-        BulletHole.id == bullet_id,
-        BulletHole.session_id == session_id,
-        BulletHole.deleted_at.is_(None),
-    ).first()
-
+    bullet = repo.get_active(db, session_id, bullet_id)
     if not bullet:
         raise HTTPException(status_code=404, detail="Bullet hole not found")
 
-    deleted_rank = bullet.rank
+    # Soft delete; the bullets after it move up a rank
     bullet.deleted_at = datetime.now(timezone.utc)
-
-    db.query(BulletHole).filter(
-        BulletHole.session_id == session_id,
-        BulletHole.deleted_at.is_(None),
-        BulletHole.rank > deleted_rank,
-    ).update({"rank": BulletHole.rank - 1}, synchronize_session=False)
-
-    db.commit()
+    repo.move_up_after(db, session_id, bullet.rank)
+    repo.save(db)

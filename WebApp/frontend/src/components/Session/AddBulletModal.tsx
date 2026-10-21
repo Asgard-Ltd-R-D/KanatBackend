@@ -58,10 +58,7 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
       <div className="absolute inset-0 bg-black/30 dark:bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-5">
-          <div>
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Add Bullet Manually</h3>
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Correction after session ended</p>
-          </div>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Add Bullet</h3>
           <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
             <X size={20} />
           </button>

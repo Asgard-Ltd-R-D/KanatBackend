@@ -3,28 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, ChevronRight, Target, AlertCircle, X, Check } from 'lucide-react'
 import { format } from 'date-fns'
-import { getSessions, createSession, updateSession, deleteSession } from '../api/sessions'
+import { getSessions, updateSession, deleteSession } from '../api/sessions'
 import { Session } from '../types'
 import { StatusBadge } from '../components/UI/StatusBadge'
 import { ConfirmDialog } from '../components/UI/ConfirmDialog'
-
-function formatDuration(startedAt: string, endedAt: string | null): string {
-  const start = new Date(startedAt).getTime()
-  const end = endedAt ? new Date(endedAt).getTime() : Date.now()
-  const ms = end - start
-  const m = Math.floor(ms / 60000)
-  const s = Math.floor((ms % 60000) / 1000)
-  return `${m}m ${s}s`
-}
-
-function StatCard({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-5 py-4 shadow-sm dark:shadow-none">
-      <p className="text-xs font-medium text-slate-500 dark:text-slate-500 uppercase tracking-wider mb-1">{label}</p>
-      <p className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{value}</p>
-    </div>
-  )
-}
+import { NewSessionModal } from '../components/Session/NewSessionModal'
+import { StatTile } from '../components/UI/StatTile'
+import { formatDuration } from '../utils/format'
 
 const SKELETON_WIDTHS = ['65%', '55%', '40%', '30%', '25%', '20%']
 
@@ -43,7 +28,6 @@ function SkeletonRow() {
 export function SessionList() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [newName, setNewName] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
@@ -52,16 +36,6 @@ export function SessionList() {
   const { data: sessions, isLoading, isError, refetch } = useQuery({
     queryKey: ['sessions'],
     queryFn: getSessions,
-  })
-
-  const createMutation = useMutation({
-    mutationFn: () => createSession(newName.trim() || 'Unnamed Session'),
-    onSuccess: (session) => {
-      qc.invalidateQueries({ queryKey: ['sessions'] })
-      setShowNew(false)
-      setNewName('')
-      navigate(`/sessions/${session.id}`)
-    },
   })
 
   const renameMutation = useMutation({
@@ -88,8 +62,7 @@ export function SessionList() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Range Sessions</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-500 mt-0.5">Manage and review shooting sessions</p>
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Sessions</h1>
         </div>
         <button
           onClick={() => setShowNew(true)}
@@ -100,51 +73,14 @@ export function SessionList() {
         </button>
       </div>
 
-      {/* New session modal */}
-      {showNew && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm" onClick={() => setShowNew(false)} />
-          <div className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">New Session</h3>
-              <button onClick={() => setShowNew(false)} className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
-                <X size={20} />
-              </button>
-            </div>
-            <input
-              autoFocus
-              type="text"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && !createMutation.isPending && createMutation.mutate()}
-              placeholder="Session name (e.g. Morning Range - Alpha)"
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 mb-4"
-            />
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowNew(false)}
-                className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => createMutation.mutate()}
-                disabled={createMutation.isPending}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
-              >
-                {createMutation.isPending ? 'Creating…' : 'Start Session'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <NewSessionModal open={showNew} onClose={() => setShowNew(false)} />
 
       {/* Stats */}
       {sessions && sessions.length > 0 && (
         <div className="grid grid-cols-3 gap-4 mb-8">
-          <StatCard label="Total Sessions" value={sessions.length} />
-          <StatCard label="Active" value={activeSessions} />
-          <StatCard label="Total Bullets" value={totalBullets} />
+          <StatTile label="Total Sessions" value={sessions.length} />
+          <StatTile label="Active" value={activeSessions} />
+          <StatTile label="Total Bullets" value={totalBullets} />
         </div>
       )}
 
@@ -152,7 +88,7 @@ export function SessionList() {
       {isError && (
         <div className="flex items-center gap-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl px-5 py-4 mb-6">
           <AlertCircle size={18} className="text-red-500 dark:text-red-400 flex-shrink-0" />
-          <p className="text-red-700 dark:text-red-300 text-sm">Failed to load sessions.</p>
+          <p className="text-red-700 dark:text-red-300 text-sm">Failed to load sessions</p>
           <button onClick={() => refetch()} className="ml-auto text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm underline">
             Retry
           </button>
@@ -183,7 +119,6 @@ export function SessionList() {
                       <Target size={24} className="text-slate-400 dark:text-slate-600" />
                     </div>
                     <p className="text-slate-600 dark:text-slate-400 font-medium">No sessions yet</p>
-                    <p className="text-slate-400 dark:text-slate-600 text-xs">Start your first session to begin tracking</p>
                     <button
                       onClick={() => setShowNew(true)}
                       className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
@@ -281,10 +216,14 @@ export function SessionList() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete Session"
-        message={`Are you sure you want to delete "${deleteTarget?.name}"?${deleteTarget?.status === 'completed' ? ` This will also delete all ${deleteTarget.bullet_count ?? 0} bullet holes.` : ''} This action cannot be undone.`}
+        message={`Delete "${deleteTarget?.name}" with its bullets? This cannot be undone.`}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-        onCancel={() => setDeleteTarget(null)}
+        onCancel={() => {
+          setDeleteTarget(null)
+          deleteMutation.reset()
+        }}
         loading={deleteMutation.isPending}
+        error={deleteMutation.error?.message}
       />
     </div>
   )

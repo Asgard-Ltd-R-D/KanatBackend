@@ -14,6 +14,15 @@ from app.core.ranges import Unsatisfiable, file_response, parse_range
     ("bytes=0-9, 20-29", (0, 9)),        # only the first range is served
     ("items=0-9", None),                 # not bytes: the whole file
     ("bytes=x-y", None),
+    # malformed: ignored, so the whole file
+    ("bytes=-1-5", None),                # a negative start
+    ("bytes=5--3", None),
+    ("bytes=+1-5", None),                # int() would read these
+    ("bytes=1-+5", None),
+    ("bytes=-+5", None),
+    ("bytes=1_0-20", None),
+    ("bytes=\u0663-5", None),            # an Arabic-Indic 3
+    ("bytes=-", None),
 ])
 def test_ranges_are_read_as_the_standard_says(header, expected):
     assert parse_range(header, 1000) == expected

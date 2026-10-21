@@ -14,6 +14,9 @@ from app.services import camera_sync, mediamtx
 from app.services import recordings as recording_svc
 from tests.fakes import NOW, FakeMediaMTX, make_camera
 
+# The real reader, kept before conftest swaps it for a stand-in in each test
+read_config_path_names = mediamtx.config_path_names
+
 
 # --- recording follows the sessions ---
 
@@ -397,3 +400,51 @@ def test_the_sync_loop_cleans_the_cache_once_per_interval(monkeypatch):
     monkeypatch.setattr(recording_svc, "CACHE_CLEAN_INTERVAL_S", 0)
     asyncio.run(run_for(0.2))
     assert len(cleaned) > 1    # every round once the interval has passed
+
+
+# --- review: real YAML, a file's real end, the served part kept ---
+
+@pytest.mark.parametrize("text, names", [
+    ("paths:\n  loopdemo:\n    source: publisher\n", {"loopdemo"}),
+    ("paths:\n    loopdemo:\n        source: publisher\n", {"loopdemo"}),        # four spaces
+    ('paths:\n  "quoted":\n    source: publisher\n', {"quoted"}),               # quoted key
+    ("paths: {inline: {source: publisher}, other: {}}\n", {"inline", "other"}),  # inline mapping
+    ("logLevel: info\n", set()),                                                 # no paths
+    ("paths: [\n", None),                                                        # not valid YAML: unknown
+])
+def test_mediamtx_yml_path_names_are_read_as_yaml(monkeypatch, tmp_path, text, names):
+    config = tmp_path / "mediamtx.yml"
+    config.write_text(text)
+    monkeypatch.setattr(settings, "mediamtx_config", str(config))
+
+    assert read_config_path_names() == names
+
+
+def test_a_recording_stopped_early_ends_at_its_last_write(monkeypatch, tmp_path):
+    # A stopped at +5 (its file last written then); B started at +7, before
+    # MediaMTX's next file at +8: A's file is A's alone
+    monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
+    start = NOW - timedelta(hours=1)
+    a_file = _recording(tmp_path / "recordings" / "cam1", start)
+    written = (start + timedelta(minutes=5)).timestamp()
+    os.utime(a_file, (written, written))
+    b_file = _recording(tmp_path / "recordings" / "cam1", start + timedelta(minutes=8))
+    a = (start, start + timedelta(minutes=5))
+    b = (start + timedelta(minutes=7), start + timedelta(minutes=20))
+
+    assert recording_svc.delete_session_video([a], [b]) == 1
+    assert not a_file.exists() and b_file.exists()
+
+
+def test_a_part_larger_than_the_cache_limit_is_still_served(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "replay_cache_max_gb", 1 / 1024**3)  # 1 byte
+    older = tmp_path / recording_svc._cache_name("cam1", NOW - timedelta(minutes=30), 60)
+    older.write_bytes(b"older video")
+    monkeypatch.setattr(mediamtx, "open_recording", lambda alias, start, duration_s: FakeVideo())
+
+    path = recording_svc.replay_file("cam1", NOW - timedelta(minutes=5), 60)
+
+    assert path.exists() and path.read_bytes() == b"mp4 bytes"   # kept, though over the limit
+    assert not older.exists()                                     # the rest goes

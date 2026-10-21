@@ -50,9 +50,14 @@ def recording_video(
     if not listed:
         raise HTTPException(status_code=404, detail="Not one of this session's recordings")
 
-    try:
-        path = svc.replay_file(alias, start, duration_s)
-    except mediamtx.MediaMTXUnreachable:
-        raise HTTPException(status_code=404, detail="Recording not available")
-    # In byte ranges, which the player needs to seek
-    return file_response(path, range_header, "video/mp4")
+    # In byte ranges, which the player needs to seek. The cache may drop the
+    # file between fetching and serving it (its cleaning runs on its own), so
+    # one more fetch is allowed.
+    for attempt in range(2):
+        try:
+            return file_response(svc.replay_file(alias, start, duration_s), range_header, "video/mp4")
+        except mediamtx.MediaMTXUnreachable:
+            raise HTTPException(status_code=404, detail="Recording not available")
+        except FileNotFoundError:
+            if attempt:
+                raise HTTPException(status_code=404, detail="Recording not available")

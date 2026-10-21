@@ -112,8 +112,9 @@ def _read_cache_name(file: Path) -> tuple[str, datetime, float] | None:
 def _prune_cache(directory: Path) -> None:
     """Drops the copies whose recording is over a day old (MediaMTX has deleted
     the original by then), abandoned downloads, and the least recently played
-    copies beyond replay_cache_max_gb. A copy's mtime is when it was last
-    played (replay_file touches it)."""
+    copies beyond replay_cache_max_gb, but never the most recently played, the
+    one being served, even if it alone is over the limit. A copy's mtime is
+    when it was last played (replay_file touches it)."""
     now = time.time()
     expired = datetime.now(timezone.utc) - timedelta(seconds=CACHE_MAX_AGE_S)
     kept = []
@@ -136,7 +137,7 @@ def _prune_cache(directory: Path) -> None:
 
     budget = settings.replay_cache_max_gb * 1024**3
     total = sum(size for _, size, _ in kept)
-    for _, size, file in sorted(kept):
+    for _, size, file in sorted(kept)[:-1]:
         if total <= budget:
             break
         file.unlink(missing_ok=True)
@@ -184,8 +185,8 @@ def replay_file(alias: str, start: datetime, duration_s: float) -> Path:
 # --- deleting a Session's video ---
 #
 # MediaMTX names each file after the moment it started recording, in this PC's
-# local time (RECORDING's recordPath in camera_sync.py), and a file runs until
-# the next one starts, at most a segment long. Recording only runs while some
+# local time (RECORDING's recordPath in camera_sync.py), and last writes it
+# when that file ends, at most a segment later. Recording only runs while some
 # Session records, so a Session's files are the ones that started within its
 # recording intervals; one that runs on into another Session's intervals is
 # kept for it.
@@ -255,6 +256,16 @@ def remove_unused_recordings(aliases: list[str]) -> int:
     return deleted
 
 
+def _file_end(file: Path, began: datetime) -> datetime:
+    """When the recording ended: its last write, at most a segment after it
+    began (a file still being written ends now)."""
+    try:
+        written = datetime.fromtimestamp(file.stat().st_mtime).astimezone()
+    except FileNotFoundError:
+        written = began
+    return min(max(written, began), began + SEGMENT)
+
+
 def delete_session_video(
     windows: list[tuple[datetime, datetime]],
     other_windows: list[tuple[datetime, datetime]],
@@ -276,10 +287,9 @@ def delete_session_video(
     if root is None:
         log.warning("Recordings folder not found; set RECORDINGS_DIR to delete a Session's video")
     for folder in _camera_folders(root) if root and root.is_dir() else []:
-        files = sorted((began, file) for file in folder.glob("*.mp4") if (began := _file_start(file)))
-        for i, (began, file) in enumerate(files):
-            ended = min(files[i + 1][0], began + SEGMENT) if i + 1 < len(files) else began + SEGMENT
-            if belongs(began, ended):
+        for file in folder.glob("*.mp4"):
+            began = _file_start(file)
+            if began is not None and belongs(began, _file_end(file, began)):
                 file.unlink(missing_ok=True)
                 deleted += 1
 

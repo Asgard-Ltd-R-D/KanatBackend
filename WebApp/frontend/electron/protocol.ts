@@ -18,8 +18,8 @@ export function registerAppScheme() {
 
 function contentSecurityPolicy({ apiUrl, mediaUrl }: KanatConfig): string {
   return [
-    `default-src 'self' ${apiUrl} ${mediaUrl} https://fonts.googleapis.com https://fonts.gstatic.com`,
-    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
+    `default-src 'self' ${apiUrl} ${mediaUrl}`,
+    `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob:`,
     `script-src 'self' 'unsafe-eval'`,
   ].join('; ')

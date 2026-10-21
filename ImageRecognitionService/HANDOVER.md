@@ -856,8 +856,10 @@ empty. SIGINT or SIGTERM ends any Run, drained, and then the service.
 .venv/bin/python -m detection.service    # --port 8010 --backend-url http://localhost:8000 --model ...
 # Start: answered once the baseline is built and the Run is watching. A repeat for
 # the same Session is answered with its Run. Another Session's start while one is
-# active is a 409. A Stream that does not open within STREAM_TIMEOUT_MS, or a
-# baseline frame with no Target, is a 502 naming the reason, and leaves no Run.
+# active is a 409, and so is the same Session's once its Run is ending. A Stream
+# that does not open within STREAM_TIMEOUT_MS, a baseline frame with no Target, or
+# no baseline built by START_TIMEOUT_S (15 s) is a 502 naming the reason, and
+# leaves no Run.
 curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "rtsp://127.0.0.1:8554/<path>"}'
 # {"session_id": "<uuid>", "state": "watching", "since": "<UTC>", "baseline_marks": 3}
 # Status: {"run": null}, or the Run, its state (starting, watching, ending) and since when.

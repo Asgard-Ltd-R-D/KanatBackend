@@ -10,16 +10,16 @@ export function getSession(id: string): Promise<Session> {
   return apiFetch<Session>(`/sessions/${id}`)
 }
 
-export function createSession(name: string): Promise<Session> {
+export function createSession(name: string, record: boolean): Promise<Session> {
   return apiFetch<Session>('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, record }),
   })
 }
 
 export function updateSession(
   id: string,
-  patch: { name?: string; status?: 'active' | 'completed' },
+  patch: { name?: string; status?: 'active' | 'completed'; record?: boolean },
 ): Promise<Session> {
   return apiFetch<Session>(`/sessions/${id}`, {
     method: 'PATCH',

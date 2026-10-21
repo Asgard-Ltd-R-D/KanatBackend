@@ -756,6 +756,15 @@ Everything runs from `ImageRecognitionService/` with its `.venv`. The pipeline
 lives in `detection/`, the scoring and truth tooling in `tools/`, so each runs
 as a module (`python -m detection.new_bullet_holes`), not as a file path.
 
+The Python version is declared once, in `.python-version`. It is the only one
+the detector has run on, and CI's `image-recognition.yml` reads it (#222).
+Build the `.venv` on it:
+
+```bash
+python$(cat .python-version) -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
 ```bash
 # Detect new Bullet Holes, optionally rendering the rectified Board
 .venv/bin/python -m detection.new_bullet_holes CLIP.mkv --start 13 --end 25 --out out.mp4

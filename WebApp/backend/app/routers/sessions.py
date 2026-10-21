@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.core.deps import get_db
 from app.core.live import hub
+from app.models import Session
 from app.schemas.live import SessionUpdatedEvent
 from app.schemas.session import SessionCreate, SessionListItem, SessionResponse, SessionUpdate
 from app.services import camera_sync, detection
@@ -18,7 +19,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
-def _response(session) -> SessionResponse:
+def _response(session: Session) -> SessionResponse:
     """The Session with its detection, which is held in memory."""
     response = SessionResponse.model_validate(session)
     response.detection = detection.state_of(session.id)
@@ -31,10 +32,11 @@ def create_session(body: SessionCreate, background: BackgroundTasks, db: DBSessi
     # Starts the cameras recording if this Session records
     camera_sync.sync_soon(db)
     if session.camera_id is not None:
+        alias = camera_svc.get_camera_or_404(session.camera_id, db).alias
         # Answered "starting" at once: the Run is asked for after the answer,
         # as it takes seconds to be watching
         detection.starting(session.id)
-        background.add_task(detection.watch, session.id, camera_svc.get_camera_or_404(session.camera_id, db).alias)
+        background.add_task(detection.watch, session.id, alias)
     return _response(session)
 
 

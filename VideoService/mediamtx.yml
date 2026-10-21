@@ -30,18 +30,25 @@ rtspAddress: :8554
 rtspAuthMethods: [basic]
 
 webrtc: yes
-webrtcAddress: :8889
+# The WebApp on this PC is the only viewer, so signalling listens on this PC
+# only: no other host can open a stream, whatever Origin it sends
+webrtcAddress: 127.0.0.1:8889
 webrtcEncryption: no
-webrtcAllowOrigin: "*"
+# Which pages may read the answers (CORS): the packaged app (app://kanat) and
+# the dev server. A browser rule, not access control; the bind above is.
+webrtcAllowOrigins: ["app://kanat", "http://localhost:5173"]
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: ""
 
+# Serves recorded video to the WebApp backend (session replay), so only this PC
 playback: yes
-playbackAddress: :9996
+playbackAddress: 127.0.0.1:9996
 playbackEncryption: no # (or yes with certs)
 
+# The WebApp backend adds the camera paths and turns recording on and off
+# through it, so only this PC
 api: yes
-apiAddress: :9997
+apiAddress: 127.0.0.1:9997
 
 # Everything else off
 hls: no
@@ -49,6 +56,8 @@ rtmp: no
 srt: no
 metrics: no
 pprof: no
+# MoQ (new in v1.21, on by default): unused, and it would hold 8892-8893
+moq: no
 
 # ---------- Paths ----------
 paths:

@@ -7,7 +7,7 @@
 # Kanat Video Server — Sim Paths & Playback API
 
 > 🧩 **Stack**: MediaMTX (record + playback) • RTSP/WebRTC readers • Control API
-> 🔌 **Ports** in this setup: **9996 = Playback API**, **9997 = Control API**
+> 🔌 **Ports** in this setup: **9996 = Playback API**, **9997 = Control API**, both on `127.0.0.1` only: the WebApp backend on the same PC is their only client. WebRTC signalling (**8889**) is on `127.0.0.1` too: the WebApp on this PC is its only viewer
 
 We run two simulated paths:
 
@@ -32,7 +32,7 @@ We run two simulated paths:
   ffplay -rtsp_transport tcp "rtsp://127.0.0.1:8554/recorddemo"
   ```
 
-> Make sure `playback: yes` and `playbackAddress: :9996` are set in your config. ([GitHub][1])
+> Make sure `playback: yes` and `playbackAddress: 127.0.0.1:9996` are set in your config. ([GitHub][1])
 
 ---
 
@@ -133,11 +133,11 @@ ffplay "http://127.0.0.1:9996/get?path=recorddemo&start=${START}&duration=60&for
 ```yaml
 # Playback server (HTTP, /list and /get) — you’re using 9996
 playback: yes
-playbackAddress: :9996
+playbackAddress: 127.0.0.1:9996
 
 # Control API (v3) — you’re using 9997
 api: yes
-apiAddress: :9997
+apiAddress: 127.0.0.1:9997
 ```
 
 These are defined in the stock `mediamtx.yml` with inline docs. Defaults bind to localhost unless changed. ([GitHub][1])

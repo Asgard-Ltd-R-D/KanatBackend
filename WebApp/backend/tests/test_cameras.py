@@ -62,7 +62,7 @@ def test_a_removed_camera_is_deleted_but_paths_from_mediamtx_yml_are_kept(monkey
 def test_a_camera_named_like_a_mediamtx_yml_path_leaves_that_path_alone(monkeypatch, db_state):
     # e.g. created while MediaMTX was down, so the API could not refuse the name
     monkeypatch.setattr(camera_sync, "_conflicts", set())
-    monkeypatch.setattr(mediamtx, "config_path_names", lambda: {"loopdemo"})
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths(frozenset({"loopdemo"})))
     static = {"runOnDemand": "./run_loopdemo.sh", "runOnInit": ""}
     db_state.cameras = [make_camera("loopdemo")]
     mtx = FakeMediaMTX(monkeypatch, {"loopdemo": dict(static)})

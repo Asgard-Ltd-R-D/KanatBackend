@@ -88,31 +88,32 @@ def playback_only_config() -> dict:
     }
 
 
-def is_camera_path(name: str, config: dict, config_names: set[str] | None) -> bool:
+def is_camera_path(name: str, config: dict, config_paths: mediamtx.ConfigPaths | None) -> bool:
     """Whether a path is one of the cameras', which the sync may patch and
     delete. A path mediamtx.yml defines never is, whatever its settings. Of the
     rest, a camera's path runs run_record.sh, or (disabled) is the playback-only
-    path; without mediamtx.yml's names, only the first counts."""
+    path; without mediamtx.yml's paths, only the first counts."""
     if _RECORD_SCRIPT in (config.get("runOnInit") or ""):
-        return config_names is None or name not in config_names
-    if config_names is None or name in config_names:
+        return config_paths is None or not config_paths.defines(name)
+    if config_paths is None or config_paths.defines(name):
         return False
     return all(config.get(key) == value for key, value in playback_only_config().items())
 
 
 def taken_by_config(alias: str) -> bool:
-    """Whether a path of that name belongs to MediaMTX itself (e.g. loopdemo in
-    mediamtx.yml): a camera of that name would overwrite it, and deleting the
-    camera delete it. False when neither mediamtx.yml nor MediaMTX says so; the
-    sync never touches such paths anyway."""
-    config_names = mediamtx.config_path_names()
-    if config_names is not None and alias in config_names:
+    """Whether a path of that name belongs to MediaMTX itself (e.g. loopdemo, or
+    a name a ~regular expression in mediamtx.yml matches): a camera of that
+    name would overwrite or shadow it, and deleting the camera delete it. False
+    when neither mediamtx.yml nor MediaMTX says so; the sync never touches such
+    paths anyway."""
+    config_paths = mediamtx.config_paths()
+    if config_paths is not None and config_paths.defines(alias):
         return True
     try:
         config = mediamtx.list_path_configs().get(alias)
     except mediamtx.MediaMTXUnreachable:
         return False
-    return config is not None and not is_camera_path(alias, config, config_names)
+    return config is not None and not is_camera_path(alias, config, config_paths)
 
 
 def sync(db: DBSession) -> None:
@@ -125,28 +126,30 @@ def sync(db: DBSession) -> None:
             for c in cameras_repo.list_all(db)
         }
         current = mediamtx.list_path_configs()
-        config_names = mediamtx.config_path_names()
+        config_paths = mediamtx.config_paths()
 
         for name, config in wanted.items():
             existing = current.get(name)
-            if existing is None:
-                mediamtx.add_path(name, config)
-                continue
-            if not is_camera_path(name, existing, config_names):
+            defined = config_paths is not None and config_paths.defines(name)
+            if defined or (existing is not None and not is_camera_path(name, existing, config_paths)):
                 # mediamtx.yml owns this name (the API refuses it, but a camera
                 # can get it while MediaMTX was down or the YAML changes later):
-                # patching would turn the static path into this camera, and
+                # adding or patching would turn the static path, or the name
+                # its ~regular expression covers, into this camera, and
                 # deleting the camera would then remove it
                 if name not in _conflicts:
                     log.warning("Camera '%s' is not applied: mediamtx.yml has a path of that name", name)
                     _conflicts.add(name)
+                continue
+            if existing is None:
+                mediamtx.add_path(name, config)
                 continue
             changed = {key: value for key, value in config.items() if existing.get(key) != value}
             if changed:
                 mediamtx.patch_path(name, changed)
 
         for name, existing in current.items():
-            if name not in wanted and is_camera_path(name, existing, config_names):
+            if name not in wanted and is_camera_path(name, existing, config_paths):
                 mediamtx.delete_path(name)
 
 

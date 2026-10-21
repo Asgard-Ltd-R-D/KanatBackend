@@ -291,14 +291,19 @@ def _file_start(file: Path) -> datetime | None:
 
 def _camera_folders(root: Path) -> list[Path]:
     """The recording folders of every camera that recorded, present or past:
-    all of them except those of the paths mediamtx.yml defines, which MediaMTX
-    keeps and expires itself. Empty when mediamtx.yml cannot be read: which
-    folders are MediaMTX's own is then unknown, so none is touched."""
-    config_names = mediamtx.config_path_names()
-    if config_names is None:
+    all of them except those of the paths mediamtx.yml defines, by name or
+    regular expression, which MediaMTX keeps and expires itself. Empty when
+    mediamtx.yml cannot be read, or has all_others, whose paths may record
+    under any name: which folders are MediaMTX's own is then unknown, so none
+    is touched."""
+    config_paths = mediamtx.config_paths()
+    if config_paths is None:
         log.warning("mediamtx.yml unreadable (MEDIAMTX_CONFIG?): no recording folder is cleaned or deleted")
         return []
-    return [folder for folder in root.iterdir() if folder.is_dir() and folder.name not in config_names]
+    if config_paths.catch_all:
+        log.warning("mediamtx.yml has all_others: no recording folder is cleaned or deleted")
+        return []
+    return [folder for folder in root.iterdir() if folder.is_dir() and not config_paths.defines(folder.name)]
 
 
 def remove_unused_recordings(aliases: list[str]) -> int:

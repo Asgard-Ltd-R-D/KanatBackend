@@ -1,4 +1,6 @@
 """MediaMTX (VideoService) on this PC: its Control API (v3) and playback server."""
+import re
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -24,10 +26,27 @@ def _api(method: str, path: str, **kwargs) -> httpx.Response:
     return res
 
 
-def config_path_names() -> set[str] | None:
-    """The paths mediamtx.yml defines (e.g. loopdemo): MediaMTX's own, which the
-    WebApp must never patch or delete, whatever their settings. None when the
-    file cannot be read, so callers can stay on the safe side."""
+@dataclass(frozen=True)
+class ConfigPaths:
+    """The paths mediamtx.yml defines: MediaMTX's own, which the WebApp must
+    never patch, delete or take the name of, whatever their settings. A key is
+    a name (loopdemo), a regular expression after "~" (~^external[0-9]+$) that
+    applies to every name it matches, or all_others (formerly all), which
+    applies to every name nothing else defines."""
+    names: frozenset[str] = frozenset()
+    patterns: tuple[re.Pattern, ...] = ()
+    catch_all: bool = False
+
+    def defines(self, name: str) -> bool:
+        """Whether a name or a regular expression defines this path. The catch-all
+        does not count: adding a camera's own path is what takes a name out of it."""
+        return name in self.names or any(p.search(name) for p in self.patterns)
+
+
+def config_paths() -> ConfigPaths | None:
+    """The paths mediamtx.yml defines. None when the file cannot be read, or
+    holds a regular expression Python reads differently from MediaMTX (Go),
+    so callers can stay on the safe side."""
     if settings.mediamtx_config:
         path = Path(settings.mediamtx_config)
     else:
@@ -41,7 +60,20 @@ def config_path_names() -> set[str] | None:
     except (OSError, yaml.YAMLError):
         return None
     paths = config.get("paths") if isinstance(config, dict) else None
-    return {str(name) for name in paths} if isinstance(paths, dict) else set()
+    if not isinstance(paths, dict):
+        return ConfigPaths()
+    names, patterns, catch_all = set(), [], False
+    for key in map(str, paths):
+        if key.startswith("~"):
+            try:
+                patterns.append(re.compile(key[1:]))  # unanchored, as Go's MatchString
+            except re.error:
+                return None
+        elif key in ("all_others", "all"):
+            catch_all = True
+        else:
+            names.add(key)
+    return ConfigPaths(frozenset(names), tuple(patterns), catch_all)
 
 
 def list_path_configs() -> dict[str, dict]:

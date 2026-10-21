@@ -41,4 +41,4 @@ def db_state(monkeypatch):
 def no_mediamtx_yml_paths(monkeypatch):
     """Tests do not read the repo's mediamtx.yml; one that needs its path names
     sets them."""
-    monkeypatch.setattr(mediamtx, "config_path_names", lambda: set())
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths())

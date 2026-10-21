@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import threading
 import time
 import uuid
@@ -15,7 +16,7 @@ from app.services import recordings as recording_svc
 from tests.fakes import NOW, FakeMediaMTX, make_camera
 
 # The real reader, kept before conftest swaps it for a stand-in in each test
-read_config_path_names = mediamtx.config_path_names
+read_config_paths = mediamtx.config_paths
 
 
 # --- recording follows the sessions ---
@@ -51,7 +52,7 @@ def test_a_deleted_camera_that_was_disabled_loses_its_path_too(monkeypatch, db_s
 
 def test_a_mediamtx_yml_path_with_a_cameras_settings_is_still_never_touched(monkeypatch, db_state):
     # Same settings as a disabled camera's path, but mediamtx.yml defines it
-    monkeypatch.setattr(mediamtx, "config_path_names", lambda: {"static"})
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths(frozenset({"static"})))
     mtx = FakeMediaMTX(monkeypatch, {"static": camera_sync.playback_only_config()})
 
     camera_sync.sync(None)                      # no camera: not deleted
@@ -61,7 +62,7 @@ def test_a_mediamtx_yml_path_with_a_cameras_settings_is_still_never_touched(monk
 
 
 def test_without_mediamtx_yml_only_paths_running_run_record_count_as_cameras(monkeypatch, db_state):
-    monkeypatch.setattr(mediamtx, "config_path_names", lambda: None)  # file unreadable
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: None)  # file unreadable
     mtx = FakeMediaMTX(monkeypatch, {
         "running": camera_sync.path_config(make_camera("running"), record=False),
         "unsure": camera_sync.playback_only_config(),
@@ -229,7 +230,7 @@ def _recording(folder, began):
 def test_deleting_a_session_deletes_only_its_own_video(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
     monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
-    monkeypatch.setattr(mediamtx, "config_path_names", lambda: {"loopdemo"})
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths(frozenset({"loopdemo"})))
     start = NOW - timedelta(hours=1)
     window = (start, start + timedelta(minutes=20))
 
@@ -294,7 +295,7 @@ def test_with_mediamtx_yml_unreadable_no_recording_folder_is_touched(monkeypatch
     # Which folders are MediaMTX's own is unknown, so none is deleted from
     monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
     monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
-    monkeypatch.setattr(mediamtx, "config_path_names", lambda: None)
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: None)
     start = NOW - timedelta(days=2)
     inside = _recording(tmp_path / "recordings" / "static", start + timedelta(minutes=5))
 
@@ -417,7 +418,69 @@ def test_mediamtx_yml_path_names_are_read_as_yaml(monkeypatch, tmp_path, text, n
     config.write_text(text)
     monkeypatch.setattr(settings, "mediamtx_config", str(config))
 
-    assert read_config_path_names() == names
+    paths = read_config_paths()
+    assert (None if paths is None else paths.names) == names
+
+
+def _config_paths(monkeypatch, tmp_path, text):
+    config = tmp_path / "mediamtx.yml"
+    config.write_text(text)
+    monkeypatch.setattr(settings, "mediamtx_config", str(config))
+    return read_config_paths()
+
+
+def test_a_regexp_path_in_mediamtx_yml_defines_every_name_it_matches(monkeypatch, tmp_path):
+    paths = _config_paths(monkeypatch, tmp_path, 'paths:\n  "~^external[0-9]+$":\n    source: publisher\n  all_others:\n')
+
+    assert paths.defines("external1") and paths.defines("external42")
+    assert not paths.defines("cam1") and not paths.defines("external")
+    assert paths.catch_all and not paths.defines("anything")   # the catch-all leaves names to cameras
+
+
+def test_a_regexp_python_cannot_read_leaves_mediamtx_yml_unknown(monkeypatch, tmp_path):
+    assert _config_paths(monkeypatch, tmp_path, 'paths:\n  "~(?P<x":\n') is None
+
+
+def test_a_camera_named_like_a_regexp_path_is_refused_and_never_applied(monkeypatch, db_state):
+    monkeypatch.setattr(camera_sync, "_conflicts", set())
+    regexp = mediamtx.ConfigPaths(patterns=(re.compile("^external[0-9]+$"),))
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: regexp)
+    mtx = FakeMediaMTX(monkeypatch, {})
+
+    assert camera_sync.taken_by_config("external1")
+    assert not camera_sync.taken_by_config("cam1")
+    db_state.cameras = [make_camera("external1")]   # created while MediaMTX was down
+    camera_sync.sync(None)
+    assert mtx.calls == []                          # not added over the regexp's path
+
+
+def test_folders_a_regexp_path_records_into_are_never_deleted(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
+    regexp = mediamtx.ConfigPaths(patterns=(re.compile("^external[0-9]+$"),))
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: regexp)
+    start = NOW - timedelta(days=2)
+    external = _recording(tmp_path / "recordings" / "external1", start + timedelta(minutes=5))
+    camera = _recording(tmp_path / "recordings" / "cam1", start + timedelta(minutes=5))
+
+    recording_svc.remove_unused_recordings([])                          # no camera has either name
+    recording_svc.delete_session_video([(start, start + timedelta(minutes=20))], [])
+
+    assert external.exists() and not camera.exists()
+
+
+def test_with_all_others_in_mediamtx_yml_no_recording_folder_is_touched(monkeypatch, tmp_path):
+    # Its paths may record under any name, so no folder is known to be a camera's
+    monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths(catch_all=True))
+    start = NOW - timedelta(days=2)
+    published = _recording(tmp_path / "recordings" / "someone", start + timedelta(minutes=5))
+
+    recording_svc.remove_unused_recordings([])
+    recording_svc.delete_session_video([(start, start + timedelta(minutes=20))], [])
+
+    assert published.exists()
 
 
 def test_a_recording_stopped_early_ends_at_its_last_write(monkeypatch, tmp_path):

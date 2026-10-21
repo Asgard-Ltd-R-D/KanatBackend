@@ -9,15 +9,29 @@ export interface ReplayMoment {
 
 const spanEnd = (start: string, durationS: number) => new Date(start).getTime() + durationS * 1000
 
-// The first camera and part that recorded `iso`, starting `prerollS` earlier
-// (but not before the part begins), or null if no camera was recording then
+// Parts of one unbroken recording meet end to start; the backend's microseconds
+// round to milliseconds here
+const CONTIGUOUS_MS = 2
+
+// The first camera and part that recorded `iso`, starting `prerollS` earlier:
+// in the part before if the recording ran on unbroken from it, else no earlier
+// than the part's start. Null if no camera was recording then
 export function findMoment(recordings: CameraRecording[], iso: string, prerollS = 0): ReplayMoment | null {
   const at = new Date(iso).getTime()
   for (const recording of recordings) {
-    const part = recording.spans.findIndex(s => new Date(s.start).getTime() <= at && at < spanEnd(s.start, s.duration_s))
+    const spans = recording.spans
+    let part = spans.findIndex(s => new Date(s.start).getTime() <= at && at < spanEnd(s.start, s.duration_s))
     if (part >= 0) {
-      const offsetS = (at - new Date(recording.spans[part].start).getTime()) / 1000
-      return { alias: recording.alias, part, offsetS: Math.max(0, offsetS - prerollS) }
+      const from = at - prerollS * 1000
+      while (
+        part > 0 &&
+        from < new Date(spans[part].start).getTime() &&
+        Math.abs(new Date(spans[part].start).getTime() - spanEnd(spans[part - 1].start, spans[part - 1].duration_s)) <= CONTIGUOUS_MS
+      ) {
+        part--
+      }
+      const offsetS = (from - new Date(spans[part].start).getTime()) / 1000
+      return { alias: recording.alias, part, offsetS: Math.max(0, offsetS) }
     }
   }
   return null

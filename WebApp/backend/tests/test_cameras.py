@@ -156,3 +156,16 @@ def test_without_mediamtx_the_state_is_unreachable(monkeypatch):
     monkeypatch.setattr(mediamtx, "path_states", unreachable)
 
     assert camera_svc.with_status([make_camera()])[0].status == "unreachable"
+
+
+
+def test_a_cameras_name_cannot_be_changed(monkeypatch):
+    # It names the camera's stream, which the detection model reads, and its recordings
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(camera_svc, "get_camera_or_404", lambda camera_id, db: make_camera("lane1"))
+    body = CameraInput(alias="north", mcast_ip="226.226.226.112", mcast_port=112)
+
+    with pytest.raises(HTTPException) as refused:
+        camera_svc.update_camera(None, body, None)
+    assert refused.value.status_code == 409

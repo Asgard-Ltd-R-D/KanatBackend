@@ -500,6 +500,19 @@ def test_a_part_played_while_the_cache_is_pruned_stays(monkeypatch, tmp_path):
     assert part.exists()
 
 
+def test_a_part_being_played_stays_past_the_day_until_it_is_no_longer_played(tmp_path):
+    part = tmp_path / recording_svc._cache_name("cam1", NOW - timedelta(days=1, minutes=5), 60)
+    part.write_bytes(b"mp4 bytes")
+    recording_svc._mark_in_use(part)  # just returned to a player
+
+    recording_svc._prune_cache(tmp_path)
+    assert part.exists()
+
+    recording_svc._in_use[part] = time.monotonic() - 1  # its player stopped
+    recording_svc._prune_cache(tmp_path)
+    assert not part.exists()
+
+
 def test_deleting_a_session_waits_for_a_replay_download_in_progress(monkeypatch, tmp_path):
     # The part is still downloading when its session is deleted: the delete
     # waits for it, and the finished copy goes too

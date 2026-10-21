@@ -152,7 +152,8 @@ def _prune_cache(directory: Path) -> None:
     the original by then), abandoned downloads, and the least recently played
     copies beyond replay_cache_max_gb, but never one still being played, even
     if those alone are over the limit: concurrent players each keep their part.
-    A copy's mtime is when it was last played (replay_file touches it)."""
+    An expired copy being played goes once it is no longer played. A copy's
+    mtime is when it was last played (replay_file touches it)."""
     _forget_finished_plays()
     now = time.time()
     expired = datetime.now(timezone.utc) - timedelta(seconds=CACHE_MAX_AGE_S)
@@ -168,7 +169,7 @@ def _prune_cache(directory: Path) -> None:
                 # A name that cannot be read: its age by the time it was written
                 too_old = named[1] < expired if named else now - stat.st_mtime > CACHE_MAX_AGE_S
                 if too_old:
-                    file.unlink()
+                    _unlink_unless_in_use(file)
                 else:
                     kept.append((stat.st_mtime, stat.st_size, file))
         except FileNotFoundError:

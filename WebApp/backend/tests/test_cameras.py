@@ -119,6 +119,33 @@ def test_a_name_from_mediamtx_yml_cannot_be_a_camera(monkeypatch):
     assert camera_sync.taken_by_config("new") is False
 
 
+def test_a_camera_can_be_edited_while_mediamtx_yml_is_unknown(monkeypatch):
+    # Disabled, so its path is playback-only, which without mediamtx.yml cannot
+    # be told from one of MediaMTX's own: its name is still the camera's
+    from fastapi.testclient import TestClient
+    from app.core.deps import get_db
+    from app.main import app
+    from app.repositories import cameras as cameras_repo
+
+    camera = make_camera("lane1", enabled=False)
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: None)
+    monkeypatch.setattr(mediamtx, "list_path_configs", lambda: {"lane1": camera_sync.playback_only_config()})
+    monkeypatch.setattr(mediamtx, "path_states", lambda: {})
+    monkeypatch.setattr(camera_svc, "get_camera_or_404", lambda camera_id, db: camera)
+    monkeypatch.setattr(cameras_repo, "save", lambda db, c: c)
+    monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app) as client:
+            res = client.put(f"/cameras/{camera.id}", json={
+                "alias": "lane1", "mcast_ip": "226.226.226.112", "mcast_port": 112, "enabled": True,
+            })
+    finally:
+        app.dependency_overrides.clear()
+
+    assert res.status_code == 200 and camera.enabled
+
+
 # --- the status shown in Settings ---
 
 def test_each_camera_shows_whether_video_is_arriving(monkeypatch):

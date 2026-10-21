@@ -33,7 +33,10 @@ def create_camera(body: CameraInput, db: DBSession = Depends(get_db)):
 
 @router.put("/{camera_id}", response_model=CameraResponse)
 def update_camera(camera_id: uuid.UUID, body: CameraInput, db: DBSession = Depends(get_db)):
-    _refuse_reserved(body.alias)
+    # Not checked for a reserved name: a camera keeps the name it was created
+    # with (update_camera refuses another), and a name mediamtx.yml took since
+    # is never applied by the sync. Checking would lock the operator out of a
+    # disabled camera whenever mediamtx.yml cannot be read
     camera = svc.update_camera(camera_id, body, db)
     camera_sync.sync_soon(db)
     return svc.with_status([camera])[0]

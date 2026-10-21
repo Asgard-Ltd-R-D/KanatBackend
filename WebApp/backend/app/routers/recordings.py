@@ -1,5 +1,4 @@
 import uuid
-from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
 from pydantic import AwareDatetime
@@ -41,14 +40,15 @@ def recording_video(
 ):
     """A recorded span (from list_recordings) as one MP4."""
     session = session_svc.get_session_or_404(session_id, db)
-    end = start + timedelta(seconds=duration_s)
-    # Only video this Session recorded: parts are listed cut to its recording
-    # intervals (list_recordings)
-    if not any(
-        s <= start and end <= e + timedelta(seconds=1)
-        for s, e in session_svc.recorded_windows(session.recording_intervals)
-    ):
-        raise HTTPException(status_code=422, detail="The part is outside what the session recorded")
+    windows = session_svc.recorded_windows(session.recording_intervals)
+    try:
+        # Exactly one of the parts list_recordings gives this Session: no other
+        # path (e.g. one of mediamtx.yml's), nor another stretch of the camera
+        listed = svc.is_listed_part(windows, camera_svc.list_cameras(db), alias, start, duration_s)
+    except mediamtx.MediaMTXUnreachable:
+        raise HTTPException(status_code=503, detail="The video service is not reachable")
+    if not listed:
+        raise HTTPException(status_code=404, detail="Not one of this session's recordings")
 
     try:
         path = svc.replay_file(alias, start, duration_s)

@@ -53,6 +53,20 @@ def session_recordings(windows: list[tuple[datetime, datetime]], cameras: list[C
     return out
 
 
+def is_listed_part(
+    windows: list[tuple[datetime, datetime]], cameras: list[Camera], alias: str, start: datetime, duration_s: float
+) -> bool:
+    """Whether (alias, start, duration_s) is one of the parts session_recordings
+    lists for these windows and cameras: the only video a Session may replay,
+    so no other path, nor another stretch of the same one, can be fetched
+    through it."""
+    for recording in session_recordings(windows, [c for c in cameras if c.alias == alias]):
+        for span in recording.spans:
+            if abs((span.start - start).total_seconds()) < 0.001 and abs(span.duration_s - duration_s) < 0.001:
+                return True
+    return False
+
+
 # --- replay files ---
 #
 # The playback server streams a recording without a length and cannot serve a
@@ -251,9 +265,9 @@ def delete_session_video(
     cameras since renamed or deleted. Returns how many recordings were deleted."""
 
     def belongs(began: datetime, ended: datetime) -> bool:
-        """Started while this Session recorded, and overlaps nothing another
-        Session recorded."""
-        return any(s <= began <= e for s, e in windows) and not any(
+        """Overlaps what this Session recorded, and nothing a remaining Session
+        recorded: a segment two Sessions shared goes with the last of them."""
+        return any(began < e and s < ended for s, e in windows) and not any(
             began < e and s < ended for s, e in other_windows
         )
 

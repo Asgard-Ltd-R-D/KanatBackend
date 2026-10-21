@@ -176,31 +176,41 @@ def test_a_download_that_breaks_leaves_no_file_and_reports_unreachable(monkeypat
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("offset_s, duration_s", [
-    (0, recording_svc.MAX_PART_S + 1),   # longer than any part offered
-    (550, 100),                          # runs past the session's end
-    (-5, 10),                            # starts before the session
+@pytest.mark.parametrize("alias, offset_s, duration_s, status", [
+    ("cam1", 60, 120.0, 200),                                # the part listed for this session
+    ("loopdemo", 60, 120.0, 404),                            # another path recording then: not listed
+    ("cam1", 61, 120.0, 404),                                # another stretch of the camera
+    ("cam1", 60, 300.0, 404),                                # a longer stretch
+    ("cam1", 60, recording_svc.MAX_PART_S + 1, 422),         # longer than any part offered
 ])
-def test_a_replay_part_must_lie_within_the_session(monkeypatch, offset_s, duration_s):
+def test_only_a_part_listed_for_the_session_is_served(monkeypatch, tmp_path, alias, offset_s, duration_s, status):
     from fastapi.testclient import TestClient
     from app.core.deps import get_db
     from app.main import app
+    from app.services import cameras as camera_svc
     from app.services import sessions as session_svc
 
     start = NOW - timedelta(minutes=10)
     recorded = SimpleNamespace(recording_intervals=[SimpleNamespace(started_at=start, ended_at=NOW)])
     monkeypatch.setattr(session_svc, "get_session_or_404", lambda sid, db: recorded)
+    monkeypatch.setattr(camera_svc, "list_cameras", lambda db: [make_camera("cam1")])
+    # Every path recorded the same stretch, cam1 and mediamtx.yml's loopdemo alike
+    span = {"start": (start + timedelta(seconds=60)).isoformat(), "duration": 120.0}
+    monkeypatch.setattr(mediamtx, "list_recordings", lambda path, s, e: [span])
+    part = tmp_path / "part.mp4"
+    part.write_bytes(b"video")
+    monkeypatch.setattr(recording_svc, "replay_file", lambda alias, start, duration_s: part)
     app.dependency_overrides[get_db] = lambda: None
     try:
         with TestClient(app) as client:
             res = client.get(
-                f"/sessions/{uuid.uuid4()}/recordings/cam1/video",
+                f"/sessions/{uuid.uuid4()}/recordings/{alias}/video",
                 params={"start": (start + timedelta(seconds=offset_s)).isoformat(), "duration_s": duration_s},
             )
     finally:
         app.dependency_overrides.clear()
 
-    assert res.status_code == 422
+    assert res.status_code == status
 
 
 # --- deleting a session's video ---
@@ -246,6 +256,21 @@ def test_deleting_a_session_deletes_only_its_own_video(monkeypatch, tmp_path):
     assert not inside.exists() and not other_camera.exists() and not renamed.exists()
     assert not copy.exists() and not renamed_copy.exists()
     assert before.exists() and after.exists() and shared.exists() and static.exists()
+
+
+def test_a_segment_two_sessions_shared_goes_with_the_last_of_them(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
+    start = NOW - timedelta(hours=1)
+    # One 10-minute segment from +0: A records +0..+5, B records +3..+20
+    shared = _recording(tmp_path / "recordings" / "cam1", start)
+    a = (start, start + timedelta(minutes=5))
+    b = (start + timedelta(minutes=3), start + timedelta(minutes=20))
+
+    assert recording_svc.delete_session_video([a], [b]) == 0   # A deleted: B still needs it
+    assert shared.exists()
+    assert recording_svc.delete_session_video([b], []) == 1    # B deleted: nobody does
+    assert not shared.exists()
 
 
 def test_a_session_that_did_not_record_deletes_and_replays_nothing(monkeypatch, tmp_path):

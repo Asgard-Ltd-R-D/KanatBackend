@@ -35,11 +35,10 @@ def _post(path: str, timeout: float, **kwargs) -> httpx.Response:
         raise DetectionServiceUnreachable(f"POST {path}: {e}") from e
 
 
-def start_run(session_id: uuid.UUID, stream_url: str) -> dict:
-    """Start the Session's Run on the Stream, answered once it is watching:
-    the Run, as the service's GET /status shows it. The same Session's Run
-    already watching is answered as started. Raises RunRefused or
-    DetectionServiceUnreachable."""
+def start_run(session_id: uuid.UUID, stream_url: str) -> None:
+    """Start the Session's Run on the Stream, answered once it is watching.
+    The same Session's Run already watching is answered as started. Raises
+    RunRefused or DetectionServiceUnreachable."""
     res = _post("/runs", START_TIMEOUT_S, json={"session_id": str(session_id), "stream_url": stream_url})
     if res.is_error:
         try:
@@ -47,7 +46,6 @@ def start_run(session_id: uuid.UUID, stream_url: str) -> dict:
         except (ValueError, KeyError, TypeError):
             detail = res.text[:200]
         raise RunRefused(res.status_code, detail)
-    return res.json()
 
 
 def end_run(session_id: uuid.UUID) -> None:

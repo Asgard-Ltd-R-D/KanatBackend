@@ -56,7 +56,6 @@ class FakeDetectionService:
         self.on_start(session_id)
         if self.start_error:
             raise self.start_error
-        return {"session_id": str(session_id), "state": "watching", "since": NOW.isoformat(), "baseline_marks": 0}
 
     def _end(self, session_id):
         self.calls.append(("end", session_id))

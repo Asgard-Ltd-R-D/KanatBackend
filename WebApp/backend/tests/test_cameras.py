@@ -57,6 +57,21 @@ def test_a_removed_camera_is_deleted_but_paths_from_mediamtx_yml_are_kept(monkey
     assert "loopdemo" in mtx.paths
 
 
+def test_a_camera_named_like_a_mediamtx_yml_path_leaves_that_path_alone(monkeypatch, db_state):
+    # e.g. created while MediaMTX was down, so the API could not refuse the name
+    monkeypatch.setattr(camera_sync, "_conflicts", set())
+    static = {"runOnDemand": "./run_loopdemo.sh", "runOnInit": ""}
+    db_state.cameras = [make_camera("loopdemo")]
+    mtx = FakeMediaMTX(monkeypatch, {"loopdemo": dict(static)})
+
+    camera_sync.sync(None)
+    assert mtx.calls == []                 # not patched into a camera
+    db_state.cameras = []
+    camera_sync.sync(None)
+    assert mtx.calls == []                 # and not deleted with it
+    assert mtx.paths["loopdemo"] == static
+
+
 def test_a_failed_sync_does_not_fail_the_request(monkeypatch, db_state):
     def unreachable():
         raise mediamtx.MediaMTXUnreachable("down")
@@ -73,6 +88,7 @@ def test_a_failed_sync_does_not_fail_the_request(monkeypatch, db_state):
     ("alias", "cam 1"),
     ("alias", "-cam"),
     ("mcast_ip", "226.226.226"),
+    ("mcast_ip", "192.168.1.10"),        # unicast: not a group a camera multicasts to
     ("mcast_ip", "226.226.226.1\" --x"),
     ("mcast_port", 0),
     ("mcast_port", 70000),

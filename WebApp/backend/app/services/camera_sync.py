@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 _RECORD_SCRIPT = "./run_record.sh"
 
 _lock = threading.Lock()
+# Aliases already reported as clashing with a mediamtx.yml path, so the sync
+# loop logs each once rather than every round
+_conflicts: set[str] = set()
 
 
 def path_config(camera: Camera) -> dict:
@@ -76,6 +79,15 @@ def sync(db: DBSession) -> None:
             existing = current.get(name)
             if existing is None:
                 mediamtx.add_path(name, config)
+                continue
+            if not is_camera_path(existing):
+                # mediamtx.yml owns this name (the API refuses it, but a camera
+                # can get it while MediaMTX was down or the YAML changes later):
+                # patching would turn the static path into this camera, and
+                # deleting the camera would then remove it
+                if name not in _conflicts:
+                    log.warning("Camera '%s' is not applied: mediamtx.yml has a path of that name", name)
+                    _conflicts.add(name)
                 continue
             changed = {key: value for key, value in config.items() if existing.get(key) != value}
             if changed:

@@ -1,5 +1,6 @@
 """MediaMTX (VideoService) on this PC: its Control API (v3) and playback server."""
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -10,20 +11,44 @@ import yaml
 from app.config.settings import settings
 
 TIMEOUT_S = 3
+# The status check answers within the frontend's own 2 s limit, so a MediaMTX
+# that hangs shows as the video service down, not the backend
+STATUS_TIMEOUT_S = 1
+# An answer this recent counts as MediaMTX being up. The camera sync loop asks
+# every 5 s, so this allows one slow or missed round.
+FRESH_S = 12
+
+# When MediaMTX last answered the Control API (time.monotonic()), from any
+# request: kept in memory, which is enough with the backend's single worker
+_last_answer: float | None = None
 
 
 class MediaMTXUnreachable(Exception):
     """MediaMTX did not answer, or answered with an error."""
 
 
-def _api(method: str, path: str, **kwargs) -> httpx.Response:
+def _api(method: str, path: str, timeout: float = TIMEOUT_S, **kwargs) -> httpx.Response:
     try:
-        res = httpx.request(method, f"{settings.mediamtx_api_url}/v3{path}", timeout=TIMEOUT_S, **kwargs)
+        res = httpx.request(method, f"{settings.mediamtx_api_url}/v3{path}", timeout=timeout, **kwargs)
     except httpx.HTTPError as e:
         raise MediaMTXUnreachable(f"{method} {path}: {e}") from e
     if res.is_error:
         raise MediaMTXUnreachable(f"{method} {path}: HTTP {res.status_code} {res.text[:200]}")
+    global _last_answer
+    _last_answer = time.monotonic()
     return res
+
+
+def is_reachable() -> bool:
+    """Whether MediaMTX is up. A recent answer to the camera sync loop says so
+    without asking again; MediaMTX is asked only when there is none."""
+    if _last_answer is not None and time.monotonic() - _last_answer < FRESH_S:
+        return True
+    try:
+        _api("GET", "/info", timeout=STATUS_TIMEOUT_S)
+    except MediaMTXUnreachable:
+        return False
+    return True
 
 
 # The regular-expression syntax that means the same in Python (with re.ASCII)

@@ -77,3 +77,9 @@ export interface CameraRecording {
   alias: string
   spans: RecordingSpan[]
 }
+
+// From GET /status: whether the backend reaches the video service (MediaMTX).
+// The backend answering at all is its own status.
+export interface SystemStatus {
+  video_service: boolean
+}

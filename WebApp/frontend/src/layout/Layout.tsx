@@ -3,6 +3,7 @@ import { ReactNode } from 'react'
 import { Crosshair, LayoutList, Settings as SettingsIcon, Sun, Moon } from 'lucide-react'
 import clsx from 'clsx'
 import { useDarkMode } from '../hooks/useDarkMode'
+import { ConnectionStatus } from './ConnectionStatus'
 
 function NavItem({ to, icon, label, end = false }: { to: string; icon: ReactNode; label: string; end?: boolean }) {
   return (
@@ -53,6 +54,8 @@ export function Layout() {
           <NavItem to="/" icon={<LayoutList size={16} />} label="Sessions" end />
           <NavItem to="/settings" icon={<SettingsIcon size={16} />} label="Settings" />
         </nav>
+
+        <ConnectionStatus />
 
         {/* Footer */}
         <div className="px-4 py-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">

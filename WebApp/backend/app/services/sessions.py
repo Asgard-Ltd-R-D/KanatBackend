@@ -57,7 +57,11 @@ def create_session(body: SessionCreate, db: DBSession) -> Session:
 
 
 def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) -> Session:
-    session = get_session_or_404(session_id, db)
+    # Locked until commit, so two changes at once cannot both see no open
+    # recording interval and each open one
+    session = repo.get_for_update(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     if body.name is not None:
         session.name = body.name

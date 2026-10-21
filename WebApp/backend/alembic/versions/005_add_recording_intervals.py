@@ -31,6 +31,15 @@ def upgrade() -> None:
         sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
     )
     op.create_index("ix_recording_intervals_session_id", "recording_intervals", ["session_id"])
+    # A session records in one interval at a time: a second open one would be
+    # left open for good, and keep the cameras recording
+    op.create_index(
+        "uq_recording_intervals_one_open",
+        "recording_intervals",
+        ["session_id"],
+        unique=True,
+        postgresql_where=sa.text("ended_at IS NULL"),
+    )
     # A session recording before this table: one interval over its whole time,
     # as recording was then switched for the whole session
     op.execute(
@@ -40,5 +49,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index("uq_recording_intervals_one_open", table_name="recording_intervals")
     op.drop_index("ix_recording_intervals_session_id", table_name="recording_intervals")
     op.drop_table("recording_intervals")

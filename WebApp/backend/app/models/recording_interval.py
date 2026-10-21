@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey
+from sqlalchemy import DateTime, ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,15 @@ class RecordingInterval(Base):
     time, since another Session may record while it does not."""
 
     __tablename__ = "recording_intervals"
+    __table_args__ = (
+        # One open interval per session at most (migration 005)
+        Index(
+            "uq_recording_intervals_one_open",
+            "session_id",
+            unique=True,
+            postgresql_where=text("ended_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID] = mapped_column(

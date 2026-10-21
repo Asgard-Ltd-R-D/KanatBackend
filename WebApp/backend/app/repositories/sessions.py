@@ -11,7 +11,8 @@ def get(db: DBSession, session_id: uuid.UUID) -> Session | None:
 
 
 def get_for_update(db: DBSession, session_id: uuid.UUID) -> Session | None:
-    """The Session, its row locked until commit: bullets are ranked under it."""
+    """The Session, its row locked until commit: bullets are ranked, and its
+    recording interval opened or closed, under it."""
     return db.query(Session).filter(Session.id == session_id).with_for_update().first()
 
 

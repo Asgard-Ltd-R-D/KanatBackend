@@ -1,0 +1,104 @@
+import threading
+import time
+import uuid
+
+from fastapi import HTTPException
+from sqlalchemy.orm import Session as DBSession
+
+from app.models import Camera
+from app.repositories import cameras as repo
+from app.schemas.camera import CameraInput, CameraResponse
+from app.services import mediamtx
+
+
+def get_camera_or_404(camera_id: uuid.UUID, db: DBSession) -> Camera:
+    camera = repo.get(db, camera_id)
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    return camera
+
+
+def list_cameras(db: DBSession) -> list[Camera]:
+    return repo.list_all(db)
+
+
+# A path stays "ready" after its camera stops sending, because GStreamer keeps
+# its RTSP session open; only the path's inbound bytes still growing show video
+# is arriving. Each path's counter is remembered with when it last grew.
+STALE_S = 10
+_traffic: dict[str, tuple[int, float | None]] = {}
+_traffic_lock = threading.Lock()
+
+
+def receiving(paths: dict[str, dict]) -> set[str]:
+    """The paths whose inbound bytes grew in the last STALE_S. Needs two looks
+    at a path before it can say yes; the sync loop keeps looking."""
+    now = time.monotonic()
+    live = set()
+    with _traffic_lock:
+        for name in list(_traffic):
+            if name not in paths:
+                del _traffic[name]
+        for name, path in paths.items():
+            inbound = path.get("inboundBytes", 0) if path.get("ready") else 0
+            previous = _traffic.get(name)
+            if previous is None:
+                _traffic[name] = (inbound, None)
+            elif inbound > previous[0]:
+                _traffic[name] = (inbound, now)
+                live.add(name)
+            else:
+                _traffic[name] = (inbound, previous[1])
+                if previous[1] is not None and now - previous[1] < STALE_S:
+                    live.add(name)
+    return live
+
+
+def watch_traffic() -> None:
+    """Takes a look at every path's counter (camera_sync's loop), so a status
+    asked for later already has something to compare with."""
+    receiving(mediamtx.path_states())
+
+
+def with_status(cameras: list[Camera]) -> list[CameraResponse]:
+    """The cameras, each with whether video is arriving from it."""
+    try:
+        ready = receiving(mediamtx.path_states())
+    except mediamtx.MediaMTXUnreachable:
+        ready = None
+
+    out = []
+    for camera in cameras:
+        item = CameraResponse.model_validate(camera)
+        if not camera.enabled:
+            item.status = "disabled"
+        elif ready is None:
+            item.status = "unreachable"
+        else:
+            item.status = "live" if camera.alias in ready else "no_signal"
+        out.append(item)
+    return out
+
+
+def _save(camera: Camera, body: CameraInput, db: DBSession) -> Camera:
+    camera.alias = body.alias
+    camera.mcast_ip = str(body.mcast_ip)
+    camera.mcast_port = body.mcast_port
+    camera.iface = body.iface
+    camera.enabled = body.enabled
+    try:
+        return repo.save(db, camera)
+    except repo.AliasTaken:
+        raise HTTPException(status_code=409, detail=f"A camera named '{body.alias}' already exists")
+
+
+def create_camera(body: CameraInput, db: DBSession) -> Camera:
+    return _save(Camera(id=uuid.uuid4()), body, db)
+
+
+def update_camera(camera_id: uuid.UUID, body: CameraInput, db: DBSession) -> Camera:
+    return _save(get_camera_or_404(camera_id, db), body, db)
+
+
+def delete_camera(camera_id: uuid.UUID, db: DBSession) -> None:
+    repo.delete(db, get_camera_or_404(camera_id, db))

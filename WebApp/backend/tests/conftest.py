@@ -4,6 +4,7 @@ import pytest
 
 from app.config.settings import settings
 from app.repositories import cameras as cameras_repo
+from app.repositories import sessions as sessions_repo
 from app.services import cameras as camera_svc
 
 
@@ -21,7 +22,8 @@ def fresh_traffic():
 
 @pytest.fixture
 def db_state(monkeypatch):
-    """What sync reads from the database: the cameras."""
-    state = SimpleNamespace(cameras=[])
+    """What sync reads from the database: the cameras and whether to record."""
+    state = SimpleNamespace(cameras=[], record=False)
     monkeypatch.setattr(cameras_repo, "list_all", lambda db: state.cameras)
+    monkeypatch.setattr(sessions_repo, "recording_session_active", lambda db: state.record)
     return state

@@ -15,6 +15,7 @@ from app.main import app
 from app.routers import live as live_router
 from app.schemas.live import BulletDeletedEvent
 from app.services import bullets as bullet_svc
+from app.services import camera_sync
 from app.services import sessions as session_svc
 
 SESSION_ID = uuid.uuid4()
@@ -37,7 +38,7 @@ def make_bullet(rank=1):
 def make_session(status="active"):
     return SimpleNamespace(
         id=SESSION_ID, name="Range 1", status=status, started_at=NOW,
-        ended_at=None, created_at=NOW, active_bullet_holes=[],
+        ended_at=None, record=False, created_at=NOW, active_bullet_holes=[],
     )
 
 
@@ -50,6 +51,8 @@ def client(monkeypatch):
         return make_session()
 
     monkeypatch.setattr(session_svc, "get_session_or_404", get_session_or_404)
+    # Nothing to tell MediaMTX: the database is fake
+    monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
     app.dependency_overrides[get_db] = FakeDB
     with TestClient(app) as c:
         yield c
@@ -104,7 +107,9 @@ def test_ending_the_session_is_published_with_its_end_time(client, subscribed, m
     assert client.patch(f"/sessions/{SESSION_ID}", json={"status": "completed"}).status_code == 200
     event = next_event(subscribed)
 
-    assert (event["type"], event["name"], event["status"]) == ("session_updated", "Range 1", "completed")
+    assert (event["type"], event["name"], event["status"], event["record"]) == (
+        "session_updated", "Range 1", "completed", False
+    )
     assert datetime.fromisoformat(event["ended_at"]) == NOW
 
 

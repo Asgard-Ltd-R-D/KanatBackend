@@ -10,7 +10,7 @@ from tests.fakes import FakeMediaMTX, make_camera
 # --- the path each camera gets ---
 
 def test_a_camera_path_runs_run_record_as_kanatfrontend_built_it():
-    config = camera_sync.path_config(make_camera(iface="eth1"))
+    config = camera_sync.path_config(make_camera(iface="eth1"), record=False)
 
     assert config["runOnInit"] == (
         "bash -lc '\n"
@@ -19,10 +19,12 @@ def test_a_camera_path_runs_run_record_as_kanatfrontend_built_it():
         "'"
     )
     assert config["runOnInitRestart"] is True
+    assert config["record"] is False
+    assert config["recordDeleteAfter"] == "1d"
 
 
 def test_no_iface_leaves_the_flag_out():
-    assert "--iface" not in camera_sync.path_config(make_camera())["runOnInit"]
+    assert "--iface" not in camera_sync.path_config(make_camera(), record=False)["runOnInit"]
 
 
 # --- syncing MediaMTX to the database ---
@@ -38,7 +40,7 @@ def test_a_new_camera_is_added(monkeypatch, db_state):
 
 def test_an_unchanged_camera_is_left_alone(monkeypatch, db_state):
     db_state.cameras = [make_camera()]
-    mtx = FakeMediaMTX(monkeypatch, {"cam1": camera_sync.path_config(make_camera())})
+    mtx = FakeMediaMTX(monkeypatch, {"cam1": camera_sync.path_config(make_camera(), record=False)})
 
     camera_sync.sync(None)
 
@@ -47,7 +49,7 @@ def test_an_unchanged_camera_is_left_alone(monkeypatch, db_state):
 
 def test_a_removed_camera_is_deleted_but_paths_from_mediamtx_yml_are_kept(monkeypatch, db_state):
     mtx = FakeMediaMTX(monkeypatch, {
-        "old": camera_sync.path_config(make_camera("old")),
+        "old": camera_sync.path_config(make_camera("old"), record=False),
         "loopdemo": {"runOnDemand": "./run_loopdemo.sh", "runOnInit": ""},
     })
 
@@ -108,7 +110,7 @@ def test_a_blank_iface_means_none():
 def test_a_name_from_mediamtx_yml_cannot_be_a_camera(monkeypatch):
     monkeypatch.setattr(mediamtx, "list_path_configs", lambda: {
         "loopdemo": {"runOnDemand": "./run_loopdemo.sh", "runOnInit": ""},
-        "cam1": camera_sync.path_config(make_camera()),
+        "cam1": camera_sync.path_config(make_camera(), record=False),
     })
 
     assert camera_sync.taken_by_config("loopdemo") is True

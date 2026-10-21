@@ -1,4 +1,5 @@
-"""MediaMTX (VideoService) on this PC: its Control API (v3)."""
+"""MediaMTX (VideoService) on this PC: its Control API (v3) and playback server."""
+from datetime import datetime
 
 import httpx
 
@@ -32,7 +33,8 @@ def add_path(name: str, config: dict) -> None:
 
 
 def patch_path(name: str, fields: dict) -> None:
-    """Changes only these fields."""
+    """Changes only these fields. Changing `record` alone does not restart the
+    path's runOnInit command (checked on v1.21.2), so the stream keeps going."""
     _api("PATCH", f"/config/paths/patch/{name}", json=fields)
 
 
@@ -44,3 +46,46 @@ def path_states() -> dict[str, dict]:
     """Every active path by name, with `ready` and its `inboundBytes` counter."""
     items = _api("GET", "/paths/list", params={"itemsPerPage": 1000}).json()["items"]
     return {item["name"]: item for item in items}
+
+
+def list_recordings(path: str, start: datetime, end: datetime) -> list[dict]:
+    """The recorded spans of `path` between `start` and `end`, as
+    [{"start": RFC 3339, "duration": seconds}]. None recorded is an empty list."""
+    try:
+        res = httpx.get(
+            f"{settings.mediamtx_playback_url}/list",
+            params={"path": path, "start": start.isoformat(), "end": end.isoformat()},
+            timeout=TIMEOUT_S,
+        )
+    except httpx.HTTPError as e:
+        raise MediaMTXUnreachable(f"playback list {path}: {e}") from e
+    # 404: nothing recorded in that window; 400: the path is not configured
+    if res.status_code in (400, 404):
+        return []
+    if res.is_error:
+        raise MediaMTXUnreachable(f"playback list {path}: HTTP {res.status_code} {res.text[:200]}")
+    return res.json()
+
+
+# Shared by the replay downloads. A part is generated as it is read, so reads
+# may pause, but a playback server silent this long has stalled.
+PLAYBACK_READ_TIMEOUT_S = 30
+_playback = httpx.Client(timeout=httpx.Timeout(TIMEOUT_S, read=PLAYBACK_READ_TIMEOUT_S))
+
+
+def open_recording(path: str, start: datetime, duration_s: float) -> httpx.Response:
+    """A recorded span as one MP4, opened as a stream. The caller iterates and
+    closes it."""
+    request = _playback.build_request(
+        "GET",
+        f"{settings.mediamtx_playback_url}/get",
+        params={"path": path, "start": start.isoformat(), "duration": duration_s, "format": "mp4"},
+    )
+    try:
+        res = _playback.send(request, stream=True)
+    except httpx.HTTPError as e:
+        raise MediaMTXUnreachable(f"playback get {path}: {e}") from e
+    if res.is_error:
+        res.close()
+        raise MediaMTXUnreachable(f"playback get {path}: HTTP {res.status_code}")
+    return res

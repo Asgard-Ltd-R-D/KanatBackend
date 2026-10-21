@@ -48,6 +48,8 @@ _clock = time.monotonic
 # Aliases already reported as clashing with a mediamtx.yml path, so the sync
 # loop logs each once rather than every round
 _conflicts: set[str] = set()
+# Whether the sync last found mediamtx.yml unknown, so that is logged once
+_config_unknown = False
 
 
 def path_config(camera: Camera, record: bool) -> dict:
@@ -117,8 +119,11 @@ def taken_by_config(alias: str) -> bool:
 
 
 def sync(db: DBSession) -> None:
-    """Make MediaMTX's camera paths match the database. Raises
-    MediaMTXUnreachable if it cannot be reached."""
+    """Make MediaMTX's camera paths match the database. Changes nothing while
+    mediamtx.yml is unknown (unreadable, or a regular expression not trusted):
+    MediaMTX lists a ~regexp path under its key, not the names it covers, so
+    any name might be its. Raises MediaMTXUnreachable if it cannot be reached."""
+    global _config_unknown
     with _lock:
         record = sessions_repo.recording_session_active(db)
         wanted = {
@@ -127,11 +132,18 @@ def sync(db: DBSession) -> None:
         }
         current = mediamtx.list_path_configs()
         config_paths = mediamtx.config_paths()
+        if config_paths is None:
+            if not _config_unknown:
+                log.warning("mediamtx.yml unreadable or not understood (MEDIAMTX_CONFIG?): cameras are not applied to MediaMTX")
+                _config_unknown = True
+            return
+        if _config_unknown:
+            log.info("mediamtx.yml read again: cameras are applied to MediaMTX")
+            _config_unknown = False
 
         for name, config in wanted.items():
             existing = current.get(name)
-            defined = config_paths is not None and config_paths.defines(name)
-            if defined or (existing is not None and not is_camera_path(name, existing, config_paths)):
+            if config_paths.defines(name) or (existing is not None and not is_camera_path(name, existing, config_paths)):
                 # mediamtx.yml owns this name (the API refuses it, but a camera
                 # can get it while MediaMTX was down or the YAML changes later):
                 # adding or patching would turn the static path, or the name

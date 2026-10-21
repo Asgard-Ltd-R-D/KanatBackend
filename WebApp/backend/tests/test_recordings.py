@@ -63,16 +63,24 @@ def test_a_mediamtx_yml_path_with_a_cameras_settings_is_still_never_touched(monk
     assert mtx.calls == []
 
 
-def test_without_mediamtx_yml_only_paths_running_run_record_count_as_cameras(monkeypatch, db_state):
-    monkeypatch.setattr(mediamtx, "config_paths", lambda: None)  # file unreadable
+def test_without_mediamtx_yml_the_sync_changes_no_path(monkeypatch, db_state):
+    # Unreadable, or a regexp not trusted: any name might be one of its paths,
+    # which MediaMTX lists only under the regexp
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: None)
+    monkeypatch.setattr(camera_sync, "_config_unknown", False)
     mtx = FakeMediaMTX(monkeypatch, {
-        "running": camera_sync.path_config(make_camera("running"), record=False),
-        "unsure": camera_sync.playback_only_config(),
+        "~^external[[:digit:]]+$": camera_sync.path_config(make_camera("external"), record=False),
+        "stale": camera_sync.path_config(make_camera("stale"), record=False),
+        "cam1": camera_sync.playback_only_config(),
     })
+    db_state.cameras = [make_camera("external1"), make_camera("cam1")]
 
     camera_sync.sync(None)
 
-    assert mtx.calls == [("delete", "running")]  # "unsure" is left alone
+    assert mtx.calls == []      # nothing added, patched or deleted
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths())
+    camera_sync.sync(None)      # known again: applied
+    assert ("add", "external1") in [call[:2] for call in mtx.calls]
 
 
 def test_recording_intervals_follow_the_record_switch_and_the_session(monkeypatch):

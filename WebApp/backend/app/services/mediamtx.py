@@ -1,9 +1,9 @@
 """MediaMTX (VideoService) on this PC: its Control API (v3) and playback server."""
-import re
 from datetime import datetime
 from pathlib import Path
 
 import httpx
+import yaml
 
 from app.config.settings import settings
 
@@ -37,14 +37,11 @@ def config_path_names() -> set[str] | None:
             return None
         path = parents[4] / "VideoService" / "mediamtx.yml"
     try:
-        text = path.read_text()
-    except OSError:
+        config = yaml.safe_load(path.read_text())
+    except (OSError, yaml.YAMLError):
         return None
-    # The keys indented one level under the top-level "paths:" key
-    match = re.search(r"^paths:[ \t]*\n((?:(?:[ \t]+.*|#.*|[ \t]*)\n?)*)", text, re.M)
-    if not match:
-        return set()
-    return set(re.findall(r"^  ([^\s#:][^:]*):", match.group(1), re.M))
+    paths = config.get("paths") if isinstance(config, dict) else None
+    return {str(name) for name in paths} if isinstance(paths, dict) else set()
 
 
 def list_path_configs() -> dict[str, dict]:

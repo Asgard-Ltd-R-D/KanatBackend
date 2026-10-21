@@ -90,7 +90,7 @@ Camera
 
 ## What is deliberately out of scope
 
-- Starting, stopping, or configuring the Detection Service from the WebApp. (The WebApp does configure mediamtx's camera paths and recording; mediamtx itself is started outside it.)
+- Starting, stopping, or configuring the Detection Service from the WebApp. (The WebApp does configure mediamtx's camera paths and recording; mediamtx itself is started outside it.) Reversed by `docs/adr/0008-the-webapp-controls-an-always-up-detection-service.md`, not built yet.
 - Multi-user or multi-site deployments.
 - Millimetre-accuracy positioning (blocked upstream — see `ImageRecognitionService/HANDOVER.md`, "Blocked" section).
 - Any interaction with `PacketProcessingService/`, `Composer_cli/`, or `MotionSimulator/`.

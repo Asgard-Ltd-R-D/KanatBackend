@@ -105,7 +105,7 @@ def is_camera_path(name: str, config: dict, config_paths: mediamtx.ConfigPaths |
 def taken_by_config(alias: str) -> bool:
     """Whether a path of that name belongs to MediaMTX itself (e.g. loopdemo, or
     a name a ~regular expression in mediamtx.yml matches): a camera of that
-    name would overwrite or shadow it, and deleting the camera delete it. False
+    name would overwrite or shadow it, and deleting the camera would delete it. False
     when neither mediamtx.yml nor MediaMTX says so; the sync never touches such
     paths anyway."""
     config_paths = mediamtx.config_paths()

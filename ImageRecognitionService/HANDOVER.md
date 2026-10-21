@@ -843,6 +843,34 @@ Two known limitations of the live run, neither closed by #83:
   the H.264 copy a replay needs: a transcode has a hash the manifest cannot
   trace, so never make one of a Sealed recording.
 
+**The Detection Service** (#223, ADR-0008) is how the WebApp backend gets a
+live Run. `detection.service` loads the detector once and serves a control
+API on 127.0.0.1 only, port 8010 (`DEFAULT_PORT`, `--port`). It has no
+authentication, which is why it is bound to the loopback. It runs one Run at a
+time, on a worker thread. A Run is the live run above on the Stream it is
+given, posting to `--backend-url` as `--session-id` does, one publisher per
+Run. A Run takes the defaults, with no print scale, so `x_mm` and `y_mm` stay
+empty. SIGINT or SIGTERM ends any Run, drained, and then the service.
+
+```bash
+.venv/bin/python -m detection.service    # --port 8010 --backend-url http://localhost:8000 --model ...
+# Start: answered once the baseline is built and the Run is watching. A repeat for
+# the same Session is answered with its Run. Another Session's start while one is
+# active is a 409, and so is the same Session's once its Run is ending. A Stream
+# that does not open within STREAM_TIMEOUT_MS, a baseline frame with no Target, or
+# no baseline built by START_TIMEOUT_S (15 s) is a 502 naming the reason, and
+# leaves no Run.
+curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "rtsp://127.0.0.1:8554/<path>"}'
+# {"session_id": "<uuid>", "state": "watching", "since": "<UTC>", "baseline_marks": 3}
+# Status: {"run": null}, or the Run, its state (starting, watching, ending) and since when.
+curl -s 127.0.0.1:8010/status
+# End: stops the Run now, answered once its posts are drained. No such Run is a 404.
+curl -s -X POST 127.0.0.1:8010/runs/<uuid>/end    # {"session_id": "<uuid>", "state": "ended"}
+```
+
+An end stops the Run at once, so a Candidate still inside its persistence
+window is never Confirmed. Judging those first is the end handshake, #228.
+
 ```bash
 
 # Derive the new Bullet Holes from a before/after photograph pair. --truth-labels
@@ -936,6 +964,7 @@ came from. Gating the extraction is what keeps sealed pixels out of it.
 |---|---|
 | `detection/board.py` | Board geometry: find, register, rectify, Target/Miss, scoring, mm |
 | `detection/new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
+| `detection/service.py` | The Detection Service: the detector loaded once, one live Run at a time, started and ended over a control API on 127.0.0.1 (#223, ADR-0008) |
 | `detection/groups.py` | Group statistics per Target (MPI, CEP50, Mean Radius, RMS, Extreme Spread), printed as `[GROUP]` blocks; pure, for SOW 2.4.1 to reuse (#86) |
 | `tools/evaluate.py`, `tools/derive_truth.py` | Scoring a run against labelled ground truth; deriving that truth from a photograph pair |
 | `tools/position_error.py` | SOW 2.3.2 stage 1: Position Error pooled over the unsealed truth recordings, per camera, labelled internal (#126) |

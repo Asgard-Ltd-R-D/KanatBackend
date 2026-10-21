@@ -7,6 +7,8 @@
 # Kanat Video Server — Sim Paths & Playback API
 
 > 🧩 **Stack**: MediaMTX (record + playback) • RTSP/WebRTC readers • Control API
+> 🌐 **Multicast on Linux:** a camera with no network interface set joins its group on the interface the routing table picks for 224.0.0.0/4. A range PC with no default route has none, so either set the camera's interface in the WebApp's Settings, or add `ip route add 224.0.0.0/4 dev <nic>`.
+>
 > 🔌 **Ports** in this setup: **9996 = Playback API**, **9997 = Control API**, both on `127.0.0.1` only: the WebApp backend on the same PC is their only client. WebRTC signalling (**8889**) is on `127.0.0.1` too: the WebApp on this PC is its only viewer
 
 We run two simulated paths:

@@ -14,7 +14,7 @@ import { ConfirmDialog } from '../components/UI/ConfirmDialog'
 import { AddBulletModal } from '../components/Session/AddBulletModal'
 import { BulletLog } from '../components/Session/BulletLog'
 import { LiveDetectionsPanel } from '../components/Session/LiveDetectionsPanel'
-import { WhepPlayer } from '../components/Camera/WhepPlayer'
+import { CameraFeeds } from '../components/Camera/CameraFeeds'
 import { useSessionLive } from '../hooks/useSessionLive'
 import { formatDuration } from '../utils/format'
 
@@ -95,11 +95,14 @@ export function SessionDetail() {
   }
 
   const bullets = session.bullet_holes ?? []
+  const active = session.status === 'active'
 
   return (
-    <div className="p-8">
+    // An active session fills the window: the cameras and the live detections
+    // take all the height below the header and stats
+    <div className={active ? 'p-8 h-full flex flex-col' : 'p-8'}>
       {/* Top bar */}
-      <div className="flex items-start justify-between mb-6">
+      <div className="flex items-start justify-between mb-6 shrink-0">
         <div className="flex items-center gap-4">
           <Link
             to="/"
@@ -176,27 +179,27 @@ export function SessionDetail() {
       </div>
 
       {/* Active: stats + stream + live bullet feed */}
-      {session.status === 'active' && (
-        <div className="flex flex-col gap-4">
+      {active && (
+        <div className="flex-1 min-h-0 flex flex-col gap-4">
           {/* Mini stats */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
             <StatTile label="Total Bullets" value={bullets.length} />
             <StatTile label="AI Detected" value={bullets.filter(b => b.source === 'model').length} />
             <StatTile label="Manual" value={bullets.filter(b => b.source === 'manual').length} />
             <StatTile label="Duration" value={formatDuration(session.started_at, null)} />
           </div>
 
-          {/* Stream + feed — fixed layout, neither column grows */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-            {/* Camera feed — 2/3 */}
-            <div className="lg:col-span-2">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Camera Feed</p>
-              <WhepPlayer path="loopdemo" />
+          {/* Cameras (2/3) and live detections (1/3), both to the bottom of the window */}
+          <div className="flex-1 min-h-[420px] grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 flex flex-col min-h-0">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 shrink-0">Camera Feed</p>
+              <div className="flex-1 min-h-[300px]">
+                <CameraFeeds />
+              </div>
             </div>
 
-            {/* Live bullet feed — 1/3, fixed height matching approx. video */}
-            <div>
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Live Detections</p>
+            <div className="flex flex-col min-h-0">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 shrink-0">Live Detections</p>
               <LiveDetectionsPanel bullets={bullets} />
             </div>
           </div>

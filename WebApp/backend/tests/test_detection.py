@@ -192,6 +192,25 @@ def test_completing_still_succeeds_when_the_detection_service_is_down(client, db
     assert client.patch(f"/sessions/{session_id}", json={"status": "completed"}).json()["status"] == "completed"
 
 
+def test_completing_ends_the_run_of_a_session_whose_camera_was_deleted(client, db, detection):
+    session_id = client.post("/sessions", json={"name": "Range 1", "camera_id": str(add_camera(db).id)}).json()["id"]
+    db.sessions[uuid.UUID(session_id)].camera_id = None   # the camera deleted: ON DELETE SET NULL
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert detection.calls[-1] == ("end", uuid.UUID(session_id))
+
+
+def test_a_run_that_starts_after_its_session_ended_is_ended(client, db, detection):
+    # The end reached the Detection Service first and found no Run (404)
+    detection.on_start = lambda session_id: client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    session_id = uuid.UUID(client.post("/sessions", json={"name": "Range 1", "camera_id": str(add_camera(db).id)}).json()["id"])
+
+    assert [call[0] for call in detection.calls] == ["start", "end", "end"]
+    assert client.get(f"/sessions/{session_id}").json()["detection"]["state"] == "none"
+
+
 def test_a_start_answered_after_the_session_ended_changes_nothing(client, db, detection):
     # The operator ends the Session while its Run is still starting: the
     # service then refuses the start, which must not mark a completed Session

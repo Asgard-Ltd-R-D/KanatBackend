@@ -128,13 +128,23 @@ def _mark_in_use(path: Path) -> None:
         _in_use[path] = time.monotonic() + IN_USE_S
 
 
-def _copies_in_use() -> set[Path]:
-    """The copies served within IN_USE_S; the others are forgotten."""
+def _forget_finished_plays() -> None:
+    """Drops the marks of copies not served within IN_USE_S."""
     now = time.monotonic()
     with _locks_guard:
         for path in [p for p, until in _in_use.items() if until <= now]:
             del _in_use[path]
-        return set(_in_use)
+
+
+def _unlink_unless_in_use(file: Path) -> bool:
+    """Removes the copy unless it is being played. Checked and removed under
+    the lock _mark_in_use takes, so a request that marks it while the cache is
+    pruned either finds it gone (and fetches it again) or keeps it."""
+    with _locks_guard:
+        if _in_use.get(file, 0) > time.monotonic():
+            return False
+        file.unlink(missing_ok=True)
+        return True
 
 
 def _prune_cache(directory: Path) -> None:
@@ -143,7 +153,7 @@ def _prune_cache(directory: Path) -> None:
     copies beyond replay_cache_max_gb, but never one still being played, even
     if those alone are over the limit: concurrent players each keep their part.
     A copy's mtime is when it was last played (replay_file touches it)."""
-    in_use = _copies_in_use()
+    _forget_finished_plays()
     now = time.time()
     expired = datetime.now(timezone.utc) - timedelta(seconds=CACHE_MAX_AGE_S)
     kept = []
@@ -160,17 +170,16 @@ def _prune_cache(directory: Path) -> None:
                 if too_old:
                     file.unlink()
                 else:
-                    kept.append((stat.st_mtime, stat.st_size, file in in_use, file))
+                    kept.append((stat.st_mtime, stat.st_size, file))
         except FileNotFoundError:
             pass  # another request removed it first
 
     budget = settings.replay_cache_max_gb * 1024**3
-    total = sum(size for _, size, _, _ in kept)
-    for _, size, playing, file in sorted(kept):
+    total = sum(size for _, size, _ in kept)
+    for _, size, file in sorted(kept):
         if total <= budget:
             break
-        if not playing:
-            file.unlink(missing_ok=True)
+        if _unlink_unless_in_use(file):
             total -= size
 
 

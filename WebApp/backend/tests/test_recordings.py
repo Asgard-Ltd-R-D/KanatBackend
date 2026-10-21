@@ -482,6 +482,24 @@ def test_a_part_no_longer_played_goes_with_the_cache_limit(monkeypatch, tmp_path
     assert not path.exists() and recording_svc._in_use == {}
 
 
+def test_a_part_played_while_the_cache_is_pruned_stays(monkeypatch, tmp_path):
+    # A request marks the part in use after pruning started scanning the folder
+    # but before it reached the limit: the part is not removed under it
+    monkeypatch.setattr(settings, "replay_cache_max_gb", 1 / 1024**3)  # 1 byte
+    part = tmp_path / recording_svc._cache_name("cam1", NOW - timedelta(minutes=5), 60)
+    part.write_bytes(b"mp4 bytes")
+    read_name = recording_svc._read_cache_name
+
+    def scanned(file):
+        recording_svc._mark_in_use(file)  # the request arrives mid-scan
+        return read_name(file)
+
+    monkeypatch.setattr(recording_svc, "_read_cache_name", scanned)
+    recording_svc._prune_cache(tmp_path)
+
+    assert part.exists()
+
+
 def test_deleting_a_session_waits_for_a_replay_download_in_progress(monkeypatch, tmp_path):
     # The part is still downloading when its session is deleted: the delete
     # waits for it, and the finished copy goes too

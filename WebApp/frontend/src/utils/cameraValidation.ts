@@ -16,6 +16,8 @@ export type CameraFormErrors = Partial<Record<keyof CameraForm, string>>
 
 const ALIAS = /^[A-Za-z0-9][A-Za-z0-9_-]{1,62}$/
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/
+// Multicast groups are 224.0.0.0 to 239.255.255.255
+const isMulticast = (ip: string) => IPV4.test(ip) && Number(ip.split('.')[0]) >= 224 && Number(ip.split('.')[0]) <= 239
 const IFACE = /^[A-Za-z0-9._:-]{1,32}$/
 
 export const EMPTY_CAMERA_FORM: CameraForm = { alias: '', mcast_ip: '', mcast_port: '', iface: '', enabled: true }
@@ -38,8 +40,8 @@ export function validateCamera(form: CameraForm): CameraFormErrors {
   if (!ALIAS.test(alias)) {
     errors.alias = '2–63 characters: letters, digits, - and _, starting with a letter or digit'
   }
-  if (!IPV4.test(form.mcast_ip.trim())) {
-    errors.mcast_ip = 'An IPv4 address, e.g. 226.226.226.112'
+  if (!isMulticast(form.mcast_ip.trim())) {
+    errors.mcast_ip = 'A multicast group (224.0.0.0 – 239.255.255.255), e.g. 226.226.226.112'
   }
   if (!form.mcast_port.trim() || !Number.isInteger(port) || port < 1 || port > 65535) {
     errors.mcast_port = 'A port from 1 to 65535'

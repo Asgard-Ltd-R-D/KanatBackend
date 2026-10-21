@@ -4,6 +4,7 @@ The loop exists so the pipeline and the detector probe look at the same image.
 What is testable without a video file is the bookkeeping the probe depends on:
 which frames got a look, and which only appeared to.
 """
+import contextlib
 import csv
 import math
 import os
@@ -12,6 +13,7 @@ import re
 import signal
 import socket
 import sys
+import threading
 import time
 import types
 from datetime import datetime, timedelta, timezone
@@ -19,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pytest
 
-from detection import board
+from detection import board, webapp
 from detection import new_bullet_holes as nbh
 
 
@@ -694,13 +696,15 @@ class _Watching(_FakeModel):
 
 
 def _live_run(monkeypatch, model, changed=lambda index: True, stride=5, timing=None):
-    """`process` on an endless stream, a frame every 2 ms; change detection
-    sees the mark on the frames `changed(index)` says."""
+    """`process` on an endless stream, a frame every 2 ms, stopped by a
+    signal as on the command line (#221); change detection sees the mark on
+    the frames `changed(index)` says."""
     loop = _live(monkeypatch, _FakeStream(interval=0.002))
     loop.model = model
     monkeypatch.setattr(nbh.board, "changed_regions",
                         lambda a, b: np.full((64, 64), changed(int(b[0, 0, 0])), bool))
-    return nbh.process(loop, None, stride=stride, timing=timing)
+    with nbh._stopped_by_signals(loop):
+        return nbh.process(loop, None, stride=stride, timing=timing)
 
 
 @pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
@@ -712,6 +716,56 @@ def test_a_stop_signal_ends_a_live_run_and_the_full_report_still_prints(
     assert len(run.holes) == 1
     assert "[INFO] 1 new Bullet Holes" in out and "[GROUP]" in out
     assert signal.getsignal(signum) is before
+
+
+class _Marking(_FakeModel):
+    """A Baseline Mark at (40, 40) on every frame, and a Bullet Hole at
+    (15, 15) from frame 6. `past` is set at the first look at or past frame
+    80, for whoever started the Run to stop it from their own thread."""
+    def __init__(self):
+        self.past = threading.Event()
+
+    def predict(self, image, imgsz, conf, verbose=False, classes=None):
+        index = int(image[0, 0, 0])
+        if index >= 80:
+            self.past.set()
+        boxes = [[35.0, 35.0, 45.0, 45.0]] + ([[10.0, 10.0, 20.0, 20.0]] if index >= 6 else [])
+        return [types.SimpleNamespace(boxes=[types.SimpleNamespace(xyxy=[b]) for b in boxes])]
+
+
+def test_a_live_run_on_a_worker_thread_ends_when_its_caller_stops_it(monkeypatch, capsys):
+    """How the Detection Service ends a Run (#221): from another thread, by
+    a call, with no signal. It ends as a signalled one does: the report
+    prints, its Baseline Marks are listed, and its posts drain."""
+    sent = []
+
+    def urlopen(request, timeout):
+        sent.append(request.full_url)
+        return contextlib.nullcontext(types.SimpleNamespace(status=201))
+    monkeypatch.setattr(webapp, "urlopen", urlopen)
+    monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
+    loop = _live(monkeypatch, _FakeStream(interval=0.002))
+    loop.model = _Marking()
+    ended = []
+
+    def work():
+        try:
+            with webapp.WebAppPublisher("session", "http://backend") as publisher:
+                ended.append(nbh.process(loop, None, stride=5, publish=publisher.publish))
+        except BaseException as error:   # starting off the main thread must raise nothing
+            ended.append(error)
+
+    worker = threading.Thread(target=work)
+    worker.start()
+    assert loop.model.past.wait(10)
+    loop.stop()
+    worker.join(10)
+    (run,) = ended
+    assert isinstance(run, nbh.Run) and len(run.holes) == 1
+    assert sent == ["http://backend/sessions/session/bullets"]
+    out = capsys.readouterr().out
+    assert "[INFO] 1 Baseline Marks (0 on a Target, 1 Miss)" in out
+    assert "[INFO] 1 new Bullet Holes" in out and "[GROUP]" in out
 
 
 def _lines_after_looks(out):
@@ -909,7 +963,8 @@ def test_a_window_a_drop_emptied_confirms_nothing(monkeypatch, capsys):
     loop.model = _Watching(lambda i: 20 <= i < 1000, stop_at=1200)
     monkeypatch.setattr(nbh.board, "changed_regions",
                         lambda a, b: np.ones((64, 64), bool))
-    run = nbh.process(loop, None, stride=1)
+    with nbh._stopped_by_signals(loop):
+        run = nbh.process(loop, None, stride=1)
     (_, missed), = loop.source.drops
     assert missed >= nbh.PERSIST_FRAMES
     assert "[NEW]" not in capsys.readouterr().out and run.holes == []
@@ -972,7 +1027,8 @@ def test_a_window_emptied_upstream_confirms_nothing(monkeypatch, capsys):
     loop.model = _Watching(lambda i: i >= 20, stop_at=200)
     monkeypatch.setattr(nbh.board, "changed_regions",
                         lambda a, b: np.ones((64, 64), bool))
-    run = nbh.process(loop, None, stride=1)
+    with nbh._stopped_by_signals(loop):
+        run = nbh.process(loop, None, stride=1)
     assert loop.source.unseen == list(range(31, 131))   # stride 1: all were due
     assert "[NEW]" not in capsys.readouterr().out and run.holes == []
 
@@ -1165,7 +1221,8 @@ def test_live_times_are_the_stream_timestamps_from_frame_0s_wall_clock(
     loop = _live(monkeypatch, _FakeStream(interval=0.002))
     loop.model = _Watching(lambda i: i >= 6, stop_at=120)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
-    run = nbh.process(loop, None, stride=1)
+    with nbh._stopped_by_signals(loop):
+        run = nbh.process(loop, None, stride=1)
     (hole,) = run.holes
     at = nbh._clock(loop.source.times[0] + hole["first_frame"] / 25)
     new = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[NEW]")]
@@ -1204,7 +1261,8 @@ def test_a_live_bullet_hole_is_published_at_the_time_printed_for_it_after_a_reco
     loop = _live(monkeypatch, _FakeStream(n=40, interval=0.002), lambda: after)
     loop.model = _Watching(lambda i: i > 100, stop_at=200)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
-    run = nbh.process(loop, None, stride=1, publish=posted.append)
+    with nbh._stopped_by_signals(loop):
+        run = nbh.process(loop, None, stride=1, publish=posted.append)
     assert [v.first_frame for v in posted] == [h["first_frame"] for h in run.holes]
     (value,) = posted
     assert value.first_frame > 40

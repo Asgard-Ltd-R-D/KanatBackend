@@ -642,8 +642,8 @@ class Recording:
 class Stream:
     """A Stream (CONTEXT.md: Stream), read on a thread of its own so that
     frames keep arriving while a look is being processed (#83). `start`
-    makes SIGINT and SIGTERM `stop` it and starts the thread; `close` stops
-    and joins it, restores the handlers and prints the live report.
+    starts the thread; `stop`, from any thread, ends iteration; `close` stops
+    and joins it and prints the live report.
 
     A failed read is a drop, never the end: the stream closed, or stalled past
     `STREAM_TIMEOUT_MS`. The thread reopens it with `reopen` every
@@ -739,8 +739,7 @@ class Stream:
         its times are its own (#117)."""
         print(f"[LIVE] {_redacted(url)}: a stream, read from where it is. Board space "
               f"is built from the first frame read, times are the stream's timestamps "
-              f"from the wall clock it was read at (#117), and "
-              f"SIGINT or SIGTERM ends the run with its report (#83)")
+              f"from the wall clock it was read at (#117)")
         cap = _open_stream(url)
         ok, frame = cap.read()
         arrived = time.time()
@@ -750,15 +749,15 @@ class Stream:
 
     def start(self, n_frames, stride, baseline_frames):
         self._wanted, self._baseline_frames = n_frames, baseline_frames
-        self._handlers = {s: signal.signal(s, self.stop)
-                          for s in (signal.SIGINT, signal.SIGTERM)}
         self._reader = threading.Thread(target=self._read, args=(stride, baseline_frames),
                                         daemon=True)
         self._reader.start()
 
-    def stop(self, *signal_args):
-        """End iteration after the look in hand. A signal handler, so it only
-        sets a flag: taking a lock here could deadlock the thread it interrupts."""
+    def stop(self):
+        """End iteration after the look in hand, from any thread. It only sets
+        a flag, which the reader and `read` poll: the command line calls it
+        from a signal handler, where taking a lock could deadlock the thread
+        it interrupts (#221)."""
         self.stopped = True
 
     def _read(self, stride, baseline_frames):
@@ -957,8 +956,6 @@ class Stream:
         return datetime.fromtimestamp(self.times[index], timezone.utc)
 
     def close(self):
-        for s, handler in self._handlers.items():
-            signal.signal(s, handler)
         self.stopped = True
         if self._reader is not None:
             # A stalled read returns within STREAM_TIMEOUT_MS (#84).
@@ -1479,6 +1476,12 @@ class RegisteredFrames:
         loop.net_scale = scale
         return loop
 
+    def stop(self):
+        """End a live Run after the look in hand, from any thread: its
+        Stream's `stop`. It then ends as at any end, report and all (#221).
+        A Recording ends at its `end` and has none."""
+        self.source.stop()
+
     @property
     def last(self):
         """The most recently registered view (`Registration.last`)."""
@@ -1505,9 +1508,9 @@ class RegisteredFrames:
         one is read from the source, then handed to `registration`: two calls,
         not one. Which frames are read, under a `stride` (#81) past the first
         `baseline_frames`, is the source's, and so is `processed`: see
-        `Recording` and `Stream`. A stream has no end but a stop: SIGINT or
-        SIGTERM ends iteration after the look in hand, and callers report as
-        at any end.
+        `Recording` and `Stream`. A stream has no end but a stop (`stop`): it
+        ends iteration after the look in hand, and callers report as at any
+        end.
         """
         frames = frames_from(self.source, self.base, n_frames, stride, baseline_frames)
         try:
@@ -1530,7 +1533,7 @@ class RegisteredFrames:
             try:
                 self.registration.report()   # before the source's, the live report
             finally:
-                self.source.close()   # whatever the report did: it restores the signals
+                self.source.close()   # whatever the report did: it releases the source
 
     def _call_detector(self, image, imgsz):
         """`_detect` on the loop's device, timed as one detector call (#129)."""
@@ -2112,6 +2115,22 @@ def _render(video, start, n_frames, views, baseline, new, out_video,
     print(f"[INFO] -> {out_video}")
 
 
+@contextlib.contextmanager
+def _stopped_by_signals(loop):
+    """SIGINT and SIGTERM stop the live Run `loop` inside the block, and the
+    handlers before are restored on leaving it: how the command line ends a
+    Run (#83). Not the Stream's, since Python installs a handler on the main
+    thread only, and a Run may run on another (#221)."""
+    print("[LIVE] SIGINT or SIGTERM ends the run with its report (#83)")
+    before = {s: signal.signal(s, lambda *_: loop.stop())
+              for s in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        yield
+    finally:
+        for s, handler in before.items():
+            signal.signal(s, handler)
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser("Report Bullet Holes that are new since the baseline")
     p.add_argument("video", help="a recording, or a stream's rtsp:// URL, normally a "
@@ -2221,6 +2240,7 @@ if __name__ == "__main__":
           else contextlib.nullcontext()) as publisher:
         loop = RegisteredFrames.open(a.video, a.start, load_model(a.model), a.confidence,
                                      a.template, ref_time, a.device)
-        process(loop, a.end, a.out, scale, not a.no_change_filter, a.merge_displaced,
-                a.baseline_frames, a.stride, publish=publisher.publish if publisher else None,
-                timing=a.timing)
+        with _stopped_by_signals(loop) if loop.live else contextlib.nullcontext():
+            process(loop, a.end, a.out, scale, not a.no_change_filter, a.merge_displaced,
+                    a.baseline_frames, a.stride,
+                    publish=publisher.publish if publisher else None, timing=a.timing)

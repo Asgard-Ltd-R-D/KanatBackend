@@ -46,11 +46,55 @@ def test_a_deleted_camera_that_was_disabled_loses_its_path_too(monkeypatch, db_s
     assert mtx.calls == [("delete", "cam1")]
 
 
+def test_a_mediamtx_yml_path_with_a_cameras_settings_is_still_never_touched(monkeypatch, db_state):
+    # Same settings as a disabled camera's path, but mediamtx.yml defines it
+    monkeypatch.setattr(mediamtx, "config_path_names", lambda: {"static"})
+    mtx = FakeMediaMTX(monkeypatch, {"static": camera_sync.playback_only_config()})
+
+    camera_sync.sync(None)                      # no camera: not deleted
+    db_state.cameras = [make_camera("static")]
+    camera_sync.sync(None)                      # a camera of that name: not patched
+    assert mtx.calls == []
+
+
+def test_without_mediamtx_yml_only_paths_running_run_record_count_as_cameras(monkeypatch, db_state):
+    monkeypatch.setattr(mediamtx, "config_path_names", lambda: None)  # file unreadable
+    mtx = FakeMediaMTX(monkeypatch, {
+        "running": camera_sync.path_config(make_camera("running"), record=False),
+        "unsure": camera_sync.playback_only_config(),
+    })
+
+    camera_sync.sync(None)
+
+    assert mtx.calls == [("delete", "running")]  # "unsure" is left alone
+
+
+def test_recording_intervals_follow_the_record_switch_and_the_session(monkeypatch):
+    from app.models import Session
+    from app.services import sessions as session_svc
+
+    t0 = NOW - timedelta(hours=1)
+    session = Session(status="active", record=True, started_at=t0, ended_at=None)
+    session_svc._follow_recording(session, t0)                       # started recording
+    assert [(i.started_at, i.ended_at) for i in session.recording_intervals] == [(t0, None)]
+
+    session.record = False
+    session_svc._follow_recording(session, t0 + timedelta(minutes=5))  # switched off
+    session.record = True
+    session_svc._follow_recording(session, t0 + timedelta(minutes=8))  # on again
+    session.status, session.ended_at = "completed", t0 + timedelta(minutes=20)
+    session_svc._follow_recording(session, t0 + timedelta(minutes=21))  # ended
+
+    assert [(i.started_at, i.ended_at) for i in session.recording_intervals] == [
+        (t0, t0 + timedelta(minutes=5)),
+        (t0 + timedelta(minutes=8), t0 + timedelta(minutes=20)),
+    ]
+
+
 # --- a session's recordings ---
 
 def test_recordings_are_cut_to_the_session(monkeypatch):
     start, end = NOW - timedelta(minutes=10), NOW
-    session = SimpleNamespace(started_at=start, ended_at=end)
     spans = {
         # began a minute before the session, ran 3 minutes
         "cam1": [{"start": (start - timedelta(minutes=1)).isoformat(), "duration": 180.0}],
@@ -58,7 +102,7 @@ def test_recordings_are_cut_to_the_session(monkeypatch):
     }
     monkeypatch.setattr(mediamtx, "list_recordings", lambda alias, s, e: spans[alias])
 
-    result = recording_svc.session_recordings(session, [make_camera("cam1"), make_camera("cam2")])
+    result = recording_svc.session_recordings([(start, end)], [make_camera("cam1"), make_camera("cam2")])
 
     assert [r.alias for r in result] == ["cam1"]
     assert result[0].spans[0].start == start
@@ -67,10 +111,9 @@ def test_recordings_are_cut_to_the_session(monkeypatch):
 
 def test_a_long_recording_is_offered_in_parts(monkeypatch):
     start = NOW - timedelta(minutes=25)
-    session = SimpleNamespace(started_at=start, ended_at=NOW)
     monkeypatch.setattr(mediamtx, "list_recordings", lambda alias, s, e: [{"start": start.isoformat(), "duration": 1500.0}])
 
-    spans = recording_svc.session_recordings(session, [make_camera()])[0].spans
+    spans = recording_svc.session_recordings([(start, NOW)], [make_camera()])[0].spans
 
     assert [s.duration_s for s in spans] == [600.0, 600.0, 300.0]
     assert spans[1].start == start + timedelta(minutes=10)
@@ -145,7 +188,8 @@ def test_a_replay_part_must_lie_within_the_session(monkeypatch, offset_s, durati
     from app.services import sessions as session_svc
 
     start = NOW - timedelta(minutes=10)
-    monkeypatch.setattr(session_svc, "get_session_or_404", lambda sid, db: SimpleNamespace(started_at=start, ended_at=NOW))
+    recorded = SimpleNamespace(recording_intervals=[SimpleNamespace(started_at=start, ended_at=NOW)])
+    monkeypatch.setattr(session_svc, "get_session_or_404", lambda sid, db: recorded)
     app.dependency_overrides[get_db] = lambda: None
     try:
         with TestClient(app) as client:
@@ -172,11 +216,16 @@ def _recording(folder, began):
 def test_deleting_a_session_deletes_only_its_own_video(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
     monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
+    monkeypatch.setattr(mediamtx, "config_path_names", lambda: {"loopdemo"})
     start = NOW - timedelta(hours=1)
     window = (start, start + timedelta(minutes=20))
 
     inside = _recording(tmp_path / "recordings" / "cam1", start + timedelta(minutes=5))
     other_camera = _recording(tmp_path / "recordings" / "cam2", start + timedelta(minutes=6))
+    # A camera renamed or deleted since: its folder no camera row names any more
+    renamed = _recording(tmp_path / "recordings" / "old-name", start + timedelta(minutes=4))
+    # mediamtx.yml's own path: MediaMTX keeps and expires it
+    static = _recording(tmp_path / "recordings" / "loopdemo", start + timedelta(minutes=8))
     before = _recording(tmp_path / "recordings" / "cam1", start - timedelta(minutes=30))
     after = _recording(tmp_path / "recordings" / "cam1", start + timedelta(minutes=40))
     # Starts in this Session but runs on into another one: kept for the other
@@ -188,14 +237,29 @@ def test_deleting_a_session_deletes_only_its_own_video(monkeypatch, tmp_path):
     stamp = (start + timedelta(minutes=5)).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     copy = cache / f"cam1_{stamp}_60.000.mp4"
     copy.write_bytes(b"video")
-    lookalike = cache / f"cam1_x_{stamp}_60.000.mp4"  # camera "cam1_x", not "cam1"
-    lookalike.write_bytes(b"video")
+    renamed_copy = cache / f"old-name_{stamp}_60.000.mp4"
+    renamed_copy.write_bytes(b"video")
 
-    deleted = recording_svc.delete_session_video(window, ["cam1", "cam2"], [other_session])
+    deleted = recording_svc.delete_session_video([window], [other_session])
 
-    assert deleted == 2
-    assert not inside.exists() and not other_camera.exists() and not copy.exists()
-    assert before.exists() and after.exists() and shared.exists() and lookalike.exists()
+    assert deleted == 3
+    assert not inside.exists() and not other_camera.exists() and not renamed.exists()
+    assert not copy.exists() and not renamed_copy.exists()
+    assert before.exists() and after.exists() and shared.exists() and static.exists()
+
+
+def test_a_session_that_did_not_record_deletes_and_replays_nothing(monkeypatch, tmp_path):
+    # Two sessions at once: the other one records, this one never did, so the
+    # footage in this one's time is the other's alone
+    monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
+    start = NOW - timedelta(hours=1)
+    others = _recording(tmp_path / "recordings" / "cam1", start + timedelta(minutes=5))
+    monkeypatch.setattr(mediamtx, "list_recordings", lambda alias, s, e: [{"start": start.isoformat(), "duration": 600.0}])
+
+    assert recording_svc.session_recordings([], [make_camera()]) == []
+    assert recording_svc.delete_session_video([], [(start, start + timedelta(minutes=20))]) == 0
+    assert others.exists()
 
 
 def test_without_a_recordings_folder_deleting_a_session_skips_its_files(monkeypatch):
@@ -203,7 +267,7 @@ def test_without_a_recordings_folder_deleting_a_session_skips_its_files(monkeypa
     monkeypatch.setattr(settings, "recordings_dir", "")
     monkeypatch.setattr(recording_svc, "_recordings_dir", lambda: None)
 
-    assert recording_svc.delete_session_video((NOW, NOW), ["cam1"], []) == 0
+    assert recording_svc.delete_session_video([(NOW, NOW)], []) == 0
 
 
 def test_day_old_recordings_of_a_removed_camera_are_deleted(monkeypatch, tmp_path):

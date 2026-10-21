@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session as DBSession, selectinload
 
-from app.models import BulletHole, Session
+from app.models import BulletHole, RecordingInterval, Session
 
 
 def get(db: DBSession, session_id: uuid.UUID) -> Session | None:
@@ -36,13 +36,20 @@ def list_with_bullet_counts(db: DBSession) -> list[tuple[Session, int]]:
     )
 
 
-def list_all(db: DBSession) -> list[Session]:
-    return db.query(Session).all()
-
-
 def recording_session_active(db: DBSession) -> bool:
-    """Whether an active Session has recording on."""
-    return db.query(Session.id).filter(Session.status == "active", Session.record.is_(True)).first() is not None
+    """Whether an active Session is recording now (has an open interval)."""
+    return (
+        db.query(RecordingInterval.id)
+        .join(Session, RecordingInterval.session_id == Session.id)
+        .filter(Session.status == "active", RecordingInterval.ended_at.is_(None))
+        .first()
+        is not None
+    )
+
+
+def intervals_of_other_sessions(db: DBSession, session_id: uuid.UUID) -> list[RecordingInterval]:
+    """Every other Session's recording intervals."""
+    return db.query(RecordingInterval).filter(RecordingInterval.session_id != session_id).all()
 
 
 def add(db: DBSession, session: Session) -> Session:

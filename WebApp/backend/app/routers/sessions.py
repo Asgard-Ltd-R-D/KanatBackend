@@ -9,7 +9,6 @@ from app.core.live import hub
 from app.schemas.live import SessionUpdatedEvent
 from app.schemas.session import SessionCreate, SessionListItem, SessionResponse, SessionUpdate
 from app.services import camera_sync
-from app.services import cameras as camera_svc
 from app.services import recordings as recording_svc
 from app.services import sessions as svc
 
@@ -52,14 +51,12 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = D
 
 @router.delete("/{session_id}", status_code=204)
 def delete_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
-    window = svc.delete_session(session_id, db)
+    windows = svc.delete_session(session_id, db)
     # Stop the recording first if this Session was recording, then delete its
     # video: no Session is left to replay it
     camera_sync.sync_soon(db)
     try:
-        recording_svc.delete_session_video(
-            window, [c.alias for c in camera_svc.list_cameras(db)], svc.session_windows(db)
-        )
+        recording_svc.delete_session_video(windows, svc.other_recorded_windows(session_id, db))
     except OSError:
         # The Session is already deleted; its files expire with MediaMTX's
         # recordDeleteAfter anyway

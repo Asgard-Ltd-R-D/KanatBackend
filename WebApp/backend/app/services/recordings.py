@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 
 from app.config.settings import settings
-from app.models import Camera, Session
+from app.models import Camera
 from app.schemas.recording import CameraRecording, RecordingSpan
 from app.services import mediamtx
 
@@ -27,10 +27,6 @@ PARTIAL_MAX_AGE_S = 3600
 CACHE_CLEAN_INTERVAL_S = 600
 
 
-def session_window(session: Session) -> tuple[datetime, datetime]:
-    return session.started_at, session.ended_at or datetime.now(timezone.utc)
-
-
 def _parts(start: datetime, end: datetime) -> list[RecordingSpan]:
     parts = []
     while start < end:
@@ -40,20 +36,20 @@ def _parts(start: datetime, end: datetime) -> list[RecordingSpan]:
     return parts
 
 
-def session_recordings(session: Session, cameras: list[Camera]) -> list[CameraRecording]:
-    """Each camera's recorded parts within the Session, cut to its start and
-    end. Recording may have been switched on for only part of it, and MediaMTX
-    deletes recordings after a day, so any camera may have none."""
-    start, end = session_window(session)
+def session_recordings(windows: list[tuple[datetime, datetime]], cameras: list[Camera]) -> list[CameraRecording]:
+    """Each camera's recorded parts within the windows a Session recorded, cut
+    to them: another Session recording at the same time does not show here.
+    MediaMTX deletes recordings after a day, so any camera may have none."""
     out = []
     for camera in cameras:
         spans = []
-        for item in mediamtx.list_recordings(camera.alias, start, end):
-            span_start = datetime.fromisoformat(item["start"])
-            span_end = span_start + timedelta(seconds=item["duration"])
-            spans += _parts(max(span_start, start), min(span_end, end))
+        for start, end in windows:
+            for item in mediamtx.list_recordings(camera.alias, start, end):
+                span_start = datetime.fromisoformat(item["start"])
+                span_end = span_start + timedelta(seconds=item["duration"])
+                spans += _parts(max(span_start, start), min(span_end, end))
         if spans:
-            out.append(CameraRecording(alias=camera.alias, spans=spans))
+            out.append(CameraRecording(alias=camera.alias, spans=sorted(spans, key=lambda s: s.start)))
     return out
 
 
@@ -175,9 +171,10 @@ def replay_file(alias: str, start: datetime, duration_s: float) -> Path:
 #
 # MediaMTX names each file after the moment it started recording, in this PC's
 # local time (RECORDING's recordPath in camera_sync.py), and a file runs until
-# the next one starts, at most a segment long. Recording only runs while a
-# recording Session is active, so a Session's files are the ones that started
-# during it; one that runs on into another Session's time is kept for it.
+# the next one starts, at most a segment long. Recording only runs while some
+# Session records, so a Session's files are the ones that started within its
+# recording intervals; one that runs on into another Session's intervals is
+# kept for it.
 
 _RECORDING_NAME = "%Y-%m-%d_%H-%M-%S-%f"
 SEGMENT = timedelta(minutes=10)  # RECORDING's recordSegmentDuration
@@ -210,6 +207,14 @@ def _file_start(file: Path) -> datetime | None:
     return second if second <= written else first
 
 
+def _camera_folders(root: Path) -> list[Path]:
+    """The recording folders of every camera that recorded, present or past:
+    all of them except those of the paths mediamtx.yml defines, which MediaMTX
+    keeps and expires itself."""
+    config_names = mediamtx.config_path_names() or set()
+    return [folder for folder in root.iterdir() if folder.is_dir() and folder.name not in config_names]
+
+
 def remove_unused_recordings(aliases: list[str]) -> int:
     """Deletes day-old recordings in folders no camera uses any more (a deleted
     or renamed camera): MediaMTX only expires the recordings of paths it still
@@ -219,8 +224,8 @@ def remove_unused_recordings(aliases: list[str]) -> int:
         return 0
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=CACHE_MAX_AGE_S)
     deleted = 0
-    for folder in root.iterdir():
-        if not folder.is_dir() or folder.name in aliases:
+    for folder in _camera_folders(root):
+        if folder.name in aliases:
             continue
         for file in folder.glob("*.mp4"):
             began = _file_start(file)
@@ -233,27 +238,26 @@ def remove_unused_recordings(aliases: list[str]) -> int:
 
 
 def delete_session_video(
-    window: tuple[datetime, datetime],
-    aliases: list[str],
+    windows: list[tuple[datetime, datetime]],
     other_windows: list[tuple[datetime, datetime]],
 ) -> int:
-    """Deletes the recordings that started within `window`, and their replay
-    copies, keeping any that also falls in another Session's window. Returns
-    how many recordings were deleted."""
-    start, end = window
+    """Deletes the recordings that started within the windows a Session
+    recorded, and their replay copies, keeping any that runs on into what
+    another Session recorded. Every camera's folder counts, including those of
+    cameras since renamed or deleted. Returns how many recordings were deleted."""
 
     def belongs(began: datetime, ended: datetime) -> bool:
-        """Started in this Session, and overlaps no other Session's time."""
-        return start <= began <= end and not any(began < e and s < ended for s, e in other_windows)
+        """Started while this Session recorded, and overlaps nothing another
+        Session recorded."""
+        return any(s <= began <= e for s, e in windows) and not any(
+            began < e and s < ended for s, e in other_windows
+        )
 
     deleted = 0
     root = _recordings_dir()
     if root is None:
         log.warning("Recordings folder not found; set RECORDINGS_DIR to delete a Session's video")
-    for alias in aliases if root else []:
-        folder = root / alias
-        if not folder.is_dir():
-            continue
+    for folder in _camera_folders(root) if root and root.is_dir() else []:
         files = sorted((began, file) for file in folder.glob("*.mp4") if (began := _file_start(file)))
         for i, (began, file) in enumerate(files):
             ended = min(files[i + 1][0], began + SEGMENT) if i + 1 < len(files) else began + SEGMENT
@@ -261,14 +265,11 @@ def delete_session_video(
                 file.unlink(missing_ok=True)
                 deleted += 1
 
-    cache = _cache_dir()
-    for alias in aliases:
-        for file in cache.glob(f"{alias}_*.mp4"):
-            named = _read_cache_name(file)
-            # The alias must match whole: "cam1" must not catch camera "cam1_x"
-            if named is None or named[0] != alias:
-                continue
-            _, began, length_s = named
-            if belongs(began, began + timedelta(seconds=length_s)):
-                file.unlink(missing_ok=True)
+    for file in _cache_dir().glob("*.mp4"):
+        named = _read_cache_name(file)
+        if named is None:
+            continue
+        _, began, length_s = named
+        if belongs(began, began + timedelta(seconds=length_s)):
+            file.unlink(missing_ok=True)
     return deleted

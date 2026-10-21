@@ -23,8 +23,9 @@ router = APIRouter(prefix="/sessions/{session_id}/recordings", tags=["recordings
 @router.get("", response_model=list[CameraRecording])
 def list_recordings(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
     session = session_svc.get_session_or_404(session_id, db)
+    windows = session_svc.recorded_windows(session.recording_intervals)
     try:
-        return svc.session_recordings(session, camera_svc.list_cameras(db))
+        return svc.session_recordings(windows, camera_svc.list_cameras(db))
     except mediamtx.MediaMTXUnreachable:
         raise HTTPException(status_code=503, detail="The video service is not reachable")
 
@@ -40,10 +41,14 @@ def recording_video(
 ):
     """A recorded span (from list_recordings) as one MP4."""
     session = session_svc.get_session_or_404(session_id, db)
-    window_start, window_end = svc.session_window(session)
-    # Only video within this Session: parts are listed cut to it (list_recordings)
-    if start < window_start or start + timedelta(seconds=duration_s) > window_end + timedelta(seconds=1):
-        raise HTTPException(status_code=422, detail="The part is outside the session")
+    end = start + timedelta(seconds=duration_s)
+    # Only video this Session recorded: parts are listed cut to its recording
+    # intervals (list_recordings)
+    if not any(
+        s <= start and end <= e + timedelta(seconds=1)
+        for s, e in session_svc.recorded_windows(session.recording_intervals)
+    ):
+        raise HTTPException(status_code=422, detail="The part is outside what the session recorded")
 
     try:
         path = svc.replay_file(alias, start, duration_s)

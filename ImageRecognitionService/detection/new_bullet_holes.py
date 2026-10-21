@@ -1652,7 +1652,8 @@ def registration_note(residual, radius, unit="Board px"):
 def process(loop, end, out_video=None, mm_per_tpl_px=None,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, timing=None):
+            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, timing=None,
+            watching=None):
     """The Run `loop`, opened by `RegisteredFrames.open`, to `end` seconds
     into its Recording. Whoever opens it chooses the source, the model and
     the Board space everything is registered onto, and can use that Board
@@ -1667,7 +1668,12 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
 
     `timing`, a path, times each Look past the baseline (#129): a CSV row a
     Look there, and n/P50/P95/P99/max printed at the end (`_report_timing`).
-    Without it nothing is written, printed or kept."""
+    Without it nothing is written, printed or kept.
+
+    `watching`, when given, is called once the baseline is built, with its
+    number of Baseline Marks: the Run is watching from then, and a Hit
+    before it may be absorbed into the baseline. The Detection Service
+    answers a start with it (#223)."""
     if timing:
         open(timing, "w").close()   # a path it cannot write fails now, not after the run
     match_px = loop.view.match_radius
@@ -1711,6 +1717,8 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
     print(f"[INFO] baseline: {len(baseline)} Baseline Marks over "
           f"{len(baseline_detections)} frame(s) from "
           f"{loop.when(0) if loop.live else f'{loop.source.start_s}s'}{short}")
+    if watching:
+        watching(len(baseline))
 
     # ponytail: a live run still keeps every look's index, time and
     # residuals, and every candidate, for the end-of-run report: a few MB an

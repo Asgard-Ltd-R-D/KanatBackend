@@ -450,6 +450,38 @@ def test_a_part_larger_than_the_cache_limit_is_still_served(monkeypatch, tmp_pat
     assert not older.exists()                                     # the rest goes
 
 
+def test_parts_played_at_once_all_stay_whatever_the_cache_limit(monkeypatch, tmp_path):
+    # Three players, each on its own part; together they are over the limit,
+    # and none of their parts is removed under them
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "replay_cache_max_gb", 1 / 1024**3)  # 1 byte
+    monkeypatch.setattr(mediamtx, "open_recording", lambda alias, start, duration_s: FakeVideo())
+    unplayed = tmp_path / recording_svc._cache_name("cam1", NOW - timedelta(minutes=50), 60)
+    unplayed.write_bytes(b"older video")
+
+    parts = [
+        recording_svc.replay_file("cam1", NOW - timedelta(minutes=m), 60, still_allowed=lambda: True)
+        for m in (30, 20, 10)
+    ]
+    recording_svc.clean_cache()
+
+    assert all(p.read_bytes() == b"mp4 bytes" for p in parts)
+    assert not unplayed.exists()
+
+
+def test_a_part_no_longer_played_goes_with_the_cache_limit(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "replay_cache_max_gb", 1 / 1024**3)  # 1 byte
+    monkeypatch.setattr(mediamtx, "open_recording", lambda alias, start, duration_s: FakeVideo())
+    path = recording_svc.replay_file("cam1", NOW - timedelta(minutes=5), 60, still_allowed=lambda: True)
+
+    # Its player stopped asking for it longer than IN_USE_S ago
+    recording_svc._in_use[path] = time.monotonic() - 1
+    recording_svc.clean_cache()
+
+    assert not path.exists() and recording_svc._in_use == {}
+
+
 def test_deleting_a_session_waits_for_a_replay_download_in_progress(monkeypatch, tmp_path):
     # The part is still downloading when its session is deleted: the delete
     # waits for it, and the finished copy goes too

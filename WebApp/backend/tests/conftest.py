@@ -7,6 +7,7 @@ from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as sessions_repo
 from app.services import cameras as camera_svc
 from app.services import mediamtx
+from app.services import recordings as recording_svc
 
 
 @pytest.fixture(autouse=True)
@@ -19,6 +20,12 @@ def no_camera_sync_loop(monkeypatch):
 def fresh_traffic():
     """Each test starts with no remembered byte counters."""
     camera_svc._traffic.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_parts_in_use():
+    """Each test starts with no replay copy being played."""
+    recording_svc._in_use.clear()
 
 
 @pytest.fixture

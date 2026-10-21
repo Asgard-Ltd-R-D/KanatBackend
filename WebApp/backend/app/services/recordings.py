@@ -27,6 +27,9 @@ CACHE_MAX_AGE_S = 24 * 3600
 PARTIAL_MAX_AGE_S = 3600
 # How often the camera sync loop cleans the replay cache
 CACHE_CLEAN_INTERVAL_S = 600
+# A copy served within this long is still being played (the player asks for
+# its ranges as it goes), so the cache limit does not remove it
+IN_USE_S = 15 * 60
 
 
 def _parts(start: datetime, end: datetime) -> list[RecordingSpan]:
@@ -81,6 +84,8 @@ def is_listed_part(
 # downloads in progress, and deletion only looks at those
 _locks: dict[Path, list] = {}  # path -> [Lock, users]
 _locks_guard = threading.Lock()
+# Copies being played: path -> time.monotonic() until which it counts as in use
+_in_use: dict[Path, float] = {}
 
 
 class PartWithdrawn(Exception):
@@ -118,12 +123,27 @@ def _read_cache_name(file: Path) -> tuple[str, datetime, float] | None:
         return None
 
 
+def _mark_in_use(path: Path) -> None:
+    with _locks_guard:
+        _in_use[path] = time.monotonic() + IN_USE_S
+
+
+def _copies_in_use() -> set[Path]:
+    """The copies served within IN_USE_S; the others are forgotten."""
+    now = time.monotonic()
+    with _locks_guard:
+        for path in [p for p, until in _in_use.items() if until <= now]:
+            del _in_use[path]
+        return set(_in_use)
+
+
 def _prune_cache(directory: Path) -> None:
     """Drops the copies whose recording is over a day old (MediaMTX has deleted
     the original by then), abandoned downloads, and the least recently played
-    copies beyond replay_cache_max_gb, but never the most recently played, the
-    one being served, even if it alone is over the limit. A copy's mtime is
-    when it was last played (replay_file touches it)."""
+    copies beyond replay_cache_max_gb, but never one still being played, even
+    if those alone are over the limit: concurrent players each keep their part.
+    A copy's mtime is when it was last played (replay_file touches it)."""
+    in_use = _copies_in_use()
     now = time.time()
     expired = datetime.now(timezone.utc) - timedelta(seconds=CACHE_MAX_AGE_S)
     kept = []
@@ -140,17 +160,18 @@ def _prune_cache(directory: Path) -> None:
                 if too_old:
                     file.unlink()
                 else:
-                    kept.append((stat.st_mtime, stat.st_size, file))
+                    kept.append((stat.st_mtime, stat.st_size, file in in_use, file))
         except FileNotFoundError:
             pass  # another request removed it first
 
     budget = settings.replay_cache_max_gb * 1024**3
-    total = sum(size for _, size, _ in kept)
-    for _, size, file in sorted(kept)[:-1]:
+    total = sum(size for _, size, _, _ in kept)
+    for _, size, playing, file in sorted(kept):
         if total <= budget:
             break
-        file.unlink(missing_ok=True)
-        total -= size
+        if not playing:
+            file.unlink(missing_ok=True)
+            total -= size
 
 
 def clean_cache() -> None:
@@ -194,6 +215,9 @@ def replay_file(alias: str, start: datetime, duration_s: float, still_allowed: C
     with _part_lock(path):
         if not still_allowed():
             raise PartWithdrawn(path.name)
+        # Each of the player's requests renews it, so no other request's
+        # pruning removes it while it is read
+        _mark_in_use(path)
         if path.exists():
             path.touch()  # played again: keep it over parts not played lately
         else:

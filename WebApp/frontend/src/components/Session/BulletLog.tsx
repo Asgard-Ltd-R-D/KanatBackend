@@ -1,4 +1,4 @@
-import { Crosshair, Trash2 } from 'lucide-react'
+import { Crosshair, Play, Trash2 } from 'lucide-react'
 import { BulletHole } from '../../types'
 import { formatClock } from '../../utils/format'
 import { locationLabel, mmLabel } from '../../utils/bullets'
@@ -7,10 +7,14 @@ import { SourceBadge } from './SourceBadge'
 interface Props {
   bullets: BulletHole[]
   onDelete: (bullet: BulletHole) => void
+  // Whether video was recorded when the bullet was seen, and how to show it
+  canReplay: (bullet: BulletHole) => boolean
+  onReplay: (bullet: BulletHole) => void
 }
 
-// A completed session's Bullet Holes, in order, each one deletable
-export function BulletLog({ bullets, onDelete }: Props) {
+// A completed session's Bullet Holes, in order, each one deletable. A bullet
+// seen while recording links to the replay at that moment.
+export function BulletLog({ bullets, onDelete, canReplay, onReplay }: Props) {
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm dark:shadow-none">
       <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
@@ -46,7 +50,20 @@ export function BulletLog({ bullets, onDelete }: Props) {
           {bullets.map(b => (
             <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
               <td className="px-4 py-3 text-slate-400 dark:text-slate-600 font-mono text-xs">{b.rank}</td>
-              <td className="px-4 py-3 font-mono text-xs text-slate-600 dark:text-slate-300">{formatClock(b.first_seen_at)}</td>
+              <td className="px-4 py-3 font-mono text-xs text-slate-600 dark:text-slate-300">
+                {canReplay(b) ? (
+                  <button
+                    onClick={() => onReplay(b)}
+                    title="Watch this moment"
+                    className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    <Play size={10} className="fill-current" />
+                    {formatClock(b.first_seen_at)}
+                  </button>
+                ) : (
+                  formatClock(b.first_seen_at)
+                )}
+              </td>
               <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">
                 {b.position_x.toFixed(0)}, {b.position_y.toFixed(0)}
               </td>

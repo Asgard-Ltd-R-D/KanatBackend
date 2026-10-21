@@ -10,7 +10,7 @@ from tests.fakes import FakeMediaMTX, make_camera
 # --- the path each camera gets ---
 
 def test_a_camera_path_runs_run_record_as_kanatfrontend_built_it():
-    config = camera_sync.path_config(make_camera(iface="eth1"))
+    config = camera_sync.path_config(make_camera(iface="eth1"), record=False)
 
     assert config["runOnInit"] == (
         "bash -lc '\n"
@@ -19,10 +19,12 @@ def test_a_camera_path_runs_run_record_as_kanatfrontend_built_it():
         "'"
     )
     assert config["runOnInitRestart"] is True
+    assert config["record"] is False
+    assert config["recordDeleteAfter"] == "1d"
 
 
 def test_no_iface_leaves_the_flag_out():
-    assert "--iface" not in camera_sync.path_config(make_camera())["runOnInit"]
+    assert "--iface" not in camera_sync.path_config(make_camera(), record=False)["runOnInit"]
 
 
 # --- syncing MediaMTX to the database ---
@@ -38,7 +40,7 @@ def test_a_new_camera_is_added(monkeypatch, db_state):
 
 def test_an_unchanged_camera_is_left_alone(monkeypatch, db_state):
     db_state.cameras = [make_camera()]
-    mtx = FakeMediaMTX(monkeypatch, {"cam1": camera_sync.path_config(make_camera())})
+    mtx = FakeMediaMTX(monkeypatch, {"cam1": camera_sync.path_config(make_camera(), record=False)})
 
     camera_sync.sync(None)
 
@@ -47,7 +49,7 @@ def test_an_unchanged_camera_is_left_alone(monkeypatch, db_state):
 
 def test_a_removed_camera_is_deleted_but_paths_from_mediamtx_yml_are_kept(monkeypatch, db_state):
     mtx = FakeMediaMTX(monkeypatch, {
-        "old": camera_sync.path_config(make_camera("old")),
+        "old": camera_sync.path_config(make_camera("old"), record=False),
         "loopdemo": {"runOnDemand": "./run_loopdemo.sh", "runOnInit": ""},
     })
 
@@ -60,6 +62,7 @@ def test_a_removed_camera_is_deleted_but_paths_from_mediamtx_yml_are_kept(monkey
 def test_a_camera_named_like_a_mediamtx_yml_path_leaves_that_path_alone(monkeypatch, db_state):
     # e.g. created while MediaMTX was down, so the API could not refuse the name
     monkeypatch.setattr(camera_sync, "_conflicts", set())
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths(frozenset({"loopdemo"})))
     static = {"runOnDemand": "./run_loopdemo.sh", "runOnInit": ""}
     db_state.cameras = [make_camera("loopdemo")]
     mtx = FakeMediaMTX(monkeypatch, {"loopdemo": dict(static)})
@@ -108,12 +111,39 @@ def test_a_blank_iface_means_none():
 def test_a_name_from_mediamtx_yml_cannot_be_a_camera(monkeypatch):
     monkeypatch.setattr(mediamtx, "list_path_configs", lambda: {
         "loopdemo": {"runOnDemand": "./run_loopdemo.sh", "runOnInit": ""},
-        "cam1": camera_sync.path_config(make_camera()),
+        "cam1": camera_sync.path_config(make_camera(), record=False),
     })
 
     assert camera_sync.taken_by_config("loopdemo") is True
     assert camera_sync.taken_by_config("cam1") is False   # a camera's own path
     assert camera_sync.taken_by_config("new") is False
+
+
+def test_a_camera_can_be_edited_while_mediamtx_yml_is_unknown(monkeypatch):
+    # Disabled, so its path is playback-only, which without mediamtx.yml cannot
+    # be told from one of MediaMTX's own: its name is still the camera's
+    from fastapi.testclient import TestClient
+    from app.core.deps import get_db
+    from app.main import app
+    from app.repositories import cameras as cameras_repo
+
+    camera = make_camera("lane1", enabled=False)
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: None)
+    monkeypatch.setattr(mediamtx, "list_path_configs", lambda: {"lane1": camera_sync.playback_only_config()})
+    monkeypatch.setattr(mediamtx, "path_states", lambda: {})
+    monkeypatch.setattr(camera_svc, "get_camera_or_404", lambda camera_id, db: camera)
+    monkeypatch.setattr(cameras_repo, "save", lambda db, c: c)
+    monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app) as client:
+            res = client.put(f"/cameras/{camera.id}", json={
+                "alias": "lane1", "mcast_ip": "226.226.226.112", "mcast_port": 112, "enabled": True,
+            })
+    finally:
+        app.dependency_overrides.clear()
+
+    assert res.status_code == 200 and camera.enabled
 
 
 # --- the status shown in Settings ---
@@ -153,3 +183,16 @@ def test_without_mediamtx_the_state_is_unreachable(monkeypatch):
     monkeypatch.setattr(mediamtx, "path_states", unreachable)
 
     assert camera_svc.with_status([make_camera()])[0].status == "unreachable"
+
+
+
+def test_a_cameras_name_cannot_be_changed(monkeypatch):
+    # It names the camera's stream, which the detection model reads, and its recordings
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(camera_svc, "get_camera_or_404", lambda camera_id, db: make_camera("lane1"))
+    body = CameraInput(alias="north", mcast_ip="226.226.226.112", mcast_port=112)
+
+    with pytest.raises(HTTPException) as refused:
+        camera_svc.update_camera(None, body, None)
+    assert refused.value.status_code == 409

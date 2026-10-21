@@ -70,8 +70,17 @@ export function CameraFormModal({ open, camera, onClose }: Props) {
       onClose={onClose}
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/* The name is the camera's stream and recordings name, so it is set once */}
         <Field label="Name" error={errors.alias}>
-          <input autoFocus value={form.alias} onChange={set('alias')} placeholder="e.g. lane1" className={INPUT} />
+          <input
+            autoFocus={!camera}
+            value={form.alias}
+            onChange={set('alias')}
+            readOnly={!!camera}
+            title={camera ? "A camera's name cannot be changed: it names its stream and recordings" : undefined}
+            placeholder="e.g. lane1"
+            className={`${INPUT} ${camera ? 'opacity-60 cursor-not-allowed' : ''}`}
+          />
         </Field>
 
         <div className="grid grid-cols-3 gap-3">

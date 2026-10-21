@@ -98,7 +98,7 @@ export function CamerasPanel() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete Camera"
-        message={`Delete "${deleteTarget?.alias ?? ''}"?`}
+        message={`Delete "${deleteTarget?.alias ?? ''}"? Its recordings will no longer be available for replay.`}
         confirmLabel="Delete"
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
         onCancel={() => {

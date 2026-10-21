@@ -216,7 +216,7 @@ export function SessionList() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete Session"
-        message={`Delete "${deleteTarget?.name}" with its bullets? This cannot be undone.`}
+        message={`Delete "${deleteTarget?.name}" with its bullets and video? This cannot be undone.`}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
         onCancel={() => {
           setDeleteTarget(null)

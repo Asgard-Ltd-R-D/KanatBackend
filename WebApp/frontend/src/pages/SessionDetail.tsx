@@ -15,8 +15,16 @@ import { AddBulletModal } from '../components/Session/AddBulletModal'
 import { BulletLog } from '../components/Session/BulletLog'
 import { LiveDetectionsPanel } from '../components/Session/LiveDetectionsPanel'
 import { CameraFeeds } from '../components/Camera/CameraFeeds'
+import { RecordingControl } from '../components/Session/RecordingControl'
+import { RecordingsCard } from '../components/Session/RecordingsCard'
+import { ReplayModal, ReplayTarget } from '../components/Session/ReplayModal'
+import { useRecordings } from '../hooks/useRecordings'
+import { findMoment } from '../utils/recordings'
 import { useSessionLive } from '../hooks/useSessionLive'
 import { formatDuration } from '../utils/format'
+
+// A bullet's replay starts this long before it was seen, to show the shot
+const REPLAY_PREROLL_S = 3
 
 export function SessionDetail() {
   const { id } = useParams<{ id: string }>()
@@ -26,6 +34,7 @@ export function SessionDetail() {
   const [deleteTarget, setDeleteTarget] = useState<BulletHole | null>(null)
   const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [, setTick] = useState(0)
+  const [replay, setReplay] = useState<ReplayTarget | null>(null)
 
   const { data: session, isLoading, refetch } = useQuery({
     queryKey: ['session', id],
@@ -34,6 +43,7 @@ export function SessionDetail() {
   })
 
   useSessionLive(id, session?.status === 'active')
+  const recordings = useRecordings(id!, session?.status === 'completed')
 
   useEffect(() => {
     if (session?.status !== 'active') return
@@ -123,6 +133,8 @@ export function SessionDetail() {
         </div>
 
         <div className="flex items-center gap-2">
+          {session.status === 'active' && <RecordingControl session={session} />}
+
           {session.status === 'active' && (
             <button
               onClick={() => setShowEndConfirm(true)}
@@ -214,7 +226,30 @@ export function SessionDetail() {
             <StatTile label="Duration" value={formatDuration(session.started_at, session.ended_at)} />
           </div>
 
-          <BulletLog bullets={bullets} onDelete={setDeleteTarget} />
+          <RecordingsCard
+            recordings={recordings.data}
+            isLoading={recordings.isLoading}
+            isError={recordings.isError}
+            onRetry={() => recordings.refetch()}
+            onPlay={alias => setReplay({ alias })}
+          />
+
+          <BulletLog
+            bullets={bullets}
+            onDelete={setDeleteTarget}
+            canReplay={b => !!recordings.data && findMoment(recordings.data, b.first_seen_at) !== null}
+            onReplay={b => {
+              const moment = recordings.data && findMoment(recordings.data, b.first_seen_at, REPLAY_PREROLL_S)
+              if (moment) setReplay({ alias: moment.alias, part: moment.part, offsetS: moment.offsetS })
+            }}
+          />
+
+          <ReplayModal
+            sessionId={session.id}
+            recordings={recordings.data ?? []}
+            target={replay}
+            onChange={setReplay}
+          />
         </>
       )}
 

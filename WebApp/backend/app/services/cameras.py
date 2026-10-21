@@ -97,7 +97,16 @@ def create_camera(body: CameraInput, db: DBSession) -> Camera:
 
 
 def update_camera(camera_id: uuid.UUID, body: CameraInput, db: DBSession) -> Camera:
-    return _save(get_camera_or_404(camera_id, db), body, db)
+    camera = get_camera_or_404(camera_id, db)
+    # The alias names the camera's stream (rtsp://.../<alias>, which the
+    # detection model reads) and its recordings, which replay and session
+    # deletion find by it: renaming would orphan both, so it cannot change
+    if body.alias != camera.alias:
+        raise HTTPException(
+            status_code=409,
+            detail="A camera's name cannot be changed: it names its stream and recordings. Add a new camera instead.",
+        )
+    return _save(camera, body, db)
 
 
 def delete_camera(camera_id: uuid.UUID, db: DBSession) -> None:

@@ -126,19 +126,48 @@ else
   echo "Multicast interface: automatic"
 fi
 
-trap 'echo; echo "Stopping..."; exit 0' INT TERM
+# GStreamer runs in the background and the script waits on it: bash runs a trap
+# only once a foreground child exits, and a GStreamer with no multicast arriving
+# never does, so MediaMTX stopping this script would leave it running.
+# The script also watches MediaMTX, which starts it: if MediaMTX dies without
+# stopping it (killed, crashed), it stops instead of streaming as an orphan
+# that a restarted MediaMTX's own copy of this script would fight.
+PARENT_PID=$PPID
+GST_PID=""
+# Between GStreamer restarts, so a camera that keeps failing does not flood the log
+RESTART_PAUSE_S=2
+
+stop_gst() {
+  [[ -n "$GST_PID" ]] && kill "$GST_PID" 2>/dev/null
+  GST_PID=""
+}
+trap 'echo; echo "Stopping..."; stop_gst; exit 0' INT TERM HUP
+trap 'stop_gst' EXIT
 
 while true; do
-  if ! "$GST_BIN" -e \
+  "$GST_BIN" -e \
     udpsrc "${UDP_SRC_ARGS[@]}" ! \
     "application/x-rtp,media=video,encoding-name=H264" ! \
     rtpjitterbuffer latency=0 drop-on-latency=true ! \
     rtph264depay ! \
     h264parse ! \
-    rtspclientsink location="${RTSP_URL}" protocols=tcp
-  then
+    rtspclientsink location="${RTSP_URL}" protocols=tcp &
+  GST_PID=$!
+
+  while kill -0 "$GST_PID" 2>/dev/null; do
+    if ! kill -0 "$PARENT_PID" 2>/dev/null; then
+      echo "The process that started this script is gone. Stopping..." >&2
+      exit 0
+    fi
+    # In the background and waited on, so a trap still runs at once
+    sleep 1 &
+    wait $! || true
+  done
+
+  if ! wait "$GST_PID"; then
     echo "⚠️ GStreamer stopped with an error. Restarting..." >&2
   fi
+  GST_PID=""
 
-  sleep 0.2
+  sleep "$RESTART_PAUSE_S"
 done

@@ -88,7 +88,12 @@ def recorded_windows(intervals: list[RecordingInterval]) -> list[tuple[datetime,
 def delete_session(session_id: uuid.UUID, db: DBSession) -> list[tuple[datetime, datetime]]:
     """Deletes the Session and returns the windows it recorded, so its video
     can be deleted too (routers/sessions.py)."""
-    session = get_session_or_404(session_id, db)
+    # Locked before its intervals are read, as update_session locks it to
+    # change them: a recording switched on at the same moment either commits
+    # first, and its interval is in the windows, or finds the Session gone
+    session = repo.get_for_update(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
     windows = recorded_windows(session.recording_intervals)
     repo.delete(db, session)
     return windows

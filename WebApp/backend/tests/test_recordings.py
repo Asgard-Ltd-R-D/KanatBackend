@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from app.config.settings import settings
 from app.services import camera_sync, mediamtx
@@ -94,6 +95,29 @@ def test_recording_intervals_follow_the_record_switch_and_the_session(monkeypatc
         (t0, t0 + timedelta(minutes=5)),
         (t0 + timedelta(minutes=8), t0 + timedelta(minutes=20)),
     ]
+
+
+def test_deleting_a_session_locks_it_before_reading_its_recording_windows(monkeypatch):
+    # A recording switched on at the same moment then either commits before the
+    # windows are read, or waits and finds the session gone
+    from app.models import RecordingInterval
+    from app.repositories import sessions as sessions_repo
+    from app.services import sessions as session_svc
+
+    t0 = NOW - timedelta(hours=1)
+    session = SimpleNamespace(recording_intervals=[RecordingInterval(started_at=t0, ended_at=t0 + timedelta(minutes=5))])
+    deleted = []
+    monkeypatch.setattr(sessions_repo, "get", lambda db, session_id: pytest.fail("read without the lock"))
+    monkeypatch.setattr(sessions_repo, "get_for_update", lambda db, session_id: session)
+    monkeypatch.setattr(sessions_repo, "delete", lambda db, s: deleted.append(s))
+
+    assert session_svc.delete_session(uuid.uuid4(), None) == [(t0, t0 + timedelta(minutes=5))]
+    assert deleted == [session]
+
+    monkeypatch.setattr(sessions_repo, "get_for_update", lambda db, session_id: None)
+    with pytest.raises(HTTPException) as gone:
+        session_svc.delete_session(uuid.uuid4(), None)
+    assert gone.value.status_code == 404
 
 
 # --- a session's recordings ---

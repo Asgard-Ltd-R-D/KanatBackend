@@ -10,8 +10,10 @@ and detects bullet holes on paper targets from range camera footage.
 **Range**:
 One recorded shooting session, from start to stop. Owns the events, hits and
 targets captured during it. A Range may start on a Board that already carries
-Bullet Holes from an earlier Range.
-_Avoid_: session, run (the system watching footage is a Run), act, firing act
+Bullet Holes from an earlier Range. The WebApp names it a Session, in its code
+and on screen; it is the same thing.
+_Avoid_: session (outside the WebApp), run (the system watching footage is a
+Run), act, firing act, range (for the physical site: the range site)
 
 **Shot Distance**:
 The distance from a Bullet Hole to its Target's centre, in millimetres.
@@ -62,6 +64,12 @@ places from one Run compare directly, places from two Runs only once each is
 mapped onto the Target artwork. A Range is watched live by one Run; a Recording
 may have many.
 _Avoid_: pass, execution, session
+
+**Detection Service**:
+The system that stays running and holds the detector, and watches each Range
+with a fresh Run when the WebApp tells it to. It outlives its Runs: between
+Ranges it holds the detector and watches nothing.
+_Avoid_: model, detection model, worker, IRS
 
 **Look**:
 One frame the system examines for Detections. Live, it looks at a fixed

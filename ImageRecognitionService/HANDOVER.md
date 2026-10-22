@@ -881,9 +881,10 @@ curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "
 # frame time, registered or Lost: both null until watching.
 # Status: {"run": null}, or the Run, its state (starting, watching, ending) and since when.
 curl -s 127.0.0.1:8010/status
-# End: answered once the Run has ended and its posts are drained, with its final
-# `registered` and `looked_at`. No such Run is a 404.
-curl -s -X POST 127.0.0.1:8010/runs/<uuid>/end    # {"session_id": "<uuid>", "state": "ended", "registered": ..., "looked_at": ...}
+# End: answered once the Run has ended and its posts are drained, with its
+# `baseline_view`, which names it, and its final `registered` and `looked_at`.
+# No such Run is a 404.
+curl -s -X POST 127.0.0.1:8010/runs/<uuid>/end    # {"session_id": "<uuid>", "state": "ended", "baseline_view": ..., "registered": ..., "looked_at": ...}
 ```
 
 An end does not stop a watching Run at once (#228). The Run keeps looking,

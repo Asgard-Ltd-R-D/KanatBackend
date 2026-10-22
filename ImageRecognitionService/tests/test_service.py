@@ -301,16 +301,17 @@ def test_a_lost_look_leaves_registered_as_it_was_while_looked_at_moves_on(placed
     assert _frame(later["looked_at"]) > _frame(run["looked_at"])
 
 
-def test_an_ends_answer_carries_the_runs_final_registered_and_looked_at(placed):
+def test_an_ends_answer_carries_the_runs_baseline_view_and_final_registered_and_looked_at(placed):
     """Its last Look's time, Lost here, and the last registered one's, not
     those of the last read before the end."""
     placed.registration.lost_from = 100
     placed.start()
-    _until(lambda: _frame(_status(placed)["looked_at"]) >= 100)
+    view = _until(lambda: _frame((r := _status(placed))["looked_at"]) >= 100 and r)["baseline_view"]
     answer = placed.call("POST", f"/runs/{SESSION}/end")
     looks = [index for index, _ in placed.registration.calls]
     assert _ends([answer]) == [ENDED]
     _, ended = answer
+    assert ended["baseline_view"] == view   # names the Run that ended
     assert _frame(ended["looked_at"]) == looks[-1]
     assert _frame(ended["registered"]["at"]) == max(i for i in looks if i < 100)
     assert _ring(ended["registered"]) == pytest.approx(

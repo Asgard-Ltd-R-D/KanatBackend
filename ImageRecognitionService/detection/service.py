@@ -131,14 +131,16 @@ class DetectionService:
         """End the Session's Run, answered once it has ended and its posts
         are drained. A watching Run first judges the Candidates it has open,
         opening none, for up to `ENDING_TIMEOUT_S` (#228); one still starting
-        stops at once. Answered with how far it watched, its last
-        `registered` and `looked_at`. No such Run is a 404."""
+        stops at once. Answered with its Baseline View, which names it, and
+        how far it watched, its last `registered` and `looked_at`. No such
+        Run is a 404."""
         with self._lock:
             run = self._run
             if run is None or run.session_id != session_id:
                 return 404, {"detail": "no such Run"}
         self._end(run)
-        return 200, {"session_id": session_id, "state": "ended", **run.watched()}
+        return 200, {"session_id": session_id, "state": "ended", "baseline_view": run.baseline_view,
+                     **run.watched()}
 
     def close(self):
         """End the Run, if any, as `end` does: how the service shuts down."""

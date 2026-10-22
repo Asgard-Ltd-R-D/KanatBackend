@@ -1,6 +1,8 @@
 import { RefObject, useEffect, useState } from 'react'
+import clsx from 'clsx'
 import { BaselineView, BulletHole, Place } from '../../types'
 import { Point, Size, baselineMarksToDraw, labelGroups, templateToElement } from '../../utils/overlay'
+import { Toggle } from '../UI/Toggle'
 
 const OUTLINE_COLOUR = '#22d3ee'
 const BASELINE_MARK_COLOUR = '#94a3b8'
@@ -120,5 +122,15 @@ export function Overlay({ view, place, bullets, videoRef }: OverlayContent & { v
         )
       })}
     </svg>
+  )
+}
+
+// The Overlay's on/off switch, over the video where `className` puts it
+export function OverlayToggle({ checked, onChange, className }: { checked: boolean; onChange: (on: boolean) => void; className: string }) {
+  return (
+    <div className={clsx('flex items-center gap-2 bg-black/60 rounded-full pl-2.5 pr-1 py-1', className)}>
+      <span className="text-[10px] font-medium text-white/80 uppercase tracking-wider">Overlay</span>
+      <Toggle checked={checked} onChange={onChange} label="Overlay" />
+    </div>
   )
 }

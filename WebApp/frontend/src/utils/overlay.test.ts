@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { baselineMarksToDraw, labelGroups, templateToElement, type Point } from './overlay.ts'
+import { baselineMarksToDraw, labelGroups, placeAt, templateToElement, type Point } from './overlay.ts'
 
 const IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 const FULL_HD = { width: 1920, height: 1080 }
@@ -68,4 +68,23 @@ test('markers whose numbers would overlap share one label, one further away keep
 
 test('a chain of close markers shares one label, though its ends are further apart', () => {
   assert.deepEqual(labelGroups([[0, 0], [100, 0], [15, 0], [30, 0]], 18), [[0, 2, 3], [1]])
+})
+
+// A Run that kept its baseline's place at 10:00:00 and moved at 10:00:20,
+// and whose latest Look the backend read was at 10:01:00
+const BASELINE = { at: '2026-10-22T10:00:00Z', template_to_picture: IDENTITY }
+const MOVED = { at: '2026-10-22T10:00:20Z', template_to_picture: [[1, 0, 5], [0, 1, 0], [0, 0, 1]] }
+const RUN = { places: [BASELINE, MOVED], watched_until: '2026-10-22T10:01:00Z' }
+const at = (iso: string) => Date.parse(iso)
+
+test('the place at a moment is the last kept at or before it', () => {
+  assert.equal(placeAt(RUN, at('2026-10-22T10:00:00Z')), BASELINE)
+  assert.equal(placeAt(RUN, at('2026-10-22T10:00:19.999Z')), BASELINE)
+  assert.equal(placeAt(RUN, at('2026-10-22T10:00:20Z')), MOVED)
+  assert.equal(placeAt(RUN, at('2026-10-22T10:01:00Z')), MOVED)
+})
+
+test('there is no place before the first kept, nor after watched_until', () => {
+  assert.equal(placeAt(RUN, at('2026-10-22T09:59:59.999Z')), null)
+  assert.equal(placeAt(RUN, at('2026-10-22T10:01:00.001Z')), null)
 })

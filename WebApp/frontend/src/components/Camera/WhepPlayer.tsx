@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { VideoOff, Loader2, RotateCcw } from 'lucide-react'
 import { useWhepStream } from '../../hooks/useWhepStream'
-import { Toggle } from '../UI/Toggle'
-import { Overlay, OverlayContent } from './Overlay'
+import { Overlay, OverlayContent, OverlayToggle } from './Overlay'
 
 interface WhepPlayerProps {
   path: string // MediaMTX path name, e.g. "camA"
@@ -65,12 +64,7 @@ export function WhepPlayer({ path, label, overlay }: WhepPlayerProps) {
         </div>
       )}
 
-      {overlay && (
-        <div className="absolute bottom-3 right-3 flex items-center gap-2 bg-black/60 rounded-full pl-2.5 pr-1 py-1">
-          <span className="text-[10px] font-medium text-white/80 uppercase tracking-wider">Overlay</span>
-          <Toggle checked={showOverlay} onChange={setShowOverlay} label="Overlay" />
-        </div>
-      )}
+      {overlay && <OverlayToggle checked={showOverlay} onChange={setShowOverlay} className="absolute bottom-3 right-3" />}
     </div>
   )
 }

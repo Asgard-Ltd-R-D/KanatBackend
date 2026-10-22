@@ -67,9 +67,10 @@ _Avoid_: pass, execution, session
 
 **Baseline View**:
 Where a Run's baseline frame showed the Board in the camera's picture: how the
-Target artwork lies on the picture, the outline of each Target, and the
-Baseline Marks. Fixed for the Run: after a Board Move it no longer matches the
-picture, until a fresh Run takes its own.
+Target artwork lay on the picture, the outline of each Target, and the
+Baseline Marks. The outlines and Baseline Marks are places on the Board and
+hold for the whole Run; where the Board sits in the picture does not, since the
+camera creeps and the Board sways or moves.
 _Avoid_: geometry, homography, calibration
 
 **Detection Service**:

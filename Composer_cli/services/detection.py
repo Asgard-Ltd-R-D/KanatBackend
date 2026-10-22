@@ -72,11 +72,12 @@ class DefaultDetectionService:
         return None
 
     def is_running(self) -> bool:
-        """Whether its control API answers /status."""
+        """Whether its control API answers /status with the Run it reports, so
+        another service on the port does not pass for it."""
         try:
             with urlopen(f"http://127.0.0.1:{PORT}/status", timeout=1) as response:
-                json.load(response)
-            return True
+                body = json.load(response)
+            return isinstance(body, dict) and "run" in body
         except (OSError, ValueError):
             return False
 

@@ -23,6 +23,12 @@ TITLE = "Detection Service"
 # Its command line as `pgrep -f` sees it. On macOS the .venv's python shows as
 # the framework's Python, so only the module names it.
 PATTERN = r"-m detection\.service"
+# Its Python processes on Windows, killed at once: Windows has no SIGTERM, and
+# a console of its own cannot be sent a Ctrl-C from here. The .venv's
+# python.exe is a launcher with a python.exe child, so both match.
+_WINDOWS_KILL = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and "
+                 "$_.CommandLine -like '*-m detection.service*' } | "
+                 "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
 # The interpreter's version, then which of its heaviest requirements it lacks.
 _PROBE = ("import importlib.util, sys; print('%d.%d' % sys.version_info[:2], "
           "*[m for m in ('cv2', 'ultralytics') if not importlib.util.find_spec(m)])")
@@ -36,13 +42,10 @@ class DefaultDetectionService:
     def __init__(self, service_dir: Path, shell: SubprocessShell | None = None) -> None:
         self.service_dir = service_dir
         self.sh = shell or SubprocessShell()
-        self.python = service_dir / ".venv" / "bin" / "python"
+        self.python = service_dir / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
     def problem(self) -> str | None:
         """Why it cannot run here, or None."""
-        if os.name == "nt":
-            # ponytail: POSIX only; Windows needs .venv\Scripts\python.exe and a PowerShell stop like dotnet.py's
-            return "composer does not run it on Windows"
         if not self.python.exists():
             return (f"no Python at {self.python}: build its .venv as "
                     "ImageRecognitionService/HANDOVER.md's \"Running it\" says")
@@ -57,7 +60,8 @@ class DefaultDetectionService:
         if version != declared:
             return f"{self.python} is Python {version}, but .python-version declares {declared}: rebuild the .venv"
         if missing:
-            return f"its .venv lacks {', '.join(missing)}: .venv/bin/pip install -r requirements.txt"
+            return (f"its .venv lacks {', '.join(missing)}: "
+                    f"{self.python.relative_to(self.service_dir)} -m pip install -r requirements.txt")
         return None
 
     def is_running(self) -> bool:
@@ -90,12 +94,16 @@ class DefaultDetectionService:
                 print_started(f"{TITLE} (127.0.0.1:{PORT})")
                 return 0
             time.sleep(0.5)
-        error(f"{TITLE} not answering on 127.0.0.1:{PORT} after {START_TIMEOUT_S} s: see its \"{TITLE}\" window")
+        error(f"{TITLE} not answering on 127.0.0.1:{PORT} after {START_TIMEOUT_S} s: see the window it runs in")
         return 1
 
     def stop_detection(self) -> None:
-        """SIGTERM, which ends any Run and drains its posts, then SIGKILL past STOP_TIMEOUT_S."""
-        if os.name != "nt":
+        """SIGTERM, which ends any Run and drains its posts, then SIGKILL past
+        STOP_TIMEOUT_S. On Windows, killed at once."""
+        if os.name == "nt":
+            # ponytail: no drain on Windows; a shutdown call on the control API would give it one
+            self.sh.run(["powershell", "-NoProfile", "-Command", _WINDOWS_KILL], check=False)
+        else:
             self._signal(signal.SIGTERM)
             deadline = time.monotonic() + STOP_TIMEOUT_S
             while self._pids() and time.monotonic() < deadline:

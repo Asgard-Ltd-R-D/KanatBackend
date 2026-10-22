@@ -114,6 +114,39 @@ Session reads `watching` or `ending`. A Run that is lost, rather than ended,
 loses its Overlay for up to its last 5 s, the time since the last read. One that
 stopped while the backend was down loses it from the backend's last read.
 
+## Bullet Holes from an earlier Run
+
+Each Run's template coordinates hang on the Target that was largest at its
+baseline (`board.build_view`), and that can change from one Run to the next.
+On CamA `_141546` the lower Target is the largest at frame 0, and the upper
+one after the camera's re-aim at 1–3 s, once the lower one is partly out of
+the picture (#240). As CONTEXT.md's Run says, places from two Runs do not
+compare directly, so an earlier Run's Bullet Holes cannot be drawn through a
+later Run's mapping as they stand.
+
+A Bullet Hole belongs to the Session's latest Run whose `taken_at` is at or
+before its `first_seen_at`. A later Run's baseline frame is newer than any
+frame of an earlier one, so that is the Run that reported it. A manual Bullet
+Hole follows the same rule, by the time the operator gave it. Over its own
+Run, a Bullet Hole goes through that Run's place. Over a later Run `c`, a
+Bullet Hole `p` of Run `r` goes onto the picture through `r`'s last kept place,
+back into `c`'s template coordinates through `c`'s baseline mapping, and out
+through `c`'s place at the moment:
+
+```text
+picture = H_c(t) · H_c(taken_at)⁻¹ · H_r(last) · p
+```
+
+Its error is how far the Board moved in the picture between the two Runs. That
+gap is normally seconds: under ~10 px of CamA's creep.
+
+A Baseline Mark within `MATCH_TPL_PX` (20 template px) of a Bullet Hole drawn
+over the same Run is not drawn, because the Bullet Hole stands for it. After a
+restart the new Run's Baseline Marks include the Session's earlier Bullet
+Holes, which would otherwise show twice, numbered and grey. The rule also
+hides the grey ring once the operator adds by hand a hole fired while no Run
+watched.
+
 ## Consequences
 
 - The Overlay follows a Board Move as far as Registration does, within one

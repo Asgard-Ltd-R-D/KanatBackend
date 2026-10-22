@@ -215,7 +215,7 @@ export function SessionDetail() {
             <div className="lg:col-span-2 flex flex-col min-h-0">
               <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 shrink-0">Camera Feed</p>
               <div className="flex-1 min-h-[300px]">
-                <CameraFeeds run={runWatches ? run : undefined} bullets={bullets} />
+                <CameraFeeds run={runWatches ? run : undefined} runs={session.runs ?? []} bullets={bullets} />
               </div>
             </div>
 

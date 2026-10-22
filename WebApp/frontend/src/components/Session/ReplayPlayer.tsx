@@ -8,20 +8,21 @@ import { RecordingPartPicker } from './RecordingPartPicker'
 interface Props {
   sessionId: string
   recording: CameraRecording
-  runs: Run[] // the Session's Runs that watched this camera
+  runs: Run[] // the Session's, in taken_at order
   bullets: BulletHole[]
   startPart?: number
   startOffsetS?: number // where in startPart to begin
   onPosition?: (iso: string) => void // the moment on screen, as it plays
 }
 
-// The Overlay at the moment `at` (ms) (ADR-0009): the Run watching then, at
-// its place then, with the Bullet Holes first seen by then. None while no Run
-// watched
-function overlayAt(runs: Run[], bullets: BulletHole[], at: number): OverlayContent | null {
-  for (const run of runs) {
+// The Overlay at the moment `at` (ms) (ADR-0009): the Run of this camera
+// watching then, at its place then, with the Bullet Holes first seen by then.
+// None while no Run watched
+function overlayAt(alias: string, runs: Run[], bullets: BulletHole[], at: number): OverlayContent | null {
+  // By the alias each Run kept, so the Runs of a camera since deleted still draw
+  for (const run of runs.filter(r => r.camera_alias === alias)) {
     const place = placeAt(run, at)
-    if (place) return { view: run.baseline_view, place, bullets: bullets.filter(b => Date.parse(b.first_seen_at) <= at) }
+    if (place) return { run, place, bullets: bullets.filter(b => Date.parse(b.first_seen_at) <= at), runs }
   }
   return null
 }
@@ -35,7 +36,7 @@ export function ReplayPlayer({ sessionId, recording, runs, bullets, startPart = 
   const [at, setAt] = useState<number | null>(null)
   // On whenever the player opens: never remembered
   const [showOverlay, setShowOverlay] = useState(true)
-  const overlay = at === null ? null : overlayAt(runs, bullets, at)
+  const overlay = at === null ? null : overlayAt(recording.alias, runs, bullets, at)
   // Where to seek once the opening part has loaded; used once
   const seekTo = useRef<number | null>(startOffsetS > 0 ? startOffsetS : null)
 
@@ -79,7 +80,7 @@ export function ReplayPlayer({ sessionId, recording, runs, bullets, startPart = 
         />
         {overlay && showOverlay && <Overlay {...overlay} videoRef={videoRef} />}
         {/* Top right: the bottom is the video's own controls */}
-        {runs.length > 0 && <OverlayToggle checked={showOverlay} onChange={setShowOverlay} className="absolute top-3 right-3" />}
+        {runs.some(r => r.camera_alias === recording.alias) && <OverlayToggle checked={showOverlay} onChange={setShowOverlay} className="absolute top-3 right-3" />}
       </div>
     </div>
   )

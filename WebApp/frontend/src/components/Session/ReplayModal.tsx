@@ -70,8 +70,7 @@ export function ReplayModal({ sessionId, recordings, runs, bullets, target, onCh
           key={`${recording.alias}-${target?.part ?? 0}-${target?.offsetS ?? 0}`}
           sessionId={sessionId}
           recording={recording}
-          // By the alias each Run kept, so the Runs of a camera since deleted still draw
-          runs={runs.filter(r => r.camera_alias === recording.alias)}
+          runs={runs}
           bullets={bullets}
           startPart={target?.part ?? 0}
           startOffsetS={target?.offsetS ?? 0}

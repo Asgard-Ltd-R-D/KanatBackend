@@ -1,9 +1,12 @@
 """A completed Session's Groups (SOW 2.1.3, #247) in GET /sessions/{id}, with
 the database replaced. The points are those of the Detection Service's own
 tests/test_groups.py, so the two ports of the arithmetic cannot drift apart."""
+import io
 import math
 import uuid
 from types import SimpleNamespace
+
+import openpyxl
 
 import pytest
 from alembic import command
@@ -14,6 +17,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.core.deps import get_db
 from app.main import app
 from app.repositories import sessions as sessions_repo
+from app.services import export
 from tests.fakes import NOW
 from tests.test_schema import URL, alembic_config, db_url  # noqa: F401 (db_url is a fixture)
 
@@ -110,6 +114,58 @@ def test_a_session_without_a_bullet_hole_on_a_target_has_no_group(client):
     assert grouping(client, []) == {"groups": [], "misses": 0, "without_position": 0}
 
 
+def groups_sheet(client):
+    res = client.get(f"/sessions/{SESSION_ID}/export/excel")
+    assert res.status_code == 200
+    return list(openpyxl.load_workbook(io.BytesIO(res.content))["Groups"].iter_rows(values_only=True))
+
+
+def test_the_excel_groups_sheet_holds_the_detail_numbers(client):
+    got = grouping(client, RECTANGLE + [on(1, 2, -3), MISS, MANUAL])
+
+    rows = groups_sheet(client)
+    assert rows[1:3] == [
+        (f"Target {g['target_index'] + 1}", g["n"], g["mpi_x_mm"], g["mpi_y_mm"], g["cep_mm"],
+         g["mean_radius_mm"], g["rms_radius_mm"], g["extreme_spread_mm"])
+        for g in got["groups"]
+    ]
+    assert rows[-2:] == [("Misses", got["misses"]) + (None,) * 6,
+                         ("Without a Position", got["without_position"]) + (None,) * 6]
+
+
+def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
+    rendered = []
+    real = export.weasyprint.HTML
+
+    def html(string, base_url):
+        rendered.append(string)
+        return real(string=string, base_url=base_url)
+
+    monkeypatch.setattr(export.weasyprint, "HTML", html)
+    client.holes = RECTANGLE + [MISS]
+
+    res = client.get(f"/sessions/{SESSION_ID}/export/pdf")
+
+    assert res.status_code == 200 and res.content.startswith(b"%PDF")
+    [page] = rendered
+    assert "<h2>Groups</h2>" in page
+    # MPI, CEP, Mean Radius, RMS radius (sqrt 20) and Extreme Spread, to 0.1 mm
+    for cell in ("Target 1", "10.0", "-5.0", "5.0", "4.0", "4.5"):
+        assert f"<td>{cell}</td>" in page
+    assert "Misses: 1" in page
+
+
+def test_without_a_group_the_pdf_still_gives_the_two_counts(client, monkeypatch):
+    rendered = []
+    monkeypatch.setattr(export.weasyprint, "HTML",
+                        lambda string, base_url: rendered.append(string) or SimpleNamespace(write_pdf=lambda: b"%PDF"))
+    client.holes = [MISS, MANUAL, MANUAL]
+
+    assert client.get(f"/sessions/{SESSION_ID}/export/pdf").status_code == 200
+    assert "<td>Target" not in rendered[0]
+    assert "Misses: 1" in rendered[0] and "Without a Position: 2" in rendered[0]
+
+
 @pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")
 def test_a_deleted_bullet_hole_leaves_its_group(db_url):
     """On a real PostgreSQL: only the query keeps a deleted Bullet Hole out."""
@@ -137,10 +193,11 @@ def test_a_deleted_bullet_hole_leaves_its_group(db_url):
         with TestClient(app) as c:
             assert c.delete(f"/sessions/{SESSION_ID}/bullets/{ids[2]}").status_code == 204
             [g] = c.get(f"/sessions/{SESSION_ID}").json()["grouping"]["groups"]
+            excel_n = groups_sheet(c)[1][1]
     finally:
         app.dependency_overrides.clear()
         engine.dispose()
 
-    assert g["n"] == 2
+    assert g["n"] == excel_n == 2
     assert (g["mpi_x_mm"], g["mpi_y_mm"]) == pytest.approx((3.0, 4.0))
     assert g["extreme_spread_mm"] == pytest.approx(10.0)

@@ -44,6 +44,11 @@ def list_with_bullet_counts(db: DBSession) -> list[tuple[Session, int]]:
     )
 
 
+def list_active(db: DBSession) -> list[Session]:
+    """The active Sessions, the earliest started first."""
+    return db.query(Session).filter(Session.status == "active").order_by(Session.started_at).all()
+
+
 def recording_session_active(db: DBSession) -> bool:
     """Whether an active Session is recording now (has an open interval)."""
     return (

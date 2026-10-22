@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     # The Detection Service's control API on this PC (ADR-0008), its --port
     detection_service_url: str = "http://127.0.0.1:8010"
     # How often the cameras are re-applied to MediaMTX, which forgets them when
-    # it restarts; 0 turns the sync loop off (tests)
+    # it restarts, and the Detection Service's Run reconciled with the Session
+    # to watch; 0 turns both loops off (tests)
     camera_sync_interval_s: float = 5
     # Where replayed recordings are kept as files, so the player can seek in
     # them; empty means VideoService/replay-cache beside the recordings

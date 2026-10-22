@@ -40,23 +40,52 @@ class FakeMediaMTX:
 
 
 class FakeDetectionService:
-    """The Detection Service's control API (services/detection_service.py):
-    every call made to it, and a start answered with `start_error` raised, or
-    else as watching. `on_start` and `on_end` see each call as it happens."""
+    """The Detection Service's control API (services/detection_service.py),
+    holding one Run at a time as the service does: `run`, or None. Every start
+    and end made is in `calls`. A start is answered with `start_error` raised,
+    a 409 while another Session's Run is active or this one's ending, or else
+    as watching; `down` makes every call go unanswered. `on_status`, `on_start`
+    and `on_end` see each call as it happens, a Run being ended reading
+    `ending`."""
 
     def __init__(self, monkeypatch):
         self.calls = []
+        self.run = None
         self.start_error = None
+        self.down = False
+        self.on_status = lambda: None
         self.on_start = self.on_end = lambda session_id: None
         monkeypatch.setattr(detection_service, "start_run", self._start)
         monkeypatch.setattr(detection_service, "end_run", self._end)
+        monkeypatch.setattr(detection_service, "status", self._status)
+
+    def _answer(self):
+        if self.down:
+            raise detection_service.DetectionServiceUnreachable("connection refused")
+
+    def _status(self):
+        self.on_status()
+        self._answer()
+        return self.run
 
     def _start(self, session_id, stream_url):
         self.calls.append(("start", session_id, stream_url))
         self.on_start(session_id)
+        self._answer()
         if self.start_error:
             raise self.start_error
+        if self.run and self.run.session_id != session_id:
+            raise detection_service.RunRefused(409, "another Session's Run is active")
+        if self.run and self.run.state == "ending":
+            raise detection_service.RunRefused(409, "the Session's Run is ending")
+        self.run = detection_service.Run(session_id, "watching")
 
     def _end(self, session_id):
         self.calls.append(("end", session_id))
+        ending = not self.down and self.run and self.run.session_id == session_id
+        if ending:
+            self.run = detection_service.Run(session_id, "ending")
         self.on_end(session_id)
+        self._answer()
+        if ending:
+            self.run = None

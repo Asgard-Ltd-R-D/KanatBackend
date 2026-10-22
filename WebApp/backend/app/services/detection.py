@@ -103,6 +103,7 @@ def starting(session_id: uuid.UUID) -> None:
 
 
 def _to_picture(H: tuple, point: tuple[float, float]) -> tuple[float, float]:
+    """A template point through a template_to_picture homography, in picture px."""
     x, y = point
     w = H[2][0] * x + H[2][1] * y + H[2][2]
     return (H[0][0] * x + H[0][1] * y + H[0][2]) / w, (H[1][0] * x + H[1][1] * y + H[1][2]) / w

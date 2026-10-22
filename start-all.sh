@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Starts the whole WebApp stack on this Mac in one terminal: Postgres (Docker),
 # MediaMTX, the Detection Service, the backend, and the frontend (Vite + Electron).
-# Each service's output is prefixed with its name. Ctrl-C stops them all (a
-# second Ctrl-C kills what is still shutting down); Postgres stays up
-# (docker compose -f WebApp/docker-compose.yml stop).
+# Each service's output is prefixed with its name. Ctrl-C, or any one service
+# exiting, stops them all (a second Ctrl-C kills what is still shutting down);
+# Postgres stays up (docker compose -f WebApp/docker-compose.yml stop).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 export PATH="$HOME/.docker/bin:$PATH"
@@ -12,11 +12,12 @@ export PATH="$HOME/.docker/bin:$PATH"
 # Detection Service only handles SIGTERM), so stop them with one SIGTERM and wait:
 # the Detection Service ends its Run and posts the Bullet Holes it still holds.
 stop_all() {
-  trap - EXIT; trap '' TERM; trap 'pkill -KILL -P $$' INT
+  trap '' TERM; trap 'pkill -KILL -P $$' INT
   pkill -TERM -P $$ || true
   wait
 }
-trap stop_all INT TERM EXIT
+trap stop_all EXIT
+trap 'exit 130' INT TERM
 
 if ! docker info >/dev/null 2>&1; then
   echo "[start-all] starting Docker Desktop..."
@@ -33,9 +34,11 @@ docker compose -f "$ROOT/WebApp/docker-compose.yml" up -d --wait
 # run <name> <dir> <command...>: in the background, output prefixed with [name].
 # sed ignores the SIGTERM and ends with its service's output, so a service
 # logging its shutdown never writes into a closed pipe.
+names=() pids=()
 run() {
   local name=$1 dir=$2; shift 2
   (cd "$dir" && exec "$@") 2>&1 | (trap '' TERM; exec sed -l "s/^/[$name] /") &
+  names+=("$name") pids+=($!)
 }
 
 run mediamtx  "$ROOT/VideoService"            ./mediamtx mediamtx.yml
@@ -45,4 +48,13 @@ DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib \
   run backend "$ROOT/WebApp/backend" uv run uvicorn app.main:app --reload --timeout-graceful-shutdown 2
 run frontend  "$ROOT/WebApp/frontend"         npm run dev
 
-wait
+# The first service to exit stops the rest. macOS bash 3.2 has no wait -n, and
+# kill -0 with several pids succeeds while any one lives, so check each.
+while sleep 1; do
+  for i in "${!pids[@]}"; do
+    if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+      echo "[start-all] ${names[$i]} exited, stopping the rest" >&2
+      exit 1
+    fi
+  done
+done

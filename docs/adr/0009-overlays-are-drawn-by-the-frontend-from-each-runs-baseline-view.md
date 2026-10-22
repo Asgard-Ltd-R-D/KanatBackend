@@ -131,7 +131,9 @@ later Run's mapping as they stand.
 A Bullet Hole belongs to the Session's latest Run whose `taken_at` is at or
 before its `first_seen_at`. A later Run's baseline frame is newer than any
 frame of an earlier one, so that is the Run that reported it. A manual Bullet
-Hole follows the same rule, by the time the operator gave it. Over its own
+Hole follows the same rule, by the time the operator gave it, and one from
+before the Session's first Run belongs to that first Run: it was fired before
+that Run's baseline, which saw it as a Baseline Mark. Over its own
 Run, a Bullet Hole goes through that Run's place. Over a later Run `c`, a
 Bullet Hole `p` of Run `r` goes onto the picture through `r`'s last kept place,
 back into `c`'s template coordinates through `c`'s baseline mapping, and out

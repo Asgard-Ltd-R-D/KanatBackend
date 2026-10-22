@@ -131,12 +131,14 @@ class DetectionService:
             was, loop = run.state, run.loop
             if was != "ending":   # a repeat end waits on the first, its time kept
                 run.enter("ending")
-        if was == "watching":
-            loop.finish()
-            if not run.ended.wait(ENDING_TIMEOUT_S):
-                loop.stop()   # harmless once it has finished and is draining
-        elif was == "starting" and loop:   # no baseline, so no Candidate yet
-            loop.stop()
+            # Flags only, so set under the lock: a Run that reads `ending` is
+            # already finishing, or stopped
+            if was == "watching":
+                loop.finish()
+            elif was == "starting" and loop:   # no baseline, so no Candidate yet
+                loop.stop()
+        if was == "watching" and not run.ended.wait(ENDING_TIMEOUT_S):
+            loop.stop()   # harmless once it has finished and is draining
         run.ended.wait()
 
     def _work(self, run, stream_url):

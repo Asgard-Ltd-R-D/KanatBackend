@@ -13,6 +13,7 @@ from app.core.database import Base
 if TYPE_CHECKING:
     from app.models.bullet_hole import BulletHole
     from app.models.recording_interval import RecordingInterval
+    from app.models.run import Run
 
 
 class Session(Base):
@@ -59,4 +60,11 @@ class Session(Base):
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="RecordingInterval.started_at",
+    )
+
+    runs: Mapped[list["Run"]] = relationship(  # type: ignore[name-defined]
+        "Run",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="Run.taken_at",
     )

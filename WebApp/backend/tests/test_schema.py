@@ -19,6 +19,7 @@ URL = os.environ.get("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")
 
 BEFORE_CAMERA_ID = "e5f6a7b8c9d0"
+BEFORE_RUNS = "f6a7b8c9d0e1"
 
 
 @pytest.fixture
@@ -45,23 +46,30 @@ def alembic_config():
     return config
 
 
-def session_columns(url):
+def schema(url):
+    """The sessions table's columns, and whether the runs table exists."""
     engine = create_engine(url)
     try:
-        return {c["name"] for c in inspect(engine).get_columns("sessions")}
+        inspector = inspect(engine)
+        return {c["name"] for c in inspector.get_columns("sessions")}, inspector.has_table("runs")
     finally:
         engine.dispose()
 
 
-def test_the_migration_applies_and_reverses_cleanly(db_url):
+def test_the_migrations_apply_and_reverse_cleanly(db_url):
     config = alembic_config()
 
     command.upgrade(config, "head")
-    assert "camera_id" in session_columns(db_url)
+    columns, runs = schema(db_url)
+    assert "camera_id" in columns and runs
+    command.downgrade(config, BEFORE_RUNS)
+    columns, runs = schema(db_url)
+    assert "camera_id" in columns and not runs
     command.downgrade(config, BEFORE_CAMERA_ID)
-    assert "camera_id" not in session_columns(db_url)
+    assert "camera_id" not in schema(db_url)[0]
     command.upgrade(config, "head")
-    assert "camera_id" in session_columns(db_url)
+    columns, runs = schema(db_url)
+    assert "camera_id" in columns and runs
 
 
 def test_deleting_a_camera_clears_it_on_its_sessions(db_url):

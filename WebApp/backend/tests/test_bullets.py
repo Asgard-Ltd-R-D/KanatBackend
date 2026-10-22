@@ -58,6 +58,28 @@ def body(x, y, **fields):
     return {"version": "v1", "first_seen_at": NOW.isoformat(), "position": {"x": x, "y": y}, **fields}
 
 
+@pytest.mark.parametrize("x, y", [
+    (774.8, 560.3),     # on the artwork
+    (1500.4, -3.6),     # a Miss beyond it
+    (-2210.0, 3405.5),  # on another Target
+])
+def test_a_position_is_stored_as_sent(client, session, stored, x, y):
+    res = client.post(f"/sessions/{session.id}/bullets", json=body(x, y))
+
+    assert res.status_code == 201
+    assert (res.json()["position_x"], res.json()["position_y"]) == (x, y)
+    assert [(b.position_x, b.position_y) for b in stored] == [(x, y)]
+
+
+def test_a_manual_position_off_the_artwork_is_stored_as_sent(client, session, stored):
+    session.status = "completed"
+
+    res = client.post(f"/sessions/{session.id}/bullets", json=body(1406.0, 1121.0, source="manual"))
+
+    assert res.status_code == 201
+    assert [(b.position_x, b.position_y, b.source) for b in stored] == [(1406.0, 1121.0, "manual")]
+
+
 @pytest.mark.parametrize("payload", [
     *(body(value, 0) for value in (math.nan, math.inf, -math.inf, "", "abc", None)),
     body(0, -math.inf),

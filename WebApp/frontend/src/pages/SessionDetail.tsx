@@ -262,7 +262,8 @@ export function SessionDetail() {
         open={showEndConfirm}
         title="End Session"
         message={`End "${session.name}"?`}
-        loadingLabel="Ending…"
+        // Until the Run has judged its last Candidates and posted them, ~2 s
+        loadingLabel="Closing…"
         confirmLabel="End Session"
         onConfirm={() => endMutation.mutate()}
         onCancel={() => {

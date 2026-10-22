@@ -67,15 +67,18 @@ Camera
             ▼
        WebApp/backend  (FastAPI)
             │
-            ├─► PostgreSQL — sessions, bullet_holes, cameras tables
+            ├─► PostgreSQL — sessions, bullet_holes, cameras, recording_intervals, runs tables
             │
             ├─► Detection Service control API (127.0.0.1:8010) — start a Session's Run, end it,
-            │   and read its status every 5 s to reconcile the Run with the Session to watch
+            │   and read its status every 5 s to reconcile the Run with the Session to watch.
+            │   The run view carries the Run's Baseline View once it is watching (ADR-0009); the
+            │   backend stores each Run the first time it sees it watching, before it pushes
+            │   `watching`, as a `runs` row with the camera's alias
             │
             ├─► mediamtx Control API (127.0.0.1:9997) — camera paths, recording on/off
             │   mediamtx playback (127.0.0.1:9996) — recorded video for replay
             │
-            ├─► GET /sessions, GET /sessions/{id}, GET /sessions/{id}/export/pdf
+            ├─► GET /sessions, GET /sessions/{id} (with its Runs, for the Overlay), GET /sessions/{id}/export/pdf
             │
             ├─► GET /sessions/{id}/live (Server-Sent Events) — pushes each change to the frontend
             │

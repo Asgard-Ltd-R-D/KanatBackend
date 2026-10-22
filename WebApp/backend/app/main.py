@@ -6,15 +6,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config.settings import settings
 from app.core.router import include_routers
-from app.services import camera_sync
+from app.services import camera_sync, detection
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Keeps MediaMTX's camera paths in step with the database while the app runs
-    task = asyncio.create_task(camera_sync.run_forever()) if settings.camera_sync_interval_s > 0 else None
+    # Keeps MediaMTX's camera paths in step with the database while the app
+    # runs, and the Detection Service's Run on the Session to watch
+    loops = [camera_sync.run_forever(), detection.run_forever()] if settings.camera_sync_interval_s > 0 else []
+    tasks = [asyncio.create_task(loop) for loop in loops]
     yield
-    if task:
+    for task in tasks:
         task.cancel()
 
 

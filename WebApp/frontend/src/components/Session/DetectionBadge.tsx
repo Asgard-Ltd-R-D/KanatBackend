@@ -28,6 +28,7 @@ const REASONS: Record<NonNullable<Detection['reason']>, string> = {
   service_down: 'Detection Service down',
   stream_failed: 'the camera stream failed',
   other_session: 'another session is being watched',
+  camera_disabled: 'the camera is disabled or deleted',
 }
 
 // Whether detection watches the session: shots count once it reads "Detection ready"

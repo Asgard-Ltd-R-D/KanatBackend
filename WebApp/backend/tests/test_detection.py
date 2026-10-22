@@ -4,8 +4,10 @@ Detection Service faked at its client module; and that client's reading of
 the service's answers."""
 import json
 import uuid
+from contextlib import contextmanager
 from types import SimpleNamespace
 
+import anyio
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +18,7 @@ from app.main import app
 from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as sessions_repo
 from app.services import camera_sync, detection_service
+from app.services import detection as detection_svc
 from app.services import recordings as recording_svc
 from tests.fakes import NOW, FakeDetectionService, make_camera
 
@@ -42,7 +45,10 @@ def db(monkeypatch):
     for name in ("get", "get_for_update", "get_with_bullets"):
         monkeypatch.setattr(sessions_repo, name, by_id)
     monkeypatch.setattr(sessions_repo, "save", lambda db: None)
+    # Sessions are added in the order they start
+    monkeypatch.setattr(sessions_repo, "list_active", lambda db: [s for s in state.sessions.values() if s.status == "active"])
     monkeypatch.setattr(cameras_repo, "get", lambda db, camera_id: state.cameras.get(camera_id))
+    monkeypatch.setattr(cameras_repo, "list_all", lambda db: list(state.cameras.values()))
     # Nothing to tell MediaMTX: the database is fake
     monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
     return state
@@ -83,6 +89,37 @@ def events(queue):
     while not queue.empty():
         out.append(json.loads(queue.get_nowait()))
     return out
+
+
+@contextmanager
+def listening(session_id):
+    """The Session's live stream, for as long as the block runs."""
+    queue = hub.subscribe(session_id)
+    try:
+        yield queue
+    finally:
+        hub.unsubscribe(session_id, queue)
+
+
+def start_session(client, camera):
+    return uuid.UUID(client.post("/sessions", json={"name": "Range 1", "camera_id": str(camera.id)}).json()["id"])
+
+
+def detection_of(client, session_id):
+    return client.get(f"/sessions/{session_id}").json()["detection"]
+
+
+def tick(client):
+    """One round of the loop that reconciles the Detection Service's Run, on a
+    worker thread of the app's event loop as the loop runs it."""
+    client.portal.call(anyio.to_thread.run_sync, detection_svc.reconcile, FakeDB())
+
+
+def not_watching(reason):
+    return {"state": "not_watching", "reason": reason, "detail": None}
+
+
+WATCHING = {"state": "watching", "reason": None, "detail": None}
 
 
 # --- starting ---
@@ -235,6 +272,188 @@ def test_a_start_answered_after_the_session_ended_changes_nothing(client, db, de
     assert client.get(f"/sessions/{session_id}").json()["detection"]["state"] == "none"
 
 
+# --- reconciling every few seconds ---
+
+def test_a_detection_service_back_up_with_no_run_gets_it_from_the_next_tick(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    with listening(session_id) as stream:
+        detection.down, detection.run = True, None   # the Detection Service restarts
+        tick(client)
+        while_down = detection_of(client, session_id)
+        detection.down = False
+        tick(client)
+        seen = [e["detection"] for e in events(stream)]
+
+    assert while_down == not_watching("service_down")
+    assert detection.calls[-1] == ("start", session_id, "rtsp://127.0.0.1:8554/lane1")
+    assert seen == [not_watching("service_down"), WATCHING]
+
+
+def test_a_run_lost_while_the_service_is_up_reads_not_watching_until_it_is_back(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    with listening(session_id) as stream:
+        detection.run = None   # its Stream failed, or the service restarted between two ticks
+        tick(client)
+        seen = [e["detection"] for e in events(stream)]
+
+    assert detection.calls[-1] == ("start", session_id, "rtsp://127.0.0.1:8554/lane1")
+    assert seen == [not_watching(None), WATCHING]
+
+
+def test_the_run_of_a_session_completed_while_the_service_was_down_is_ended(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    detection.down = True
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+    detection.down = False
+
+    tick(client)
+
+    assert detection.calls[-1] == ("end", session_id)
+    assert detection.run is None
+    assert detection_of(client, session_id)["state"] == "none"
+
+
+def test_the_run_of_a_deleted_session_is_ended(client, db, detection):
+    deleted = uuid.uuid4()
+    detection.run = detection_service.Run(deleted, "watching")
+
+    tick(client)
+
+    assert detection.calls == [("end", deleted)]
+
+
+@pytest.mark.parametrize("change", ["disabled", "deleted"])
+def test_a_camera_disabled_or_deleted_mid_session_ends_its_run(client, db, detection, change):
+    camera = add_camera(db)
+    session_id = start_session(client, camera)
+    if change == "disabled":
+        camera.enabled = False
+    else:
+        del db.cameras[camera.id]
+        db.sessions[session_id].camera_id = None   # ON DELETE SET NULL
+
+    tick(client)
+    calls = list(detection.calls)
+    tick(client)
+
+    assert calls[-1] == ("end", session_id)
+    assert detection.calls == calls   # and is not started again
+    session = client.get(f"/sessions/{session_id}").json()
+    assert (session["status"], session["detection"]) == ("active", not_watching("camera_disabled"))
+
+
+def test_a_second_session_gets_the_run_once_the_watched_one_completes(client, db, detection):
+    first = start_session(client, add_camera(db))
+    second = start_session(client, add_camera(db, "lane2"))
+    tick(client)
+    waiting = detection_of(client, second)
+
+    client.patch(f"/sessions/{first}", json={"status": "completed"})
+    tick(client)
+
+    assert (waiting["state"], waiting["reason"]) == ("not_watching", "other_session")
+    assert detection.calls[-1] == ("start", second, "rtsp://127.0.0.1:8554/lane2")
+    assert detection_of(client, second) == WATCHING
+
+
+def test_the_session_holding_the_run_keeps_it_over_an_earlier_one(client, db, detection):
+    detection.start_error = detection_service.RunRefused(502, "no Target on the baseline frame")
+    earlier = start_session(client, add_camera(db))
+    detection.start_error = None
+    holder = start_session(client, add_camera(db, "lane2"))
+    calls = list(detection.calls)
+
+    tick(client)
+
+    assert detection.calls == calls
+    assert detection.run == (holder, "watching")
+    assert (detection_of(client, earlier)["state"], detection_of(client, earlier)["reason"]) == ("not_watching", "other_session")
+
+
+def test_a_reopened_session_gets_a_new_run(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+    client.patch(f"/sessions/{session_id}", json={"status": "active"})
+
+    tick(client)
+
+    assert detection.calls[-1] == ("start", session_id, "rtsp://127.0.0.1:8554/lane1")
+    assert detection_of(client, session_id) == WATCHING
+
+
+def test_after_a_backend_restart_a_watched_session_reads_watching_by_the_next_tick(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    detection_svc._states.clear()   # the backend restarted; its Run did not
+    calls = list(detection.calls)
+
+    tick(client)
+
+    assert detection_of(client, session_id) == WATCHING
+    assert detection.calls == calls
+
+
+def test_a_session_started_during_a_tick_keeps_its_run(client, db, detection):
+    # Its Run is in the Detection Service's status, so its Session is read
+    camera, started = add_camera(db), []
+
+    def start_one():
+        if not started:
+            started.append(start_session(client, camera))
+
+    detection.on_status = start_one
+
+    tick(client)
+
+    assert detection.run == (started[0], "watching")
+    assert [call[0] for call in detection.calls] == ["start"]
+
+
+def test_a_second_start_for_a_watched_session_leaves_its_run(client, db, detection):
+    # The create's own start and a tick's can both ask for the Run, and the
+    # Detection Service answers both with the one Run
+    session_id = start_session(client, add_camera(db))
+
+    client.portal.call(anyio.to_thread.run_sync, detection_svc.watch, session_id, "lane1")
+
+    assert detection.run == (session_id, "watching")
+    assert detection_of(client, session_id) == WATCHING
+
+
+def test_a_tick_while_a_session_ends_leaves_it_to_its_end(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    detection.on_end = lambda sid: detection_svc.reconcile(FakeDB())
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert [call[0] for call in detection.calls] == ["start", "end"]
+    assert detection_of(client, session_id)["state"] == "none"
+
+
+def test_a_session_no_longer_active_reads_none_by_the_next_tick(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+    # As a start that raced its end leaves it
+    detection_svc._states[session_id] = detection_svc.RUN_LOST
+
+    tick(client)
+
+    assert detection_of(client, session_id)["state"] == "none"
+
+
+def test_a_tick_with_nothing_to_change_makes_no_call_and_pushes_nothing(client, db, detection):
+    first = start_session(client, add_camera(db))
+    second = start_session(client, add_camera(db, "lane2"))   # waiting for the first
+    tick(client)
+    calls = list(detection.calls)
+
+    with listening(first) as a, listening(second) as b:
+        tick(client)
+        pushed = events(a) + events(b)
+
+    assert detection.calls == calls
+    assert pushed == []
+
+
 # --- the client ---
 
 def test_the_client_reads_the_detection_services_answers(monkeypatch):
@@ -246,6 +465,15 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
 
     monkeypatch.setattr(detection_service.httpx, "request", request)
     session_id = uuid.uuid4()
+
+    answers["/status"] = (200, {"run": None})
+    assert detection_service.status() is None
+    answers["/status"] = (200, {"run": {"session_id": str(session_id), "state": "watching",
+                                        "since": "2026-10-22T09:00:00+00:00", "baseline_marks": 3}})
+    assert detection_service.status() == (session_id, "watching")
+    answers["/status"] = (404, {"detail": "not found"})   # something else on its port
+    with pytest.raises(detection_service.DetectionServiceUnreachable):
+        detection_service.status()
 
     answers["/runs"] = (409, {"detail": "another Session's Run is active"})
     with pytest.raises(detection_service.RunRefused) as refused:

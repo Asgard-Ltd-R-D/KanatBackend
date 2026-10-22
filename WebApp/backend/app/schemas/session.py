@@ -13,8 +13,10 @@ class Detection(BaseModel):
 
     state: Literal["none", "starting", "watching", "not_watching", "ending"]
     # Why not watching: the Detection Service did not answer, its Run failed
-    # to start on the Stream, or another Session's Run holds the service
-    reason: Optional[Literal["service_down", "stream_failed", "other_session"]] = None
+    # to start on the Stream, another Session's Run holds the service, or the
+    # Session's camera was disabled or deleted. None for a Run lost while the
+    # service answers, until its new start does
+    reason: Optional[Literal["service_down", "stream_failed", "other_session", "camera_disabled"]] = None
     # The Detection Service's own words, when it refused the start
     detail: Optional[str] = None
 

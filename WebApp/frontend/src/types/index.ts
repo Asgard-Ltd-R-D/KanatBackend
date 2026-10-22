@@ -17,8 +17,10 @@ export interface Session {
 export interface Detection {
   state: 'none' | 'starting' | 'watching' | 'not_watching' | 'ending'
   // Why not watching: the Detection Service did not answer, the Run failed to
-  // start on the camera's stream, or another session's Run holds the service
-  reason: 'service_down' | 'stream_failed' | 'other_session' | null
+  // start on the camera's stream, another session's Run holds the service, or
+  // the session's camera was disabled or deleted. null for a Run lost while
+  // the service answers, until it is started again
+  reason: 'service_down' | 'stream_failed' | 'other_session' | 'camera_disabled' | null
   detail: string | null // the Detection Service's own words for a refused start
 }
 

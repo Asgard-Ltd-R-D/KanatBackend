@@ -2,6 +2,7 @@
 ADR-0008): its control API, which starts and ends a Session's Run."""
 import time
 import uuid
+from typing import NamedTuple
 
 import httpx
 
@@ -29,6 +30,12 @@ _last_answer: float | None = None
 
 class DetectionServiceUnreachable(Exception):
     """The Detection Service did not answer, or answered an end with an error."""
+
+
+class Run(NamedTuple):
+    """The Detection Service's Run, as its status reports it."""
+    session_id: uuid.UUID
+    state: str   # starting, watching or ending
 
 
 class RunRefused(Exception):
@@ -61,6 +68,17 @@ def is_reachable() -> bool:
     except DetectionServiceUnreachable:
         return False
     return True
+
+
+def status() -> Run | None:
+    """The Detection Service's Run, or None without one. Raises
+    DetectionServiceUnreachable, also for an answer that is not its status."""
+    res = _request("GET", "/status", STATUS_TIMEOUT_S)
+    try:
+        run = res.raise_for_status().json()["run"]
+        return None if run is None else Run(uuid.UUID(run["session_id"]), run["state"])
+    except (httpx.HTTPStatusError, ValueError, KeyError, TypeError) as e:
+        raise DetectionServiceUnreachable(f"GET /status: HTTP {res.status_code} {res.text[:200]}") from e
 
 
 def start_run(session_id: uuid.UUID, stream_url: str) -> None:

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { baselineMarksToDraw, templateToElement, type Point } from './overlay.ts'
+import { baselineMarksToDraw, labelGroups, templateToElement, type Point } from './overlay.ts'
 
 const IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 const FULL_HD = { width: 1920, height: 1080 }
@@ -60,4 +60,12 @@ test('a Baseline Mark within 20 template px of a drawn Bullet Hole is dropped, o
 
 test('with no Bullet Hole drawn every Baseline Mark is', () => {
   assert.deepEqual(baselineMarksToDraw([[1, 2]], []), [[1, 2]])
+})
+
+test('markers whose numbers would overlap share one label, one further away keeps its own', () => {
+  assert.deepEqual(labelGroups([[0, 0], [10, 0], [100, 0]], 18), [[0, 1], [2]])
+})
+
+test('a chain of close markers shares one label, though its ends are further apart', () => {
+  assert.deepEqual(labelGroups([[0, 0], [100, 0], [15, 0], [30, 0]], 18), [[0, 2, 3], [1]])
 })

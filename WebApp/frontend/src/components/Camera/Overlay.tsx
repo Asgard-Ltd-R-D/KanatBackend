@@ -1,6 +1,6 @@
 import { RefObject, useEffect, useState } from 'react'
 import { BaselineView, BulletHole } from '../../types'
-import { Point, Size, baselineMarksToDraw, templateToElement } from '../../utils/overlay'
+import { Point, Size, baselineMarksToDraw, labelGroups, templateToElement } from '../../utils/overlay'
 
 const OUTLINE_COLOUR = '#22d3ee'
 const BASELINE_MARK_COLOUR = '#94a3b8'
@@ -55,14 +55,15 @@ export interface OverlayContent {
 
 // The Overlay (ADR-0009), where the Run's baseline placed things on the
 // picture: each Target's outline, labelled with its number, each Bullet Hole
-// as a ring numbered with its rank, and in grey each Baseline Mark no Bullet
-// Hole stands for. It covers the video exactly, and lets every click through
+// as a ring numbered with its rank (one label for rings too close to number
+// apart), and in grey each Baseline Mark no Bullet Hole stands for. It covers the video exactly, and lets every click through
 // to the player.
 export function Overlay({ view, bullets, videoRef }: OverlayContent & { videoRef: RefObject<HTMLVideoElement> }) {
   const sizes = useVideoSizes(videoRef)
   const toElement = sizes && templateToElement(view.template_to_picture, view.picture, sizes.video, sizes.element)
   if (!toElement) return null
   const holes = bullets.map(b => [b.position_x, b.position_y] as Point)
+  const markers = holes.map(toElement)
 
   return (
     <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden>
@@ -97,16 +98,23 @@ export function Overlay({ view, bullets, videoRef }: OverlayContent & { videoRef
         const [x, y] = toElement(mark)
         return <circle key={i} cx={x} cy={y} r={BASELINE_MARK_RADIUS} fill="none" stroke={BASELINE_MARK_COLOUR} strokeWidth={1.5} />
       })}
-      {bullets.map(b => {
-        const [x, y] = toElement([b.position_x, b.position_y])
-        const colour = colourOf(b)
+      {bullets.map((b, i) => (
+        <circle key={b.id} cx={markers[i][0]} cy={markers[i][1]} r={MARKER_RADIUS} fill="none" stroke={colourOf(b)} strokeWidth={2} />
+      ))}
+      {labelGroups(markers, 2 * MARKER_RADIUS).map(group => {
+        // Top right of the group's rings, where a lone ring's label goes
+        const x = Math.max(...group.map(i => markers[i][0])) + MARKER_RADIUS + 2
+        const y = Math.min(...group.map(i => markers[i][1])) - MARKER_RADIUS + 2
         return (
-          <g key={b.id}>
-            <circle cx={x} cy={y} r={MARKER_RADIUS} fill="none" stroke={colour} strokeWidth={2} />
-            <text x={x + MARKER_RADIUS + 2} y={y - MARKER_RADIUS + 2} fontSize={12} fontWeight={700} fill={colour} {...textOutline}>
-              {b.rank}
-            </text>
-          </g>
+          <text key={bullets[group[0]].id} x={x} y={y} fontSize={12} fontWeight={700} {...textOutline}>
+            {/* By rank: the list is in first_seen_at order, and a rank is the order holes arrived in */}
+            {group.sort((a, b) => bullets[a].rank - bullets[b].rank).map((i, n) => (
+              <tspan key={bullets[i].id} fill={colourOf(bullets[i])}>
+                {n > 0 && ','}
+                {bullets[i].rank}
+              </tspan>
+            ))}
+          </text>
         )
       })}
     </svg>

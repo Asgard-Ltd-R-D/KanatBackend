@@ -38,3 +38,13 @@ export function templateToElement(
     return [left + (px * width) / picture.width, top + (py * height) / picture.height]
   }
 }
+
+// How near a Baseline Mark must be to a Bullet Hole to be the same hole, in
+// template px: the Detection Service's MATCH_TPL_PX
+const MATCH_TPL_PX = 20
+
+// The Baseline Marks drawn: those no Bullet Hole drawn over the same Run
+// stands for, by the Detection Service's own test (`strip_pre_existing`)
+export function baselineMarksToDraw(marks: Point[], holes: Point[]): Point[] {
+  return marks.filter(([x, y]) => holes.every(([hx, hy]) => Math.hypot(x - hx, y - hy) >= MATCH_TPL_PX))
+}

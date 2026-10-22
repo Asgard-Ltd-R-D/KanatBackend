@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { templateToElement, type Point } from './overlay.ts'
+import { baselineMarksToDraw, templateToElement, type Point } from './overlay.ts'
 
 const IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 const FULL_HD = { width: 1920, height: 1080 }
@@ -48,4 +48,16 @@ test('a video whose proportions differ from the picture maps nothing', () => {
 
 test('a video not loaded yet maps nothing', () => {
   assert.equal(templateToElement(IDENTITY, FULL_HD, { width: 0, height: 0 }, { width: 960, height: 540 }), null)
+})
+
+test('a Baseline Mark within 20 template px of a drawn Bullet Hole is dropped, one further away is kept', () => {
+  const holes: Point[] = [[100, 100], [900, 500]]
+  const marks: Point[] = [[112, 115], [100, 120], [900, 470]]
+  // 19.2 px off the first hole: the hole stands for it. 20 px off it, and
+  // 30 px off the second, they are other holes
+  assert.deepEqual(baselineMarksToDraw(marks, holes), [[100, 120], [900, 470]])
+})
+
+test('with no Bullet Hole drawn every Baseline Mark is', () => {
+  assert.deepEqual(baselineMarksToDraw([[1, 2]], []), [[1, 2]])
 })

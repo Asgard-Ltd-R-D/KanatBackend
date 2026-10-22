@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { VideoOff, Loader2, RotateCcw } from 'lucide-react'
 import { useWhepStream } from '../../hooks/useWhepStream'
-import { BaselineView } from '../../types'
 import { Toggle } from '../UI/Toggle'
-import { Overlay } from './Overlay'
+import { Overlay, OverlayContent } from './Overlay'
 
 interface WhepPlayerProps {
   path: string // MediaMTX path name, e.g. "camA"
   label?: string // shown over the video, top right
-  overlay?: BaselineView // drawn over the video, with a toggle to hide it
+  overlay?: OverlayContent // drawn over the video, with a toggle to hide it
 }
 
 // Fills its container; the video keeps its proportions inside it
@@ -28,7 +27,7 @@ export function WhepPlayer({ path, label, overlay }: WhepPlayerProps) {
         className="w-full h-full object-contain"
       />
 
-      {overlay && showOverlay && <Overlay view={overlay} videoRef={videoRef} />}
+      {overlay && showOverlay && <Overlay {...overlay} videoRef={videoRef} />}
 
       {status === 'loading' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80">

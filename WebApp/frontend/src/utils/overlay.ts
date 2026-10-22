@@ -85,7 +85,12 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
-const sum = (offsets: { stray: number }[]) => offsets.reduce((total, o) => total + o.stray, 0)
+// A point's offset to a mark, and how far it strays from a candidate shift
+type Offset = { offset: Point; stray: number }
+
+const sum = (offsets: Offset[]) => offsets.reduce((total, o) => total + o.stray, 0)
+
+const distance = ([x, y]: Point) => Math.hypot(x, y)
 
 // Run `from`'s template coordinates in Run `to`'s (ADR-0009). Each Run may hang
 // them on another Target (#240), so a point goes onto the picture at `from`'s
@@ -103,21 +108,33 @@ function carrier(from: RunGeometry, to: RunGeometry, holes: Point[]): (p: Point)
   const last = from.places[from.places.length - 1].template_to_picture
   const through = (p: Point) => project(back, project(last, p))
   const points = [...holes, ...from.baseline_view.baseline_marks].map(through)
-  // A point's offsets to the marks within `reach` of it once shifted by `s`,
-  // nearest first, with how far each strays from `s`
-  const offsetsTo = ([x, y]: Point, [sx, sy]: Point, reach: number) =>
+  // Each point's offsets to the marks any candidate shift could match it to,
+  // found once, not again for every candidate (#246): a candidate is within
+  // CARRY_MATCH_TPL_PX, and a match within MATCH_TPL_PX of it
+  const offsets = points.map(([x, y]) =>
     to.baseline_view.baseline_marks
-      .map(([mx, my]) => ({ offset: [mx - x, my - y] as Point, stray: Math.hypot(mx - x - sx, my - y - sy) }))
-      .filter(o => o.stray < reach)
-      .sort((a, b) => a.stray - b.stray)
-  const agreeing = (s: Point) => points.flatMap(p => offsetsTo(p, s, MATCH_TPL_PX).slice(0, 1))
+      .map(([mx, my]): Point => [mx - x, my - y])
+      .filter(o => distance(o) < CARRY_MATCH_TPL_PX + MATCH_TPL_PX),
+  )
+  // Under shift `s`, each point's offset to its nearest mark within
+  // MATCH_TPL_PX once shifted, with how far it strays from `s`
+  const agreeing = ([sx, sy]: Point) =>
+    offsets.flatMap(own => {
+      let nearest: Offset | null = null
+      for (const offset of own) {
+        const stray = Math.hypot(offset[0] - sx, offset[1] - sy)
+        if (stray < MATCH_TPL_PX && (!nearest || stray < nearest.stray)) nearest = { offset, stray }
+      }
+      return nearest ? [nearest] : []
+    })
   // Every offset in reach is a candidate, not each point's nearest: an
   // unrelated mark can be nearer every point than its own. On a tie in how
-  // many agree, the shift they stray least from
-  const [best = []] = points
-    .flatMap(p => offsetsTo(p, [0, 0], CARRY_MATCH_TPL_PX))
-    .map(({ offset }) => agreeing(offset))
-    .sort((a, b) => b.length - a.length || sum(a) - sum(b))
+  // many agree, the shift they stray least from; on a tie in that too, as when
+  // two points claim one mark, the first found, each point's nearest first
+  const best = offsets
+    .flatMap(own => own.filter(o => distance(o) < CARRY_MATCH_TPL_PX).sort((a, b) => distance(a) - distance(b)))
+    .map(agreeing)
+    .reduce<Offset[]>((a, b) => (b.length > a.length || (b.length === a.length && sum(b) < sum(a)) ? b : a), [])
   const dx = median(best.map(o => o.offset[0]))
   const dy = median(best.map(o => o.offset[1]))
   return p => {
@@ -125,6 +142,12 @@ function carrier(from: RunGeometry, to: RunGeometry, holes: Point[]): (p: Point)
     return [x + dx, y + dy]
   }
 }
+
+// The carriers worked out, by the Baseline View carried onto, then all else
+// they depend on: a replay draws the Overlay on every timeupdate, and a carry
+// shift weighs every pair of point and mark (#246). The view stays the same
+// object across refetches (React Query keeps what did not change)
+const carriersOnto = new WeakMap<RunGeometry['baseline_view'], Map<string, (p: Point) => Point>>()
 
 // Each Bullet Hole's position in Run `run`'s template coordinates: as stored
 // over the Run it belongs to (runOf), carried over from an earlier one
@@ -135,10 +158,18 @@ export function holesOver<R extends RunGeometry>(
 ): Point[] {
   const owners = bullets.map(b => runOf(runs, b.first_seen_at) ?? run)
   const positions = bullets.map((b): Point => [b.position_x, b.position_y])
+  const known = carriersOnto.get(run.baseline_view) ?? new Map<string, (p: Point) => Point>()
+  carriersOnto.set(run.baseline_view, known)
   const carriers = new Map(
     [...new Set(owners)]
       .filter(owner => owner.taken_at !== run.taken_at)
-      .map(owner => [owner.taken_at, carrier(owner, run, positions.filter((_, i) => owners[i] === owner))] as const),
+      .map(owner => {
+        const holes = positions.filter((_, i) => owners[i] === owner)
+        // A Run's own Baseline View is fixed; its last place is not while it watches
+        const key = JSON.stringify([owner.taken_at, owner.places[owner.places.length - 1], holes])
+        if (!known.has(key)) known.set(key, carrier(owner, run, holes))
+        return [owner.taken_at, known.get(key)!] as const
+      }),
   )
   return positions.map((p, i) => carriers.get(owners[i].taken_at)?.(p) ?? p)
 }

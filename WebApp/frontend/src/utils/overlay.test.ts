@@ -167,3 +167,15 @@ test("Bullet Holes nearer an unrelated Baseline Mark than their own still land o
   near(carried[0], [140, 100])
   near(carried[1], [240, 100])
 })
+
+test("the carry shift follows the earlier Run's Bullet Holes when they change", () => {
+  // Over the same later Baseline View, holes that agree on a shift of 10, not
+  // the 40 of the ones before them
+  const early = run('2026-10-22T10:00:00Z', IDENTITY)
+  const late = run('2026-10-22T10:05:00Z', IDENTITY)
+  late.baseline_view.baseline_marks = [[110, 100], [140, 100], [220, 100], [240, 100]]
+  holesOver(late, [early, late], [hole('2026-10-22T10:01:00Z', [100, 100]), hole('2026-10-22T10:02:00Z', [200, 100])])
+  const carried = holesOver(late, [early, late], [hole('2026-10-22T10:01:00Z', [130, 100]), hole('2026-10-22T10:02:00Z', [230, 100])])
+  near(carried[0], [140, 100])
+  near(carried[1], [240, 100])
+})

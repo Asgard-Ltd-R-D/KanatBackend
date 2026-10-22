@@ -154,11 +154,13 @@ grey rings showed beside the carried Bullet Holes, on the holes themselves.
 
 `s` closes that gap. `c`'s baseline saw each of `r`'s Bullet Holes and
 Baseline Marks as a Baseline Mark of its own, within 60 template px of where
-the picture carries it. `s` is the offset to its nearest mark that brings the
-most of them within `MATCH_TPL_PX` of a mark, refined to the median of their
-offsets. The most, not the median of each one's nearest: in a tight Group a
-Bullet Hole's nearest mark can be its neighbour's. Two restarts on that
-Recording measured it:
+the picture carries it. `s` is the offset from one of them to any mark within
+those 60 px that brings the most of them within `MATCH_TPL_PX` of a mark,
+refined to the median of their offsets. On a tie, `s` is the offset they lie
+closest to. The most, not the median of each one's nearest: in a tight Group a
+Bullet Hole's nearest mark can be its neighbour's. Any mark, not only the
+nearest: a hole fired between the Runs can be nearer each of them than its
+own. Two restarts on that Recording measured it:
 - 4 of 5 carried Bullet Holes within 0.0–4.2 template px of their marks (the
   fifth had none);
 - 2 of 2 within 5.3 and 9.0.

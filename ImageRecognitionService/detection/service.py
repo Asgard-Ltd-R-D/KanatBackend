@@ -234,7 +234,7 @@ if __name__ == "__main__":
     service = DetectionService(nbh.load_model(a.model), a.backend_url)
     server = serve(service, a.port)
     print(f"[SERVICE] control API on http://127.0.0.1:{a.port}, detector {a.model}; "
-          f"SIGINT or SIGTERM ends any Run, drained, then the service")
+          f"SIGINT or SIGTERM ends any Run as an end does, then the service")
     signal.signal(signal.SIGTERM, signal.default_int_handler)   # a stop, as Ctrl-C is
     try:
         server.serve_forever()

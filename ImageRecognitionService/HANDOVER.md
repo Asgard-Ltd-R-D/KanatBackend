@@ -853,7 +853,8 @@ authentication, which is why it is bound to the loopback. It runs one Run at a
 time, on a worker thread. A Run is the live run above on the Stream it is
 given, posting to `--backend-url` as `--session-id` does, one publisher per
 Run. A Run takes the defaults, with no print scale, so `x_mm` and `y_mm` stay
-empty. SIGINT or SIGTERM ends any Run, drained, and then the service.
+empty. SIGINT or SIGTERM ends any Run as an end does, its open Candidates
+judged and its posts drained, and then the service.
 `composer up --detection` runs it in a Terminal window of its own, and `stop`
 and `kill` stop it (#225).
 

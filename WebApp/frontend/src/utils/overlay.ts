@@ -71,12 +71,11 @@ export function runOf<R extends Pick<Run, 'taken_at'>>(runs: R[], firstSeenAt: s
   return runs.filter(r => Date.parse(r.taken_at) <= seen).pop() ?? runs[0]
 }
 
-type Carried = Pick<Run, 'taken_at' | 'baseline_view' | 'places'>
-type Hole = Pick<BulletHole, 'first_seen_at' | 'position_x' | 'position_y'>
+type RunGeometry = Pick<Run, 'taken_at' | 'baseline_view' | 'places'>
 
-// How far the picture may carry an earlier Run's hole from the later Run's
-// Baseline Mark of it, in template px: the Board's move between the two Runs,
-// ~37 on CamA's creep across a 6.5 s restart (#246)
+// How far the picture may carry an earlier Run's Bullet Hole from the later
+// Run's Baseline Mark of it, in template px: how far the camera crept between
+// the two Runs, 37 on CamA across a 6.5 s restart (#246)
 const CARRY_MATCH_TPL_PX = 60
 
 function median(values: number[]): number {
@@ -88,26 +87,34 @@ function median(values: number[]): number {
 
 // Run `from`'s template coordinates in Run `to`'s (ADR-0009). Each Run may hang
 // them on another Target (#240), so a point goes onto the picture at `from`'s
-// last place and back through `to`'s baseline. The Board moves in the picture
-// between the two, so it is then shifted by the median offset from `from`'s
-// holes (its Bullet Holes `holes` and its Baseline Marks) to the nearest of
-// `to`'s Baseline Marks: `to`'s baseline saw each of them as one
+// last place and back through `to`'s baseline. The camera creeps between the
+// two, so it is then shifted onto `to`'s Baseline Marks, which `to`'s baseline
+// saw `from`'s Bullet Holes `holes` and Baseline Marks as: by the offset to its
+// nearest mark that brings the most of them within MATCH_TPL_PX of one, refined
+// to the median of theirs. Most, not each one's nearest: in a tight Group a
+// hole's nearest mark can be its neighbour's
 // ponytail: one translation, so a Board turned or scaled between the Runs, or
 // moved over CARRY_MATCH_TPL_PX, is not followed; fit the Runs' Target
 // outlines if restarts show it
-function carrier(from: Carried, to: Carried, holes: Point[]): (p: Point) => Point {
+function carrier(from: RunGeometry, to: RunGeometry, holes: Point[]): (p: Point) => Point {
   const back = adjugate(to.baseline_view.template_to_picture)
   const last = from.places[from.places.length - 1].template_to_picture
   const through = (p: Point) => project(back, project(last, p))
-  const offsets = [...holes, ...from.baseline_view.baseline_marks].map(through).flatMap(([x, y]) =>
+  const points = [...holes, ...from.baseline_view.baseline_marks].map(through)
+  // A point's offset to the mark nearest it once shifted by `s`, within `reach`
+  const offsetTo = ([x, y]: Point, [sx, sy]: Point, reach: number): Point[] =>
     to.baseline_view.baseline_marks
       .map(([mx, my]): Point => [mx - x, my - y])
-      .filter(([dx, dy]) => Math.hypot(dx, dy) < CARRY_MATCH_TPL_PX)
-      .sort((a, b) => Math.hypot(...a) - Math.hypot(...b))
-      .slice(0, 1),
-  )
-  const dx = median(offsets.map(o => o[0]))
-  const dy = median(offsets.map(o => o[1]))
+      .filter(([dx, dy]) => Math.hypot(dx - sx, dy - sy) < reach)
+      .sort(([ax, ay], [bx, by]) => Math.hypot(ax - sx, ay - sy) - Math.hypot(bx - sx, by - sy))
+      .slice(0, 1)
+  const agreeing = (s: Point) => points.flatMap(p => offsetTo(p, s, MATCH_TPL_PX))
+  const best = points
+    .flatMap(p => offsetTo(p, [0, 0], CARRY_MATCH_TPL_PX))
+    .map(agreeing)
+    .reduce<Point[]>((most, offsets) => (offsets.length > most.length ? offsets : most), [])
+  const dx = median(best.map(o => o[0]))
+  const dy = median(best.map(o => o[1]))
   return p => {
     const [x, y] = through(p)
     return [x + dx, y + dy]
@@ -116,15 +123,19 @@ function carrier(from: Carried, to: Carried, holes: Point[]): (p: Point) => Poin
 
 // Each Bullet Hole's position in Run `run`'s template coordinates: as stored
 // over the Run it belongs to (runOf), carried over from an earlier one
-export function holesOver<R extends Carried>(run: R, runs: R[], bullets: Hole[]): Point[] {
+export function holesOver<R extends RunGeometry>(
+  run: R,
+  runs: R[],
+  bullets: Pick<BulletHole, 'first_seen_at' | 'position_x' | 'position_y'>[],
+): Point[] {
   const owners = bullets.map(b => runOf(runs, b.first_seen_at) ?? run)
   const positions = bullets.map((b): Point => [b.position_x, b.position_y])
   const carriers = new Map(
     [...new Set(owners)]
       .filter(owner => owner.taken_at !== run.taken_at)
-      .map(owner => [owner, carrier(owner, run, positions.filter((_, i) => owners[i] === owner))] as const),
+      .map(owner => [owner.taken_at, carrier(owner, run, positions.filter((_, i) => owners[i] === owner))] as const),
   )
-  return positions.map((p, i) => carriers.get(owners[i])?.(p) ?? p)
+  return positions.map((p, i) => carriers.get(owners[i].taken_at)?.(p) ?? p)
 }
 
 // How near a Baseline Mark must be to a Bullet Hole to be the same hole, in

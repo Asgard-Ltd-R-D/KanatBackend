@@ -129,19 +129,30 @@ test('over its own Run a Bullet Hole is not carried', () => {
   assert.deepEqual(holesOver(EARLIER, [EARLIER, LATER], EARLIER_HOLES), [[200, 300], [400, 300], [300, 500]])
 })
 
-// The Board moved between the two Runs: the later one's baseline saw each of
-// the earlier one's holes 30 template px right and 20 down of where the
-// picture carries them, and one other hole far from all of them
-const picture = holesOver(LATER, [EARLIER, LATER], EARLIER_HOLES)
-const MOVED_LATER = run('2026-10-22T10:05:00Z', OTHER_TARGET)
-MOVED_LATER.baseline_view.baseline_marks = [...picture.map(([x, y]): Point => [x + 30, y + 20]), [picture[0][0] + 500, picture[0][1]]]
+// The camera crept between the two Runs: the later one's baseline saw each
+// of the earlier one's Bullet Holes 30 template px right and 20 down of where
+// the picture carries them, and one other hole far from all of them
+const THROUGH_PICTURE = holesOver(LATER, [EARLIER, LATER], EARLIER_HOLES)
+const CREPT_LATER = run('2026-10-22T10:05:00Z', OTHER_TARGET)
+CREPT_LATER.baseline_view.baseline_marks = [...THROUGH_PICTURE.map(([x, y]): Point => [x + 30, y + 20]), [THROUGH_PICTURE[0][0] + 500, THROUGH_PICTURE[0][1]]]
 
-test('an earlier Run\'s Bullet Hole lands on the later Run\'s Baseline Mark of it, across a Board move between the Runs', () => {
-  const carried = holesOver(MOVED_LATER, [EARLIER, MOVED_LATER], EARLIER_HOLES)
-  carried.forEach((p, i) => near(p, MOVED_LATER.baseline_view.baseline_marks[i]))
+test('an earlier Run\'s Bullet Hole lands on the later Run\'s Baseline Mark of it, though the camera crept between the Runs', () => {
+  const carried = holesOver(CREPT_LATER, [EARLIER, CREPT_LATER], EARLIER_HOLES)
+  carried.forEach((p, i) => near(p, CREPT_LATER.baseline_view.baseline_marks[i]))
 })
 
 test("a later Run's Baseline Mark that matches an earlier Run's carried Bullet Hole is dropped", () => {
-  const carried = holesOver(MOVED_LATER, [EARLIER, MOVED_LATER], EARLIER_HOLES)
-  assert.deepEqual(baselineMarksToDraw(MOVED_LATER.baseline_view.baseline_marks, carried), [[picture[0][0] + 500, picture[0][1]]])
+  const carried = holesOver(CREPT_LATER, [EARLIER, CREPT_LATER], EARLIER_HOLES)
+  assert.deepEqual(baselineMarksToDraw(CREPT_LATER.baseline_view.baseline_marks, carried), [[THROUGH_PICTURE[0][0] + 500, THROUGH_PICTURE[0][1]]])
+})
+
+test("a tight Group's Bullet Holes land on their own Baseline Marks, not their neighbours'", () => {
+  // 25 template px apart, and the camera crept 37 between the Runs: each but
+  // the first is nearer its neighbour's mark than its own
+  const early = run('2026-10-22T10:00:00Z', IDENTITY)
+  const late = run('2026-10-22T10:05:00Z', IDENTITY)
+  const group: Point[] = [[100, 100], [125, 100], [150, 100], [175, 100]]
+  late.baseline_view.baseline_marks = group.map(([x, y]): Point => [x + 37, y])
+  const carried = holesOver(late, [early, late], group.map(p => hole('2026-10-22T10:01:00Z', p)))
+  carried.forEach((p, i) => near(p, late.baseline_view.baseline_marks[i]))
 })

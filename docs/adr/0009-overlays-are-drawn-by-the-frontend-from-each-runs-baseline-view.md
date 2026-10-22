@@ -152,18 +152,20 @@ Service restarted mid-Session, the gap was 6.5 s and the Board moved ~16
 picture px in it. That is 37 template px, past `MATCH_TPL_PX`, so the new Run's
 grey rings showed beside the carried Bullet Holes, on the holes themselves.
 
-`s` closes that gap. `c`'s baseline saw each of `r`'s holes, its Bullet Holes
-and its Baseline Marks, as a Baseline Mark. So `s` is the median offset from
-each of `r`'s holes, carried through the picture, to the nearest of `c`'s
-Baseline Marks within 60 template px. Two restarts on that Recording measured
-it:
-- 4 of 5 carried Bullet Holes within 0.7–4.9 template px of their marks (the
+`s` closes that gap. `c`'s baseline saw each of `r`'s Bullet Holes and
+Baseline Marks as a Baseline Mark of its own, within 60 template px of where
+the picture carries it. `s` is the offset to its nearest mark that brings the
+most of them within `MATCH_TPL_PX` of a mark, refined to the median of their
+offsets. The most, not the median of each one's nearest: in a tight Group a
+Bullet Hole's nearest mark can be its neighbour's. Two restarts on that
+Recording measured it:
+- 4 of 5 carried Bullet Holes within 0.0–4.2 template px of their marks (the
   fifth had none);
-- 2 of 2 within 0.1 and 4.1.
+- 2 of 2 within 5.3 and 9.0.
 
-One translation follows a Board that slid between the Runs. It does not follow
-one turned or scaled, nor one moved further than 60 template px; fitting the
-two Runs' Target outlines would.
+One translation follows the camera's creep between the Runs. It does not
+follow a Board turned or scaled, nor one moved further than 60 template px;
+fitting the two Runs' Target outlines would.
 
 A Baseline Mark within `MATCH_TPL_PX` (20 template px) of a Bullet Hole drawn
 over the same Run is not drawn, because the Bullet Hole stands for it. After a

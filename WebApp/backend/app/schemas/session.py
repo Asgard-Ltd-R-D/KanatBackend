@@ -5,6 +5,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.bullet_hole import BulletHoleInSession
+from app.schemas.run import RunResponse
 
 
 class Detection(BaseModel):
@@ -76,6 +77,8 @@ class SessionResponse(BaseModel):
     camera_id: Optional[uuid.UUID]
     created_at: datetime
     bullet_holes: list[BulletHoleInSession] = Field(default=[], validation_alias="active_bullet_holes")
+    # Each Run that watched it, in taken_at order
+    runs: list[RunResponse] = []
     # Held in memory, not in the database: set by routers/sessions.py
     detection: Detection = Field(default_factory=lambda: Detection(state="none"))
     # Computed from bullet_holes: set by routers/sessions.py

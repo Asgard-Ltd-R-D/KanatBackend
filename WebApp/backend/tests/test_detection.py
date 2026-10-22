@@ -17,11 +17,12 @@ from app.core.live import hub
 from app.main import app
 from app.repositories import bullets as bullets_repo
 from app.repositories import cameras as cameras_repo
+from app.repositories import runs as runs_repo
 from app.repositories import sessions as sessions_repo
 from app.services import camera_sync, detection_service
 from app.services import detection as detection_svc
 from app.services import recordings as recording_svc
-from tests.fakes import NOW, FakeDetectionService, make_camera
+from tests.fakes import NOW, FakeDetectionService, baseline_view, make_camera
 
 
 class FakeDB:
@@ -31,7 +32,8 @@ class FakeDB:
 
 @pytest.fixture
 def db(monkeypatch):
-    """The database replaced: its Sessions and cameras by id."""
+    """The database replaced: its Sessions and cameras by id. A Run is
+    stored nowhere: tests/test_runs.py stores them on a real database."""
     state = SimpleNamespace(sessions={}, cameras={})
 
     def add(db, session):
@@ -50,6 +52,9 @@ def db(monkeypatch):
     monkeypatch.setattr(sessions_repo, "list_active", lambda db: [s for s in state.sessions.values() if s.status == "active"])
     monkeypatch.setattr(cameras_repo, "get", lambda db, camera_id: state.cameras.get(camera_id))
     monkeypatch.setattr(cameras_repo, "list_all", lambda db: list(state.cameras.values()))
+    monkeypatch.setattr(detection_svc, "SessionLocal", FakeDB)
+    monkeypatch.setattr(sessions_repo, "exists", lambda db, session_id: session_id in state.sessions)
+    monkeypatch.setattr(runs_repo, "add_once", lambda db, *run: None)
     # Nothing to tell MediaMTX: the database is fake
     monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
     return state
@@ -468,7 +473,7 @@ def test_the_session_holding_the_run_keeps_it_over_an_earlier_one(client, db, de
     tick(client)
 
     assert detection.calls == calls
-    assert detection.run == (holder, "watching")
+    assert detection.run[:2] == (holder, "watching")
     assert (detection_of(client, earlier)["state"], detection_of(client, earlier)["reason"]) == ("not_watching", "other_session")
 
 
@@ -510,7 +515,7 @@ def test_a_session_started_during_a_tick_keeps_its_run(client, db, detection):
 
     tick(client)
 
-    assert detection.run == (started[0], "watching")
+    assert detection.run[:2] == (started[0], "watching")
     assert [call[0] for call in detection.calls] == ["start"]
 
 
@@ -521,7 +526,7 @@ def test_a_second_start_for_a_watched_session_leaves_its_run(client, db, detecti
 
     client.portal.call(anyio.to_thread.run_sync, detection_svc.watch, session_id, "lane1")
 
-    assert detection.run == (session_id, "watching")
+    assert detection.run[:2] == (session_id, "watching")
     assert detection_of(client, session_id) == WATCHING
 
 
@@ -574,13 +579,22 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
 
     answers["/status"] = (200, {"run": None})
     assert detection_service.status() is None
-    answers["/status"] = (200, {"run": {"session_id": str(session_id), "state": "watching",
-                                        "since": "2026-10-22T09:00:00+00:00", "baseline_marks": 3}})
-    assert detection_service.status() == (session_id, "watching")
+    view = baseline_view(NOW)
+    watching = {"session_id": str(session_id), "state": "watching", "since": "2026-10-22T09:00:00+00:00",
+                "baseline_marks": 3, "baseline_view": view.model_dump(mode="json")}
+    answers["/status"] = (200, {"run": watching})
+    assert detection_service.status() == (session_id, "watching", view)
+    answers["/status"] = (200, {"run": {**watching, "state": "starting", "baseline_view": None}})
+    assert detection_service.status() == (session_id, "starting", None)
+    answers["/status"] = (200, {"run": {**watching, "baseline_view": {"taken_at": "not a time"}}})
+    with pytest.raises(detection_service.DetectionServiceUnreachable):
+        detection_service.status()
     answers["/status"] = (404, {"detail": "not found"})   # something else on its port
     with pytest.raises(detection_service.DetectionServiceUnreachable):
         detection_service.status()
 
+    answers["/runs"] = (200, watching)
+    assert detection_service.start_run(session_id, "rtsp://127.0.0.1:8554/lane1") == (session_id, "watching", view)
     answers["/runs"] = (409, {"detail": "another Session's Run is active"})
     with pytest.raises(detection_service.RunRefused) as refused:
         detection_service.start_run(session_id, "rtsp://127.0.0.1:8554/lane1")

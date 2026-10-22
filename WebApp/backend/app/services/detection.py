@@ -8,6 +8,9 @@ asked a Run for reads `none`.
 Every camera_sync_interval_s the backend reconciles the Detection Service's
 one Run with the Session that should hold it (`reconcile`), so a Run that was
 lost, or never started, comes back by itself, from a fresh baseline.
+
+Each Run that watches a Session is stored with it, with its Baseline View
+(ADR-0009), the first time the backend sees it watching.
 """
 import asyncio
 import logging
@@ -15,6 +18,7 @@ import threading
 import uuid
 
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session as DBSession
 
 from app.config.settings import settings
@@ -22,6 +26,7 @@ from app.core.database import SessionLocal
 from app.core.live import hub
 from app.models import Session
 from app.repositories import cameras as cameras_repo
+from app.repositories import runs as runs_repo
 from app.repositories import sessions as sessions_repo
 from app.schemas.live import DetectionUpdatedEvent
 from app.schemas.session import Detection
@@ -88,6 +93,25 @@ def starting(session_id: uuid.UUID) -> None:
     _set(session_id, Detection(state="starting"))
 
 
+def _store_run(session_id: uuid.UUID, alias: str, run: detection_service.Run) -> None:
+    """Stores the Run, watching on the camera `alias`, for its Session if that
+    still exists; one already stored is not stored again. Done before
+    `watching` is pushed, so the frontend's refetch on it brings the Run.
+    Storing fails only with the database, logged: the next status read that
+    shows the Run stores it, and the Session is not left reading `starting`."""
+    if run.baseline_view is None:
+        return
+    db = SessionLocal()
+    try:
+        if sessions_repo.exists(db, session_id):
+            runs_repo.add_once(db, session_id, alias, run.baseline_view.taken_at,
+                               run.baseline_view.model_dump(mode="json"))
+    except SQLAlchemyError as e:
+        log.warning("The Run of session %s is not stored yet: %s", session_id, e)
+    finally:
+        db.close()
+
+
 def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("starting",)) -> None:
     """Asks the Detection Service for the Session's Run on the camera's Stream,
     which answers once the Run is watching: seconds, so it runs after the
@@ -96,7 +120,7 @@ def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("star
     that started ending meanwhile keeps its state, and a Run started for it
     is ended."""
     try:
-        detection_service.start_run(session_id, f"{settings.mediamtx_rtsp_url}/{alias}")
+        run = detection_service.start_run(session_id, f"{settings.mediamtx_rtsp_url}/{alias}")
     except detection_service.DetectionServiceUnreachable as e:
         log.warning("Session %s is not watched: the Detection Service did not answer: %s", session_id, e)
         result = SERVICE_DOWN
@@ -105,6 +129,7 @@ def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("star
         reason = "other_session" if e.status == 409 else "stream_failed"
         result = Detection(state="not_watching", reason=reason, detail=e.detail)
     else:
+        _store_run(session_id, alias, run)
         result = WATCHING
     if not _set(session_id, result, only_from) and result.state == "watching" and state_of(session_id).state in ("ending", "none"):
         # Its end may have reached the Detection Service before this start did,
@@ -211,7 +236,9 @@ def reconcile(db: DBSession) -> None:
     if current not in IDLE or (run and run.state == "ending"):
         return   # a start or an end is under way
     if run and run.state == "watching":
-        _set(wanted.id, WATCHING, only_from=IDLE)   # unknown since the backend restarted
+        # Unknown since the backend restarted, or its start not answered to it
+        _store_run(wanted.id, cameras[wanted.camera_id].alias, run)
+        _set(wanted.id, WATCHING, only_from=IDLE)
         return
     if current == "none":
         # Reopened, or not asked for since the backend restarted.

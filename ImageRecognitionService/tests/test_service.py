@@ -3,6 +3,7 @@ in-process: a fake Stream behind the opener, a fake detector (the live tests'
 `_Marking`), and the backend replaced at the publisher's HTTP call."""
 import contextlib
 import json
+import math
 import sys
 import threading
 import time
@@ -50,16 +51,38 @@ class _Placed(_FakeView):
         np.array([[1500.0, 100.0], [2900.0, 100.0], [2900.0, 1000.0], [1500.0, 1000.0]]))]
 
 
+def _shifted(index):
+    """`_Placed`'s template_to_picture, the Board moved `index` px right."""
+    return np.array([[1.0, 0.0, index], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]) @ _Placed.H
+
+
+class _Creeping(_Scripted):
+    """A `Registration` as the camera creeps: frame i registers with the
+    Board i picture px right of where `_Placed` has it, until frame
+    `lost_from`, and every Look from it on is Lost. `calls` is each frame
+    handed to it, `(index, pixels)`."""
+    def __init__(self):
+        super().__init__(_Placed(), lambda index: index < self.lost_from)
+        self.lost_from = math.inf
+
+    def register(self, frame, index):
+        view = super().register(frame, index)
+        if view is not None:
+            view.H = _shifted(index)
+        return view
+
+
 class _Api:
     """The control API on an ephemeral port, its Runs opened on an endless
-    fake Stream unless `opener` is replaced, onto Board space `_Placed`, and
+    fake Stream unless `opener` is replaced, onto Board space `_Placed`,
+    registered by `registration`, a `_Creeping` all its Runs share, and
     looked at by `model`, by default `_Marking`, and the bullets it posts in
     `sent`, their bodies in `posted`. `call` answers (status, JSON body)."""
     def __init__(self, monkeypatch, model=None):
         _openable(monkeypatch)
         monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask: (_Placed(), 0.95))
-        monkeypatch.setattr(nbh, "Registration",
-                            lambda view, base, mask, when: _Scripted(view, lambda i: True))
+        self.registration = _Creeping()
+        monkeypatch.setattr(nbh, "Registration", lambda view, base, mask, when: self.registration)
         monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.01)
         monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.ones((64, 64), bool))
         self.sent, self.posted, self.opened, self.posting = [], [], [], threading.Event()
@@ -112,6 +135,11 @@ def api(monkeypatch):
     api.close()
 
 
+def _still(run):
+    """`run` less what moves on with each Look: `registered` and `looked_at`."""
+    return {k: v for k, v in run.items() if k not in ("registered", "looked_at")}
+
+
 @pytest.fixture
 def placed(api):
     """`api`, its Runs' baseline frame 192x108 and read at ARRIVED."""
@@ -136,22 +164,23 @@ def test_a_start_is_answered_once_the_run_is_watching(api):
     assert status == 200
     assert (run["session_id"], run["state"], run["baseline_marks"]) == (SESSION, "watching", 1)
     assert api.opened == [URL]
-    assert api.call("GET", "/status") == (200, {"run": run})
+    assert _still(_status(api)) == _still(run)
 
 
 def test_a_repeat_start_for_the_session_is_answered_with_its_run(api):
     """The backend's reconcile repeats a start safely: the Run is the one
     already watching, not a second one with a fresh baseline."""
     _, run = api.start()
-    assert api.start() == (200, run)
+    status, again = api.start()
+    assert (status, _still(again)) == (200, _still(run))
     assert api.opened == [URL]
 
 
 def test_a_start_for_another_session_is_refused_while_a_run_is_active(api):
     _, run = api.start()
     status, body = api.start(OTHER)
-    assert (status, body["run"]) == (409, run)
-    assert api.call("GET", "/status") == (200, {"run": run})
+    assert (status, _still(body["run"])) == (409, _still(run))
+    assert _still(_status(api)) == _still(run)
 
 
 def _cannot_open(monkeypatch, api):
@@ -190,18 +219,20 @@ def _status(api):
 
 
 def test_status_reports_a_run_starting_until_it_is_watching(api):
-    """With no Baseline View until then: no baseline frame has placed the
-    Board on the picture yet (ADR-0009)."""
+    """With no Baseline View, `registered` or `looked_at` until then: no
+    baseline frame has placed the Board on the picture yet (ADR-0009)."""
     opening, stream = threading.Event(), api.opener
     api.opener = lambda *args: (opening.wait(10), stream(*args))[1]
     starting = threading.Thread(target=api.start)
     starting.start()
     run = _until(lambda: _status(api))
-    assert (run["state"], run["baseline_view"]) == ("starting", None)
+    assert (run["state"], run["baseline_view"], run["registered"], run["looked_at"]) == (
+        "starting", None, None, None)
     opening.set()
     starting.join(10)
     run = _status(api)
-    assert run["state"] == "watching" and run["baseline_view"] is not None
+    assert run["state"] == "watching"
+    assert None not in (run["baseline_view"], run["registered"], run["looked_at"])
 
 
 def test_a_watching_runs_baseline_view_places_the_artwork_on_its_picture(placed):
@@ -237,6 +268,55 @@ def test_a_baseline_views_marks_lie_where_the_fake_detector_planted_them(monkeyp
     assert placed.start()[1]["baseline_view"]["baseline_marks"] == [[20.0, 20.0]]
 
 
+def _frame(at):
+    """The index of the `placed` Stream's frame timed `at`: one each
+    1/LIVE_FPS s from ARRIVED."""
+    return round((datetime.fromisoformat(at) - ARRIVED).total_seconds() * nbh.LIVE_FPS)
+
+
+def _ring(registered):
+    """Where `registered` places the artwork's ring centre in the picture."""
+    return board.apply(np.array(registered["template_to_picture"]), [board.RING_CENTRE_TPL])[0]
+
+
+def test_registered_follows_the_board_as_it_moves_in_the_picture(placed):
+    """Each read carries the latest registered Look: its frame's time, and
+    where it placed the Board, a picture px further right each frame."""
+    placed.start()
+    first = _status(placed)["registered"]
+    later = _until(lambda: (r := _status(placed)["registered"]) != first and r)
+    assert _frame(later["at"]) > _frame(first["at"])
+    for registered in (first, later):
+        assert _ring(registered) == pytest.approx(
+            (RING_AT[0] + _frame(registered["at"]), RING_AT[1]), abs=1e-3)
+
+
+def test_a_lost_look_leaves_registered_as_it_was_while_looked_at_moves_on(placed):
+    placed.registration.lost_from = 100
+    placed.start()
+    run = _until(lambda: (r := _status(placed))["looked_at"] and _frame(r["looked_at"]) >= 100 and r)
+    later = _until(lambda: (r := _status(placed))["looked_at"] != run["looked_at"] and r)
+    assert _frame(run["registered"]["at"]) < 100
+    assert later["registered"] == run["registered"]
+    assert _frame(later["looked_at"]) > _frame(run["looked_at"])
+
+
+def test_an_ends_answer_carries_the_runs_final_registered_and_looked_at(placed):
+    """Its last Look's time, Lost here, and the last registered one's, not
+    those of the last read before the end."""
+    placed.registration.lost_from = 100
+    placed.start()
+    _until(lambda: _frame(_status(placed)["looked_at"]) >= 100)
+    answer = placed.call("POST", f"/runs/{SESSION}/end")
+    looks = [index for index, _ in placed.registration.calls]
+    assert _ends([answer]) == [ENDED]
+    _, ended = answer
+    assert _frame(ended["looked_at"]) == looks[-1]
+    assert _frame(ended["registered"]["at"]) == max(i for i in looks if i < 100)
+    assert _ring(ended["registered"]) == pytest.approx(
+        (RING_AT[0] + _frame(ended["registered"]["at"]), RING_AT[1]), abs=1e-3)
+
+
 def test_an_end_is_answered_once_the_runs_posts_are_drained(api):
     """The backend holds the Run's one post, its Bullet Hole from frame 6,
     until let go: meanwhile the Run is `ending` and the end unanswered."""
@@ -251,7 +331,7 @@ def test_an_end_is_answered_once_the_runs_posts_are_drained(api):
     assert ending.is_alive() and _status(api)["state"] == "ending"
     api.posting.set()
     ending.join(10)
-    assert ended == [(200, {"session_id": SESSION, "state": "ended"})]
+    assert _ends(ended) == [ENDED]
     assert api.sent == [f"http://backend/sessions/{SESSION}/bullets"]
     assert _status(api) is None
 
@@ -296,14 +376,19 @@ def _end_just_after_a_shot(api):
     return ended
 
 
-ENDED = (200, {"session_id": SESSION, "state": "ended"})
+ENDED = (200, SESSION, "ended")
+
+
+def _ends(answers):
+    """Each end's answer as `(status, session_id, state)`."""
+    return [(status, body["session_id"], body["state"]) for status, body in answers]
 
 
 def test_a_bullet_hole_first_seen_just_before_the_end_is_posted_before_it_returns(
         shot_before_end):
     """Judged as at any Look once its persistence window has elapsed, and
     posted, before the end is answered (#228): the last shot is not lost."""
-    assert _end_just_after_a_shot(shot_before_end) == [ENDED]
+    assert _ends(_end_just_after_a_shot(shot_before_end)) == [ENDED]
     assert [p["position"] for p in shot_before_end.posted] == [{"x": 15.0, "y": 15.0}]
 
 
@@ -331,7 +416,7 @@ def test_an_end_whose_stream_stops_giving_frames_returns_by_its_timeout(
     shot_before_end.opener = lambda url, start, ref_time: (
         nbh.Stream(_FakeStream(n=150, interval=0.002), time.time(), lambda: _FakeStream(n=0)),
         np.zeros((8, 8, 3), np.int64))
-    assert _end_just_after_a_shot(shot_before_end) == [ENDED]
+    assert _ends(_end_just_after_a_shot(shot_before_end)) == [ENDED]
     assert shot_before_end.posted == [] and _status(shot_before_end) is None
 
 

@@ -54,9 +54,9 @@ OUTLINE_POINTS = 64
 class _Run:
     """A Run as `/status` reports it: its Session, its state (`starting`,
     `watching`, `ending`) and since when, and once watching its Baseline
-    Marks counted and its Baseline View (ADR-0009). `ready` is set once it is
-    watching or has failed, `ended` once it has ended and its posts are
-    drained."""
+    Marks counted, its Baseline View and how far it has watched (ADR-0009).
+    `ready` is set once it is watching or has failed, `ended` once it has
+    ended and its posts are drained."""
     def __init__(self, session_id):
         self.session_id, self.baseline_marks, self.error = session_id, None, None
         self.baseline_view = None
@@ -70,7 +70,17 @@ class _Run:
     def view(self):
         return {"session_id": self.session_id, "state": self.state,
                 "since": self.since.isoformat(), "baseline_marks": self.baseline_marks,
-                "baseline_view": self.baseline_view}
+                "baseline_view": self.baseline_view, **self.watched()}
+
+    def watched(self):
+        """`registered`, its latest registered Look's time and
+        template_to_picture, and `looked_at`, its latest Look's time,
+        registered or Lost: both None until it is watching (ADR-0009)."""
+        if self.baseline_view is None:
+            return {"registered": None, "looked_at": None}
+        (index, view), looked = self.loop.registered, self.loop.looked
+        return {"registered": {"at": _at(self.loop, index), "template_to_picture": view.H.tolist()},
+                "looked_at": _at(self.loop, looked)}
 
 
 class DetectionService:
@@ -121,13 +131,14 @@ class DetectionService:
         """End the Session's Run, answered once it has ended and its posts
         are drained. A watching Run first judges the Candidates it has open,
         opening none, for up to `ENDING_TIMEOUT_S` (#228); one still starting
-        stops at once. No such Run is a 404."""
+        stops at once. Answered with how far it watched, its last
+        `registered` and `looked_at`. No such Run is a 404."""
         with self._lock:
             run = self._run
             if run is None or run.session_id != session_id:
                 return 404, {"detail": "no such Run"}
         self._end(run)
-        return 200, {"session_id": session_id, "state": "ended"}
+        return 200, {"session_id": session_id, "state": "ended", **run.watched()}
 
     def close(self):
         """End the Run, if any, as `end` does: how the service shuts down."""
@@ -192,11 +203,16 @@ def _baseline_view(view, loop, marks):
     each Target's outline, in `target_index` order, and each of its Baseline
     Marks, `marks` in Board space."""
     height, width = loop.base.shape[:2]
-    return {"taken_at": loop.wall_clock(0).astimezone(timezone.utc).isoformat(timespec="milliseconds"),
+    return {"taken_at": _at(loop, 0),
             "picture": {"width": width, "height": height},
             "template_to_picture": view.H.tolist(),
             "targets": [_outline(view.board_to_template(t)) for t in view.targets],
             "baseline_marks": view.board_to_template(marks[:, :2]).astype(float).round(1).tolist()}
+
+
+def _at(loop, index):
+    """Frame `index` of `loop`'s time, on `first_seen_at`'s clock."""
+    return loop.wall_clock(index).astimezone(timezone.utc).isoformat(timespec="milliseconds")
 
 
 def _outline(points):

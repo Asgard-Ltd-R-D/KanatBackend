@@ -870,15 +870,20 @@ curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "
 # {"session_id": "<uuid>", "state": "watching", "since": "<UTC>", "baseline_marks": 3,
 #  "baseline_view": {"taken_at": "<UTC>", "picture": {"width": 1920, "height": 1080},
 #                    "template_to_picture": [[...], [...], [...]], "targets": [[[x, y], ...], ...],
-#                    "baseline_marks": [[x, y], ...]}}
+#                    "baseline_marks": [[x, y], ...]},
+#  "registered": {"at": "<UTC>", "template_to_picture": [[...], [...], [...]]},
+#  "looked_at": "<UTC>"}
 # The Baseline View (ADR-0009) is null until the Run is watching: the baseline frame's
 # time, size and template-to-picture homography, each Target's outline in template
 # px, in target_index order, cut to at most OUTLINE_POINTS (64), and each Baseline
-# Mark in template px.
+# Mark in template px. `registered` is the latest registered Look's frame time and
+# homography, which a Lost Look leaves as it was, and `looked_at` the latest Look's
+# frame time, registered or Lost: both null until watching.
 # Status: {"run": null}, or the Run, its state (starting, watching, ending) and since when.
 curl -s 127.0.0.1:8010/status
-# End: answered once the Run has ended and its posts are drained. No such Run is a 404.
-curl -s -X POST 127.0.0.1:8010/runs/<uuid>/end    # {"session_id": "<uuid>", "state": "ended"}
+# End: answered once the Run has ended and its posts are drained, with its final
+# `registered` and `looked_at`. No such Run is a 404.
+curl -s -X POST 127.0.0.1:8010/runs/<uuid>/end    # {"session_id": "<uuid>", "state": "ended", "registered": ..., "looked_at": ...}
 ```
 
 An end does not stop a watching Run at once (#228). The Run keeps looking,

@@ -1403,6 +1403,11 @@ class RegisteredFrames:
         self.net_scale = None   # measured by `open`; see the warning there
         self.registration = registration
         self.lost = 0
+        # The latest registered Look, `(index, view)`, then the latest Look's
+        # index, registered or Lost: how far a Run has watched (ADR-0009).
+        # Each set in one assignment, the first first, so another thread
+        # reading them in that order never reads the first past the second.
+        self.registered = self.looked = None
         self.finishing = False   # set by `finish`
         # The Board past the margin canvas, searched by a second inference (#46).
         self.bands = view.exposed_bands(BAND_CONTEXT_PX)
@@ -1536,6 +1541,9 @@ class RegisteredFrames:
                 self.clock.start(wait)   # the frame is in hand: read, decoded, handed over
                 current = self.view if index == 0 else self.registration.register(frame, index)
                 self.clock.lap("registration")
+                if current is not None:
+                    self.registered = index, current
+                self.looked = index
                 if current is None:
                     self.lost += 1
                     yield Look(index, None, None, None)

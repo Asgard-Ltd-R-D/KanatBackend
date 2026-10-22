@@ -84,7 +84,7 @@ def api(monkeypatch):
 
 
 @pytest.fixture
-def late(monkeypatch):
+def shot_before_end(monkeypatch):
     """`api`, its Runs looked at by `_ShotBeforeEnd`."""
     api = _Api(monkeypatch, _ShotBeforeEnd())
     yield api
@@ -206,8 +206,8 @@ class _ShotBeforeEnd:
 
 
 def _end_just_after_a_shot(api):
-    """Start a Run on `late`'s model, and end it while the Bullet Hole's
-    Candidate is open: answered with the end's answer, once it returns."""
+    """Start a Run on `shot_before_end`'s model, and end it while the Bullet
+    Hole's Candidate is open: answered with the end's answer, once it returns."""
     model = api.model
     api.start()
     assert model.seen.wait(10)
@@ -221,38 +221,43 @@ def _end_just_after_a_shot(api):
     return ended
 
 
-def test_a_bullet_hole_first_seen_just_before_the_end_is_posted_before_it_returns(late):
+ENDED = (200, {"session_id": SESSION, "state": "ended"})
+
+
+def test_a_bullet_hole_first_seen_just_before_the_end_is_posted_before_it_returns(
+        shot_before_end):
     """Judged as at any Look once its persistence window has elapsed, and
     posted, before the end is answered (#228): the last shot is not lost."""
-    assert _end_just_after_a_shot(late) == [(200, {"session_id": SESSION, "state": "ended"})]
-    assert [p["position"] for p in late.posted] == [{"x": 15.0, "y": 15.0}]
+    assert _end_just_after_a_shot(shot_before_end) == [ENDED]
+    assert [p["position"] for p in shot_before_end.posted] == [{"x": 15.0, "y": 15.0}]
 
 
-def test_a_bullet_hole_first_seen_while_the_run_is_ending_is_never_posted(late):
+def test_a_bullet_hole_first_seen_while_the_run_is_ending_is_never_posted(shot_before_end):
     """No Candidate opens while ending: the one at (55, 55) is not posted,
     though seen on every look to the end."""
-    _end_just_after_a_shot(late)
-    assert {"x": 55.0, "y": 55.0} not in [p["position"] for p in late.posted]
+    _end_just_after_a_shot(shot_before_end)
+    assert {"x": 55.0, "y": 55.0} not in [p["position"] for p in shot_before_end.posted]
 
 
-def test_an_end_returns_within_one_persistence_window_of_stream(late):
+def test_an_end_returns_within_one_persistence_window_of_stream(shot_before_end):
     """The Run looks on to the look that judges the last Candidate open when
     the end came, and no further: none first seen while ending holds it."""
-    _end_just_after_a_shot(late)
-    model = late.model
+    _end_just_after_a_shot(shot_before_end)
+    model = shot_before_end.model
     past = [i for i in model.looks if i + 1 >= model.first + nbh.PERSIST_FRAMES]
     assert past == [model.looks[-1]]
 
 
-def test_an_end_whose_stream_stops_giving_frames_returns_by_its_timeout(monkeypatch, late):
+def test_an_end_whose_stream_stops_giving_frames_returns_by_its_timeout(
+        monkeypatch, shot_before_end):
     """The Stream runs out with the Candidate still open, and never comes
     back: the Run stops past ENDING_TIMEOUT_S, its Candidate unconfirmable."""
     monkeypatch.setattr(service, "ENDING_TIMEOUT_S", 0.3)
-    late.opener = lambda url, start, ref_time: (
+    shot_before_end.opener = lambda url, start, ref_time: (
         nbh.Stream(_FakeStream(n=150, interval=0.002), time.time(), lambda: _FakeStream(n=0)),
         np.zeros((8, 8, 3), np.int64))
-    assert _end_just_after_a_shot(late) == [(200, {"session_id": SESSION, "state": "ended"})]
-    assert late.posted == [] and _status(late) is None
+    assert _end_just_after_a_shot(shot_before_end) == [ENDED]
+    assert shot_before_end.posted == [] and _status(shot_before_end) is None
 
 
 @pytest.mark.parametrize("session_id", [SESSION, OTHER, "not-a-uuid"])

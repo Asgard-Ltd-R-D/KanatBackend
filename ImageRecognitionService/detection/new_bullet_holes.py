@@ -1269,8 +1269,8 @@ class Persistence:
         return self._judge_due(index + 1)
 
     @property
-    def open(self):
-        """How many Candidates are still inside their window, unjudged."""
+    def unjudged(self):
+        """How many Candidates are still open: inside their window, unjudged."""
         return len(self._candidates) - self._judged
 
     def end(self, processed):
@@ -1775,7 +1775,7 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
             timed.append(_timing_row(look, loop.clock))
         if announce:
             announce(persisted_now, corroborating)
-        if finishing and not persistence.open:
+        if finishing and not persistence.unjudged:
             loop.stop()   # every Candidate judged, as at any Look (ADR-0003, #228)
 
     processed = loop.processed

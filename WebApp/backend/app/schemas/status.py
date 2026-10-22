@@ -6,3 +6,4 @@ class SystemStatus(BaseModel):
     at all is the backend's own status."""
 
     video_service: bool
+    detection_service: bool

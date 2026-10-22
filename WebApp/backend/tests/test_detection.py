@@ -240,11 +240,11 @@ def test_a_start_answered_after_the_session_ended_changes_nothing(client, db, de
 def test_the_client_reads_the_detection_services_answers(monkeypatch):
     answers = {}
 
-    def post(url, timeout, **kwargs):
+    def request(method, url, timeout, **kwargs):
         status, body = answers[url.rsplit(":8010", 1)[1]]
-        return httpx.Response(status, json=body, request=httpx.Request("POST", url))
+        return httpx.Response(status, json=body, request=httpx.Request(method, url))
 
-    monkeypatch.setattr(detection_service.httpx, "post", post)
+    monkeypatch.setattr(detection_service.httpx, "request", request)
     session_id = uuid.uuid4()
 
     answers["/runs"] = (409, {"detail": "another Session's Run is active"})

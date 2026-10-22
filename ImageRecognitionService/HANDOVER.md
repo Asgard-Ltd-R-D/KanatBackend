@@ -765,6 +765,9 @@ python$(cat .python-version) -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
+On Windows, `py -<version> -m venv .venv` with the version `.python-version`
+holds, then `.venv\Scripts\pip install -r requirements.txt`.
+
 ```bash
 # Detect new Bullet Holes, optionally rendering the rectified Board
 .venv/bin/python -m detection.new_bullet_holes CLIP.mkv --start 13 --end 25 --out out.mp4

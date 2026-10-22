@@ -233,14 +233,14 @@ Start in detached mode (background):
 
 Detached mode launches the containers and opens a new Terminal window that runs `PacketProcessingService.dll`, leaving the originating shell free.
 
-Start the video and detection services alongside it, each in a Terminal window of its own:
+Start the video and detection services alongside it, each in a window of its own (a Terminal window on macOS, a console on Windows):
 
 ```bash
 ./composer up dev -d --mediamtx --detection
 ```
 
 - `--mediamtx` runs MediaMTX from `VideoService/`. Its binary is not committed: place it there first.
-- `--detection` runs the Detection Service (`python -m detection.service`) from `ImageRecognitionService/` on its own `.venv`, at the Python version `ImageRecognitionService/.python-version` declares. Build that `.venv` first, as `ImageRecognitionService/HANDOVER.md`'s "Running it" says. Composer waits until its control API answers on `127.0.0.1:8010`. A missing `.venv`, the wrong Python or missing requirements are reported, and it is not started. Nothing restarts it if it stops (ADR-0008). POSIX only: composer does not start it on Windows.
+- `--detection` runs the Detection Service (`python -m detection.service`) from `ImageRecognitionService/` on its own `.venv`, at the Python version `ImageRecognitionService/.python-version` declares. Build that `.venv` first, as `ImageRecognitionService/HANDOVER.md`'s "Running it" says. Composer waits until its control API answers on `127.0.0.1:8010`. A missing `.venv`, the wrong Python or missing requirements are reported, and it is not started. Nothing restarts it if it stops (ADR-0008).
 
 **Note**:
 
@@ -261,7 +261,7 @@ Stop the running environment:
 
 #### Kill Environment
 
-`stop` and `kill` also stop MediaMTX and the Detection Service. The Detection Service gets SIGTERM, which ends any Run and posts its last Bullet Holes. If it is still running 10 s later, while the backend is down for instance, it is killed, and the Bullet Holes it has not posted are lost.
+`stop` and `kill` also stop MediaMTX and the Detection Service. On macOS and Linux the Detection Service gets SIGTERM, which ends any Run and posts its last Bullet Holes. If it is still running 10 s later, while the backend is down for instance, it is killed, and the Bullet Holes it has not posted are lost. Windows has no SIGTERM, so there it is killed at once: end the Session first, so its Run has ended before you stop.
 
 Kill and clean up an environment (removes containers and DLL):
 

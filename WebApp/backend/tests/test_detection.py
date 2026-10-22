@@ -265,6 +265,17 @@ def test_completing_still_succeeds_when_the_detection_service_is_down(client, db
     assert detection_of(client, session_id) == END_UNCONFIRMED
 
 
+def test_a_watched_session_whose_run_is_already_gone_reads_end_unconfirmed(client, db, detection):
+    # Lost since the last tick, which still read watching: the 404 for no such
+    # Run does not say what it saw last was posted
+    session_id = start_session(client, add_camera(db))
+    detection.run = None
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["detection"] == END_UNCONFIRMED
+
+
 def test_a_session_no_run_watched_reads_none_however_its_end_went(client, db, detection):
     # Waiting for another Session's Run: nothing of its own was in flight
     start_session(client, add_camera(db))
@@ -533,7 +544,9 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
     assert (refused.value.status, refused.value.detail) == (409, "another Session's Run is active")
 
     answers[f"/runs/{session_id}/end"] = (404, {"detail": "no such Run"})
-    detection_service.end_run(session_id)        # already ended
+    assert detection_service.end_run(session_id) is False   # already ended, not by this end
+    answers[f"/runs/{session_id}/end"] = (200, {})
+    assert detection_service.end_run(session_id) is True
     answers[f"/runs/{session_id}/end"] = (500, {})
     with pytest.raises(detection_service.DetectionServiceUnreachable):
         detection_service.end_run(session_id)

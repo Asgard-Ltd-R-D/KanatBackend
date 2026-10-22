@@ -11,7 +11,7 @@ class Detection(BaseModel):
     """Whether a Run of the Detection Service watches the Session
     (services/detection.py). `none`: no camera, or no Run is wanted any more.
     `end_unconfirmed`: the Session completed without the Detection Service
-    answering its Run's end, so Bullet Holes fired last may be missing."""
+    confirming it ended its Run, so Bullet Holes fired last may be missing."""
 
     state: Literal["none", "starting", "watching", "not_watching", "ending", "end_unconfirmed"]
     # Why not watching: the Detection Service did not answer, its Run failed

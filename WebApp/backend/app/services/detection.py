@@ -102,13 +102,13 @@ def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("star
 
 
 def _end_run(session_id: uuid.UUID) -> bool:
-    """Whether the Detection Service answered that the Run has ended."""
+    """Whether the Detection Service answered that this end ended the Run: not
+    when it could not be reached, or had no Run for the Session."""
     try:
-        detection_service.end_run(session_id)
+        return detection_service.end_run(session_id)
     except detection_service.DetectionServiceUnreachable as e:
         log.warning("The Run of session %s may not have ended: %s", session_id, e)
         return False
-    return True
 
 
 def end(session: Session) -> None:
@@ -118,7 +118,8 @@ def end(session: Session) -> None:
     what persisted, then `none`. A Detection Service that cannot be reached,
     or does not answer within END_TIMEOUT_S, is logged, and the Session ends
     anyway, reading `end_unconfirmed` if it was watched: its last Bullet Holes
-    may be missing.
+    may be missing. So does a watched one whose Run was already gone, lost
+    since the last tick.
 
     ponytail: a deleted Session's `end_unconfirmed` stays in memory until
     the backend restarts, a few bytes for each; reconcile does not read the

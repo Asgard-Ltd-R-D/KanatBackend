@@ -97,9 +97,11 @@ def start_run(session_id: uuid.UUID, stream_url: str) -> None:
         raise RunRefused(res.status_code, detail)
 
 
-def end_run(session_id: uuid.UUID) -> None:
+def end_run(session_id: uuid.UUID) -> bool:
     """End the Session's Run, answered once it has ended and its posts are
-    drained. No such Run (404) is already ended."""
+    drained. Returns whether there was one: no such Run (404) is already
+    ended, but not by this end, so what it saw last is not confirmed posted."""
     res = _request("POST", f"/runs/{session_id}/end", END_TIMEOUT_S)
     if res.is_error and res.status_code != 404:
         raise DetectionServiceUnreachable(f"POST /runs/{session_id}/end: HTTP {res.status_code} {res.text[:200]}")
+    return res.status_code != 404

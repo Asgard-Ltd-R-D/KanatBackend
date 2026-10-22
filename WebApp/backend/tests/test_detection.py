@@ -276,6 +276,31 @@ def test_a_watched_session_whose_run_is_already_gone_reads_end_unconfirmed(clien
     assert res.json()["detection"] == END_UNCONFIRMED
 
 
+def test_a_watched_session_read_not_watching_since_reads_end_unconfirmed(client, db, detection):
+    # A tick while the Detection Service was down read it service_down: its
+    # Run may still hold its last shots
+    session_id = start_session(client, add_camera(db))
+    detection.down = True
+    tick(client)
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["detection"] == END_UNCONFIRMED
+
+
+def test_a_session_whose_run_ended_while_it_was_active_reads_none(client, db, detection):
+    # Its camera disabled: the Run's end was confirmed while the Session still
+    # stored what it posted
+    camera = add_camera(db)
+    session_id = start_session(client, camera)
+    camera.enabled = False
+    tick(client)
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["detection"]["state"] == "none"
+
+
 def test_a_session_no_run_watched_reads_none_however_its_end_went(client, db, detection):
     # Waiting for another Session's Run: nothing of its own was in flight
     start_session(client, add_camera(db))

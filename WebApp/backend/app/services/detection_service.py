@@ -13,9 +13,10 @@ from app.config.settings import settings
 # after its START_TIMEOUT_S (15 s)
 START_TIMEOUT_S = 20
 # An end is answered once the Run has judged the Candidates it has open, which
-# the service bounds by its ENDING_TIMEOUT_S (5 s), and its posts to this
-# backend are drained (#228)
-END_TIMEOUT_S = 10   # PROVISIONAL
+# the service bounds by its ENDING_TIMEOUT_S (5 s), its Stream is closed, which
+# waits out a stalled read for up to its STREAM_TIMEOUT_MS (5 s), and its posts
+# to this backend are drained: ~1.5-3 s when the Stream is well (#228)
+END_TIMEOUT_S = 15   # PROVISIONAL
 # The status check answers within the frontend's own 2 s limit, as MediaMTX's
 # does beside it (routers/status.py)
 STATUS_TIMEOUT_S = 1

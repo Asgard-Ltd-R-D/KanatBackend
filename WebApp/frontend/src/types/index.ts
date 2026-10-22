@@ -13,9 +13,10 @@ export interface Session {
 }
 
 // Whether a Run of the Detection Service watches a session. none: no camera,
-// or the session has ended.
+// or the session has ended. end_unconfirmed: the session ended without the
+// Detection Service confirming it ended its Run, so the last shots may be missing
 export interface Detection {
-  state: 'none' | 'starting' | 'watching' | 'not_watching' | 'ending'
+  state: 'none' | 'starting' | 'watching' | 'not_watching' | 'ending' | 'end_unconfirmed'
   // Why not watching: the Detection Service did not answer, the Run failed to
   // start on the camera's stream, another session's Run holds the service, or
   // the session's camera was disabled or deleted. null for a Run lost while

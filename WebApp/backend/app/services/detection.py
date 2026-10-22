@@ -38,11 +38,17 @@ CAMERA_DISABLED = Detection(state="not_watching", reason="camera_disabled")
 # the service restarted between two ticks, which the backend cannot tell
 # apart, so no reason is given until the new Run's start answers
 RUN_LOST = Detection(state="not_watching")
+# Kept once the Session completes, unlike the others, until it is reopened
+END_UNCONFIRMED = Detection(state="end_unconfirmed")
 # The states with no start or end under way, which a tick may change; the
 # call under way sets the state itself once it is answered
 IDLE = ("none", "watching", "not_watching")
 
 _states: dict[uuid.UUID, Detection] = {}
+# The Sessions a Run has watched since their Run's end was last confirmed,
+# whatever they read now: one that reads not watching since may still have
+# lost its last Bullet Holes with its Run
+_watched: set[uuid.UUID] = set()
 _lock = threading.Lock()
 
 
@@ -53,11 +59,19 @@ def state_of(session_id: uuid.UUID) -> Detection:
 def _set(session_id: uuid.UUID, detection: Detection, only_from: tuple[str, ...] | None = None) -> bool:
     """Changes the Session's state and pushes it, unless `only_from` is given
     and the state is none of those. Returns whether it changed it, or it
-    already read that; that is not pushed again."""
+    already read that; that is not pushed again. `end_unconfirmed` is read
+    as `none` for a Session not in _watched, under the same lock as the
+    confirmed end that takes it out."""
     with _lock:
         current = state_of(session_id)
         if only_from is not None and current.state not in only_from:
             return False
+        if detection == END_UNCONFIRMED and session_id not in _watched:
+            detection = NONE
+        if detection == WATCHING:
+            _watched.add(session_id)
+        elif detection.state in ("none", "end_unconfirmed"):
+            _watched.discard(session_id)
         if detection == current:
             return True
         if detection.state == "none":
@@ -99,23 +113,51 @@ def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("star
         _end_run(session_id)
 
 
-def _end_run(session_id: uuid.UUID) -> None:
+def _end_run(session_id: uuid.UUID) -> bool:
+    """Whether the Detection Service answered that this end ended the Run: not
+    when it could not be reached, or had no Run for the Session."""
     try:
-        detection_service.end_run(session_id)
+        ended = detection_service.end_run(session_id)
     except detection_service.DetectionServiceUnreachable as e:
         log.warning("The Run of session %s may not have ended: %s", session_id, e)
+        return False
+    if ended:
+        with _lock:
+            _watched.discard(session_id)
+    return ended
 
 
 def end(session: Session) -> None:
     """Ends the active Session's Run, if it has a camera or had one when its
     Run was asked for, and returns once the Run has ended: `ending`
-    meanwhile, then `none`. A Detection Service that cannot be reached is
-    logged, and the Session ends anyway."""
+    meanwhile, while the Run judges the Candidates it has open and posts
+    what persisted, then `none`. A Detection Service that cannot be reached,
+    or does not answer within END_TIMEOUT_S, is logged, and the Session ends
+    anyway. So does one whose Run is already gone. It then reads
+    `end_unconfirmed` if a Run watched it since its Run's end was last
+    confirmed, even if it reads not watching by now: its last Bullet Holes
+    may be missing.
+
+    ponytail: a deleted Session's `end_unconfirmed` stays in memory until
+    the backend restarts, a few bytes for each; reconcile does not read the
+    deleted ones apart from the completed ones"""
     if session.status != "active" or (session.camera_id is None and session.id not in _states):
         return
     _set(session.id, Detection(state="ending"))
-    _end_run(session.id)
-    _set(session.id, NONE)
+    # Whether a Run watched it is read by _set once the end is answered: a
+    # start answered just before the end began, or a tick's end of the same
+    # Run confirmed meanwhile, changes it.
+    # ponytail: the Detection Service drops its Run before it answers that
+    # tick's end, so this end's 404 can come first and read end_unconfirmed,
+    # the safe way round. Waiting on an end of the same Run already under
+    # way closes it if it ever matters
+    _set(session.id, NONE if _end_run(session.id) else END_UNCONFIRMED)
+
+
+def reopened(session_id: uuid.UUID) -> None:
+    """The Session is active again: its last end not being confirmed no longer
+    stands, and reconcile watches it again from a fresh baseline."""
+    _set(session_id, NONE, only_from=("end_unconfirmed",))
 
 
 def reconcile(db: DBSession) -> None:
@@ -124,8 +166,8 @@ def reconcile(db: DBSession) -> None:
     enabled, or else the earliest started active Session whose camera is. A
     Run of any other Session is ended, and the wanted Session's started if it
     has none. Every other active Session reads why it is not watched, and
-    every Session no longer active reads `none`. A Session with a start or an
-    end under way is left to it."""
+    every Session no longer active reads `none`, unless its end was not
+    confirmed. A Session with a start or an end under way is left to it."""
     # Asked before the database is read: a Run is only started for a Session
     # already committed, so the Session of the Run it reports is read below
     try:

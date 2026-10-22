@@ -125,7 +125,10 @@ export function SessionDetail() {
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{session.name}</h1>
               <StatusBadge status={session.status} />
-              {active && session.detection && <DetectionBadge detection={session.detection} />}
+              {/* Once ended, only to say its Run's end was not confirmed */}
+              {session.detection && (active || session.detection.state === 'end_unconfirmed') && (
+                <DetectionBadge detection={session.detection} />
+              )}
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
               {format(new Date(session.started_at), 'EEEE, MMM d yyyy · HH:mm')}
@@ -259,7 +262,8 @@ export function SessionDetail() {
         open={showEndConfirm}
         title="End Session"
         message={`End "${session.name}"?`}
-        loadingLabel="Ending…"
+        // Until the Run has judged its last Candidates and posted them, up to ~3 s
+        loadingLabel="Closing…"
         confirmLabel="End Session"
         onConfirm={() => endMutation.mutate()}
         onCancel={() => {

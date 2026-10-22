@@ -26,6 +26,7 @@ def fresh_traffic():
 def no_detection_states():
     """Each test starts with no Session's detection remembered."""
     detection._states.clear()
+    detection._watched.clear()
 
 
 @pytest.fixture(autouse=True)

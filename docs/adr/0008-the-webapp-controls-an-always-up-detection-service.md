@@ -47,6 +47,16 @@ staying up is therefore not the seconds:
     Candidates are decided (at most one persistence window) and posts are
     drained, so the last shot is not dropped on a 409.
 
+*Amended 2026-10-22 (#228): both waits in an end are bounded, so a failed
+Stream or Detection Service never keeps the operator in an open Session. The
+Run judges its open Candidates for at most 5 s (`ENDING_TIMEOUT_S`). If the
+Stream gives no frames in that time, the Candidates still open are
+unconfirmable. The backend waits at most 15 s for the end, then completes the
+Session anyway. A Session that was watched then reads `end_unconfirmed`, because
+anything its Run posts after completion is refused with a 409. The decision
+stands: these limits bound the wait without changing what an end waits for.
+Stopping the Detection Service ends its Run the same way.*
+
 ## Considered options
 
 - **The backend spawns a Run per Session as a child process.** It pays imports,

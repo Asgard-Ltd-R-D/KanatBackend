@@ -57,6 +57,8 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = D
         # it posts on the way out are stored
         detection.end(svc.get_session_or_404(session_id, db))
     session = svc.update_session(session_id, body, db)
+    if body.status == "active":
+        detection.reopened(session_id)
     # Ending a Session or switching its recording starts or stops the cameras recording
     camera_sync.sync_soon(db)
     hub.publish_from_thread(

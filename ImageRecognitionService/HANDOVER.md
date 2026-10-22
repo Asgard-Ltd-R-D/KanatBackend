@@ -853,7 +853,8 @@ authentication, which is why it is bound to the loopback. It runs one Run at a
 time, on a worker thread. A Run is the live run above on the Stream it is
 given, posting to `--backend-url` as `--session-id` does, one publisher per
 Run. A Run takes the defaults, with no print scale, so `x_mm` and `y_mm` stay
-empty. SIGINT or SIGTERM ends any Run, drained, and then the service.
+empty. SIGINT or SIGTERM ends any Run as an end does, its open Candidates
+judged and its posts drained, and then the service.
 `composer up --detection` runs it in a Terminal window of its own, and `stop`
 and `kill` stop it (#225).
 
@@ -869,12 +870,18 @@ curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "
 # {"session_id": "<uuid>", "state": "watching", "since": "<UTC>", "baseline_marks": 3}
 # Status: {"run": null}, or the Run, its state (starting, watching, ending) and since when.
 curl -s 127.0.0.1:8010/status
-# End: stops the Run now, answered once its posts are drained. No such Run is a 404.
+# End: answered once the Run has ended and its posts are drained. No such Run is a 404.
 curl -s -X POST 127.0.0.1:8010/runs/<uuid>/end    # {"session_id": "<uuid>", "state": "ended"}
 ```
 
-An end stops the Run at once, so a Candidate still inside its persistence
-window is never Confirmed. Judging those first is the end handshake, #228.
+An end does not stop a watching Run at once (#228). The Run keeps looking,
+opening no new Candidate, until every Candidate it has open is judged as at
+any Look: at most one persistence window, ~3 s on the development Mac. So a
+Bullet Hole fired just before the end is still posted, and the backend keeps
+its Session active until the end is answered. A Stream that gives no frames
+meanwhile is stopped past `ENDING_TIMEOUT_S` (5 s), its open Candidates
+unconfirmable. A Run still starting stops at once. The command line's SIGINT
+and SIGTERM still stop a Run at once.
 
 ```bash
 

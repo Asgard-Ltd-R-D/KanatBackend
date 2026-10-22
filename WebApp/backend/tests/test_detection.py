@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.core.deps import get_db
 from app.core.live import hub
 from app.main import app
+from app.repositories import bullets as bullets_repo
 from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as sessions_repo
 from app.services import camera_sync, detection_service
@@ -219,7 +220,35 @@ def test_completing_a_session_without_a_camera_ends_nothing(client, db, detectio
     assert detection.calls == []
 
 
+def test_a_bullet_hole_posted_during_the_end_window_is_stored(client, db, detection, monkeypatch):
+    # The Run judges its open Candidates before its end is answered, and
+    # posts what persisted meanwhile
+    stored = []
+
+    def add(db, bullet):
+        bullet.created_at = NOW
+        stored.append(bullet)
+        return bullet
+
+    monkeypatch.setattr(bullets_repo, "find_by_idempotency_key", lambda db, session_id, key: None)
+    monkeypatch.setattr(bullets_repo, "count_active", lambda db, session_id: len(stored))
+    monkeypatch.setattr(bullets_repo, "add", add)
+    session_id = start_session(client, add_camera(db))
+    posted = []
+    detection.on_end = lambda sid: posted.append(client.post(f"/sessions/{sid}/bullets", json={
+        "version": "v1", "first_seen_at": NOW.isoformat(), "position": {"x": 100, "y": 200}}).status_code)
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert posted == [201]
+    assert [b.session_id for b in stored] == [session_id]
+
+
+END_UNCONFIRMED = {"state": "end_unconfirmed", "reason": None, "detail": None}
+
+
 def test_completing_still_succeeds_when_the_detection_service_is_down(client, db, detection):
+    # Or does not answer in time: the client raises the same for both
     session_id = client.post("/sessions", json={"name": "Range 1", "camera_id": str(add_camera(db).id)}).json()["id"]
 
     def down(session_id):
@@ -227,7 +256,79 @@ def test_completing_still_succeeds_when_the_detection_service_is_down(client, db
 
     detection.on_end = down
 
-    assert client.patch(f"/sessions/{session_id}", json={"status": "completed"}).json()["status"] == "completed"
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+    tick(client)
+
+    assert res.json()["status"] == "completed"
+    # The page says so, and keeps saying it: its last Bullet Holes may be missing
+    assert res.json()["detection"] == END_UNCONFIRMED
+    assert detection_of(client, session_id) == END_UNCONFIRMED
+
+
+def test_a_watched_session_whose_run_is_already_gone_reads_end_unconfirmed(client, db, detection):
+    # Lost since the last tick, which still read watching: the 404 for no such
+    # Run does not say what it saw last was posted
+    session_id = start_session(client, add_camera(db))
+    detection.run = None
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["detection"] == END_UNCONFIRMED
+
+
+def test_a_watched_session_read_not_watching_since_reads_end_unconfirmed(client, db, detection):
+    # A tick while the Detection Service was down read it service_down: its
+    # Run may still hold its last shots
+    session_id = start_session(client, add_camera(db))
+    detection.down = True
+    tick(client)
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["detection"] == END_UNCONFIRMED
+
+
+def test_a_session_whose_run_ended_while_it_was_active_reads_none(client, db, detection):
+    # Its camera disabled: the Run's end was confirmed while the Session still
+    # stored what it posted
+    camera = add_camera(db)
+    session_id = start_session(client, camera)
+    camera.enabled = False
+    tick(client)
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["detection"]["state"] == "none"
+
+
+def test_a_run_another_end_confirmed_meanwhile_leaves_the_end_confirmed(client, db, detection):
+    # A tick, its camera disabled, ended the Run while the Session was still
+    # active, just before this end reached the Detection Service: no such Run
+    session_id = start_session(client, add_camera(db))
+    run, detection.run = detection.run, None
+
+    def ended_by_a_tick(sid):
+        detection.on_end = lambda sid: None
+        detection.run = run
+        detection_svc._end_run(sid)
+
+    detection.on_end = ended_by_a_tick
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["detection"]["state"] == "none"
+
+
+def test_a_session_no_run_watched_reads_none_however_its_end_went(client, db, detection):
+    # Waiting for another Session's Run: nothing of its own was in flight
+    start_session(client, add_camera(db))
+    waiting = start_session(client, add_camera(db, "lane2"))
+    tick(client)
+    detection.down = True
+
+    res = client.patch(f"/sessions/{waiting}", json={"status": "completed"})
+
+    assert res.json()["detection"]["state"] == "none"
 
 
 def test_completing_ends_the_run_of_a_session_whose_camera_was_deleted(client, db, detection):
@@ -310,7 +411,8 @@ def test_the_run_of_a_session_completed_while_the_service_was_down_is_ended(clie
 
     assert detection.calls[-1] == ("end", session_id)
     assert detection.run is None
-    assert detection_of(client, session_id)["state"] == "none"
+    # Ended after the Session completed: what it posted on the way out was refused
+    assert detection_of(client, session_id) == END_UNCONFIRMED
 
 
 def test_the_run_of_a_deleted_session_is_ended(client, db, detection):
@@ -370,9 +472,13 @@ def test_the_session_holding_the_run_keeps_it_over_an_earlier_one(client, db, de
     assert (detection_of(client, earlier)["state"], detection_of(client, earlier)["reason"]) == ("not_watching", "other_session")
 
 
-def test_a_reopened_session_gets_a_new_run(client, db, detection):
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_a_reopened_session_gets_a_new_run(client, db, detection, confirmed):
     session_id = start_session(client, add_camera(db))
+    detection.down = not confirmed   # its end is not confirmed, and its Run left
     client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+    detection.down = False
+    tick(client)   # ends the Run of a Session no longer active
     client.patch(f"/sessions/{session_id}", json={"status": "active"})
 
     tick(client)
@@ -481,7 +587,9 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
     assert (refused.value.status, refused.value.detail) == (409, "another Session's Run is active")
 
     answers[f"/runs/{session_id}/end"] = (404, {"detail": "no such Run"})
-    detection_service.end_run(session_id)        # already ended
+    assert detection_service.end_run(session_id) is False   # already ended, not by this end
+    answers[f"/runs/{session_id}/end"] = (200, {})
+    assert detection_service.end_run(session_id) is True
     answers[f"/runs/{session_id}/end"] = (500, {})
     with pytest.raises(detection_service.DetectionServiceUnreachable):
         detection_service.end_run(session_id)

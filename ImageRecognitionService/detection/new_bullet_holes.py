@@ -302,9 +302,10 @@ def strip_pre_existing(pts, baseline, match_px):
     return pts[distance >= match_px], distance[distance < match_px]
 
 
-def _fold(candidates, idx, pts, match_px):
+def _fold(candidates, idx, pts, match_px, opening=True):
     """One Look's Detections into the candidates, in place, for `Persistence`.
-    A candidate is [pos, seen_frame_idxs, first_idx].
+    A candidate is [pos, seen_frame_idxs, first_idx]. Without `opening`, a
+    Detection matching none is dropped rather than opening a candidate.
 
     ponytail: each Detection is matched against every candidate so far, kept
     or not, as the whole-run fold always was. That is once a Look, so a very
@@ -312,7 +313,8 @@ def _fold(candidates, idx, pts, match_px):
     for p in np.asarray(pts, np.float32):  # (cx, cy) or (cx, cy, w, h), always 2-D
         match = next((c for c in candidates if same_bullet_hole(c[0], p, match_px)), None)
         if match is None:
-            candidates.append([p.copy(), [idx], idx])
+            if opening:
+                candidates.append([p.copy(), [idx], idx])
         else:
             n = len(match[1])
             match[0] = (match[0] * n + p) / (n + 1)
@@ -1253,16 +1255,23 @@ class Persistence:
         self._judged = 0   # candidates are made in frame order, so the judged are a prefix
         self._persisted = {}   # id(hole) -> (hole, its candidate)
 
-    def add(self, index, pts):
+    def add(self, index, pts, opening=True):
         """One Look: its Detections, or None if it was Lost. Returns the
         Candidates that persisted at it, each with its position and sightings
-        as of now. `index + 1` frames have passed, in both modes."""
+        as of now. `index + 1` frames have passed, in both modes. Without
+        `opening`, as while a live Run ends, a Detection opens no Candidate
+        (#228)."""
         if pts is None:
             self.lost.append(index)
         else:
             self.looked_at.append(index)
-            _fold(self._candidates, index, pts, self.match_px)
+            _fold(self._candidates, index, pts, self.match_px, opening)
         return self._judge_due(index + 1)
+
+    @property
+    def unjudged(self):
+        """How many Candidates are still open: inside their window, unjudged."""
+        return len(self._candidates) - self._judged
 
     def end(self, processed):
         """Judge whatever became due after the last Look, `processed` frames
@@ -1394,6 +1403,7 @@ class RegisteredFrames:
         self.net_scale = None   # measured by `open`; see the warning there
         self.registration = registration
         self.lost = 0
+        self.finishing = False   # set by `finish`
         # The Board past the margin canvas, searched by a second inference (#46).
         self.bands = view.exposed_bands(BAND_CONTEXT_PX)
 
@@ -1481,6 +1491,14 @@ class RegisteredFrames:
         Stream's `stop`. It then ends as at any end, report and all (#221).
         A Recording ends at its `end` and has none."""
         self.source.stop()
+
+    def finish(self):
+        """End a live Run once every Candidate open now is judged, from any
+        thread: `process` opens no new one meanwhile, and stops the Run at the
+        Look that judges the last, at most one persistence window on (#228).
+        Only a flag, as `stop` sets. A Stream that gives no frames never gets
+        there: whoever finishes a Run also bounds the wait, and stops it."""
+        self.finishing = True
 
     @property
     def last(self):
@@ -1658,8 +1676,9 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
     into its Recording. Whoever opens it chooses the source, the model and
     the Board space everything is registered onto, and can use that Board
     space first: the scoring tool places its truth through it (#185). A
-    Stream has no `end`: it runs until stopped, at `LIVE_STRIDE` unless
-    `stride` says otherwise, and prints each Bullet Hole as it is confirmed.
+    Stream has no `end`: it runs until stopped, or finished (`finish`), at
+    `LIVE_STRIDE` unless `stride` says otherwise, and prints each Bullet Hole
+    as it is confirmed.
 
     `publish`, when given, is handed each Confirmed Bullet Hole once, as a
     `BulletHoleConfirmed` (#155): a Stream's as it is announced, a
@@ -1745,7 +1764,9 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
                 corroborating = [p for p, seen in zip(pts, evidence) if seen]
                 corroboration += corroborating
             loop.clock.lap("change filter")
-        persisted_now = persistence.add(look.index, pts)  # empty is meaningful: looked, saw nothing
+        finishing = loop.finishing   # read once: the Look opens and stops by the same answer
+        # empty is meaningful: looked, saw nothing
+        persisted_now = persistence.add(look.index, pts, opening=not finishing)
         # The Look's clock stops once Persistence has taken it: the announcer's
         # Change Evidence check and print fall outside it, as a recording's
         # end-of-run check does (#129).
@@ -1754,6 +1775,8 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
             timed.append(_timing_row(look, loop.clock))
         if announce:
             announce(persisted_now, corroborating)
+        if finishing and not persistence.unjudged:
+            loop.stop()   # every Candidate judged, as at any Look (ADR-0003, #228)
 
     processed = loop.processed
     if persistence.lost:

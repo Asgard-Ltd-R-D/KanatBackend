@@ -89,3 +89,4 @@ class FakeDetectionService:
         self._answer()
         if ending:
             self.run = None
+        return bool(ending)

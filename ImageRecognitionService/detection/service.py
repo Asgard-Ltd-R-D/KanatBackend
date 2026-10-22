@@ -36,6 +36,13 @@ DEFAULT_PORT = 8010
 # one Run for good.
 START_TIMEOUT_S = 15   # PROVISIONAL
 
+# How long an end lets a watching Run look on, judging the Candidates it has
+# open, before it stops the Run as it stands (#228): one persistence window
+# (PERSIST_FRAMES at LIVE_FPS, 2 s) past the Look in hand, to the stride's
+# Look that judges the last, ~3 s on the development Mac. Past it the Stream
+# gave no frames to judge them on, and a Candidate still open is unconfirmable.
+ENDING_TIMEOUT_S = 5   # PROVISIONAL
+
 
 class _Run:
     """A Run as `/status` reports it: its Session, its state (`starting`,
@@ -101,8 +108,10 @@ class DetectionService:
             return 200, run.view()
 
     def end(self, session_id):
-        """End the Session's Run now, answered once it has ended and its
-        posts are drained. No such Run is a 404."""
+        """End the Session's Run, answered once it has ended and its posts
+        are drained. A watching Run first judges the Candidates it has open,
+        opening none, for up to `ENDING_TIMEOUT_S` (#228); one still starting
+        stops at once. No such Run is a 404."""
         with self._lock:
             run = self._run
             if run is None or run.session_id != session_id:
@@ -119,11 +128,17 @@ class DetectionService:
 
     def _end(self, run):
         with self._lock:
-            if run.state != "ending":   # a repeat end keeps the first one's time
+            was, loop = run.state, run.loop
+            if was != "ending":   # a repeat end waits on the first, its time kept
                 run.enter("ending")
-            loop = run.loop
-        if loop:
-            loop.stop()
+            # Flags only, so set under the lock: a Run that reads `ending` is
+            # already finishing, or stopped
+            if was == "watching":
+                loop.finish()
+            elif was == "starting" and loop:   # no baseline, so no Candidate yet
+                loop.stop()
+        if was == "watching" and not run.ended.wait(ENDING_TIMEOUT_S):
+            loop.stop()   # harmless once it has finished and is draining
         run.ended.wait()
 
     def _work(self, run, stream_url):
@@ -219,7 +234,7 @@ if __name__ == "__main__":
     service = DetectionService(nbh.load_model(a.model), a.backend_url)
     server = serve(service, a.port)
     print(f"[SERVICE] control API on http://127.0.0.1:{a.port}, detector {a.model}; "
-          f"SIGINT or SIGTERM ends any Run, drained, then the service")
+          f"SIGINT or SIGTERM ends any Run as an end does, then the service")
     signal.signal(signal.SIGTERM, signal.default_int_handler)   # a stop, as Ctrl-C is
     try:
         server.serve_forever()

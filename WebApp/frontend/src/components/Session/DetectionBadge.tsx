@@ -1,7 +1,8 @@
 import clsx from 'clsx'
 import { Detection } from '../../types'
 
-const STYLES: Record<Exclude<Detection['state'], 'none'>, { label: string; badge: string; dot: string }> = {
+// hint: shown on hover when the Detection Service gave no words of its own
+const STYLES: Record<Exclude<Detection['state'], 'none'>, { label: string; badge: string; dot: string; hint?: string }> = {
   starting: {
     label: 'Detection starting',
     badge: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/30',
@@ -22,6 +23,12 @@ const STYLES: Record<Exclude<Detection['state'], 'none'>, { label: string; badge
     badge: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700',
     dot: 'bg-slate-400 dark:bg-slate-500 animate-pulse',
   },
+  end_unconfirmed: {
+    label: 'Detection end not confirmed',
+    hint: 'The last shots may be missing: add them by hand',
+    badge: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/30',
+    dot: 'bg-amber-500 dark:bg-amber-400',
+  },
 }
 
 const REASONS: Record<NonNullable<Detection['reason']>, string> = {
@@ -37,7 +44,7 @@ export function DetectionBadge({ detection }: { detection: Detection }) {
   const style = STYLES[detection.state]
   return (
     <span
-      title={detection.detail ?? undefined}
+      title={detection.detail ?? style.hint}
       className={clsx('inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border', style.badge)}
     >
       <span className={clsx('w-1.5 h-1.5 rounded-full', style.dot)} />

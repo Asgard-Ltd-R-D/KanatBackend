@@ -12,8 +12,11 @@ from app.config.settings import settings
 # open, Board space and the baseline, which the service itself gives up on
 # after its START_TIMEOUT_S (15 s)
 START_TIMEOUT_S = 20
-# An end is answered once the Run has stopped and its posts are drained
-END_TIMEOUT_S = 10   # PROVISIONAL: #228 bounds the end with its persistence window
+# An end is answered once the Run has judged the Candidates it has open, which
+# the service bounds by its ENDING_TIMEOUT_S (5 s), its Stream is closed, which
+# waits out a stalled read for up to its STREAM_TIMEOUT_MS (5 s), and its posts
+# to this backend are drained: ~1.5-3 s when the Stream is well (#228)
+END_TIMEOUT_S = 15   # PROVISIONAL
 # The status check answers within the frontend's own 2 s limit, as MediaMTX's
 # does beside it (routers/status.py)
 STATUS_TIMEOUT_S = 1
@@ -94,9 +97,11 @@ def start_run(session_id: uuid.UUID, stream_url: str) -> None:
         raise RunRefused(res.status_code, detail)
 
 
-def end_run(session_id: uuid.UUID) -> None:
+def end_run(session_id: uuid.UUID) -> bool:
     """End the Session's Run, answered once it has ended and its posts are
-    drained. No such Run (404) is already ended."""
+    drained. Returns whether there was one: no such Run (404) is already
+    ended, but not by this end, so what it saw last is not confirmed posted."""
     res = _request("POST", f"/runs/{session_id}/end", END_TIMEOUT_S)
     if res.is_error and res.status_code != 404:
         raise DetectionServiceUnreachable(f"POST /runs/{session_id}/end: HTTP {res.status_code} {res.text[:200]}")
+    return res.status_code != 404

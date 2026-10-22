@@ -44,6 +44,8 @@ function applyEvent(session: Session, event: LiveEvent): Session {
       return { ...session, name: event.name, status: event.status, ended_at: event.ended_at, record: event.record }
     case 'detection_updated':
       return { ...session, detection: event.detection }
+    case 'run_moved':
+      return session
   }
 }
 

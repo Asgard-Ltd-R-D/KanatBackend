@@ -240,7 +240,7 @@ Start the video and detection services alongside it, each in a window of its own
 ```
 
 - `--mediamtx` runs MediaMTX from `VideoService/`. Its binary is not committed: place it there first.
-- `--detection` runs the Detection Service (`python -m detection.service`) from `ImageRecognitionService/` on its own `.venv`, at the Python version `ImageRecognitionService/.python-version` declares. Build that `.venv` first, as `ImageRecognitionService/HANDOVER.md`'s "Running it" says. Composer waits until its control API answers on `127.0.0.1:8010`. A missing `.venv`, the wrong Python or missing requirements are reported, and it is not started. Nothing restarts it if it stops (ADR-0008).
+- `--detection` runs the Detection Service (`python -m detection.service`) from `ImageRecognitionService/` on its own `.venv`, at the Python version `ImageRecognitionService/.python-version` declares. Build that `.venv` first, as `ImageRecognitionService/HANDOVER.md`'s "Running it" says. Composer waits until its control API answers on `127.0.0.1:8010`. A missing `.venv`, the wrong Python or missing requirements are reported, and it is not started. If it does not start, or does not answer within 60 s, `up` exits non-zero there and does not launch PacketProcessingService; the containers and MediaMTX stay up, so fix it and run `up` again. Nothing restarts it if it stops (ADR-0008).
 
 **Note**:
 

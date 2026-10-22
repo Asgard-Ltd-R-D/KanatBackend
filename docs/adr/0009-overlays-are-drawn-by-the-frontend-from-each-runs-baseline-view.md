@@ -56,7 +56,8 @@ view (below): today it carries only `session_id`, `state`, `since` and a
 `baseline_marks` count, and the backend's client keeps only the first two. The
 backend keeps a place only when it has moved by more than a couple of px since
 the last one it kept: a few rows a minute while the Board creeps, and none
-while it holds. Replay draws the place kept last before the moment on screen.
+while it holds. Replay draws the place kept last before the moment on screen,
+and only while that Run was watching (its end, below).
 
 A stream of every Look's registration (in-process detail, at Look rate, for an
 operator who cannot act on a Look) stays out. So does following sway, which
@@ -86,9 +87,32 @@ fields are added to the run view; every existing field keeps its meaning.
 }
 ```
 
+The end's answer (`POST /runs/{session_id}/end`, today `{session_id, state}`)
+also carries the Run's final `registered`. A Board Move in the last seconds
+before an end, where a Bullet Hole confirmed in the closing window then sits,
+is therefore not left at the previous poll's place. A move between two reads is
+still not kept, as between any two polls.
+
 The backend persists one `runs` row per Run: its Session, the alias of the
-camera it watched, `taken_at`, the Baseline View as JSON, and the places it
-kept, each an `at` and a `template_to_picture`, starting with the baseline's.
+camera it watched, `taken_at`, the Baseline View as JSON, the places it kept,
+each an `at` and a `template_to_picture`, starting with the baseline's, and
+`watched_until`.
+
+## A Run's end
+
+A Run watches only part of its Session when it is lost and a later Run takes
+over, so replay must know when each one stopped. `watched_until` is the `at` of
+the latest registration the backend has read from the Run, on the same clock as
+`taken_at`. Every status read that shows the Run moves it on, and the end's
+answer gives the last one. It stops moving when the Run stops, whatever stopped
+it, so the backend never has to notice an end, and a backend restart loses
+nothing it had stored.
+
+Replay draws a Run only between its `taken_at` and its `watched_until`, so
+nothing is drawn while no Run watched; live, the Overlay shows only while the
+Session reads `watching` or `ending`. A Run that is lost, rather than ended,
+loses its Overlay for up to its last 5 s, the time since the last read. One that
+stopped while the backend was down loses it from the backend's last read.
 
 ## Consequences
 

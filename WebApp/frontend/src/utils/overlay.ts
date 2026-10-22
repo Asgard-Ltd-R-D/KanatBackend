@@ -85,14 +85,16 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
+const sum = (offsets: { stray: number }[]) => offsets.reduce((total, o) => total + o.stray, 0)
+
 // Run `from`'s template coordinates in Run `to`'s (ADR-0009). Each Run may hang
 // them on another Target (#240), so a point goes onto the picture at `from`'s
 // last place and back through `to`'s baseline. The camera creeps between the
 // two, so it is then shifted onto `to`'s Baseline Marks, which `to`'s baseline
-// saw `from`'s Bullet Holes `holes` and Baseline Marks as: by the offset to its
-// nearest mark that brings the most of them within MATCH_TPL_PX of one, refined
-// to the median of theirs. Most, not each one's nearest: in a tight Group a
-// hole's nearest mark can be its neighbour's
+// saw `from`'s Bullet Holes `holes` and Baseline Marks as: by the offset to a
+// mark that brings the most of them within MATCH_TPL_PX of one, refined to the
+// median of theirs. Most, not each one's nearest: in a tight Group a hole's
+// nearest mark can be its neighbour's
 // ponytail: one translation, so a Board turned or scaled between the Runs, or
 // moved over CARRY_MATCH_TPL_PX, is not followed; fit the Runs' Target
 // outlines if restarts show it
@@ -101,20 +103,23 @@ function carrier(from: RunGeometry, to: RunGeometry, holes: Point[]): (p: Point)
   const last = from.places[from.places.length - 1].template_to_picture
   const through = (p: Point) => project(back, project(last, p))
   const points = [...holes, ...from.baseline_view.baseline_marks].map(through)
-  // A point's offset to the mark nearest it once shifted by `s`, within `reach`
-  const offsetTo = ([x, y]: Point, [sx, sy]: Point, reach: number): Point[] =>
+  // A point's offsets to the marks within `reach` of it once shifted by `s`,
+  // nearest first, with how far each strays from `s`
+  const offsetsTo = ([x, y]: Point, [sx, sy]: Point, reach: number) =>
     to.baseline_view.baseline_marks
-      .map(([mx, my]): Point => [mx - x, my - y])
-      .filter(([dx, dy]) => Math.hypot(dx - sx, dy - sy) < reach)
-      .sort(([ax, ay], [bx, by]) => Math.hypot(ax - sx, ay - sy) - Math.hypot(bx - sx, by - sy))
-      .slice(0, 1)
-  const agreeing = (s: Point) => points.flatMap(p => offsetTo(p, s, MATCH_TPL_PX))
-  const best = points
-    .flatMap(p => offsetTo(p, [0, 0], CARRY_MATCH_TPL_PX))
-    .map(agreeing)
-    .reduce<Point[]>((most, offsets) => (offsets.length > most.length ? offsets : most), [])
-  const dx = median(best.map(o => o[0]))
-  const dy = median(best.map(o => o[1]))
+      .map(([mx, my]) => ({ offset: [mx - x, my - y] as Point, stray: Math.hypot(mx - x - sx, my - y - sy) }))
+      .filter(o => o.stray < reach)
+      .sort((a, b) => a.stray - b.stray)
+  const agreeing = (s: Point) => points.flatMap(p => offsetsTo(p, s, MATCH_TPL_PX).slice(0, 1))
+  // Every offset in reach is a candidate, not each point's nearest: an
+  // unrelated mark can be nearer every point than its own. On a tie in how
+  // many agree, the shift they stray least from
+  const [best = []] = points
+    .flatMap(p => offsetsTo(p, [0, 0], CARRY_MATCH_TPL_PX))
+    .map(({ offset }) => agreeing(offset))
+    .sort((a, b) => b.length - a.length || sum(a) - sum(b))
+  const dx = median(best.map(o => o.offset[0]))
+  const dy = median(best.map(o => o.offset[1]))
   return p => {
     const [x, y] = through(p)
     return [x + dx, y + dy]

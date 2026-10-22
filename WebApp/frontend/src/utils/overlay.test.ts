@@ -156,3 +156,14 @@ test("a tight Group's Bullet Holes land on their own Baseline Marks, not their n
   const carried = holesOver(late, [early, late], group.map(p => hole('2026-10-22T10:01:00Z', p)))
   carried.forEach((p, i) => near(p, late.baseline_view.baseline_marks[i]))
 })
+
+test("Bullet Holes nearer an unrelated Baseline Mark than their own still land on their own", () => {
+  // The camera crept 40 between the Runs, and the later baseline also saw a
+  // hole 10 and one 20 right of where the picture carries them
+  const early = run('2026-10-22T10:00:00Z', IDENTITY)
+  const late = run('2026-10-22T10:05:00Z', IDENTITY)
+  late.baseline_view.baseline_marks = [[110, 100], [140, 100], [220, 100], [240, 100]]
+  const carried = holesOver(late, [early, late], [hole('2026-10-22T10:01:00Z', [100, 100]), hole('2026-10-22T10:02:00Z', [200, 100])])
+  near(carried[0], [140, 100])
+  near(carried[1], [240, 100])
+})

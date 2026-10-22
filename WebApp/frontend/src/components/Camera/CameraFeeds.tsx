@@ -14,7 +14,8 @@ function gridFor(n: number): { columns: number; rows: number } {
 }
 
 // Every enabled camera, live, sharing all of the space it is given; the
-// Run's Overlay, with the Session's Bullet Holes, only over the camera it watched
+// Run's Overlay, at its latest place, with the Session's Bullet Holes, only
+// over the camera it watched
 export function CameraFeeds({ run, bullets }: { run?: Run; bullets: BulletHole[] }) {
   const { data: cameras, isLoading, isError } = useCameras()
   const enabled = cameras?.filter(c => c.enabled) ?? []
@@ -63,7 +64,11 @@ export function CameraFeeds({ run, bullets }: { run?: Run; bullets: BulletHole[]
           key={camera.id}
           path={camera.alias}
           label={enabled.length > 1 ? camera.alias : undefined}
-          overlay={run?.camera_alias === camera.alias ? { view: run.baseline_view, bullets } : undefined}
+          overlay={
+            run?.camera_alias === camera.alias
+              ? { view: run.baseline_view, place: run.places[run.places.length - 1], bullets }
+              : undefined
+          }
         />
       ))}
     </div>

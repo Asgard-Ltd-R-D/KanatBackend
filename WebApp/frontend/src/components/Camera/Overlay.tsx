@@ -1,5 +1,5 @@
 import { RefObject, useEffect, useState } from 'react'
-import { BaselineView, BulletHole } from '../../types'
+import { BaselineView, BulletHole, Place } from '../../types'
 import { Point, Size, baselineMarksToDraw, labelGroups, templateToElement } from '../../utils/overlay'
 
 const OUTLINE_COLOUR = '#22d3ee'
@@ -47,20 +47,22 @@ function useVideoSizes(videoRef: RefObject<HTMLVideoElement>) {
   return sizes
 }
 
-// What the Overlay draws: a Run's Baseline View, and the Bullet Holes over it
+// What the Overlay draws: a Run's Baseline View at one of its places, and
+// the Bullet Holes over it
 export interface OverlayContent {
   view: BaselineView
+  place: Place
   bullets: BulletHole[]
 }
 
-// The Overlay (ADR-0009), where the Run's baseline placed things on the
+// The Overlay (ADR-0009), where the Run's place puts things on the
 // picture: each Target's outline, labelled with its number, each Bullet Hole
 // as a ring numbered with its rank (one label for rings too close to number
 // apart), and in grey each Baseline Mark no Bullet Hole stands for. It covers the video exactly, and lets every click through
 // to the player.
-export function Overlay({ view, bullets, videoRef }: OverlayContent & { videoRef: RefObject<HTMLVideoElement> }) {
+export function Overlay({ view, place, bullets, videoRef }: OverlayContent & { videoRef: RefObject<HTMLVideoElement> }) {
   const sizes = useVideoSizes(videoRef)
-  const toElement = sizes && templateToElement(view.template_to_picture, view.picture, sizes.video, sizes.element)
+  const toElement = sizes && templateToElement(place.template_to_picture, view.picture, sizes.video, sizes.element)
   if (!toElement) return null
   const holes = bullets.map(b => [b.position_x, b.position_y] as Point)
   const markers = holes.map(toElement)

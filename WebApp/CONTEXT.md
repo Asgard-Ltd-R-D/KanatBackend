@@ -73,7 +73,10 @@ Camera
             │   and read its status every 5 s to reconcile the Run with the Session to watch.
             │   The run view carries the Run's Baseline View once it is watching (ADR-0009); the
             │   backend stores each Run the first time it sees it watching, before it pushes
-            │   `watching`, as a `runs` row with the camera's alias
+            │   `watching`, as a `runs` row with the camera's alias. The run view, and the end's
+            │   answer, also carry how far it watched (`registered`, `looked_at`): each moves the
+            │   row's `watched_until` on, and keeps the place once it moved more than 2 px at the
+            │   Target outlines, then pushes `run_moved`
             │
             ├─► mediamtx Control API (127.0.0.1:9997) — camera paths, recording on/off
             │   mediamtx playback (127.0.0.1:9996) — recorded video for replay

@@ -28,6 +28,16 @@ class BaselineView(BaseModel):
     baseline_marks: list[Point] = []
 
 
+class Place(BaseModel):
+    """Where a Run's registered Look showed the Board in the camera's picture
+    (ADR-0009)."""
+
+    # The Look's frame time, on the clock of the Bullet Holes' first_seen_at
+    at: AwareDatetime
+    # Template coordinates onto the Look's frame px, row-major
+    template_to_picture: tuple[Row, Row, Row]
+
+
 class RunResponse(BaseModel):
     """One Run of the Detection Service that watched the Session."""
 
@@ -35,4 +45,9 @@ class RunResponse(BaseModel):
 
     camera_alias: str
     taken_at: datetime
+    # Its latest Look's frame time the backend has read, registered or Lost
+    watched_until: datetime
     baseline_view: BaselineView
+    # Where it registered the Board, in time order, starting with the
+    # baseline's: each kept once it moved more than a couple of px
+    places: list[Place]

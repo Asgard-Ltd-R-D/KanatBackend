@@ -5,6 +5,7 @@ the service's answers."""
 import json
 import uuid
 from contextlib import contextmanager
+from datetime import datetime
 from types import SimpleNamespace
 
 import anyio
@@ -22,7 +23,7 @@ from app.repositories import sessions as sessions_repo
 from app.services import camera_sync, detection_service
 from app.services import detection as detection_svc
 from app.services import recordings as recording_svc
-from tests.fakes import NOW, FakeDetectionService, baseline_view, make_camera
+from tests.fakes import NOW, FakeDetectionService, baseline_view, make_camera, place
 
 
 class FakeDB:
@@ -55,6 +56,7 @@ def db(monkeypatch):
     monkeypatch.setattr(detection_svc, "SessionLocal", FakeDB)
     monkeypatch.setattr(sessions_repo, "exists", lambda db, session_id: session_id in state.sessions)
     monkeypatch.setattr(runs_repo, "add_once", lambda db, *run: None)
+    monkeypatch.setattr(runs_repo, "get_for_update", lambda db, *run: None)
     # Nothing to tell MediaMTX: the database is fake
     monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
     return state
@@ -579,31 +581,41 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
 
     answers["/status"] = (200, {"run": None})
     assert detection_service.status() is None
-    view = baseline_view(NOW)
+    view, registered = baseline_view(NOW), place(NOW, dx=3.0)
+    looked_at = "2026-10-22T09:00:05.560+00:00"
     watching = {"session_id": str(session_id), "state": "watching", "since": "2026-10-22T09:00:00+00:00",
-                "baseline_marks": 3, "baseline_view": view.model_dump(mode="json")}
+                "baseline_marks": 3, "baseline_view": view.model_dump(mode="json"),
+                "registered": registered.model_dump(mode="json"), "looked_at": looked_at}
+    read = (session_id, "watching", view, registered, datetime.fromisoformat(looked_at))
     answers["/status"] = (200, {"run": watching})
-    assert detection_service.status() == (session_id, "watching", view)
-    answers["/status"] = (200, {"run": {**watching, "state": "starting", "baseline_view": None}})
-    assert detection_service.status() == (session_id, "starting", None)
-    answers["/status"] = (200, {"run": {**watching, "baseline_view": {"taken_at": "not a time"}}})
-    with pytest.raises(detection_service.DetectionServiceUnreachable):
-        detection_service.status()
+    assert detection_service.status() == read
+    answers["/status"] = (200, {"run": {**watching, "state": "starting", "baseline_view": None,
+                                        "registered": None, "looked_at": None}})
+    assert detection_service.status() == (session_id, "starting", None, None, None)
+    for wrong in ({"baseline_view": {"taken_at": "not a time"}}, {"registered": {"at": "not a time"}},
+                  {"looked_at": "2026-10-22T09:00:05"}):   # a time with no zone is not on first_seen_at's clock
+        answers["/status"] = (200, {"run": {**watching, **wrong}})
+        with pytest.raises(detection_service.DetectionServiceUnreachable):
+            detection_service.status()
     answers["/status"] = (404, {"detail": "not found"})   # something else on its port
     with pytest.raises(detection_service.DetectionServiceUnreachable):
         detection_service.status()
 
     answers["/runs"] = (200, watching)
-    assert detection_service.start_run(session_id, "rtsp://127.0.0.1:8554/lane1") == (session_id, "watching", view)
+    assert detection_service.start_run(session_id, "rtsp://127.0.0.1:8554/lane1") == read
     answers["/runs"] = (409, {"detail": "another Session's Run is active"})
     with pytest.raises(detection_service.RunRefused) as refused:
         detection_service.start_run(session_id, "rtsp://127.0.0.1:8554/lane1")
     assert (refused.value.status, refused.value.detail) == (409, "another Session's Run is active")
 
     answers[f"/runs/{session_id}/end"] = (404, {"detail": "no such Run"})
-    assert detection_service.end_run(session_id) is False   # already ended, not by this end
-    answers[f"/runs/{session_id}/end"] = (200, {})
-    assert detection_service.end_run(session_id) is True
-    answers[f"/runs/{session_id}/end"] = (500, {})
-    with pytest.raises(detection_service.DetectionServiceUnreachable):
-        detection_service.end_run(session_id)
+    assert detection_service.end_run(session_id) is None   # already ended, not by this end
+    answers[f"/runs/{session_id}/end"] = (200, {"session_id": str(session_id), "state": "ended",
+                                                "baseline_view": view.model_dump(mode="json"),
+                                                "registered": registered.model_dump(mode="json"),
+                                                "looked_at": looked_at})
+    assert detection_service.end_run(session_id) == (session_id, "ended", *read[2:])
+    for wrong in ((500, {}), (200, {})):
+        answers[f"/runs/{session_id}/end"] = wrong
+        with pytest.raises(detection_service.DetectionServiceUnreachable):
+            detection_service.end_run(session_id)

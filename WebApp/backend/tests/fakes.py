@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from app.schemas.run import BaselineView
+from app.schemas.run import BaselineView, Place
 from app.services import detection_service, mediamtx
 
 NOW = datetime.now(timezone.utc)
@@ -55,15 +55,22 @@ def baseline_view(taken_at):
     )
 
 
+def place(at, dx=0.0, sx=0.25):
+    """Where a Run registered the Board at `at`: where `baseline_view` has
+    it, moved `dx` picture px right and scaled `sx` across."""
+    return Place(at=at, template_to_picture=[[sx, 0.0, 600.0 + dx], [0.0, 0.25, 300.0], [0.0, 0.0, 1.0]])
+
+
 class FakeDetectionService:
     """The Detection Service's control API (services/detection_service.py),
     holding one Run at a time as the service does: `run`, or None. Every start
     and end made is in `calls`. A start is answered with `start_error` raised,
     a 409 while another Session's Run is active or this one's ending, or else
     as watching, the Run already watching if it is this Session's, or a new
-    one whose Baseline View is taken later than any before; `down` makes
-    every call go unanswered. `on_status`, `on_start`
-    and `on_end` see each call as it happens, a Run being ended reading
+    one whose Baseline View is taken later than any before, registered and
+    looked at only then; `down` makes every call go unanswered. An end is
+    answered with the Run's Baseline View and how far it watched. `on_status`, `on_start` and
+    `on_end` see each call as it happens, a Run being ended reading
     `ending`."""
 
     def __init__(self, monkeypatch):
@@ -98,16 +105,18 @@ class FakeDetectionService:
             raise detection_service.RunRefused(409, "the Session's Run is ending")
         if not self.run:   # a repeat start is answered with the Run already watching
             taken_at = NOW + timedelta(seconds=len(self.calls))
-            self.run = detection_service.Run(session_id, "watching", baseline_view(taken_at))
+            self.run = detection_service.Run(session_id, "watching", baseline_view(taken_at),
+                                             place(taken_at), taken_at)
         return self.run
 
     def _end(self, session_id):
         self.calls.append(("end", session_id))
-        ending = not self.down and self.run and self.run.session_id == session_id
-        if ending:
-            self.run = detection_service.Run(session_id, "ending")
+        run = self.run if not self.down and self.run and self.run.session_id == session_id else None
+        if run:
+            self.run = run._replace(state="ending")
         self.on_end(session_id)
         self._answer()
-        if ending:
-            self.run = None
-        return bool(ending)
+        if not run:
+            return None
+        self.run = None
+        return run._replace(state="ended")

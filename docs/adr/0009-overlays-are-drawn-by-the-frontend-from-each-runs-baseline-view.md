@@ -89,7 +89,8 @@ Three fields are added to the run view; every existing field keeps its meaning.
 ```
 
 The end's answer (`POST /runs/{session_id}/end`, today `{session_id, state}`)
-also carries the Run's final `registered` and `looked_at`. A Board Move in the last seconds
+also carries the Run's final `registered` and `looked_at`, and its Baseline View,
+whose `taken_at` names the Run they belong to. A Board Move in the last seconds
 before an end, where a Bullet Hole confirmed in the closing window then sits,
 is therefore not left at the previous poll's place. A move between two reads is
 still not kept, as between any two polls.

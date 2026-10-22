@@ -1,6 +1,7 @@
 """The schema on a real PostgreSQL: the migrations, and the rules only the
 database keeps. Skipped unless TEST_DATABASE_URL names a server's database to
 connect to; each test makes a database of its own there and drops it after."""
+import json
 import os
 import uuid
 from pathlib import Path
@@ -20,6 +21,7 @@ pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")
 
 BEFORE_CAMERA_ID = "e5f6a7b8c9d0"
 BEFORE_RUNS = "f6a7b8c9d0e1"
+BEFORE_PLACES = "a7b8c9d0e1f2"
 
 
 @pytest.fixture
@@ -91,3 +93,36 @@ def test_deleting_a_camera_clears_it_on_its_sessions(db_url):
         rows = conn.execute(text("SELECT camera_id FROM sessions WHERE id = :id"), {"id": session_id}).all()
     engine.dispose()
     assert rows == [(None,)]   # the Session stays, without its camera
+
+
+def test_a_run_stored_before_its_places_is_placed_and_watched_as_its_baseline(db_url):
+    """Places and watched_until apply and reverse cleanly; a Run stored
+    before them keeps the place its baseline frame showed the Board at, and
+    reads watched until then."""
+    config = alembic_config()
+    command.upgrade(config, BEFORE_PLACES)
+    engine = create_engine(db_url)
+    session_id = uuid.uuid4()
+    H = [[0.25, 0.0, 600.0], [0.0, 0.25, 300.0], [0.0, 0.0, 1.0]]
+    view = {"taken_at": "2026-10-22T10:15:02.120000Z", "picture": {"width": 1920, "height": 1080},
+            "template_to_picture": H, "targets": [], "baseline_marks": []}
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO sessions (id, name, status, started_at) VALUES (:id, 'Range 1', 'active', now())"
+        ), {"id": session_id})
+        conn.execute(text(
+            "INSERT INTO runs (id, session_id, camera_alias, taken_at, baseline_view) "
+            "VALUES (:id, :session, 'lane1', '2026-10-22T10:15:02.120Z', CAST(:view AS jsonb))"
+        ), {"id": uuid.uuid4(), "session": session_id, "view": json.dumps(view)})
+
+    command.upgrade(config, "head")
+    with engine.connect() as conn:
+        places, watched_until, taken_at = conn.execute(
+            text("SELECT places, watched_until, taken_at FROM runs")).one()
+    assert places == [{"at": view["taken_at"], "template_to_picture": H}]
+    assert watched_until == taken_at
+
+    command.downgrade(config, BEFORE_PLACES)
+    columns = {c["name"] for c in inspect(engine).get_columns("runs")}
+    engine.dispose()
+    assert not {"places", "watched_until"} & columns

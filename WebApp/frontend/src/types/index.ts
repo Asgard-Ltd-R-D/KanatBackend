@@ -23,11 +23,19 @@ export interface BaselineView {
   baseline_marks: [number, number][] // one point per Baseline Mark, in template px
 }
 
+// Where a Run's registered Look showed the Board in the camera's picture (ADR-0009)
+export interface Place {
+  at: string
+  template_to_picture: number[][] // template px -> that frame's px, row-major 3x3
+}
+
 // A Run of the Detection Service that watched the session, and the camera it watched
 export interface Run {
   camera_alias: string
   taken_at: string
+  watched_until: string // its latest Look's frame time the backend read, registered or Lost
   baseline_view: BaselineView
+  places: Place[] // where it registered the Board, in time order, starting with the baseline's
 }
 
 // One Target's Group, in mm from the Target's centre. The spread measures are
@@ -101,6 +109,7 @@ export type LiveEvent =
   | { type: 'bullet_deleted'; bullet_id: string }
   | { type: 'session_updated'; name: string; status: Session['status']; ended_at: string | null; record: boolean }
   | { type: 'detection_updated'; detection: Detection }
+  | { type: 'run_moved'; taken_at: string } // a Run kept a new place: the refetch brings it
 
 // live: MediaMTX is receiving the stream. no_signal: configured, but nothing
 // arrives on its multicast group. disabled: switched off in Settings.

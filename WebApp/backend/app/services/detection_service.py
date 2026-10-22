@@ -2,12 +2,14 @@
 ADR-0008): its control API, which starts and ends a Session's Run."""
 import time
 import uuid
+from datetime import datetime
 from typing import NamedTuple
 
 import httpx
+from pydantic import AwareDatetime, TypeAdapter
 
 from app.config.settings import settings
-from app.schemas.run import BaselineView
+from app.schemas.run import BaselineView, Place
 
 # A start is answered once its Run is watching, or has failed: the Stream's
 # open, Board space and the baseline, which the service itself gives up on
@@ -37,20 +39,30 @@ class DetectionServiceUnreachable(Exception):
 
 
 class Run(NamedTuple):
-    """The Detection Service's Run, as its status reports it."""
+    """The Detection Service's Run, as its status, a start or an end reports it."""
     session_id: uuid.UUID
-    state: str   # starting, watching or ending
-    # Where its baseline frame showed the Board (ADR-0009); None until watching
+    state: str   # starting, watching or ending; ended in an end's answer
+    # Where its baseline frame showed the Board (ADR-0009), its taken_at naming
+    # the Run; None until watching
     baseline_view: BaselineView | None = None
+    # How far it has watched (ADR-0009): its latest registered Look's place, and
+    # its latest Look's frame time, registered or Lost; None until watching
+    registered: Place | None = None
+    looked_at: datetime | None = None
+
+
+_TIME = TypeAdapter(AwareDatetime)
 
 
 def _run(view: dict) -> Run:
-    """The Run of a run view. Raises ValueError, KeyError or TypeError for
-    anything that is not one. A Detection Service older than the Baseline
-    View (ADR-0009) still watches: its Runs have none."""
-    baseline_view = view.get("baseline_view")
+    """The Run of a run view, or of an end's answer. Raises ValueError,
+    KeyError or TypeError for anything that is not one. A Detection Service
+    older than the Baseline View (ADR-0009) still watches: its Runs have none."""
+    baseline_view, registered, looked_at = (view.get(k) for k in ("baseline_view", "registered", "looked_at"))
     return Run(uuid.UUID(view["session_id"]), view["state"],
-               None if baseline_view is None else BaselineView.model_validate(baseline_view))
+               None if baseline_view is None else BaselineView.model_validate(baseline_view),
+               None if registered is None else Place.model_validate(registered),
+               None if looked_at is None else _TIME.validate_python(looked_at))
 
 
 class RunRefused(Exception):
@@ -114,11 +126,16 @@ def start_run(session_id: uuid.UUID, stream_url: str) -> Run:
         raise DetectionServiceUnreachable(f"POST /runs: HTTP {res.status_code} {res.text[:200]}") from e
 
 
-def end_run(session_id: uuid.UUID) -> bool:
+def end_run(session_id: uuid.UUID) -> Run | None:
     """End the Session's Run, answered once it has ended and its posts are
-    drained. Returns whether there was one: no such Run (404) is already
-    ended, but not by this end, so what it saw last is not confirmed posted."""
+    drained, with how far it watched. None when there was no such Run (404):
+    already ended, but not by this end, so what it saw last is not confirmed
+    posted. Raises DetectionServiceUnreachable, also for an answer that is
+    not an end's."""
     res = _request("POST", f"/runs/{session_id}/end", END_TIMEOUT_S)
-    if res.is_error and res.status_code != 404:
-        raise DetectionServiceUnreachable(f"POST /runs/{session_id}/end: HTTP {res.status_code} {res.text[:200]}")
-    return res.status_code != 404
+    if res.status_code == 404:
+        return None
+    try:
+        return _run(res.raise_for_status().json())
+    except (httpx.HTTPStatusError, ValueError, KeyError, TypeError) as e:
+        raise DetectionServiceUnreachable(f"POST /runs/{session_id}/end: HTTP {res.status_code} {res.text[:200]}") from e

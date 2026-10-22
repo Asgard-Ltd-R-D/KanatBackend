@@ -4,7 +4,7 @@ watched and its Baseline View. Driven through the REST API on a real
 PostgreSQL, the Detection Service faked at its client module, so skipped
 unless TEST_DATABASE_URL is set."""
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import anyio
 import pytest
@@ -19,7 +19,8 @@ from app.main import app
 from app.services import camera_sync, detection_service
 from app.services import detection as detection_svc
 from app.services import recordings as recording_svc
-from tests.fakes import NOW, FakeDetectionService, baseline_view
+from tests.fakes import NOW, FakeDetectionService, baseline_view, place
+from tests.test_detection import events, listening
 from tests.test_schema import URL, alembic_config, db_url  # noqa: F401 (db_url is a fixture)
 
 pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")
@@ -87,6 +88,21 @@ def taken_at(run):
     return datetime.fromisoformat(run["taken_at"])
 
 
+def watched_until(run):
+    return datetime.fromisoformat(run["watched_until"])
+
+
+def later(run, seconds, **moved):
+    """`run` as read `seconds` past its baseline frame, registered then,
+    the Board moved as `moved` says (`fakes.place`)."""
+    at = run.baseline_view.taken_at + timedelta(seconds=seconds)
+    return run._replace(registered=place(at, **moved), looked_at=at)
+
+
+def places(*registered):
+    return [p.model_dump(mode="json") for p in registered]
+
+
 def stored_runs(engine):
     with engine.connect() as conn:
         return conn.execute(text("SELECT count(*) FROM runs")).scalar()
@@ -101,6 +117,9 @@ def test_a_sessions_detail_returns_its_run_with_its_baseline_view_and_camera(cli
     assert run["camera_alias"] == "lane1"
     assert taken_at(run) == sent.taken_at
     assert run["baseline_view"] == sent.model_dump(mode="json")
+    # Placed where its baseline frame showed the Board, and watched until then
+    assert run["places"] == places(place(sent.taken_at))
+    assert watched_until(run) == sent.taken_at
 
 
 def test_a_sessions_detail_returns_the_baseline_marks_as_the_detection_service_sent_them(
@@ -200,3 +219,105 @@ def test_the_run_is_stored_before_the_watching_push_goes_out(client, detection, 
         tick(client)
 
     assert stored_at_push == [1]
+
+
+@pytest.mark.parametrize("moved, kept", [
+    ({"dx": 2.5}, True),
+    ({"dx": 1.5}, False),
+    # 2.4 px at the second Target's right edge, 1.1 px at the artwork's
+    ({"sx": 0.2508}, True),
+])
+def test_a_place_moved_more_than_2_px_is_kept_and_pushed_as_run_moved(client, detection, camera, moved, kept):
+    session_id = start_session(client, camera)
+    first = detection.run
+    detection.run = later(first, 5, **moved)
+
+    with listening(session_id) as queue:
+        tick(client)
+        pushed = events(queue)
+
+    [run] = runs_of(client, session_id)
+    assert run["places"] == places(first.registered, *([detection.run.registered] if kept else []))
+    assert [(e["type"], datetime.fromisoformat(e["taken_at"])) for e in pushed] == (
+        [("run_moved", taken_at(run))] if kept else [])
+
+
+def test_every_status_read_moves_watched_until_on(client, detection, camera):
+    session_id = start_session(client, camera)
+    first = detection.run
+
+    for seconds in (5, 10):
+        detection.run = later(first, seconds)
+        tick(client)
+        [run] = runs_of(client, session_id)
+        assert watched_until(run) == detection.run.looked_at
+    assert run["places"] == places(first.registered)   # the Board held still
+
+
+def test_the_ends_answer_sets_the_last_watched_until_and_keeps_its_place_if_it_moved(client, detection, camera):
+    session_id = start_session(client, camera)
+    # Moved since the last read: only the end's answer tells
+    detection.run = last = later(detection.run, 7, dx=3.0)
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    [run] = runs_of(client, session_id)
+    assert watched_until(run) == last.looked_at
+    assert run["places"][-1] == places(last.registered)[0]
+
+
+def test_an_ends_answer_moves_on_only_the_run_it_names(client, detection, camera):
+    # A later Run never stored, the database down all its life: its end's
+    # answer leaves the Run before it as it was
+    session_id = start_session(client, camera)
+    first = detection.run
+    detection.run = read = later(first, 5)
+    tick(client)
+    unstored = first._replace(baseline_view=baseline_view(NOW + timedelta(minutes=1)))
+    detection.run = later(unstored, 7, dx=3.0)
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    [run] = runs_of(client, session_id)
+    assert watched_until(run) == read.looked_at
+    assert run["places"] == places(first.registered)
+
+
+def test_a_lost_runs_watched_until_stays_at_the_last_read(client, detection, camera):
+    session_id = start_session(client, camera)
+    detection.run = read = later(detection.run, 5)
+    tick(client)
+    detection.run = None   # lost: the next tick starts another
+
+    tick(client)
+
+    first, _ = runs_of(client, session_id)
+    assert watched_until(first) == read.looked_at
+
+
+def test_a_run_whose_last_looks_are_lost_still_reaches_its_last_looked_at(client, detection, camera):
+    session_id = start_session(client, camera)
+    registered = later(detection.run, 5, dx=3.0)
+    detection.run = registered._replace(looked_at=registered.looked_at + timedelta(seconds=4))
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    [run] = runs_of(client, session_id)
+    assert watched_until(run) == registered.looked_at + timedelta(seconds=4)
+    assert run["places"][-1] == places(registered.registered)[0]
+
+
+@pytest.mark.parametrize("newer_dx", [3.0, 0.0])   # moved, or back where it was
+def test_a_read_older_than_one_already_followed_moves_nothing_back(client, detection, camera, newer_dx):
+    # A tick's read, followed after an end's answer that came later
+    session_id = start_session(client, camera)
+    first = detection.run
+    detection.run = newer = later(first, 10, dx=newer_dx)
+    tick(client)
+    detection.run = later(first, 5, dx=6.0)
+
+    tick(client)
+
+    [run] = runs_of(client, session_id)
+    assert watched_until(run) == newer.looked_at
+    assert run["places"] == places(first.registered, *([newer.registered] if newer_dx else []))

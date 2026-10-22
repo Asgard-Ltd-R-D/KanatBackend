@@ -6,13 +6,13 @@ const POLL_MS = 3000
 
 export type ServiceState = 'online' | 'offline' | 'unknown'
 
-type SystemState = { backend: ServiceState; videoService: ServiceState; detectionService: ServiceState }
+type ServiceStates = { backend: ServiceState; videoService: ServiceState; detectionService: ServiceState }
 
-const online = (up: boolean): ServiceState => (up ? 'online' : 'offline')
+const toState = (up: boolean): ServiceState => (up ? 'online' : 'offline')
 
 // Whether the backend, the video service and the Detection Service are up,
 // checked every POLL_MS. When the backend does not answer, the others are unknown.
-export function useSystemStatus(): SystemState {
+export function useSystemStatus(): ServiceStates {
   const { data, isError, isPending } = useQuery({
     queryKey: ['status'],
     queryFn: getStatus,
@@ -25,7 +25,7 @@ export function useSystemStatus(): SystemState {
   if (isError) return { backend: 'offline', videoService: 'unknown', detectionService: 'unknown' }
   return {
     backend: 'online',
-    videoService: online(data.video_service),
-    detectionService: online(data.detection_service),
+    videoService: toState(data.video_service),
+    detectionService: toState(data.detection_service),
   }
 }

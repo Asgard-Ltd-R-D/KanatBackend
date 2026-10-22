@@ -13,11 +13,13 @@ export PATH="$HOME/.docker/bin:$PATH"
 # the Detection Service ends its Run and posts the Bullet Holes it still holds.
 # Signal every process under the script, not just its children: npm and uv run
 # their services as their own children, and a KILL to npm alone orphans Vite
-# and Electron.
+# and Electron. The KILL also takes the processes listed before the TERM: one
+# whose parent exited on the TERM is no longer under the script.
 tree() { local c; for c in $(pgrep -P "$1"); do echo "$c"; tree "$c"; done; }
 stop_all() {
-  trap '' TERM; trap 'kill -KILL $(tree $$) 2>/dev/null' INT
-  kill -TERM $(tree $$) 2>/dev/null || true
+  under=$(tree $$)
+  trap '' TERM; trap 'kill -KILL $under $(tree $$) 2>/dev/null' INT
+  kill -TERM $under 2>/dev/null || true
   wait
 }
 trap stop_all EXIT

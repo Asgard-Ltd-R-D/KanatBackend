@@ -56,6 +56,12 @@ class SubprocessShell:
             if self._open_new_terminal_linux(command, title):
                 return
 
+        if sys.platform == "win32":
+            # A console of its own, as a Terminal window on macOS: the process
+            # outlives the console composer ran in.
+            subprocess.Popen(list(cmd), cwd=str(cwd) if cwd else None, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            return
+
         subprocess.Popen(
             list(cmd),
             cwd=str(cwd) if cwd else None,

@@ -228,6 +228,15 @@ def test_a_baseline_view_has_one_outline_per_target_in_target_order(placed):
                                           (2900.0, 100.0), (2900.0, 1000.0)]
 
 
+def test_a_baseline_views_marks_lie_where_the_fake_detector_planted_them(monkeypatch, placed):
+    """In template coordinates: `_Marking`'s mark at (40, 40) in a Board
+    space drawn at twice the template's scale is at (20, 20) on it."""
+    class Doubled(_Placed):
+        tpl_to_board = np.diag([2.0, 2.0, 1.0])
+    monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask: (Doubled(), 0.95))
+    assert placed.start()[1]["baseline_view"]["baseline_marks"] == [[20.0, 20.0]]
+
+
 def test_an_end_is_answered_once_the_runs_posts_are_drained(api):
     """The backend holds the Run's one post, its Bullet Hole from frame 6,
     until let go: meanwhile the Run is `ending` and the end unanswered."""

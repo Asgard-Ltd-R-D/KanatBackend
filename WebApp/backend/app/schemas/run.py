@@ -23,6 +23,9 @@ class BaselineView(BaseModel):
     template_to_picture: tuple[Row, Row, Row]
     # One outline per Target, in template coordinates; its index is target_index
     targets: list[list[Point]]
+    # One point per Baseline Mark, in template coordinates; none on a Run
+    # stored before the Detection Service sent them
+    baseline_marks: list[Point] = []
 
 
 class RunResponse(BaseModel):

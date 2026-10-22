@@ -103,6 +103,15 @@ def test_a_sessions_detail_returns_its_run_with_its_baseline_view_and_camera(cli
     assert run["baseline_view"] == sent.model_dump(mode="json")
 
 
+def test_a_sessions_detail_returns_the_baseline_marks_as_the_detection_service_sent_them(
+        client, detection, camera):
+    session_id = start_session(client, camera)
+
+    [run] = runs_of(client, session_id)
+
+    assert run["baseline_view"]["baseline_marks"] == [[702.5, 560.0], [2310.4, 87.2]]
+
+
 def test_the_session_list_carries_no_runs(client, detection, camera):
     start_session(client, camera)
 

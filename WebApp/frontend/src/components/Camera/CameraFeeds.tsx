@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { AlertCircle, Settings, VideoOff } from 'lucide-react'
 import { useCameras } from '../../hooks/useCameras'
-import { Run } from '../../types'
+import { BulletHole, Run } from '../../types'
 import { WhepPlayer } from './WhepPlayer'
 
 // Columns and rows for n cameras: 1 fills the area, 2 stack, 3-4 make a 2x2
@@ -14,8 +14,8 @@ function gridFor(n: number): { columns: number; rows: number } {
 }
 
 // Every enabled camera, live, sharing all of the space it is given; the
-// Run's Overlay only over the camera it watched
-export function CameraFeeds({ run }: { run?: Run }) {
+// Run's Overlay, with the Session's Bullet Holes, only over the camera it watched
+export function CameraFeeds({ run, bullets }: { run?: Run; bullets: BulletHole[] }) {
   const { data: cameras, isLoading, isError } = useCameras()
   const enabled = cameras?.filter(c => c.enabled) ?? []
 
@@ -63,7 +63,7 @@ export function CameraFeeds({ run }: { run?: Run }) {
           key={camera.id}
           path={camera.alias}
           label={enabled.length > 1 ? camera.alias : undefined}
-          overlay={run?.camera_alias === camera.alias ? run.baseline_view : undefined}
+          overlay={run?.camera_alias === camera.alias ? { view: run.baseline_view, bullets } : undefined}
         />
       ))}
     </div>

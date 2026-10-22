@@ -42,14 +42,16 @@ class FakeMediaMTX:
 
 def baseline_view(taken_at):
     """A Run's Baseline View as the Detection Service sends it (ADR-0009):
-    the artwork at a quarter of its size in a 1920x1080 picture, and two
-    Targets, the artwork's own and one to its right."""
+    the artwork at a quarter of its size in a 1920x1080 picture, two
+    Targets, the artwork's own and one to its right, and a Baseline Mark on
+    each."""
     return BaselineView(
         taken_at=taken_at,
         picture={"width": 1920, "height": 1080},
         template_to_picture=[[0.25, 0.0, 600.0], [0.0, 0.25, 300.0], [0.0, 0.0, 1.0]],
         targets=[[[0.0, 0.0], [1405.0, 0.0], [1405.0, 1120.0], [0.0, 1120.0]],
                  [[1600.0, 0.0], [3005.0, 0.0], [3005.0, 1120.0], [1600.0, 1120.0]]],
+        baseline_marks=[[702.5, 560.0], [2310.4, 87.2]],
     )
 
 

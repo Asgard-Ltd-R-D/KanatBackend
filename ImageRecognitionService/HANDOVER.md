@@ -869,10 +869,12 @@ and `kill` stop it (#225).
 curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "rtsp://127.0.0.1:8554/<path>"}'
 # {"session_id": "<uuid>", "state": "watching", "since": "<UTC>", "baseline_marks": 3,
 #  "baseline_view": {"taken_at": "<UTC>", "picture": {"width": 1920, "height": 1080},
-#                    "template_to_picture": [[...], [...], [...]], "targets": [[[x, y], ...], ...]}}
+#                    "template_to_picture": [[...], [...], [...]], "targets": [[[x, y], ...], ...],
+#                    "baseline_marks": [[x, y], ...]}}
 # The Baseline View (ADR-0009) is null until the Run is watching: the baseline frame's
-# time, size and template-to-picture homography, and each Target's outline in template
-# px, in target_index order, cut to at most OUTLINE_POINTS (64).
+# time, size and template-to-picture homography, each Target's outline in template
+# px, in target_index order, cut to at most OUTLINE_POINTS (64), and each Baseline
+# Mark in template px.
 # Status: {"run": null}, or the Run, its state (starting, watching, ending) and since when.
 curl -s 127.0.0.1:8010/status
 # End: answered once the Run has ended and its posts are drained. No such Run is a 404.

@@ -176,7 +176,7 @@ class DetectionService:
             run.ended.set()
 
     def _watching(self, run, view, marks):
-        baseline_view = _baseline_view(view, run.loop)
+        baseline_view = _baseline_view(view, run.loop, marks)
         with self._lock:
             run.baseline_marks, run.baseline_view = len(marks), baseline_view
             if run.state == "starting":
@@ -185,16 +185,18 @@ class DetectionService:
         run.ready.set()
 
 
-def _baseline_view(view, loop):
+def _baseline_view(view, loop, marks):
     """Where the baseline frame, frame 0 of `loop`, showed Board space `view`
     in the camera's picture (ADR-0009): its time on `first_seen_at`'s clock,
-    its size, the template's homography onto it, and each Target's outline in
-    template coordinates, in `target_index` order."""
+    its size, the template's homography onto it, and in template coordinates
+    each Target's outline, in `target_index` order, and each of its Baseline
+    Marks, `marks` in Board space."""
     height, width = loop.base.shape[:2]
     return {"taken_at": loop.wall_clock(0).astimezone(timezone.utc).isoformat(timespec="milliseconds"),
             "picture": {"width": width, "height": height},
             "template_to_picture": view.H.tolist(),
-            "targets": [_outline(view.board_to_template(t)) for t in view.targets]}
+            "targets": [_outline(view.board_to_template(t)) for t in view.targets],
+            "baseline_marks": view.board_to_template(marks[:, :2]).astype(float).round(1).tolist()}
 
 
 def _outline(points):

@@ -38,3 +38,37 @@ export function templateToElement(
     return [left + (px * width) / picture.width, top + (py * height) / picture.height]
   }
 }
+
+// How near a Baseline Mark must be to a Bullet Hole to be the same hole, in
+// template px: the Detection Service's MATCH_TPL_PX
+const MATCH_TPL_PX = 20
+
+// The Baseline Marks drawn: those no Bullet Hole drawn over the same Run
+// stands for, by the Detection Service's own test (`strip_pre_existing`)
+export function baselineMarksToDraw(marks: Point[], holes: Point[]): Point[] {
+  return marks.filter(([x, y]) => holes.every(([hx, hy]) => Math.hypot(x - hx, y - hy) >= MATCH_TPL_PX))
+}
+
+// Markers whose numbers would overlap on screen, so each group gets one label
+// listing its ranks: the indices of `points` (element px) linked by gaps under
+// `px`, a chain included, each group in the order of `points`
+export function labelGroups(points: Point[], px: number): number[][] {
+  const grouped = new Set<number>()
+  const groups: number[][] = []
+  points.forEach((_, first) => {
+    if (grouped.has(first)) return
+    grouped.add(first)
+    const group = [first]
+    for (let k = 0; k < group.length; k++) {
+      const [x, y] = points[group[k]]
+      points.forEach(([ox, oy], i) => {
+        if (!grouped.has(i) && Math.hypot(x - ox, y - oy) < px) {
+          grouped.add(i)
+          group.push(i)
+        }
+      })
+    }
+    groups.push(group.sort((a, b) => a - b))
+  })
+  return groups
+}

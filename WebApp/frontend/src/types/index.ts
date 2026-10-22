@@ -20,6 +20,7 @@ export interface BaselineView {
   picture: { width: number; height: number }
   template_to_picture: number[][] // template px -> the baseline frame's px, row-major 3x3
   targets: [number, number][][] // one outline per Target, in template px; its index is target_index
+  baseline_marks: [number, number][] // one point per Baseline Mark, in template px
 }
 
 // A Run of the Detection Service that watched the session, and the camera it watched

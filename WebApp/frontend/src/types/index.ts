@@ -11,6 +11,22 @@ export interface Session {
   bullet_count?: number
   detection?: Detection // on a single session, not in the list
   grouping?: Grouping // on a single session, not in the list
+  runs?: Run[] // on a single session, in taken_at order, not in the list
+}
+
+// Where a Run's baseline frame showed the Board in the camera's picture (ADR-0009)
+export interface BaselineView {
+  taken_at: string
+  picture: { width: number; height: number }
+  template_to_picture: number[][] // template px -> the baseline frame's px, row-major 3x3
+  targets: [number, number][][] // one outline per Target, in template px; its index is target_index
+}
+
+// A Run of the Detection Service that watched the session, and the camera it watched
+export interface Run {
+  camera_alias: string
+  taken_at: string
+  baseline_view: BaselineView
 }
 
 // One Target's Group, in mm from the Target's centre. The spread measures are

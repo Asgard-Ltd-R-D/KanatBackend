@@ -108,6 +108,9 @@ export function SessionDetail() {
 
   const bullets = session.bullet_holes ?? []
   const active = session.status === 'active'
+  // The Overlay: the latest Run's, over its camera, only while a Run watches (ADR-0009)
+  const run = session.runs?.[session.runs.length - 1]
+  const runWatches = session.detection?.state === 'watching' || session.detection?.state === 'ending'
 
   return (
     // An active session fills the window: the cameras and the live detections
@@ -212,7 +215,7 @@ export function SessionDetail() {
             <div className="lg:col-span-2 flex flex-col min-h-0">
               <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 shrink-0">Camera Feed</p>
               <div className="flex-1 min-h-[300px]">
-                <CameraFeeds />
+                <CameraFeeds run={runWatches ? run : undefined} />
               </div>
             </div>
 

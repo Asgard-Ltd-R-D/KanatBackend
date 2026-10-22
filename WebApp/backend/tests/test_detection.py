@@ -16,6 +16,7 @@ from app.main import app
 from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as sessions_repo
 from app.services import camera_sync, detection_service
+from app.services import recordings as recording_svc
 from tests.fakes import NOW, FakeDetectionService, make_camera
 
 
@@ -199,6 +200,17 @@ def test_completing_ends_the_run_of_a_session_whose_camera_was_deleted(client, d
     client.patch(f"/sessions/{session_id}", json={"status": "completed"})
 
     assert detection.calls[-1] == ("end", uuid.UUID(session_id))
+
+
+def test_deleting_an_active_session_ends_its_run(client, db, detection, monkeypatch):
+    monkeypatch.setattr(sessions_repo, "delete", lambda _, session: db.sessions.pop(session.id))
+    monkeypatch.setattr(sessions_repo, "intervals_of_other_sessions", lambda _, session_id: [])
+    monkeypatch.setattr(recording_svc, "delete_session_video", lambda windows, others: 0)
+    session_id = uuid.UUID(client.post("/sessions", json={"name": "Range 1", "camera_id": str(add_camera(db).id)}).json()["id"])
+
+    assert client.delete(f"/sessions/{session_id}").status_code == 204
+    assert detection.calls[-1] == ("end", session_id)
+    assert session_id not in db.sessions
 
 
 def test_a_run_that_starts_after_its_session_ended_is_ended(client, db, detection):

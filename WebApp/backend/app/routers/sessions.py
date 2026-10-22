@@ -70,6 +70,9 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = D
 
 @router.delete("/{session_id}", status_code=204)
 def delete_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
+    # Its Run ends first: nothing is left for it to post into, and the
+    # Detection Service holds one Run at a time
+    detection.end(svc.get_session_or_404(session_id, db))
     windows = svc.delete_session(session_id, db)
     # Stop the recording first if this Session was recording, then delete its
     # video: no Session is left to replay it

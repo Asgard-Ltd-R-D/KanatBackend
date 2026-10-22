@@ -69,7 +69,7 @@ class FakeDetectionService:
     as watching, the Run already watching if it is this Session's, or a new
     one whose Baseline View is taken later than any before, registered and
     looked at only then; `down` makes every call go unanswered. An end is
-    answered with how far the Run watched. `on_status`, `on_start` and
+    answered with the Run's Baseline View and how far it watched. `on_status`, `on_start` and
     `on_end` see each call as it happens, a Run being ended reading
     `ending`."""
 
@@ -119,4 +119,4 @@ class FakeDetectionService:
         if not run:
             return None
         self.run = None
-        return detection_service.Run(session_id, "ended", None, run.registered, run.looked_at)
+        return run._replace(state="ended")

@@ -42,8 +42,8 @@ class Run(NamedTuple):
     """The Detection Service's Run, as its status, a start or an end reports it."""
     session_id: uuid.UUID
     state: str   # starting, watching or ending; ended in an end's answer
-    # Where its baseline frame showed the Board (ADR-0009); None until watching,
-    # and in an end's answer
+    # Where its baseline frame showed the Board (ADR-0009), its taken_at naming
+    # the Run; None until watching
     baseline_view: BaselineView | None = None
     # How far it has watched (ADR-0009): its latest registered Look's place, and
     # its latest Look's frame time, registered or Lost; None until watching

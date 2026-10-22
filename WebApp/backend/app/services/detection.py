@@ -184,7 +184,8 @@ def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("star
 def _end_run(session_id: uuid.UUID) -> bool:
     """Whether the Detection Service answered that this end ended the Run: not
     when it could not be reached, or had no Run for the Session. Its answer
-    moves the Session's stored Run on to how far it watched (`_follow`)."""
+    moves the stored Run it names on to how far it watched (`_follow`); one
+    never stored, the database down all its life, moves none."""
     try:
         ended = detection_service.end_run(session_id)
     except detection_service.DetectionServiceUnreachable as e:
@@ -196,10 +197,8 @@ def _end_run(session_id: uuid.UUID) -> bool:
         _watched.discard(session_id)
     db = SessionLocal()
     try:
-        # ponytail: the answer names no Run, so it goes to the Session's latest
-        # stored; a Run never stored (the database down all its life) leaves it
-        # to the one before. Have the end answer with taken_at if that matters
-        _follow(db, runs_repo.get_for_update(db, session_id), ended)
+        if ended.baseline_view is not None:   # none for a Run ended before it watched
+            _follow(db, runs_repo.get_for_update(db, session_id, ended.baseline_view.taken_at), ended)
     except SQLAlchemyError as e:
         log.warning("How far the Run of session %s watched is not stored: %s", session_id, e)
     finally:

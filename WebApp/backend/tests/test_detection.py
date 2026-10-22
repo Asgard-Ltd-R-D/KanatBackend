@@ -611,9 +611,10 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
     answers[f"/runs/{session_id}/end"] = (404, {"detail": "no such Run"})
     assert detection_service.end_run(session_id) is None   # already ended, not by this end
     answers[f"/runs/{session_id}/end"] = (200, {"session_id": str(session_id), "state": "ended",
+                                                "baseline_view": view.model_dump(mode="json"),
                                                 "registered": registered.model_dump(mode="json"),
                                                 "looked_at": looked_at})
-    assert detection_service.end_run(session_id) == (session_id, "ended", None, *read[3:])
+    assert detection_service.end_run(session_id) == (session_id, "ended", *read[2:])
     for wrong in ((500, {}), (200, {})):
         answers[f"/runs/{session_id}/end"] = wrong
         with pytest.raises(detection_service.DetectionServiceUnreachable):

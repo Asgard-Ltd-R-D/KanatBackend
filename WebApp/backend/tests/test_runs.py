@@ -266,6 +266,23 @@ def test_the_ends_answer_sets_the_last_watched_until_and_keeps_its_place_if_it_m
     assert run["places"][-1] == places(last.registered)[0]
 
 
+def test_an_ends_answer_moves_on_only_the_run_it_names(client, detection, camera):
+    # A later Run never stored, the database down all its life: its end's
+    # answer leaves the Run before it as it was
+    session_id = start_session(client, camera)
+    first = detection.run
+    detection.run = read = later(first, 5)
+    tick(client)
+    unstored = first._replace(baseline_view=baseline_view(NOW + timedelta(minutes=1)))
+    detection.run = later(unstored, 7, dx=3.0)
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    [run] = runs_of(client, session_id)
+    assert watched_until(run) == read.looked_at
+    assert run["places"] == places(first.registered)
+
+
 def test_a_lost_runs_watched_until_stays_at_the_last_read(client, detection, camera):
     session_id = start_session(client, camera)
     detection.run = read = later(detection.run, 5)

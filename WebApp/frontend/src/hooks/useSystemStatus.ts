@@ -6,9 +6,13 @@ const POLL_MS = 3000
 
 export type ServiceState = 'online' | 'offline' | 'unknown'
 
-// Whether the backend and the video service are up, checked every POLL_MS.
-// When the backend does not answer, the video service's state is unknown.
-export function useSystemStatus(): { backend: ServiceState; videoService: ServiceState } {
+type SystemState = { backend: ServiceState; videoService: ServiceState; detectionService: ServiceState }
+
+const online = (up: boolean): ServiceState => (up ? 'online' : 'offline')
+
+// Whether the backend, the video service and the Detection Service are up,
+// checked every POLL_MS. When the backend does not answer, the others are unknown.
+export function useSystemStatus(): SystemState {
   const { data, isError, isPending } = useQuery({
     queryKey: ['status'],
     queryFn: getStatus,
@@ -17,7 +21,11 @@ export function useSystemStatus(): { backend: ServiceState; videoService: Servic
     retry: false, // a missed answer shows straight away
   })
 
-  if (isPending) return { backend: 'unknown', videoService: 'unknown' }
-  if (isError) return { backend: 'offline', videoService: 'unknown' }
-  return { backend: 'online', videoService: data.video_service ? 'online' : 'offline' }
+  if (isPending) return { backend: 'unknown', videoService: 'unknown', detectionService: 'unknown' }
+  if (isError) return { backend: 'offline', videoService: 'unknown', detectionService: 'unknown' }
+  return {
+    backend: 'online',
+    videoService: online(data.video_service),
+    detectionService: online(data.detection_service),
+  }
 }

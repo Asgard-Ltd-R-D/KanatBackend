@@ -104,8 +104,11 @@ def _store_run(session_id: uuid.UUID, alias: str, run: detection_service.Run) ->
     db = SessionLocal()
     try:
         if sessions_repo.exists(db, session_id):
-            runs_repo.add_once(db, session_id, alias, run.baseline_view.taken_at,
-                               run.baseline_view.model_dump(mode="json"))
+            view = run.baseline_view.model_dump(mode="json")
+            # Placed where its baseline frame showed the Board, and watched until then
+            baseline = {"at": view["taken_at"], "template_to_picture": view["template_to_picture"]}
+            runs_repo.add_once(db, session_id, alias, run.baseline_view.taken_at, view,
+                               [baseline], run.baseline_view.taken_at)
     except SQLAlchemyError as e:
         log.warning("The Run of session %s is not stored yet: %s", session_id, e)
     finally:

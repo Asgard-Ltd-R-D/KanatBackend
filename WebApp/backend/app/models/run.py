@@ -32,5 +32,10 @@ class Run(Base):
     taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # schemas/run.py's BaselineView, as JSON
     baseline_view: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Where it registered the Board, each schemas/run.py's Place as JSON, in
+    # time order, starting with the baseline's: one kept only once it moved
+    places: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # Its latest Look's frame time the backend has read, registered or Lost
+    watched_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     session: Mapped["Session"] = relationship("Session", back_populates="runs")

@@ -16,13 +16,14 @@ END_TIMEOUT_S = 10   # PROVISIONAL: #228 bounds the end with its persistence win
 # The status check answers within the frontend's own 2 s limit, as MediaMTX's
 # does beside it (routers/status.py)
 STATUS_TIMEOUT_S = 1
-# An answer this recent counts as the Detection Service being up, as for
-# MediaMTX (mediamtx.FRESH_S)
+# An answer this recent counts as the Detection Service being up, so a stopped
+# service reads down within it, plus the frontend's 3 s poll
 FRESH_S = 12
 
 # When the Detection Service last answered (time.monotonic()), from any
-# request and with any HTTP status: kept in memory, which is enough with the
-# backend's single worker
+# request: kept in memory, which is enough with the backend's single worker.
+# Unlike MediaMTX's, an error status counts too: a 404 for no such Run or a
+# 409 for another Session's is the service answering.
 _last_answer: float | None = None
 
 

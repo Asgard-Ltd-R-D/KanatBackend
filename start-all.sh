@@ -11,9 +11,13 @@ export PATH="$HOME/.docker/bin:$PATH"
 # Services started with & ignore Ctrl-C (bash does that in a script, and the
 # Detection Service only handles SIGTERM), so stop them with one SIGTERM and wait:
 # the Detection Service ends its Run and posts the Bullet Holes it still holds.
+# Signal every process under the script, not just its children: npm and uv run
+# their services as their own children, and a KILL to npm alone orphans Vite
+# and Electron.
+tree() { local c; for c in $(pgrep -P "$1"); do echo "$c"; tree "$c"; done; }
 stop_all() {
-  trap '' TERM; trap 'pkill -KILL -P $$' INT
-  pkill -TERM -P $$ || true
+  trap '' TERM; trap 'kill -KILL $(tree $$) 2>/dev/null' INT
+  kill -TERM $(tree $$) 2>/dev/null || true
   wait
 }
 trap stop_all EXIT

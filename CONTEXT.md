@@ -60,10 +60,20 @@ _Avoid_: feed, live source
 **Run**:
 The system watching footage once, from its baseline frame to its end. The
 baseline frame fixes where on the Board the Run places everything it reports:
-places from one Run compare directly, places from two Runs only once each is
-mapped onto the Target artwork. A Range is watched live by one Run; a Recording
-may have many.
+places from one Run compare directly. Two Runs may register to different
+Targets, so places from two Runs compare only through a frame both share: the
+camera's picture, or the artwork of one and the same Target. A Range is
+watched live by one Run at a time, and by a fresh one after a Run is lost; a
+Recording may have many.
 _Avoid_: pass, execution, session
+
+**Baseline View**:
+Where a Run's baseline frame showed the Board in the camera's picture: how the
+Target artwork lay on the picture, the outline of each Target, and the
+Baseline Marks. The outlines and Baseline Marks are places on the Board and
+hold for the whole Run; where the Board sits in the picture does not, since the
+camera creeps and the Board sways or moves.
+_Avoid_: geometry, homography, calibration
 
 **Detection Service**:
 The system that stays running and holds the detector, and watches each Range

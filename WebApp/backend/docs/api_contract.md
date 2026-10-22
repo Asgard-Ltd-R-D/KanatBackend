@@ -27,7 +27,7 @@ The detection model calls this endpoint once per confirmed Bullet Hole.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `version` | string | yes | Must be `"v1"`. Unknown versions are rejected with `422`. |
-| `first_seen_at` | string (ISO 8601, timezone required) | yes | Absolute UTC timestamp when the Bullet Hole was first confirmed by the model. Naive timestamps (no `Z` or offset) are rejected with `422`. |
+| `first_seen_at` | string (ISO 8601, timezone required) | yes | Absolute UTC time of the frame in which the model first detected the Bullet Hole, not of its confirmation. Naive timestamps (no `Z` or offset) are rejected with `422`. |
 | `position.x` | float | yes | Template-space X coordinate (0–1405 px). |
 | `position.y` | float | yes | Template-space Y coordinate (0–1120 px). |
 | `target_index` | integer | no | Index of the Target the hole landed on, when the model can determine it. `null` or absent means Miss or undetermined. |

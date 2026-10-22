@@ -71,8 +71,8 @@ Camera
             │
             ├─► GET /sessions/{id}/live (Server-Sent Events) — pushes each change to the frontend
             │
-            └─► GET /status — whether mediamtx is up, for the frontend's status indicator: from the
-                camera sync loop's last answer (under 12 s old), asking mediamtx only without one
+            └─► GET /status — whether mediamtx and the Detection Service are up, for the frontend's
+                status indicator: from each one's last answer (under 12 s old), asking it only without one
                         ▲
                WebApp/frontend (Electron)
 ```

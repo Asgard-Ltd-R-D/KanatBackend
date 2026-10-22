@@ -258,6 +258,8 @@ export function SessionDetail() {
           <ReplayModal
             sessionId={session.id}
             recordings={recordings.data ?? []}
+            runs={session.runs ?? []}
+            bullets={bullets}
             target={replay}
             onChange={setReplay}
           />

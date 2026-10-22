@@ -261,6 +261,8 @@ def test_deleting_a_sessions_video_holds_no_database_connection(monkeypatch):
     request_db = SimpleNamespace(open=True)
     request_db.close = lambda: setattr(request_db, "open", False)
     mine, others = [(NOW - timedelta(hours=1), NOW)], [(NOW - timedelta(hours=3), NOW - timedelta(hours=2))]
+    # A completed Session: no Run to end
+    monkeypatch.setattr(session_svc, "get_session_or_404", lambda sid, db: SimpleNamespace(status="completed"))
     monkeypatch.setattr(session_svc, "delete_session", lambda sid, db: mine)
     monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
     monkeypatch.setattr(session_svc, "other_recorded_windows", lambda sid, db: db.open and others)

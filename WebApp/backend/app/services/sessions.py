@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session as DBSession
 
 from app.models import RecordingInterval, Session
+from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as repo
 from app.schemas.session import SessionCreate, SessionListItem, SessionUpdate
 
@@ -45,12 +46,17 @@ def _follow_recording(session: Session, now: datetime) -> None:
 
 
 def create_session(body: SessionCreate, db: DBSession) -> Session:
+    if body.camera_id is not None:
+        camera = cameras_repo.get(db, body.camera_id)
+        if camera is None or not camera.enabled:
+            raise HTTPException(status_code=422, detail="No enabled camera with this id")
     session = Session(
         id=uuid.uuid4(),
         name=body.name,
         status="active",
         started_at=datetime.now(timezone.utc),
         record=body.record,
+        camera_id=body.camera_id,
     )
     _follow_recording(session, session.started_at)
     return repo.add(db, session)

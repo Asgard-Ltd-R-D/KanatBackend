@@ -5,9 +5,21 @@ export interface Session {
   started_at: string
   ended_at: string | null
   record: boolean // the cameras are recorded while this session is active
+  camera_id?: string | null // the camera whose stream detection watches; fixed at creation
   created_at: string
   bullet_holes?: BulletHole[]
   bullet_count?: number
+  detection?: Detection // on a single session, not in the list
+}
+
+// Whether a Run of the Detection Service watches a session. none: no camera,
+// or the session has ended.
+export interface Detection {
+  state: 'none' | 'starting' | 'watching' | 'not_watching' | 'ending'
+  // Why not watching: the Detection Service did not answer, the Run failed to
+  // start on the camera's stream, or another session's Run holds the service
+  reason: 'service_down' | 'stream_failed' | 'other_session' | null
+  detail: string | null // the Detection Service's own words for a refused start
 }
 
 export interface BulletHole {
@@ -46,6 +58,7 @@ export type LiveEvent =
   | { type: 'bullet_created'; bullet: BulletHole }
   | { type: 'bullet_deleted'; bullet_id: string }
   | { type: 'session_updated'; name: string; status: Session['status']; ended_at: string | null; record: boolean }
+  | { type: 'detection_updated'; detection: Detection }
 
 // live: MediaMTX is receiving the stream. no_signal: configured, but nothing
 // arrives on its multicast group. disabled: switched off in Settings.

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Video } from 'lucide-react'
+import { Crosshair, Video } from 'lucide-react'
 import { createSession } from '../../api/sessions'
+import { useCameras } from '../../hooks/useCameras'
 import { Modal } from '../UI/Modal'
 import { Toggle } from '../UI/Toggle'
 
@@ -16,15 +17,18 @@ export function NewSessionModal({ open, onClose }: Props) {
   const qc = useQueryClient()
   const [name, setName] = useState('')
   const [record, setRecord] = useState(false)
+  const [cameraId, setCameraId] = useState('') // '': no camera, no detection
+  const { data: cameras } = useCameras()
 
   useEffect(() => {
     if (!open) return
     setName('')
     setRecord(false)
+    setCameraId('')
   }, [open])
 
   const mutation = useMutation({
-    mutationFn: () => createSession(name.trim() || 'Unnamed Session', record),
+    mutationFn: () => createSession(name.trim() || 'Unnamed Session', record, cameraId || null),
     onSuccess: (session) => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       onClose()
@@ -49,6 +53,25 @@ export function NewSessionModal({ open, onClose }: Props) {
         placeholder="Session name"
         className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 mb-4"
       />
+
+      {/* The camera watching the Board: detection watches its stream for the whole session */}
+      <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2.5 mb-3">
+        <div className="flex items-center gap-3">
+          <Crosshair size={16} className="text-slate-400 dark:text-slate-500 shrink-0" />
+          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Detection camera</p>
+        </div>
+        <select
+          value={cameraId}
+          onChange={e => setCameraId(e.target.value)}
+          aria-label="Detection camera"
+          className="bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">None</option>
+          {cameras?.filter(c => c.enabled).map(c => (
+            <option key={c.id} value={c.id}>{c.alias}</option>
+          ))}
+        </select>
+      </div>
 
       <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2.5 mb-5">
         <div className="flex items-center gap-3">

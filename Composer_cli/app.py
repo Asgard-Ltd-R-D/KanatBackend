@@ -99,8 +99,8 @@ class ComposerApp(ComposerUseCases):
             else:
                 warn("MediaMtx requested but not available (binary/config missing in VideoService)")
 
-        if getattr(args, "detection", False):
-            self.detection.run_detection()
+        if getattr(args, "detection", False) and self.detection.run_detection() != 0:
+            return 1
 
         if detached:
             info("Launching PacketProcessingService in a new terminal window (detached mode)")

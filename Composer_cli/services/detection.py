@@ -19,6 +19,9 @@ START_TIMEOUT_S = 60
 # How long `stop` waits after SIGTERM, which ends any Run and drains its posts,
 # before it kills the process.
 STOP_TIMEOUT_S = 10
+# detection.new_bullet_holes's DEFAULT_MODEL, which the service loads before it
+# answers. trained_models/ is git-ignored, so a fresh checkout lacks it.
+MODEL = Path("trained_models/kanat_yolo26n_v1/weights/best.pt")
 TITLE = "Detection Service"
 # Its command line as `pgrep -f` sees it. On macOS the .venv's python shows as
 # the framework's Python, so only the module names it.
@@ -64,6 +67,8 @@ class DefaultDetectionService:
         if missing:
             return (f"its .venv lacks {', '.join(missing)}: "
                     f"{self.python.relative_to(self.service_dir)} -m pip install -r requirements.txt")
+        if not (self.service_dir / MODEL).exists():
+            return f"no detector weights at {self.service_dir / MODEL}: trained_models/ is not committed, so copy them in"
         return None
 
     def is_running(self) -> bool:

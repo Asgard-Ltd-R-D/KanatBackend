@@ -247,6 +247,15 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
     monkeypatch.setattr(detection_service.httpx, "request", request)
     session_id = uuid.uuid4()
 
+    answers["/status"] = (200, {"run": None})
+    assert detection_service.status() is None
+    answers["/status"] = (200, {"run": {"session_id": str(session_id), "state": "watching",
+                                        "since": "2026-10-22T09:00:00+00:00", "baseline_marks": 3}})
+    assert detection_service.status() == (session_id, "watching")
+    answers["/status"] = (404, {"detail": "not found"})   # something else on its port
+    with pytest.raises(detection_service.DetectionServiceUnreachable):
+        detection_service.status()
+
     answers["/runs"] = (409, {"detail": "another Session's Run is active"})
     with pytest.raises(detection_service.RunRefused) as refused:
         detection_service.start_run(session_id, "rtsp://127.0.0.1:8554/lane1")

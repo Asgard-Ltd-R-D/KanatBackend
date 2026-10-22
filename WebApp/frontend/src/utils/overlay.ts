@@ -1,6 +1,8 @@
 // Where the Overlay draws (ADR-0009). Pure, so node --test checks it:
 // npm test
 
+import type { Place, Run } from '../types'
+
 export type Point = [number, number]
 
 export interface Size {
@@ -37,6 +39,14 @@ export function templateToElement(
     const py = (H[1][0] * x + H[1][1] * y + H[1][2]) / w
     return [left + (px * width) / picture.width, top + (py * height) / picture.height]
   }
+}
+
+// Where a Run had the Board at the moment `at` (ms): the last place it kept
+// at or before it (they are in time order). None before its baseline, nor
+// after the latest Look the backend read from it, when it no longer watched
+export function placeAt(run: Pick<Run, 'places' | 'watched_until'>, at: number): Place | null {
+  if (at > Date.parse(run.watched_until)) return null
+  return run.places.filter(p => Date.parse(p.at) <= at).pop() ?? null
 }
 
 // How near a Baseline Mark must be to a Bullet Hole to be the same hole, in

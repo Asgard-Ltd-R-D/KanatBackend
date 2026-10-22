@@ -22,6 +22,8 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import cv2
+
 from detection import new_bullet_holes as nbh
 from detection import webapp
 
@@ -43,14 +45,21 @@ START_TIMEOUT_S = 15   # PROVISIONAL
 # gave no frames to judge them on, and a Candidate still open is unconfirmable.
 ENDING_TIMEOUT_S = 5   # PROVISIONAL
 
+# The most points a Target's outline is sent in. A contour found in a frame
+# runs to hundreds, and the Baseline View rides on every status read, every
+# 5 s (ADR-0009); at the picture's scale a template px is a fraction of a px.
+OUTLINE_POINTS = 64
+
 
 class _Run:
     """A Run as `/status` reports it: its Session, its state (`starting`,
-    `watching`, `ending`) and since when, and its Baseline Marks once
-    watching. `ready` is set once it is watching or has failed, `ended` once
-    it has ended and its posts are drained."""
+    `watching`, `ending`) and since when, and once watching its Baseline
+    Marks counted and its Baseline View (ADR-0009). `ready` is set once it is
+    watching or has failed, `ended` once it has ended and its posts are
+    drained."""
     def __init__(self, session_id):
         self.session_id, self.baseline_marks, self.error = session_id, None, None
+        self.baseline_view = None
         self.loop, self.ready, self.ended = None, threading.Event(), threading.Event()
         self.deadline = time.monotonic() + START_TIMEOUT_S
         self.enter("starting")
@@ -60,7 +69,8 @@ class _Run:
 
     def view(self):
         return {"session_id": self.session_id, "state": self.state,
-                "since": self.since.isoformat(), "baseline_marks": self.baseline_marks}
+                "since": self.since.isoformat(), "baseline_marks": self.baseline_marks,
+                "baseline_view": self.baseline_view}
 
 
 class DetectionService:
@@ -151,7 +161,7 @@ class DetectionService:
                 loop.stop()
             with webapp.WebAppPublisher(run.session_id, self._backend_url) as publisher:
                 nbh.process(loop, None, publish=publisher.publish,
-                            watching=lambda marks: self._watching(run, marks))
+                            watching=lambda view, marks: self._watching(run, view, marks))
         except BaseException as error:   # SystemExit too: how a Run's open fails
             run.error = str(error) or type(error).__name__
             print(f"[SERVICE] Session {run.session_id}: the Run failed: {run.error}")
@@ -165,13 +175,35 @@ class DetectionService:
             run.ready.set()
             run.ended.set()
 
-    def _watching(self, run, marks):
+    def _watching(self, run, view, marks):
+        baseline_view = _baseline_view(view, run.loop)
         with self._lock:
-            run.baseline_marks = marks
+            run.baseline_marks, run.baseline_view = len(marks), baseline_view
             if run.state == "starting":
                 run.enter("watching")
-        print(f"[SERVICE] Session {run.session_id}: watching, {marks} Baseline Mark(s)")
+        print(f"[SERVICE] Session {run.session_id}: watching, {len(marks)} Baseline Mark(s)")
         run.ready.set()
+
+
+def _baseline_view(view, loop):
+    """Where the baseline frame, frame 0 of `loop`, showed Board space `view`
+    in the camera's picture (ADR-0009): its time on `first_seen_at`'s clock,
+    its size, the template's homography onto it, and each Target's outline in
+    template coordinates, in `target_index` order."""
+    height, width = loop.base.shape[:2]
+    return {"taken_at": loop.wall_clock(0).astimezone(timezone.utc).isoformat(timespec="milliseconds"),
+            "picture": {"width": width, "height": height},
+            "template_to_picture": view.H.tolist(),
+            "targets": [_outline(view.board_to_template(t)) for t in view.targets]}
+
+
+def _outline(points):
+    """A Target's outline cut to at most OUTLINE_POINTS of its own points, by
+    simplifying it to within a template px, then two, four..."""
+    points, tolerance = points.reshape(-1, 1, 2).astype("float32"), 1.0
+    while len(cut := cv2.approxPolyDP(points, tolerance, True)) > OUTLINE_POINTS:
+        tolerance *= 2
+    return cut.reshape(-1, 2).astype(float).round(1).tolist()
 
 
 def _start_body(raw):

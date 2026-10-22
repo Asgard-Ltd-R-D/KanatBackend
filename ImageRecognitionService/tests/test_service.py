@@ -7,28 +7,57 @@ import sys
 import threading
 import time
 import types
+from datetime import datetime, timezone
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import numpy as np
 import pytest
 
-from detection import service, webapp
+from detection import board, service, webapp
 from detection import new_bullet_holes as nbh
-from test_frame_loop import _FakeStream, _Marking, _openable, _Scripted
+from test_frame_loop import _FakeStream, _FakeView, _Marking, _openable, _Scripted
 
 SESSION = "6f1c0d3e-2b7a-4c1e-9d3f-0a1b2c3d4e5f"
 OTHER = "0b9e8d7c-6a5f-4e3d-8c2b-1a0f9e8d7c6b"
 URL = "rtsp://127.0.0.1:8554/cam"
 
 
+# A baseline frame's time, and where the fake Target's ring centre is in its
+# 192x108 picture
+ARRIVED = datetime(2026, 10, 22, 10, 15, 2, 120000, timezone.utc)
+RING_AT = (120.0, 50.0)
+
+
+def _traced(centre, radius, n):
+    """A round Target's outline as a contour found in a frame traces it:
+    `n` points, stepped a frame px, here 3 template px, either side of it."""
+    a = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    r = radius + np.where(np.arange(n) % 2, 3.0, -3.0)
+    return np.stack([centre[0] + r * np.cos(a), centre[1] + r * np.sin(a)], 1)
+
+
+class _Placed(_FakeView):
+    """Board space with geometry: the artwork shown at a tenth of its size,
+    its ring centre at RING_AT, and two Targets. Board space is template
+    coordinates here: the artwork's own Target, traced in 720 points, and a
+    square one to its right."""
+    H = np.array([[0.1, 0.0, RING_AT[0] - 0.1 * board.RING_CENTRE_TPL[0]],
+                  [0.0, 0.1, RING_AT[1] - 0.1 * board.RING_CENTRE_TPL[1]],
+                  [0.0, 0.0, 1.0]])
+    targets = [p.reshape(-1, 1, 2).astype(np.float32) for p in (
+        _traced(board.RING_CENTRE_TPL, 500.0, 720),
+        np.array([[1500.0, 100.0], [2900.0, 100.0], [2900.0, 1000.0], [1500.0, 1000.0]]))]
+
+
 class _Api:
     """The control API on an ephemeral port, its Runs opened on an endless
-    fake Stream unless `opener` is replaced and looked at by `model`, by
-    default `_Marking`, and the bullets it posts in `sent`, their bodies in
-    `posted`. `call` answers (status, JSON body)."""
+    fake Stream unless `opener` is replaced, onto Board space `_Placed`, and
+    looked at by `model`, by default `_Marking`, and the bullets it posts in
+    `sent`, their bodies in `posted`. `call` answers (status, JSON body)."""
     def __init__(self, monkeypatch, model=None):
         _openable(monkeypatch)
+        monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask: (_Placed(), 0.95))
         monkeypatch.setattr(nbh, "Registration",
                             lambda view, base, mask, when: _Scripted(view, lambda i: True))
         monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.01)
@@ -81,6 +110,15 @@ def api(monkeypatch):
     api = _Api(monkeypatch)
     yield api
     api.close()
+
+
+@pytest.fixture
+def placed(api):
+    """`api`, its Runs' baseline frame 192x108 and read at ARRIVED."""
+    api.opener = lambda url, start, ref_time: (
+        nbh.Stream(_FakeStream(interval=0.002), ARRIVED.timestamp(), lambda: _FakeStream(n=0)),
+        np.zeros((108, 192, 3), np.int64))
+    return api
 
 
 @pytest.fixture
@@ -152,14 +190,42 @@ def _status(api):
 
 
 def test_status_reports_a_run_starting_until_it_is_watching(api):
+    """With no Baseline View until then: no baseline frame has placed the
+    Board on the picture yet (ADR-0009)."""
     opening, stream = threading.Event(), api.opener
     api.opener = lambda *args: (opening.wait(10), stream(*args))[1]
     starting = threading.Thread(target=api.start)
     starting.start()
-    assert _until(lambda: _status(api))["state"] == "starting"
+    run = _until(lambda: _status(api))
+    assert (run["state"], run["baseline_view"]) == ("starting", None)
     opening.set()
     starting.join(10)
-    assert _status(api)["state"] == "watching"
+    run = _status(api)
+    assert run["state"] == "watching" and run["baseline_view"] is not None
+
+
+def test_a_watching_runs_baseline_view_places_the_artwork_on_its_picture(placed):
+    """The artwork's ring centre goes through `template_to_picture` onto the
+    fake Target's place in the baseline frame, timed on first_seen_at's clock."""
+    _, run = placed.start()
+    view = run["baseline_view"]
+    assert view["taken_at"] == "2026-10-22T10:15:02.120+00:00"
+    assert view["picture"] == {"width": 192, "height": 108}
+    ring = board.apply(np.array(view["template_to_picture"]), [board.RING_CENTRE_TPL])[0]
+    assert ring == pytest.approx(RING_AT, abs=1e-3)
+    assert _status(placed)["baseline_view"] == view
+
+
+def test_a_baseline_view_has_one_outline_per_target_in_target_order(placed):
+    """Each outline in template coordinates, cut to at most OUTLINE_POINTS
+    of its own points: the round one keeps to its radius, and the square
+    keeps its corners."""
+    round_one, square = placed.start()[1]["baseline_view"]["targets"]
+    assert 8 <= len(round_one) <= service.OUTLINE_POINTS
+    radii = np.linalg.norm(np.array(round_one) - board.RING_CENTRE_TPL, axis=1)
+    assert radii == pytest.approx(500.0, abs=3.1)
+    assert sorted(map(tuple, square)) == [(1500.0, 100.0), (1500.0, 1000.0),
+                                          (2900.0, 100.0), (2900.0, 1000.0)]
 
 
 def test_an_end_is_answered_once_the_runs_posts_are_drained(api):

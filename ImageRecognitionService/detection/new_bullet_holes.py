@@ -1689,10 +1689,11 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
     Look there, and n/P50/P95/P99/max printed at the end (`_report_timing`).
     Without it nothing is written, printed or kept.
 
-    `watching`, when given, is called once the baseline is built, with its
-    number of Baseline Marks: the Run is watching from then, and a Hit
-    before it may be absorbed into the baseline. The Detection Service
-    answers a start with it (#223)."""
+    `watching`, when given, is called once the baseline is built, with
+    Board space and its Baseline Marks: the Run is watching from then, and a
+    Hit before it may be absorbed into the baseline. The Detection Service
+    answers a start with it, and builds the Run's Baseline View from it
+    (#223, ADR-0009)."""
     if timing:
         open(timing, "w").close()   # a path it cannot write fails now, not after the run
     match_px = loop.view.match_radius
@@ -1737,7 +1738,7 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
           f"{len(baseline_detections)} frame(s) from "
           f"{loop.when(0) if loop.live else f'{loop.source.start_s}s'}{short}")
     if watching:
-        watching(len(baseline))
+        watching(loop.view, baseline)
 
     # ponytail: a live run still keeps every look's index, time and
     # residuals, and every candidate, for the end-of-run report: a few MB an

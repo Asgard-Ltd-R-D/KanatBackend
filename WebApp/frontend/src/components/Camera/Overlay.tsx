@@ -1,5 +1,5 @@
 import { RefObject, useEffect, useState } from 'react'
-import { BaselineView, BulletHole } from '../../types'
+import { BaselineView, BulletHole, Place } from '../../types'
 import { Point, Size, baselineMarksToDraw, labelGroups, templateToElement } from '../../utils/overlay'
 
 const OUTLINE_COLOUR = '#22d3ee'
@@ -47,11 +47,11 @@ function useVideoSizes(videoRef: RefObject<HTMLVideoElement>) {
   return sizes
 }
 
-// What the Overlay draws: a Run's Baseline View at one of its places (its
-// template_to_picture), and the Bullet Holes over it
+// What the Overlay draws: a Run's Baseline View at one of its places, and
+// the Bullet Holes over it
 export interface OverlayContent {
   view: BaselineView
-  place: number[][]
+  place: Place
   bullets: BulletHole[]
 }
 
@@ -62,7 +62,7 @@ export interface OverlayContent {
 // to the player.
 export function Overlay({ view, place, bullets, videoRef }: OverlayContent & { videoRef: RefObject<HTMLVideoElement> }) {
   const sizes = useVideoSizes(videoRef)
-  const toElement = sizes && templateToElement(place, view.picture, sizes.video, sizes.element)
+  const toElement = sizes && templateToElement(place.template_to_picture, view.picture, sizes.video, sizes.element)
   if (!toElement) return null
   const holes = bullets.map(b => [b.position_x, b.position_y] as Point)
   const markers = holes.map(toElement)

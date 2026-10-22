@@ -66,7 +66,7 @@ export function CameraFeeds({ run, bullets }: { run?: Run; bullets: BulletHole[]
           label={enabled.length > 1 ? camera.alias : undefined}
           overlay={
             run?.camera_alias === camera.alias
-              ? { view: run.baseline_view, place: run.places[run.places.length - 1].template_to_picture, bullets }
+              ? { view: run.baseline_view, place: run.places[run.places.length - 1], bullets }
               : undefined
           }
         />

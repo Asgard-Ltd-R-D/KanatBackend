@@ -117,15 +117,17 @@ def end(session: Session) -> None:
     meanwhile, while the Run judges the Candidates it has open and posts
     what persisted, then `none`. A Detection Service that cannot be reached,
     or does not answer within END_TIMEOUT_S, is logged, and the Session ends
-    anyway, reading `end_unconfirmed`.
+    anyway, reading `end_unconfirmed` if it was watched: its last Bullet Holes
+    may be missing.
 
     ponytail: a deleted Session's `end_unconfirmed` stays in memory until
     the backend restarts, a few bytes for each; reconcile does not read the
     deleted ones apart from the completed ones"""
     if session.status != "active" or (session.camera_id is None and session.id not in _states):
         return
+    watched = state_of(session.id) == WATCHING
     _set(session.id, Detection(state="ending"))
-    _set(session.id, NONE if _end_run(session.id) else END_UNCONFIRMED)
+    _set(session.id, NONE if _end_run(session.id) or not watched else END_UNCONFIRMED)
 
 
 def reopened(session_id: uuid.UUID) -> None:
@@ -140,8 +142,8 @@ def reconcile(db: DBSession) -> None:
     enabled, or else the earliest started active Session whose camera is. A
     Run of any other Session is ended, and the wanted Session's started if it
     has none. Every other active Session reads why it is not watched, and
-    every Session no longer active reads `none`. A Session with a start or an
-    end under way is left to it."""
+    every Session no longer active reads `none`, unless its end was not
+    confirmed. A Session with a start or an end under way is left to it."""
     # Asked before the database is read: a Run is only started for a Session
     # already committed, so the Session of the Run it reports is read below
     try:

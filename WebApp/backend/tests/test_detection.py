@@ -247,15 +247,12 @@ def test_a_bullet_hole_posted_during_the_end_window_is_stored(client, db, detect
 END_UNCONFIRMED = {"state": "end_unconfirmed", "reason": None, "detail": None}
 
 
-@pytest.mark.parametrize("error", [
-    detection_service.DetectionServiceUnreachable("connection refused"),
-    detection_service.DetectionServiceUnreachable("POST /runs/…/end: timed out"),   # no answer in time
-])
-def test_completing_still_succeeds_when_the_detection_service_is_down(client, db, detection, error):
+def test_completing_still_succeeds_when_the_detection_service_is_down(client, db, detection):
+    # Or does not answer in time: the client raises the same for both
     session_id = client.post("/sessions", json={"name": "Range 1", "camera_id": str(add_camera(db).id)}).json()["id"]
 
     def down(session_id):
-        raise error
+        raise detection_service.DetectionServiceUnreachable("connection refused")
 
     detection.on_end = down
 
@@ -266,6 +263,18 @@ def test_completing_still_succeeds_when_the_detection_service_is_down(client, db
     # The page says so, and keeps saying it: its last Bullet Holes may be missing
     assert res.json()["detection"] == END_UNCONFIRMED
     assert detection_of(client, session_id) == END_UNCONFIRMED
+
+
+def test_a_session_no_run_watched_reads_none_however_its_end_went(client, db, detection):
+    # Waiting for another Session's Run: nothing of its own was in flight
+    start_session(client, add_camera(db))
+    waiting = start_session(client, add_camera(db, "lane2"))
+    tick(client)
+    detection.down = True
+
+    res = client.patch(f"/sessions/{waiting}", json={"status": "completed"})
+
+    assert res.json()["detection"]["state"] == "none"
 
 
 def test_completing_ends_the_run_of_a_session_whose_camera_was_deleted(client, db, detection):

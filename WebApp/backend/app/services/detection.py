@@ -113,15 +113,15 @@ def _follow(db: DBSession, stored: Run | None, run: detection_service.Run) -> No
     """Moves the stored Run on to how far `run`, its status read or end's
     answer, says it watched: `watched_until` to its `looked_at`, and its
     `registered` place kept if it lies more than MOVED_PX from the last kept,
-    then pushed as `run_moved`. A read older than one already kept, a tick's
-    that raced an end's answer, moves neither back."""
-    if stored is None:
+    then pushed as `run_moved`. A read no newer than `watched_until`, a
+    tick's that raced an end's answer, changes neither: its place may be
+    one the Board has since left."""
+    if stored is None or run.looked_at is None or run.looked_at <= stored.watched_until:
         return
-    if run.looked_at is not None and run.looked_at > stored.watched_until:
-        stored.watched_until = run.looked_at
+    stored.watched_until = run.looked_at
     last = Place.model_validate(stored.places[-1])
     new = run.registered
-    moved = new is not None and new.at > last.at and any(
+    moved = new is not None and any(
         math.dist(_to_picture(last.template_to_picture, p), _to_picture(new.template_to_picture, p)) > MOVED_PX
         for outline in stored.baseline_view["targets"] for p in outline)
     if moved:

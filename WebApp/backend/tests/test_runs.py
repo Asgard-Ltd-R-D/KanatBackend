@@ -307,11 +307,12 @@ def test_a_run_whose_last_looks_are_lost_still_reaches_its_last_looked_at(client
     assert run["places"][-1] == places(registered.registered)[0]
 
 
-def test_a_read_older_than_one_already_kept_moves_nothing_back(client, detection, camera):
-    # A tick's read, kept after an end's answer that came later
+@pytest.mark.parametrize("newer_dx", [3.0, 0.0])   # moved, or back where it was
+def test_a_read_older_than_one_already_followed_moves_nothing_back(client, detection, camera, newer_dx):
+    # A tick's read, followed after an end's answer that came later
     session_id = start_session(client, camera)
     first = detection.run
-    detection.run = newer = later(first, 10, dx=3.0)
+    detection.run = newer = later(first, 10, dx=newer_dx)
     tick(client)
     detection.run = later(first, 5, dx=6.0)
 
@@ -319,4 +320,4 @@ def test_a_read_older_than_one_already_kept_moves_nothing_back(client, detection
 
     [run] = runs_of(client, session_id)
     assert watched_until(run) == newer.looked_at
-    assert run["places"] == places(first.registered, newer.registered)
+    assert run["places"] == places(first.registered, *([newer.registered] if newer_dx else []))

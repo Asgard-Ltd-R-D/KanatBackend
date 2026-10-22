@@ -137,15 +137,33 @@ before the Session's first Run belongs to that first Run: it was fired before
 that Run's baseline, which saw it as a Baseline Mark. Over its own
 Run, a Bullet Hole goes through that Run's place. Over a later Run `c`, a
 Bullet Hole `p` of Run `r` goes onto the picture through `r`'s last kept place,
-back into `c`'s template coordinates through `c`'s baseline mapping, and out
-through `c`'s place at the moment:
+back into `c`'s template coordinates through `c`'s baseline mapping, shifted
+by `s` (below), and out through `c`'s place at the moment:
 
 ```text
-picture = H_c(t) · H_c(taken_at)⁻¹ · H_r(last) · p
+q       = H_c(taken_at)⁻¹ · H_r(last) · p + s
+picture = H_c(t) · q
 ```
 
-Its error is how far the Board moved in the picture between the two Runs. That
-gap is normally seconds: under ~10 px of CamA's creep.
+The picture alone leaves `q` off by how far the Board moved in the picture
+between `r`'s last place and `c`'s baseline. That was meant to be under ~10 px
+of CamA's creep, but it was not (#246). On CamA `_141546`, with the Detection
+Service restarted mid-Session, the gap was 6.5 s and the Board moved ~16
+picture px in it. That is 37 template px, past `MATCH_TPL_PX`, so the new Run's
+grey rings showed beside the carried Bullet Holes, on the holes themselves.
+
+`s` closes that gap. `c`'s baseline saw each of `r`'s holes, its Bullet Holes
+and its Baseline Marks, as a Baseline Mark. So `s` is the median offset from
+each of `r`'s holes, carried through the picture, to the nearest of `c`'s
+Baseline Marks within 60 template px. Two restarts on that Recording measured
+it:
+- 4 of 5 carried Bullet Holes within 0.7–4.9 template px of their marks (the
+  fifth had none);
+- 2 of 2 within 0.1 and 4.1.
+
+One translation follows a Board that slid between the Runs. It does not follow
+one turned or scaled, nor one moved further than 60 template px; fitting the
+two Runs' Target outlines would.
 
 A Baseline Mark within `MATCH_TPL_PX` (20 template px) of a Bullet Hole drawn
 over the same Run is not drawn, because the Bullet Hole stands for it. After a

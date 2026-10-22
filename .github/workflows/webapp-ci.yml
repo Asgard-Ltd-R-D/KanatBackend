@@ -62,7 +62,7 @@ jobs:
           fi
 
   frontend-typecheck:
-    name: Frontend type check
+    name: Frontend type check and tests
     needs: check-frontend
     if: needs.check-frontend.outputs.exists == 'true'
     runs-on: ubuntu-latest
@@ -73,9 +73,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 22: the tests are .ts files, which node --test runs only from 22.18
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: WebApp/frontend/package-lock.json
 
@@ -84,3 +85,6 @@ jobs:
 
       - name: Type check
         run: npx tsc --noEmit
+
+      - name: Tests
+        run: npm test

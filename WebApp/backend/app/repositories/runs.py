@@ -17,3 +17,17 @@ def add_once(db: DBSession, session_id: uuid.UUID, camera_alias: str, taken_at: 
         .on_conflict_do_nothing(constraint="uq_runs_session_id_taken_at")
     )
     db.commit()
+
+
+def get_for_update(db: DBSession, session_id: uuid.UUID, taken_at: datetime | None = None) -> Run | None:
+    """The Session's Run taken at `taken_at`, or its latest, its row locked
+    until commit: how far it watched is moved on under it."""
+    query = db.query(Run).filter(Run.session_id == session_id)
+    if taken_at is not None:
+        query = query.filter(Run.taken_at == taken_at)
+    return query.order_by(Run.taken_at.desc()).with_for_update().first()
+
+
+def save(db: DBSession) -> None:
+    """Commits the changes made to Runs loaded from `db`."""
+    db.commit()

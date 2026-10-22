@@ -40,4 +40,12 @@ class DetectionUpdatedEvent(BaseModel):
     detection: Detection
 
 
-LiveEvent = BulletCreatedEvent | BulletDeletedEvent | SessionUpdatedEvent | DetectionUpdatedEvent
+class RunMovedEvent(BaseModel):
+    """A Run of the Session kept a new place for the Board in the picture
+    (services/detection.py, ADR-0009); the Session's detail carries it."""
+
+    type: Literal["run_moved"] = "run_moved"
+    taken_at: datetime
+
+
+LiveEvent = BulletCreatedEvent | BulletDeletedEvent | SessionUpdatedEvent | DetectionUpdatedEvent | RunMovedEvent

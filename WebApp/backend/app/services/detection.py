@@ -10,10 +10,12 @@ one Run with the Session that should hold it (`reconcile`), so a Run that was
 lost, or never started, comes back by itself, from a fresh baseline.
 
 Each Run that watches a Session is stored with it, with its Baseline View
-(ADR-0009), the first time the backend sees it watching.
+(ADR-0009), the first time the backend sees it watching. Each status read,
+and the end's answer, then moves it on to how far it watched.
 """
 import asyncio
 import logging
+import math
 import threading
 import uuid
 
@@ -24,11 +26,12 @@ from sqlalchemy.orm import Session as DBSession
 from app.config.settings import settings
 from app.core.database import SessionLocal
 from app.core.live import hub
-from app.models import Session
+from app.models import Run, Session
 from app.repositories import cameras as cameras_repo
 from app.repositories import runs as runs_repo
 from app.repositories import sessions as sessions_repo
-from app.schemas.live import DetectionUpdatedEvent
+from app.schemas.live import DetectionUpdatedEvent, RunMovedEvent
+from app.schemas.run import Place
 from app.schemas.session import Detection
 from app.services import detection_service
 
@@ -48,6 +51,12 @@ END_UNCONFIRMED = Detection(state="end_unconfirmed")
 # The states with no start or end under way, which a tick may change; the
 # call under way sets the state itself once it is answered
 IDLE = ("none", "watching", "not_watching")
+
+# A Run's registered place is kept once it lies more than this from the last
+# one kept, at any point of its Target outlines, in the baseline frame's
+# picture px (ADR-0009): a Board holding still adds no rows, a creeping one
+# (~1 px/s on CamA) a few a minute
+MOVED_PX = 2.0
 
 _states: dict[uuid.UUID, Detection] = {}
 # The Sessions a Run has watched since their Run's end was last confirmed,
@@ -93,10 +102,39 @@ def starting(session_id: uuid.UUID) -> None:
     _set(session_id, Detection(state="starting"))
 
 
+def _to_picture(H: tuple, point: tuple[float, float]) -> tuple[float, float]:
+    x, y = point
+    w = H[2][0] * x + H[2][1] * y + H[2][2]
+    return (H[0][0] * x + H[0][1] * y + H[0][2]) / w, (H[1][0] * x + H[1][1] * y + H[1][2]) / w
+
+
+def _follow(db: DBSession, stored: Run | None, run: detection_service.Run) -> None:
+    """Moves the stored Run on to how far `run`, its status read or end's
+    answer, says it watched: `watched_until` to its `looked_at`, and its
+    `registered` place kept if it lies more than MOVED_PX from the last kept,
+    then pushed as `run_moved`. A read older than one already kept, a tick's
+    that raced an end's answer, moves neither back."""
+    if stored is None:
+        return
+    if run.looked_at is not None and run.looked_at > stored.watched_until:
+        stored.watched_until = run.looked_at
+    last = Place.model_validate(stored.places[-1])
+    new = run.registered
+    moved = new is not None and new.at > last.at and any(
+        math.dist(_to_picture(last.template_to_picture, p), _to_picture(new.template_to_picture, p)) > MOVED_PX
+        for outline in stored.baseline_view["targets"] for p in outline)
+    if moved:
+        stored.places = [*stored.places, new.model_dump(mode="json")]
+    runs_repo.save(db)
+    if moved:
+        hub.publish_from_thread(stored.session_id, RunMovedEvent(taken_at=stored.taken_at))
+
+
 def _store_run(session_id: uuid.UUID, alias: str, run: detection_service.Run) -> None:
     """Stores the Run, watching on the camera `alias`, for its Session if that
     still exists; one already stored is not stored again. Done before
     `watching` is pushed, so the frontend's refetch on it brings the Run.
+    Then moves it on to how far `run` says it watched (`_follow`).
     Storing fails only with the database, logged: the next status read that
     shows the Run stores it, and the Session is not left reading `starting`."""
     if run.baseline_view is None:
@@ -104,11 +142,12 @@ def _store_run(session_id: uuid.UUID, alias: str, run: detection_service.Run) ->
     db = SessionLocal()
     try:
         if sessions_repo.exists(db, session_id):
-            view = run.baseline_view.model_dump(mode="json")
+            view = run.baseline_view
             # Placed where its baseline frame showed the Board, and watched until then
-            baseline = {"at": view["taken_at"], "template_to_picture": view["template_to_picture"]}
-            runs_repo.add_once(db, session_id, alias, run.baseline_view.taken_at, view,
-                               [baseline], run.baseline_view.taken_at)
+            baseline = Place(at=view.taken_at, template_to_picture=view.template_to_picture)
+            runs_repo.add_once(db, session_id, alias, view.taken_at, view.model_dump(mode="json"),
+                               [baseline.model_dump(mode="json")], view.taken_at)
+            _follow(db, runs_repo.get_for_update(db, session_id, view.taken_at), run)
     except SQLAlchemyError as e:
         log.warning("The Run of session %s is not stored yet: %s", session_id, e)
     finally:
@@ -143,16 +182,28 @@ def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("star
 
 def _end_run(session_id: uuid.UUID) -> bool:
     """Whether the Detection Service answered that this end ended the Run: not
-    when it could not be reached, or had no Run for the Session."""
+    when it could not be reached, or had no Run for the Session. Its answer
+    moves the Session's stored Run on to how far it watched (`_follow`)."""
     try:
         ended = detection_service.end_run(session_id)
     except detection_service.DetectionServiceUnreachable as e:
         log.warning("The Run of session %s may not have ended: %s", session_id, e)
         return False
-    if ended:
-        with _lock:
-            _watched.discard(session_id)
-    return ended
+    if ended is None:
+        return False
+    with _lock:
+        _watched.discard(session_id)
+    db = SessionLocal()
+    try:
+        # ponytail: the answer names no Run, so it goes to the Session's latest
+        # stored; a Run never stored (the database down all its life) leaves it
+        # to the one before. Have the end answer with taken_at if that matters
+        _follow(db, runs_repo.get_for_update(db, session_id), ended)
+    except SQLAlchemyError as e:
+        log.warning("How far the Run of session %s watched is not stored: %s", session_id, e)
+    finally:
+        db.close()
+    return True
 
 
 def end(session: Session) -> None:

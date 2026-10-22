@@ -1,8 +1,12 @@
 import asyncio
+import math
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config.settings import settings
 from app.core.router import include_routers
@@ -32,6 +36,14 @@ app.add_middleware(
 )
 
 include_routers(app)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # FastAPI's own 422, but a refused NaN or infinity is echoed back as text:
+    # JSON cannot carry it, and the answer would fail as a 500
+    non_finite_as_text = {float: lambda v: v if math.isfinite(v) else str(v)}
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors(), custom_encoder=non_finite_as_text)})
 
 
 @app.get("/health", tags=["meta"])

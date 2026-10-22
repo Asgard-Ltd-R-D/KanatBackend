@@ -3,12 +3,14 @@ import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, FiniteFloat, field_validator
 
 
 class BulletPosition(BaseModel):
-    x: float = Field(ge=0, le=1405)
-    y: float = Field(ge=0, le=1120)
+    # Template coordinates, unbounded: a Miss or a Bullet Hole on another
+    # Target lies off the artwork's 0–1405 × 0–1120 (ADR-0009)
+    x: FiniteFloat
+    y: FiniteFloat
 
 
 class BulletCreate(BaseModel):

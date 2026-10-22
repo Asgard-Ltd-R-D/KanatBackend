@@ -44,8 +44,9 @@ def _backend(monkeypatch, *answers, seconds=0.0):
 
 
 def test_a_value_becomes_the_v1_payload(monkeypatch):
-    """Clipped to the template, UTC to the millisecond with a `Z`, and keyed
-    by the Session, the first frame and the rounded Template coordinates."""
+    """Template coordinates as they are, off the artwork too, UTC to the
+    millisecond with a `Z`, and keyed by the Session, the first frame and the
+    rounded Template coordinates."""
     sent = _backend(monkeypatch, 201)
     with webapp.WebAppPublisher("session", "http://backend:8000/") as publisher:
         publisher.publish(_value())
@@ -55,7 +56,7 @@ def test_a_value_becomes_the_v1_payload(monkeypatch):
     assert on_target == {
         "version": "v1",
         "first_seen_at": "2026-10-13T09:30:10.523Z",
-        "position": {"x": 1405.0, "y": 0.0},
+        "position": {"x": 1500.4, "y": -3.6},
         "target_index": 0,
         "x_mm": -12.3,
         "y_mm": 4.1,

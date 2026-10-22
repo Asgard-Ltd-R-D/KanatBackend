@@ -26,9 +26,6 @@ DRAIN_TIMEOUT_S = 120
 # One POST's socket timeout, and the grace one in flight gets past the drain.
 SOCKET_TIMEOUT_S = 10
 
-# The template's size in px: the range the WebApp validates `position` against.
-TEMPLATE_W, TEMPLATE_H = 1405.0, 1120.0
-
 
 class WebAppPublisher:
     """POSTs each value published to `/sessions/{session_id}/bullets`, on one
@@ -118,7 +115,7 @@ def _payload(value, session_id):
     return {
         "version": "v1",
         "first_seen_at": utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
-        "position": {"x": min(max(x, 0.0), TEMPLATE_W), "y": min(max(y, 0.0), TEMPLATE_H)},
+        "position": {"x": x, "y": y},
         "target_index": value.target,
         "x_mm": None if mm is None else mm[0],
         "y_mm": None if mm is None else mm[1],

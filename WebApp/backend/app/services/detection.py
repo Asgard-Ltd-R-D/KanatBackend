@@ -59,11 +59,15 @@ def state_of(session_id: uuid.UUID) -> Detection:
 def _set(session_id: uuid.UUID, detection: Detection, only_from: tuple[str, ...] | None = None) -> bool:
     """Changes the Session's state and pushes it, unless `only_from` is given
     and the state is none of those. Returns whether it changed it, or it
-    already read that; that is not pushed again."""
+    already read that; that is not pushed again. `end_unconfirmed` is read
+    as `none` for a Session not in _watched, under the same lock as the
+    confirmed end that takes it out."""
     with _lock:
         current = state_of(session_id)
         if only_from is not None and current.state not in only_from:
             return False
+        if detection == END_UNCONFIRMED and session_id not in _watched:
+            detection = NONE
         if detection == WATCHING:
             _watched.add(session_id)
         elif detection.state in ("none", "end_unconfirmed"):
@@ -118,7 +122,8 @@ def _end_run(session_id: uuid.UUID) -> bool:
         log.warning("The Run of session %s may not have ended: %s", session_id, e)
         return False
     if ended:
-        _watched.discard(session_id)
+        with _lock:
+            _watched.discard(session_id)
     return ended
 
 
@@ -139,10 +144,14 @@ def end(session: Session) -> None:
     if session.status != "active" or (session.camera_id is None and session.id not in _states):
         return
     _set(session.id, Detection(state="ending"))
-    ended = _end_run(session.id)
-    # Read once the end is answered: a start answered just before the end
-    # began, or a tick's end of the same Run confirmed meanwhile, changes it
-    _set(session.id, NONE if ended or session.id not in _watched else END_UNCONFIRMED)
+    # Whether a Run watched it is read by _set once the end is answered: a
+    # start answered just before the end began, or a tick's end of the same
+    # Run confirmed meanwhile, changes it.
+    # ponytail: the Detection Service drops its Run before it answers that
+    # tick's end, so this end's 404 can come first and read end_unconfirmed,
+    # the safe way round. Waiting on an end of the same Run already under
+    # way closes it if it ever matters
+    _set(session.id, NONE if _end_run(session.id) else END_UNCONFIRMED)
 
 
 def reopened(session_id: uuid.UUID) -> None:

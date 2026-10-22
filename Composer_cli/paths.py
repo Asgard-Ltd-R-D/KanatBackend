@@ -30,3 +30,4 @@ class Paths:
     compose_prod: Path = DOCKER_COMPOSE_PROD_FILE
     questdb_dir: Path = QUESTDB_DIR
     video_service_dir: Path = PROJECT_ROOT / "VideoService"
+    image_recognition_dir: Path = PROJECT_ROOT / "ImageRecognitionService"

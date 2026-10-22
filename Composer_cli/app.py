@@ -13,6 +13,7 @@ from .services.compose import DefaultComposeService
 from .services.docker import DefaultDockerService
 from .services.dotnet import DefaultDotnetService
 from .services.video import DefaultVideoService
+from .services.detection import DefaultDetectionService
 from .services.environment import EnvironmentManager
 from .services.envmanage import DefaultEnvManager
 from .services.packaging import DefaultPackagingService
@@ -34,6 +35,7 @@ class ComposerApp(ComposerUseCases):
         self.docker = docker_service
         self.dotnet = dotnet_service
         self.video = DefaultVideoService(self.paths.video_service_dir, self.shell)
+        self.detection = DefaultDetectionService(self.paths.image_recognition_dir, self.shell)
         self.compose = DefaultComposeService(self.shell)
         self.env = DefaultEnvManager(self.shell)
         self.packager = DefaultPackagingService(self.shell, self.progress, self.paths, docker_service)
@@ -97,6 +99,9 @@ class ComposerApp(ComposerUseCases):
             else:
                 warn("MediaMtx requested but not available (binary/config missing in VideoService)")
 
+        if getattr(args, "detection", False) and self.detection.run_detection() != 0:
+            return 1
+
         if detached:
             info("Launching PacketProcessingService in a new terminal window (detached mode)")
             time.sleep(1) # Await for docker containers to run
@@ -110,6 +115,7 @@ class ComposerApp(ComposerUseCases):
         """Issue docker compose stop for the selected environment."""
         dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
         self.dotnet.terminate_packetprocessing(dll_path, environment)
+        self.detection.stop_detection()
         self.video.stop_mediamtx()
         ctx = self._compose_ctx(environment)
         self.compose.stop(ctx)
@@ -120,6 +126,7 @@ class ComposerApp(ComposerUseCases):
         """Stop services, remove containers, and delete release artifacts for the environment."""
         dll_path = self.paths.release_dir / environment / "PacketProcessingService.dll"
         self.dotnet.terminate_packetprocessing(dll_path, environment)
+        self.detection.stop_detection()
         self.video.stop_mediamtx()
         ctx = self._compose_ctx(environment)
         self.env.kill_env(ctx)
@@ -149,6 +156,11 @@ class ComposerApp(ComposerUseCases):
         mtx_status = "[OK] Available" if mtx_avail else "[MISSING] Binary/Config"
         mtx_runtime = ", Running" if mtx_running else ", Not Running"
         print(f"MediaMtx: {mtx_status}{mtx_runtime}")
+
+        det_problem = self.detection.problem()
+        det_status = f"[MISSING] {det_problem}" if det_problem else "[OK] Available"
+        det_runtime = ", Running" if self.detection.is_running() else ", Not Running"
+        print(f"Detection Service: {det_status}{det_runtime}")
 
         return 0
 

@@ -56,6 +56,12 @@ class SubprocessShell:
             if self._open_new_terminal_linux(command, title):
                 return
 
+        if sys.platform == "win32":
+            # A console of its own, as a Terminal window on macOS: the process
+            # outlives the console composer ran in.
+            subprocess.Popen(list(cmd), cwd=str(cwd) if cwd else None, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            return
+
         subprocess.Popen(
             list(cmd),
             cwd=str(cwd) if cwd else None,
@@ -66,15 +72,9 @@ class SubprocessShell:
     def close_terminal_windows(self, title: str) -> None:
         if sys.platform != "darwin":
             return
-        script = f'''
-tell application "Terminal"
-    repeat with w in windows
-        if custom title of w is "{title}" then
-            close w
-        end if
-    end repeat
-end tell
-'''
+        # One close for all of them: closing inside a loop over `windows` shifts
+        # their indices, and the loop fails on the next one.
+        script = f'tell application "Terminal" to close (every window whose custom title is "{title}")'
         subprocess.run(["osascript", "-e", script], check=False)
 
     def _format_shell_command(self, cmd: Sequence[str], cwd: Optional[Path]) -> str:

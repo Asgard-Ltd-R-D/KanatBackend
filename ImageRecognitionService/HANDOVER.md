@@ -765,6 +765,9 @@ python$(cat .python-version) -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
+On Windows, `py -<version> -m venv .venv` with the version `.python-version`
+holds, then `.venv\Scripts\pip install -r requirements.txt`.
+
 ```bash
 # Detect new Bullet Holes, optionally rendering the rectified Board
 .venv/bin/python -m detection.new_bullet_holes CLIP.mkv --start 13 --end 25 --out out.mp4
@@ -851,6 +854,8 @@ time, on a worker thread. A Run is the live run above on the Stream it is
 given, posting to `--backend-url` as `--session-id` does, one publisher per
 Run. A Run takes the defaults, with no print scale, so `x_mm` and `y_mm` stay
 empty. SIGINT or SIGTERM ends any Run, drained, and then the service.
+`composer up --detection` runs it in a Terminal window of its own, and `stop`
+and `kill` stop it (#225).
 
 ```bash
 .venv/bin/python -m detection.service    # --port 8010 --backend-url http://localhost:8000 --model ...

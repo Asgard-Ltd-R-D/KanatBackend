@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.core.deps import get_db
 from app.core.live import hub
 from app.main import app
+from app.repositories import bullets as bullets_repo
 from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as sessions_repo
 from app.services import camera_sync, detection_service
@@ -217,6 +218,30 @@ def test_completing_a_session_without_a_camera_ends_nothing(client, db, detectio
 
     assert client.patch(f"/sessions/{session_id}", json={"status": "completed"}).json()["status"] == "completed"
     assert detection.calls == []
+
+
+def test_a_bullet_hole_posted_during_the_end_window_is_stored(client, db, detection, monkeypatch):
+    # The Run judges its open Candidates before its end is answered, and
+    # posts what persisted meanwhile
+    stored = []
+
+    def add(db, bullet):
+        bullet.created_at = NOW
+        stored.append(bullet)
+        return bullet
+
+    monkeypatch.setattr(bullets_repo, "find_by_idempotency_key", lambda db, session_id, key: None)
+    monkeypatch.setattr(bullets_repo, "count_active", lambda db, session_id: len(stored))
+    monkeypatch.setattr(bullets_repo, "add", add)
+    session_id = start_session(client, add_camera(db))
+    posted = []
+    detection.on_end = lambda sid: posted.append(client.post(f"/sessions/{sid}/bullets", json={
+        "version": "v1", "first_seen_at": NOW.isoformat(), "position": {"x": 100, "y": 200}}).status_code)
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert posted == [201]
+    assert [b.session_id for b in stored] == [session_id]
 
 
 def test_completing_still_succeeds_when_the_detection_service_is_down(client, db, detection):

@@ -12,8 +12,10 @@ from app.config.settings import settings
 # open, Board space and the baseline, which the service itself gives up on
 # after its START_TIMEOUT_S (15 s)
 START_TIMEOUT_S = 20
-# An end is answered once the Run has stopped and its posts are drained
-END_TIMEOUT_S = 10   # PROVISIONAL: #228 bounds the end with its persistence window
+# An end is answered once the Run has judged the Candidates it has open, which
+# the service bounds by its ENDING_TIMEOUT_S (5 s), and its posts to this
+# backend are drained (#228)
+END_TIMEOUT_S = 10   # PROVISIONAL
 # The status check answers within the frontend's own 2 s limit, as MediaMTX's
 # does beside it (routers/status.py)
 STATUS_TIMEOUT_S = 1

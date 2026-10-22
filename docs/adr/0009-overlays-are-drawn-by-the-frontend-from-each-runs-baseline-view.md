@@ -49,12 +49,14 @@ starts watching. Only the mapping from template coordinates onto the picture
 changes, and the Detection Service already computes one for every registered
 Look.
 
-Its latest rides on the Service's run view, which the backend already reads
-every 5 s through `GET /status`, so following the Board needs no new endpoint
-and no new contract. The backend keeps a place only when it has moved by more
-than a couple of px since the last one it kept: a few rows a minute while the
-Board creeps, and none while it holds. Replay draws the place kept last before
-the moment on screen.
+The Baseline View and the latest of those mappings ride on the Service's run
+view, which `POST /runs` answers with and the backend already reads every 5 s
+through `GET /status`. That needs no new endpoint, but it does extend the run
+view (below): today it carries only `session_id`, `state`, `since` and a
+`baseline_marks` count, and the backend's client keeps only the first two. The
+backend keeps a place only when it has moved by more than a couple of px since
+the last one it kept: a few rows a minute while the Board creeps, and none
+while it holds. Replay draws the place kept last before the moment on screen.
 
 A stream of every Look's registration (in-process detail, at Look rate, for an
 operator who cannot act on a Look) stays out. So does following sway, which
@@ -64,6 +66,30 @@ The backend keeps one Baseline View per Run, not one per Session: a later
 Run's Baseline Marks include the Session's own earlier Bullet Holes, and replay
 must not draw them before they were fired.
 
+## The run view's extension
+
+The control API (ADR-0008) is not versioned. The Detection Service and the
+backend ship together from this repo, and both ends change in one release. Two
+fields are added to the run view; every existing field keeps its meaning.
+
+```jsonc
+"baseline_view": {                          // null until the Run is watching
+  "taken_at": "2026-10-22T10:15:02.120Z",   // the baseline frame's time, on first_seen_at's clock
+  "picture": {"width": 1920, "height": 1080},
+  "template_to_picture": [[a, b, c], [d, e, f], [g, h, i]],  // template px → baseline frame px
+  "targets": [[[x, y], ...], ...],          // one outline per Target, index = target_index, template px
+  "baseline_marks": [[x, y], ...]           // template px
+},
+"registered": {                             // null until watching; a Lost Look leaves it as it was
+  "at": "2026-10-22T10:15:47.880Z",         // the latest registered Look's frame time, same clock
+  "template_to_picture": [[a, b, c], [d, e, f], [g, h, i]]
+}
+```
+
+The backend persists one `runs` row per Run: its Session, the alias of the
+camera it watched, `taken_at`, the Baseline View as JSON, and the places it
+kept, each an `at` and a `template_to_picture`, starting with the baseline's.
+
 ## Consequences
 
 - The Overlay follows a Board Move as far as Registration does, within one
@@ -71,9 +97,12 @@ must not draw them before they were fired.
   until a re-anchor or a fresh Run. A wrong fit shows rather than hides: the
   Target outlines sit off the printed Targets, which tells the operator the
   markers cannot be trusted.
-- Template coordinates stop being clamped to the artwork. A Bullet Hole on
-  another Target, or a Miss beyond the artwork, was stored on the artwork's
-  border, and the Overlay would have drawn it there. Rows stored before the
-  change keep their clamped positions.
+- The bullet contract's `position` loses its 0–1405 × 0–1120 bounds: the
+  publisher stops clamping, and the backend's schema accepts any finite x/y.
+  That widens what `v1` accepts and narrows nothing, so every `v1` payload
+  stays valid and the version stays `v1`. The contract doc changes with that
+  code, not before it. Until then a Bullet Hole on another Target, or a Miss
+  beyond the artwork, is stored on the artwork's border, where the Overlay
+  would draw it. Rows stored before the change keep their clamped positions.
 - The pipeline's internals (Candidates, Lost Looks, registration quality) stay
   out of the WebApp, in the Detection Service's own tooling on Recordings.

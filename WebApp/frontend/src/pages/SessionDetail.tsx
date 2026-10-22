@@ -250,7 +250,11 @@ export function SessionDetail() {
             onDelete={setDeleteTarget}
             canReplay={b => !!recordings.data && findMoment(recordings.data, b.first_seen_at) !== null}
             onReplay={b => {
-              const moment = recordings.data && findMoment(recordings.data, b.first_seen_at, REPLAY_PREROLL_S)
+              // From a Run's camera when it recorded then, where the Overlay draws
+              const runCameras = new Set(session.runs?.map(r => r.camera_alias))
+              const first = recordings.data?.filter(r => runCameras.has(r.alias)) ?? []
+              const rest = recordings.data?.filter(r => !runCameras.has(r.alias)) ?? []
+              const moment = findMoment([...first, ...rest], b.first_seen_at, REPLAY_PREROLL_S)
               if (moment) setReplay({ alias: moment.alias, part: moment.part, offsetS: moment.offsetS })
             }}
           />

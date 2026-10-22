@@ -1,8 +1,9 @@
 """Stand-ins shared by the camera, recording and detection tests."""
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from app.schemas.run import BaselineView
 from app.services import detection_service, mediamtx
 
 NOW = datetime.now(timezone.utc)
@@ -39,12 +40,27 @@ class FakeMediaMTX:
         del self.paths[name]
 
 
+def baseline_view(taken_at):
+    """A Run's Baseline View as the Detection Service sends it (ADR-0009):
+    the artwork at a quarter of its size in a 1920x1080 picture, and two
+    Targets, the artwork's own and one to its right."""
+    return BaselineView(
+        taken_at=taken_at,
+        picture={"width": 1920, "height": 1080},
+        template_to_picture=[[0.25, 0.0, 600.0], [0.0, 0.25, 300.0], [0.0, 0.0, 1.0]],
+        targets=[[[0.0, 0.0], [1405.0, 0.0], [1405.0, 1120.0], [0.0, 1120.0]],
+                 [[1600.0, 0.0], [3005.0, 0.0], [3005.0, 1120.0], [1600.0, 1120.0]]],
+    )
+
+
 class FakeDetectionService:
     """The Detection Service's control API (services/detection_service.py),
     holding one Run at a time as the service does: `run`, or None. Every start
     and end made is in `calls`. A start is answered with `start_error` raised,
     a 409 while another Session's Run is active or this one's ending, or else
-    as watching; `down` makes every call go unanswered. `on_status`, `on_start`
+    as watching, the Run already watching if it is this Session's, or a new
+    one whose Baseline View is taken later than any before; `down` makes
+    every call go unanswered. `on_status`, `on_start`
     and `on_end` see each call as it happens, a Run being ended reading
     `ending`."""
 
@@ -78,7 +94,10 @@ class FakeDetectionService:
             raise detection_service.RunRefused(409, "another Session's Run is active")
         if self.run and self.run.state == "ending":
             raise detection_service.RunRefused(409, "the Session's Run is ending")
-        self.run = detection_service.Run(session_id, "watching")
+        if not self.run:   # a repeat start is answered with the Run already watching
+            taken_at = NOW + timedelta(seconds=len(self.calls))
+            self.run = detection_service.Run(session_id, "watching", baseline_view(taken_at))
+        return self.run
 
     def _end(self, session_id):
         self.calls.append(("end", session_id))

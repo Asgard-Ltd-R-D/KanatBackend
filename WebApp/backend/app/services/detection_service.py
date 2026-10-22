@@ -7,6 +7,7 @@ from typing import NamedTuple
 import httpx
 
 from app.config.settings import settings
+from app.schemas.run import BaselineView
 
 # A start is answered once its Run is watching, or has failed: the Stream's
 # open, Board space and the baseline, which the service itself gives up on
@@ -39,6 +40,17 @@ class Run(NamedTuple):
     """The Detection Service's Run, as its status reports it."""
     session_id: uuid.UUID
     state: str   # starting, watching or ending
+    # Where its baseline frame showed the Board (ADR-0009); None until watching
+    baseline_view: BaselineView | None = None
+
+
+def _run(view: dict) -> Run:
+    """The Run of a run view. Raises ValueError, KeyError or TypeError for
+    anything that is not one. A Detection Service older than the Baseline
+    View (ADR-0009) still watches: its Runs have none."""
+    baseline_view = view.get("baseline_view")
+    return Run(uuid.UUID(view["session_id"]), view["state"],
+               None if baseline_view is None else BaselineView.model_validate(baseline_view))
 
 
 class RunRefused(Exception):
@@ -79,15 +91,16 @@ def status() -> Run | None:
     res = _request("GET", "/status", STATUS_TIMEOUT_S)
     try:
         run = res.raise_for_status().json()["run"]
-        return None if run is None else Run(uuid.UUID(run["session_id"]), run["state"])
+        return None if run is None else _run(run)
     except (httpx.HTTPStatusError, ValueError, KeyError, TypeError) as e:
         raise DetectionServiceUnreachable(f"GET /status: HTTP {res.status_code} {res.text[:200]}") from e
 
 
-def start_run(session_id: uuid.UUID, stream_url: str) -> None:
-    """Start the Session's Run on the Stream, answered once it is watching.
-    The same Session's Run already watching is answered as started. Raises
-    RunRefused or DetectionServiceUnreachable."""
+def start_run(session_id: uuid.UUID, stream_url: str) -> Run:
+    """Start the Session's Run on the Stream, answered once it is watching,
+    with the Run. The same Session's Run already watching is answered as
+    started. Raises RunRefused or DetectionServiceUnreachable, also for an
+    answer that is not a Run."""
     res = _request("POST", "/runs", START_TIMEOUT_S, json={"session_id": str(session_id), "stream_url": stream_url})
     if res.is_error:
         try:
@@ -95,6 +108,10 @@ def start_run(session_id: uuid.UUID, stream_url: str) -> None:
         except (ValueError, KeyError, TypeError):
             detail = res.text[:200]
         raise RunRefused(res.status_code, detail)
+    try:
+        return _run(res.json())
+    except (ValueError, KeyError, TypeError) as e:
+        raise DetectionServiceUnreachable(f"POST /runs: HTTP {res.status_code} {res.text[:200]}") from e
 
 
 def end_run(session_id: uuid.UUID) -> bool:

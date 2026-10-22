@@ -10,6 +10,28 @@ export interface Session {
   bullet_holes?: BulletHole[]
   bullet_count?: number
   detection?: Detection // on a single session, not in the list
+  grouping?: Grouping // on a single session, not in the list
+}
+
+// One Target's Group, in mm from the Target's centre. The spread measures are
+// null below two Bullet Holes
+export interface Group {
+  target_index: number
+  n: number
+  mpi_x_mm: number
+  mpi_y_mm: number
+  cep_mm: number | null
+  mean_radius_mm: number | null
+  rms_radius_mm: number | null
+  extreme_spread_mm: number | null
+}
+
+// Computed by the backend from the session's Bullet Holes: one Group per
+// Target, and the Bullet Holes left out of every Group
+export interface Grouping {
+  groups: Group[]
+  misses: number
+  without_position: number // manual ones, and detected ones without a print scale
 }
 
 // Whether a Run of the Detection Service watches a session. none: no camera,

@@ -138,9 +138,11 @@ def end(session: Session) -> None:
     deleted ones apart from the completed ones"""
     if session.status != "active" or (session.camera_id is None and session.id not in _states):
         return
-    watched = session.id in _watched
     _set(session.id, Detection(state="ending"))
-    _set(session.id, NONE if _end_run(session.id) or not watched else END_UNCONFIRMED)
+    ended = _end_run(session.id)
+    # Read once the end is answered: a start answered just before the end
+    # began, or a tick's end of the same Run confirmed meanwhile, changes it
+    _set(session.id, NONE if ended or session.id not in _watched else END_UNCONFIRMED)
 
 
 def reopened(session_id: uuid.UUID) -> None:

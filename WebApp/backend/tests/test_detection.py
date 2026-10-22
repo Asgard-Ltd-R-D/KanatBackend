@@ -301,6 +301,24 @@ def test_a_session_whose_run_ended_while_it_was_active_reads_none(client, db, de
     assert res.json()["detection"]["state"] == "none"
 
 
+def test_a_run_another_end_confirmed_meanwhile_leaves_the_end_confirmed(client, db, detection):
+    # A tick, its camera disabled, ended the Run while the Session was still
+    # active, just before this end reached the Detection Service: no such Run
+    session_id = start_session(client, add_camera(db))
+    run, detection.run = detection.run, None
+
+    def ended_by_a_tick(sid):
+        detection.on_end = lambda sid: None
+        detection.run = run
+        detection_svc._end_run(sid)
+
+    detection.on_end = ended_by_a_tick
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["detection"]["state"] == "none"
+
+
 def test_a_session_no_run_watched_reads_none_however_its_end_went(client, db, detection):
     # Waiting for another Session's Run: nothing of its own was in flight
     start_session(client, add_camera(db))

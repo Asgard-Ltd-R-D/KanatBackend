@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import time
+from contextlib import suppress
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -92,18 +94,32 @@ class DefaultDetectionService:
         return 1
 
     def stop_detection(self) -> None:
-        """SIGTERM, which ends any Run with its posts drained, then SIGKILL past STOP_TIMEOUT_S."""
+        """SIGTERM, which ends any Run and drains its posts, then SIGKILL past STOP_TIMEOUT_S."""
         if os.name != "nt":
-            self.sh.run(["pkill", "-f", "--", PATTERN], check=False)
+            self._signal(signal.SIGTERM)
             deadline = time.monotonic() + STOP_TIMEOUT_S
-            while self._process_left() and time.monotonic() < deadline:
+            while self._pids() and time.monotonic() < deadline:
                 time.sleep(0.2)
-            if self._process_left():
-                warn(f"{TITLE} still running {STOP_TIMEOUT_S} s after SIGTERM; killing it")
-                self.sh.run(["pkill", "-KILL", "-f", "--", PATTERN], check=False)
+            if self._pids():
+                warn(f"{TITLE} still running {STOP_TIMEOUT_S} s after SIGTERM; killing it, "
+                     "and any Bullet Hole it has not posted yet is lost")
+                self._signal(signal.SIGKILL)
         self.sh.close_terminal_windows(TITLE)
         print_stopped(TITLE)
 
-    def _process_left(self) -> bool:
-        rc, _, _ = self.sh.run_capture(["pgrep", "-f", "--", PATTERN])
-        return rc == 0
+    def _signal(self, sig: int) -> None:
+        for pid in self._pids():
+            with suppress(ProcessLookupError):
+                os.kill(pid, sig)
+
+    def _pids(self) -> list[int]:
+        """Its Python processes. A shell or terminal whose command line carries
+        the module (Linux's `bash -lc`, `xterm -e`) is left alone: its exit would
+        SIGHUP the service before the drain."""
+        _, out, _ = self.sh.run_capture(["pgrep", "-f", "--", PATTERN])
+        pids = []
+        for pid in out.split():
+            _, comm, _ = self.sh.run_capture(["ps", "-o", "comm=", "-p", pid])
+            if Path(comm.strip()).name.lower().startswith("python"):
+                pids.append(int(pid))
+        return pids

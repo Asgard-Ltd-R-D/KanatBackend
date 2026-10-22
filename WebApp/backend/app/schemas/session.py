@@ -23,6 +23,30 @@ class Detection(BaseModel):
     detail: Optional[str] = None
 
 
+class Group(BaseModel):
+    """One Target's Group (the root CONTEXT.md), in millimetres from the
+    Target's centre. Below two Bullet Holes every spread measure is None."""
+
+    target_index: int
+    n: int
+    mpi_x_mm: float
+    mpi_y_mm: float
+    cep_mm: Optional[float] = None
+    mean_radius_mm: Optional[float] = None
+    rms_radius_mm: Optional[float] = None
+    extreme_spread_mm: Optional[float] = None
+
+
+class Grouping(BaseModel):
+    """The Session's Groups, one per Target, in target_index order, and the
+    Bullet Holes left out of every Group (services/groups.py)."""
+
+    groups: list[Group] = []
+    misses: int = 0
+    # Manual ones, and detected ones without a print scale
+    without_position: int = 0
+
+
 class SessionCreate(BaseModel):
     name: str
     record: bool = False
@@ -54,6 +78,8 @@ class SessionResponse(BaseModel):
     bullet_holes: list[BulletHoleInSession] = Field(default=[], validation_alias="active_bullet_holes")
     # Held in memory, not in the database: set by routers/sessions.py
     detection: Detection = Field(default_factory=lambda: Detection(state="none"))
+    # Computed from bullet_holes: set by routers/sessions.py
+    grouping: Grouping = Field(default_factory=Grouping)
 
 
 class SessionListItem(BaseModel):

@@ -18,6 +18,7 @@ import { LiveDetectionsPanel } from '../components/Session/LiveDetectionsPanel'
 import { CameraFeeds } from '../components/Camera/CameraFeeds'
 import { RecordingControl } from '../components/Session/RecordingControl'
 import { RecordingsCard } from '../components/Session/RecordingsCard'
+import { GroupsCard } from '../components/Session/GroupsCard'
 import { ReplayModal, ReplayTarget } from '../components/Session/ReplayModal'
 import { useRecordings } from '../hooks/useRecordings'
 import { findMoment } from '../utils/recordings'
@@ -230,6 +231,8 @@ export function SessionDetail() {
             <StatTile label="Total Bullets" value={bullets.length} />
             <StatTile label="Duration" value={formatDuration(session.started_at, session.ended_at)} />
           </div>
+
+          {session.grouping && <GroupsCard grouping={session.grouping} />}
 
           <RecordingsCard
             recordings={recordings.data}

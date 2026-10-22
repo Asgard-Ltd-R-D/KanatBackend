@@ -38,10 +38,9 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
     if (!form.first_seen_at || isNaN(new Date(form.first_seen_at).getTime())) e.first_seen_at = 'Required date/time'
     const x = Number(form.position_x)
     const y = Number(form.position_y)
-    if (!form.position_x || isNaN(x)) e.position_x = 'Required number'
-    else if (x < 0 || x > 1405) e.position_x = 'Must be 0–1405'
-    if (!form.position_y || isNaN(y)) e.position_y = 'Required number'
-    else if (y < 0 || y > 1120) e.position_y = 'Must be 0–1120'
+    // Unbounded: a Miss or a Bullet Hole on another Target lies off the artwork
+    if (!form.position_x || !Number.isFinite(x)) e.position_x = 'Required number'
+    if (!form.position_y || !Number.isFinite(y)) e.position_y = 'Required number'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -86,7 +85,7 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
                 value={form.position_x}
                 onChange={e => setForm(f => ({ ...f, position_x: e.target.value }))}
                 className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                placeholder="0–1405"
+                placeholder="artwork: 0–1405"
               />
               {errors.position_x && <p className="text-red-500 dark:text-red-400 text-xs mt-1">{errors.position_x}</p>}
             </div>
@@ -98,7 +97,7 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
                 value={form.position_y}
                 onChange={e => setForm(f => ({ ...f, position_y: e.target.value }))}
                 className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                placeholder="0–1120"
+                placeholder="artwork: 0–1120"
               />
               {errors.position_y && <p className="text-red-500 dark:text-red-400 text-xs mt-1">{errors.position_y}</p>}
             </div>

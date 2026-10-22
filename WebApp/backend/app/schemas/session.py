@@ -9,9 +9,11 @@ from app.schemas.bullet_hole import BulletHoleInSession
 
 class Detection(BaseModel):
     """Whether a Run of the Detection Service watches the Session
-    (services/detection.py). `none`: no camera, or no Run is wanted any more."""
+    (services/detection.py). `none`: no camera, or no Run is wanted any more.
+    `end_unconfirmed`: the Session completed without the Detection Service
+    answering its Run's end, so Bullet Holes fired last may be missing."""
 
-    state: Literal["none", "starting", "watching", "not_watching", "ending"]
+    state: Literal["none", "starting", "watching", "not_watching", "ending", "end_unconfirmed"]
     # Why not watching: the Detection Service did not answer, its Run failed
     # to start on the Stream, another Session's Run holds the service, or the
     # Session's camera was disabled or deleted. None for a Run lost while the

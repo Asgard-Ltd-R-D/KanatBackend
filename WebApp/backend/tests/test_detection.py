@@ -244,15 +244,28 @@ def test_a_bullet_hole_posted_during_the_end_window_is_stored(client, db, detect
     assert [b.session_id for b in stored] == [session_id]
 
 
-def test_completing_still_succeeds_when_the_detection_service_is_down(client, db, detection):
+END_UNCONFIRMED = {"state": "end_unconfirmed", "reason": None, "detail": None}
+
+
+@pytest.mark.parametrize("error", [
+    detection_service.DetectionServiceUnreachable("connection refused"),
+    detection_service.DetectionServiceUnreachable("POST /runs/…/end: timed out"),   # no answer in time
+])
+def test_completing_still_succeeds_when_the_detection_service_is_down(client, db, detection, error):
     session_id = client.post("/sessions", json={"name": "Range 1", "camera_id": str(add_camera(db).id)}).json()["id"]
 
     def down(session_id):
-        raise detection_service.DetectionServiceUnreachable("connection refused")
+        raise error
 
     detection.on_end = down
 
-    assert client.patch(f"/sessions/{session_id}", json={"status": "completed"}).json()["status"] == "completed"
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+    tick(client)
+
+    assert res.json()["status"] == "completed"
+    # The page says so, and keeps saying it: its last Bullet Holes may be missing
+    assert res.json()["detection"] == END_UNCONFIRMED
+    assert detection_of(client, session_id) == END_UNCONFIRMED
 
 
 def test_completing_ends_the_run_of_a_session_whose_camera_was_deleted(client, db, detection):
@@ -335,7 +348,8 @@ def test_the_run_of_a_session_completed_while_the_service_was_down_is_ended(clie
 
     assert detection.calls[-1] == ("end", session_id)
     assert detection.run is None
-    assert detection_of(client, session_id)["state"] == "none"
+    # Ended after the Session completed: what it posted on the way out was refused
+    assert detection_of(client, session_id) == END_UNCONFIRMED
 
 
 def test_the_run_of_a_deleted_session_is_ended(client, db, detection):
@@ -395,9 +409,13 @@ def test_the_session_holding_the_run_keeps_it_over_an_earlier_one(client, db, de
     assert (detection_of(client, earlier)["state"], detection_of(client, earlier)["reason"]) == ("not_watching", "other_session")
 
 
-def test_a_reopened_session_gets_a_new_run(client, db, detection):
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_a_reopened_session_gets_a_new_run(client, db, detection, confirmed):
     session_id = start_session(client, add_camera(db))
+    detection.down = not confirmed   # its end is not confirmed, and its Run left
     client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+    detection.down = False
+    tick(client)   # ends the Run of a Session no longer active
     client.patch(f"/sessions/{session_id}", json={"status": "active"})
 
     tick(client)

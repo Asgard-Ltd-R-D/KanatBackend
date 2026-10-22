@@ -38,6 +38,8 @@ CAMERA_DISABLED = Detection(state="not_watching", reason="camera_disabled")
 # the service restarted between two ticks, which the backend cannot tell
 # apart, so no reason is given until the new Run's start answers
 RUN_LOST = Detection(state="not_watching")
+# Kept once the Session completes, unlike the others, until it is reopened
+END_UNCONFIRMED = Detection(state="end_unconfirmed")
 # The states with no start or end under way, which a tick may change; the
 # call under way sets the state itself once it is answered
 IDLE = ("none", "watching", "not_watching")
@@ -99,23 +101,37 @@ def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("star
         _end_run(session_id)
 
 
-def _end_run(session_id: uuid.UUID) -> None:
+def _end_run(session_id: uuid.UUID) -> bool:
+    """Whether the Detection Service answered that the Run has ended."""
     try:
         detection_service.end_run(session_id)
     except detection_service.DetectionServiceUnreachable as e:
         log.warning("The Run of session %s may not have ended: %s", session_id, e)
+        return False
+    return True
 
 
 def end(session: Session) -> None:
     """Ends the active Session's Run, if it has a camera or had one when its
     Run was asked for, and returns once the Run has ended: `ending`
-    meanwhile, then `none`. A Detection Service that cannot be reached is
-    logged, and the Session ends anyway."""
+    meanwhile, while the Run judges the Candidates it has open and posts
+    what persisted, then `none`. A Detection Service that cannot be reached,
+    or does not answer within END_TIMEOUT_S, is logged, and the Session ends
+    anyway, reading `end_unconfirmed`.
+
+    ponytail: a deleted Session's `end_unconfirmed` stays in memory until
+    the backend restarts, a few bytes for each; reconcile does not read the
+    deleted ones apart from the completed ones"""
     if session.status != "active" or (session.camera_id is None and session.id not in _states):
         return
     _set(session.id, Detection(state="ending"))
-    _end_run(session.id)
-    _set(session.id, NONE)
+    _set(session.id, NONE if _end_run(session.id) else END_UNCONFIRMED)
+
+
+def reopened(session_id: uuid.UUID) -> None:
+    """The Session is active again: its last end not being confirmed no longer
+    stands, and reconcile watches it again from a fresh baseline."""
+    _set(session_id, NONE, only_from=("end_unconfirmed",))
 
 
 def reconcile(db: DBSession) -> None:

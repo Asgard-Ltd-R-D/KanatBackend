@@ -102,12 +102,21 @@ class DefaultDetectionService:
                 print_started(f"{TITLE} (127.0.0.1:{PORT})")
                 return 0
             time.sleep(0.5)
-        error(f"{TITLE} not answering on 127.0.0.1:{PORT} after {START_TIMEOUT_S} s: see the window it runs in")
+        # Ended, so it cannot come up after `up` failed, nor race a retry for the port.
+        self._end()
+        error(f"{TITLE} not answering on 127.0.0.1:{PORT} after {START_TIMEOUT_S} s, so stopped: "
+              "see the window it ran in")
         return 1
 
     def stop_detection(self) -> None:
+        """End it and close its window."""
+        self._end()
+        self.sh.close_terminal_windows(TITLE)
+        print_stopped(TITLE)
+
+    def _end(self) -> None:
         """SIGTERM, which ends any Run and drains its posts, then SIGKILL past
-        STOP_TIMEOUT_S. On Windows, killed at once."""
+        STOP_TIMEOUT_S. On Windows, killed at once. Its window stays open."""
         if os.name == "nt":
             # ponytail: no drain on Windows; a shutdown call on the control API would give it one
             self.sh.run(["powershell", "-NoProfile", "-Command", _WINDOWS_KILL], check=False)
@@ -120,8 +129,6 @@ class DefaultDetectionService:
                 warn(f"{TITLE} still running {STOP_TIMEOUT_S} s after SIGTERM; killing it, "
                      "and any Bullet Hole it has not posted yet is lost")
                 self._signal(signal.SIGKILL)
-        self.sh.close_terminal_windows(TITLE)
-        print_stopped(TITLE)
 
     def _signal(self, sig: int) -> None:
         for pid in self._pids():

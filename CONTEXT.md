@@ -65,6 +65,13 @@ mapped onto the Target artwork. A Range is watched live by one Run; a Recording
 may have many.
 _Avoid_: pass, execution, session
 
+**Baseline View**:
+Where a Run's baseline frame showed the Board in the camera's picture: how the
+Target artwork lies on the picture, the outline of each Target, and the
+Baseline Marks. Fixed for the Run: after a Board Move it no longer matches the
+picture, until a fresh Run takes its own.
+_Avoid_: geometry, homography, calibration
+
 **Detection Service**:
 The system that stays running and holds the detector, and watches each Range
 with a fresh Run when the WebApp tells it to. It outlives its Runs: between

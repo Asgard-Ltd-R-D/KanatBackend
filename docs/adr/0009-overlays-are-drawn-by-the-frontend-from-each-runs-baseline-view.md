@@ -137,15 +137,37 @@ before the Session's first Run belongs to that first Run: it was fired before
 that Run's baseline, which saw it as a Baseline Mark. Over its own
 Run, a Bullet Hole goes through that Run's place. Over a later Run `c`, a
 Bullet Hole `p` of Run `r` goes onto the picture through `r`'s last kept place,
-back into `c`'s template coordinates through `c`'s baseline mapping, and out
-through `c`'s place at the moment:
+back into `c`'s template coordinates through `c`'s baseline mapping, shifted
+by `s` (below), and out through `c`'s place at the moment:
 
 ```text
-picture = H_c(t) · H_c(taken_at)⁻¹ · H_r(last) · p
+q       = H_c(taken_at)⁻¹ · H_r(last) · p + s
+picture = H_c(t) · q
 ```
 
-Its error is how far the Board moved in the picture between the two Runs. That
-gap is normally seconds: under ~10 px of CamA's creep.
+The picture alone leaves `q` off by how far the Board moved in the picture
+between `r`'s last place and `c`'s baseline. That was meant to be under ~10 px
+of CamA's creep, but it was not (#246). On CamA `_141546`, with the Detection
+Service restarted mid-Session, the gap was 6.5 s and the Board moved ~16
+picture px in it. That is 37 template px, past `MATCH_TPL_PX`, so the new Run's
+grey rings showed beside the carried Bullet Holes, on the holes themselves.
+
+`s` closes that gap. `c`'s baseline saw each of `r`'s Bullet Holes and
+Baseline Marks as a Baseline Mark of its own, within 60 template px of where
+the picture carries it. `s` is the offset from one of them to any mark within
+those 60 px that brings the most of them within `MATCH_TPL_PX` of a mark,
+refined to the median of their offsets. On a tie, `s` is the offset they lie
+closest to. The most, not the median of each one's nearest: in a tight Group a
+Bullet Hole's nearest mark can be its neighbour's. Any mark, not only the
+nearest: a hole fired between the Runs can be nearer each of them than its
+own. Two restarts on that Recording measured it:
+- 4 of 5 carried Bullet Holes within 0.0–4.2 template px of their marks (the
+  fifth had none);
+- 2 of 2 within 5.3 and 9.0.
+
+One translation follows the camera's creep between the Runs. It does not
+follow a Board turned or scaled, nor one moved further than 60 template px;
+fitting the two Runs' Target outlines would.
 
 A Baseline Mark within `MATCH_TPL_PX` (20 template px) of a Bullet Hole drawn
 over the same Run is not drawn, because the Bullet Hole stands for it. After a

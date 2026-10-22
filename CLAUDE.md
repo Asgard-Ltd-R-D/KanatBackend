@@ -32,6 +32,7 @@ dotnet test ... --filter "FullyQualifiedName~IntegrationTests"  # integration on
 # Composer CLI (dev/prod lifecycle + installers) — each is a separate subcommand
 python composer.py up dev -d      # environment defaults to prod if omitted
 python composer.py up dev -d --mediamtx   # also start MediaMTX from VideoService/ (binary not committed)
+python composer.py up dev -d --detection  # also start the Detection Service on 127.0.0.1:8010 (needs ImageRecognitionService/.venv)
 python composer.py stop dev
 python composer.py kill dev
 python composer.py status

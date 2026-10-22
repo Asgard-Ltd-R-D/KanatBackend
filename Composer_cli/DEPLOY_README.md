@@ -233,6 +233,15 @@ Start in detached mode (background):
 
 Detached mode launches the containers and opens a new Terminal window that runs `PacketProcessingService.dll`, leaving the originating shell free.
 
+Start the video and detection services alongside it, each in a Terminal window of its own:
+
+```bash
+./composer up dev -d --mediamtx --detection
+```
+
+- `--mediamtx` runs MediaMTX from `VideoService/`. Its binary is not committed: place it there first.
+- `--detection` runs the Detection Service (`python -m detection.service`) from `ImageRecognitionService/` on its own `.venv`, at the Python version `ImageRecognitionService/.python-version` declares. Build that `.venv` first, as `ImageRecognitionService/HANDOVER.md`'s "Running it" says. Composer waits until its control API answers on `127.0.0.1:8010`. A missing `.venv`, the wrong Python or missing requirements is reported, and it is not started. Nothing restarts it if it stops (ADR-0008). POSIX only: composer does not start it on Windows.
+
 **Note**:
 
 - Starting one environment automatically stops the other if it's running.
@@ -251,6 +260,8 @@ Stop the running environment:
 ```
 
 #### Kill Environment
+
+`stop` and `kill` also stop MediaMTX and the Detection Service. The Detection Service gets SIGTERM, which ends any Run with its Bullet Holes posted, and is killed if it is still running 10 s later.
 
 Kill and clean up an environment (removes containers and DLL):
 
@@ -290,6 +301,7 @@ Shows:
 
 - Running Docker containers
 - PacketProcessingService build status and whether the process is currently running (with environment/port)
+- MediaMTX and the Detection Service: whether each can run here (or why not) and whether it is running
 - Available release packages
 
 #### Help

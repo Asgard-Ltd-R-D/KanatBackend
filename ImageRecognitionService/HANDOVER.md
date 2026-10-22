@@ -851,6 +851,8 @@ time, on a worker thread. A Run is the live run above on the Stream it is
 given, posting to `--backend-url` as `--session-id` does, one publisher per
 Run. A Run takes the defaults, with no print scale, so `x_mm` and `y_mm` stay
 empty. SIGINT or SIGTERM ends any Run, drained, and then the service.
+`composer up --detection` runs it in a Terminal window of its own, and `stop`
+and `kill` stop it (#225).
 
 ```bash
 .venv/bin/python -m detection.service    # --port 8010 --backend-url http://localhost:8000 --model ...

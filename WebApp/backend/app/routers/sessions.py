@@ -9,7 +9,7 @@ from app.core.live import hub
 from app.models import Session
 from app.schemas.live import SessionUpdatedEvent
 from app.schemas.session import SessionCreate, SessionListItem, SessionResponse, SessionUpdate
-from app.services import camera_sync, detection
+from app.services import camera_sync, detection, groups
 from app.services import cameras as camera_svc
 from app.services import recordings as recording_svc
 from app.services import sessions as svc
@@ -20,9 +20,10 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 def _response(session: Session) -> SessionResponse:
-    """The Session with its detection, which is held in memory."""
+    """The Session with its detection, which is held in memory, and its Groups."""
     response = SessionResponse.model_validate(session)
     response.detection = detection.state_of(session.id)
+    response.grouping = groups.grouping(response.bullet_holes)
     return response
 
 

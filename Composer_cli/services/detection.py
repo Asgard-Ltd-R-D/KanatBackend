@@ -46,6 +46,8 @@ class DefaultDetectionService:
 
     def problem(self) -> str | None:
         """Why it cannot run here, or None."""
+        if not self.service_dir.is_dir():
+            return f"no {self.service_dir}: the installer does not ship it, so run composer from a source checkout"
         if not self.python.exists():
             return (f"no Python at {self.python}: build its .venv as "
                     "ImageRecognitionService/HANDOVER.md's \"Running it\" says")

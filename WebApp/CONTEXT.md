@@ -28,6 +28,9 @@ A confirmed detection reported by the Detection Service to the backend. One row 
 
 This is distinct from a **Hit**: two bullets through the same point leave one Bullet Hole. The system counts Bullet Holes, not Hits. See `docs/adr/0001-report-bullet-holes-not-hits.md`.
 
+**Group** (web app sense)
+As in the root `CONTEXT.md`: one Target's Bullet Holes, with their MPI, CEP (beside it Mean Radius and RMS radius) and Extreme Spread, in millimetres. A completed Session shows one Group per Target on its page and in its PDF and Excel exports. The backend computes them from the Session's stored Bullet Holes each time it is read (`backend/app/services/groups.py`, ported from the Detection Service's `detection/groups.py`), so the operator's corrections apply: a deleted Bullet Hole leaves its Group. A Group takes the Bullet Holes with a `target_index` and both `x_mm` and `y_mm`. The Misses, and the Bullet Holes without a Position (every manual one, since its form takes no Target or millimetres, and a detected one when the print scale is not configured), are in no Group and are counted beside them. An active Session shows none.
+
 **Template coordinates**
 The coordinate system of the printed Target artwork (`ImageRecognitionService/data/targets/kanat_silhouette_a4.png`, 1405×1120 px), laid over the whole Board through its largest Target, the one a Run registers to. Which Target that is can change from one Run to the next (#240), so two Runs' coordinates compare only through the camera's picture. All Bullet Hole positions are reported and stored in these coordinates. The artwork bounds only that one Target: a Bullet Hole on another Target, or a Miss beyond the artwork, lies outside 0–1405 × 0–1120. It is stored there all the same; rows stored before #241 were clamped onto the artwork's border and stay there.
 

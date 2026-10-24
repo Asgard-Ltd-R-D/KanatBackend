@@ -38,7 +38,7 @@ def make_bullet(rank=1):
 def make_session(status="active"):
     return SimpleNamespace(
         id=SESSION_ID, name="Range 1", status=status, started_at=NOW,
-        ended_at=None, record=False, created_at=NOW, active_bullet_holes=[],
+        ended_at=None, record=False, camera_id=None, created_at=NOW, active_bullet_holes=[],
     )
 
 

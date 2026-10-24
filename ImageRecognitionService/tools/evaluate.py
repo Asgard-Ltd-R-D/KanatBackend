@@ -1011,7 +1011,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     # so a scored Run builds Board space once, and before its first Look, so a
     # truth that cannot be placed fails before any (#185).
     loop = nbh.RegisteredFrames.open(
-        video, start, model, confidence, template,
+        video, start, nbh.load_model(model), confidence, template,
         opener=None if move is None else functools.partial(open_moved, move))
     view = loop.view
     truth, pre_labels = load_truth(truth_image, truth_labels, loop.base, view)

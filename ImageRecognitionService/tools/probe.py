@@ -125,7 +125,8 @@ def probe(video, start, end, model_path, truth_tpl, radius_tpl,
     """
     names = names or [f"truth #{n}" for n in range(1, len(truth_tpl) + 1)]
     print(f"\n[PROBE] {os.path.relpath(model_path)} at conf {conf}")
-    loop = nbh.RegisteredFrames.open(video, start, model_path, conf, template_path)
+    loop = nbh.RegisteredFrames.open(video, start, nbh.load_model(model_path), conf,
+                                     template_path)
     view = loop.view
     radius = radius_tpl * view.board_scale
     rates = detection_rates(loop.looks(loop.frames_until(end)),

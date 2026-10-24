@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import clsx from 'clsx'
-import { CameraRecording } from '../../types'
+import { BulletHole, CameraRecording, Run } from '../../types'
 import { Modal } from '../UI/Modal'
 import { ReplayPlayer } from './ReplayPlayer'
 import { findMoment } from '../../utils/recordings'
@@ -14,12 +14,14 @@ export interface ReplayTarget {
 interface Props {
   sessionId: string
   recordings: CameraRecording[]
+  runs: Run[]
+  bullets: BulletHole[]
   target: ReplayTarget | null
   onChange: (target: ReplayTarget | null) => void
 }
 
 // A session's recordings in a large window over the page; Esc closes it
-export function ReplayModal({ sessionId, recordings, target, onChange }: Props) {
+export function ReplayModal({ sessionId, recordings, runs, bullets, target, onChange }: Props) {
   const recording = recordings.find(r => r.alias === target?.alias)
   // The moment on screen, so switching camera shows the same moment from the
   // other camera, when it was recording then; otherwise from its start
@@ -68,6 +70,8 @@ export function ReplayModal({ sessionId, recordings, target, onChange }: Props) 
           key={`${recording.alias}-${target?.part ?? 0}-${target?.offsetS ?? 0}`}
           sessionId={sessionId}
           recording={recording}
+          runs={runs}
+          bullets={bullets}
           startPart={target?.part ?? 0}
           startOffsetS={target?.offsetS ?? 0}
           onPosition={iso => (position.current = iso)}

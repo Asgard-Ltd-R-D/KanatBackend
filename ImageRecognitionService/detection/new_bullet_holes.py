@@ -302,9 +302,10 @@ def strip_pre_existing(pts, baseline, match_px):
     return pts[distance >= match_px], distance[distance < match_px]
 
 
-def _fold(candidates, idx, pts, match_px):
+def _fold(candidates, idx, pts, match_px, opening=True):
     """One Look's Detections into the candidates, in place, for `Persistence`.
-    A candidate is [pos, seen_frame_idxs, first_idx].
+    A candidate is [pos, seen_frame_idxs, first_idx]. Without `opening`, a
+    Detection matching none is dropped rather than opening a candidate.
 
     ponytail: each Detection is matched against every candidate so far, kept
     or not, as the whole-run fold always was. That is once a Look, so a very
@@ -312,7 +313,8 @@ def _fold(candidates, idx, pts, match_px):
     for p in np.asarray(pts, np.float32):  # (cx, cy) or (cx, cy, w, h), always 2-D
         match = next((c for c in candidates if same_bullet_hole(c[0], p, match_px)), None)
         if match is None:
-            candidates.append([p.copy(), [idx], idx])
+            if opening:
+                candidates.append([p.copy(), [idx], idx])
         else:
             n = len(match[1])
             match[0] = (match[0] * n + p) / (n + 1)
@@ -390,6 +392,15 @@ def _bullet_hole_classes(model):
     if not classes:
         raise SystemExit(f"model has no {BULLET_HOLE_CLASS!r} class: {model.names}")
     return classes
+
+
+def load_model(path):
+    """The detector at `path`, for `RegisteredFrames.open` (#221). A wrong
+    checkpoint is refused here, before any video work."""
+    from ultralytics import YOLO  # imported lazily: pulls in torch
+    model = YOLO(path)
+    _bullet_hole_classes(model)
+    return model
 
 
 def _round32(x):
@@ -633,8 +644,8 @@ class Recording:
 class Stream:
     """A Stream (CONTEXT.md: Stream), read on a thread of its own so that
     frames keep arriving while a look is being processed (#83). `start`
-    makes SIGINT and SIGTERM `stop` it and starts the thread; `close` stops
-    and joins it, restores the handlers and prints the live report.
+    starts the thread; `stop`, from any thread, ends iteration; `close` stops
+    and joins it and prints the live report.
 
     A failed read is a drop, never the end: the stream closed, or stalled past
     `STREAM_TIMEOUT_MS`. The thread reopens it with `reopen` every
@@ -730,8 +741,7 @@ class Stream:
         its times are its own (#117)."""
         print(f"[LIVE] {_redacted(url)}: a stream, read from where it is. Board space "
               f"is built from the first frame read, times are the stream's timestamps "
-              f"from the wall clock it was read at (#117), and "
-              f"SIGINT or SIGTERM ends the run with its report (#83)")
+              f"from the wall clock it was read at (#117)")
         cap = _open_stream(url)
         ok, frame = cap.read()
         arrived = time.time()
@@ -741,15 +751,15 @@ class Stream:
 
     def start(self, n_frames, stride, baseline_frames):
         self._wanted, self._baseline_frames = n_frames, baseline_frames
-        self._handlers = {s: signal.signal(s, self.stop)
-                          for s in (signal.SIGINT, signal.SIGTERM)}
         self._reader = threading.Thread(target=self._read, args=(stride, baseline_frames),
                                         daemon=True)
         self._reader.start()
 
-    def stop(self, *signal_args):
-        """End iteration after the look in hand. A signal handler, so it only
-        sets a flag: taking a lock here could deadlock the thread it interrupts."""
+    def stop(self):
+        """End iteration after the look in hand, from any thread. It only sets
+        a flag, which the reader and `read` poll: the command line calls it
+        from a signal handler, where taking a lock could deadlock the thread
+        it interrupts (#221)."""
         self.stopped = True
 
     def _read(self, stride, baseline_frames):
@@ -948,8 +958,6 @@ class Stream:
         return datetime.fromtimestamp(self.times[index], timezone.utc)
 
     def close(self):
-        for s, handler in self._handlers.items():
-            signal.signal(s, handler)
         self.stopped = True
         if self._reader is not None:
             # A stalled read returns within STREAM_TIMEOUT_MS (#84).
@@ -1247,16 +1255,23 @@ class Persistence:
         self._judged = 0   # candidates are made in frame order, so the judged are a prefix
         self._persisted = {}   # id(hole) -> (hole, its candidate)
 
-    def add(self, index, pts):
+    def add(self, index, pts, opening=True):
         """One Look: its Detections, or None if it was Lost. Returns the
         Candidates that persisted at it, each with its position and sightings
-        as of now. `index + 1` frames have passed, in both modes."""
+        as of now. `index + 1` frames have passed, in both modes. Without
+        `opening`, as while a live Run ends, a Detection opens no Candidate
+        (#228)."""
         if pts is None:
             self.lost.append(index)
         else:
             self.looked_at.append(index)
-            _fold(self._candidates, index, pts, self.match_px)
+            _fold(self._candidates, index, pts, self.match_px, opening)
         return self._judge_due(index + 1)
+
+    @property
+    def unjudged(self):
+        """How many Candidates are still open: inside their window, unjudged."""
+        return len(self._candidates) - self._judged
 
     def end(self, processed):
         """Judge whatever became due after the last Look, `processed` frames
@@ -1388,23 +1403,27 @@ class RegisteredFrames:
         self.net_scale = None   # measured by `open`; see the warning there
         self.registration = registration
         self.lost = 0
+        # The latest registered Look, `(index, view)`, and the latest Look's
+        # index, registered or Lost: how far a Run has watched (ADR-0009).
+        # Each set in one assignment, `looked` first, so another thread
+        # reading `registered` first never reads it past `looked`.
+        self.registered = self.looked = None
+        self.finishing = False   # set by `finish`
         # The Board past the margin canvas, searched by a second inference (#46).
         self.bands = view.exposed_bands(BAND_CONTEXT_PX)
 
     @classmethod
-    def open(cls, video, start, model_path, conf=DEFAULT_CONFIDENCE,
+    def open(cls, video, start, model, conf=DEFAULT_CONFIDENCE,
              template_path=board.DEFAULT_TEMPLATE, ref_time=None, device=None, opener=None):
-        from ultralytics import YOLO  # imported lazily: pulls in torch
-        model = YOLO(model_path)
-        _bullet_hole_classes(model)   # refuse a wrong checkpoint before any video work
-
+        """The Run on `model`, a detector `load_model` loaded: whoever opens
+        Runs loads it, once for all of them if it likes (#221)."""
         template = cv2.imread(template_path)
         if template is None:
             raise SystemExit(f"cannot read Target artwork at {template_path}")
         _, template_mask = board.find_targets(template, min_area=1)
 
         # How long building Board space takes is measured from opening the
-        # source, so the model load above is not in it (#79).
+        # source, so no model load is in it (#79).
         opened_at = time.perf_counter()
         source, base, view, correlation = open_board_space(video, start, template_mask,
                                                            ref_time, opener)
@@ -1472,6 +1491,20 @@ class RegisteredFrames:
         loop.net_scale = scale
         return loop
 
+    def stop(self):
+        """End a live Run after the look in hand, from any thread: its
+        Stream's `stop`. It then ends as at any end, report and all (#221).
+        A Recording ends at its `end` and has none."""
+        self.source.stop()
+
+    def finish(self):
+        """End a live Run once every Candidate open now is judged, from any
+        thread: `process` opens no new one meanwhile, and stops the Run at the
+        Look that judges the last, at most one persistence window on (#228).
+        Only a flag, as `stop` sets. A Stream that gives no frames never gets
+        there: whoever finishes a Run also bounds the wait, and stops it."""
+        self.finishing = True
+
     @property
     def last(self):
         """The most recently registered view (`Registration.last`)."""
@@ -1498,9 +1531,9 @@ class RegisteredFrames:
         one is read from the source, then handed to `registration`: two calls,
         not one. Which frames are read, under a `stride` (#81) past the first
         `baseline_frames`, is the source's, and so is `processed`: see
-        `Recording` and `Stream`. A stream has no end but a stop: SIGINT or
-        SIGTERM ends iteration after the look in hand, and callers report as
-        at any end.
+        `Recording` and `Stream`. A stream has no end but a stop (`stop`): it
+        ends iteration after the look in hand, and callers report as at any
+        end.
         """
         frames = frames_from(self.source, self.base, n_frames, stride, baseline_frames)
         try:
@@ -1508,6 +1541,9 @@ class RegisteredFrames:
                 self.clock.start(wait)   # the frame is in hand: read, decoded, handed over
                 current = self.view if index == 0 else self.registration.register(frame, index)
                 self.clock.lap("registration")
+                self.looked = index
+                if current is not None:
+                    self.registered = index, current
                 if current is None:
                     self.lost += 1
                     yield Look(index, None, None, None)
@@ -1523,7 +1559,7 @@ class RegisteredFrames:
             try:
                 self.registration.report()   # before the source's, the live report
             finally:
-                self.source.close()   # whatever the report did: it restores the signals
+                self.source.close()   # whatever the report did: it releases the source
 
     def _call_detector(self, image, imgsz):
         """`_detect` on the loop's device, timed as one detector call (#129)."""
@@ -1642,13 +1678,15 @@ def registration_note(residual, radius, unit="Board px"):
 def process(loop, end, out_video=None, mm_per_tpl_px=None,
             require_change_evidence=REQUIRE_CHANGE_EVIDENCE,
             merge_displaced=NON_COOCCURRENCE_MERGE,
-            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, timing=None):
+            baseline_frames=BASELINE_FRAMES, stride=None, publish=None, timing=None,
+            watching=None):
     """The Run `loop`, opened by `RegisteredFrames.open`, to `end` seconds
     into its Recording. Whoever opens it chooses the source, the model and
     the Board space everything is registered onto, and can use that Board
     space first: the scoring tool places its truth through it (#185). A
-    Stream has no `end`: it runs until stopped, at `LIVE_STRIDE` unless
-    `stride` says otherwise, and prints each Bullet Hole as it is confirmed.
+    Stream has no `end`: it runs until stopped, or finished (`finish`), at
+    `LIVE_STRIDE` unless `stride` says otherwise, and prints each Bullet Hole
+    as it is confirmed.
 
     `publish`, when given, is handed each Confirmed Bullet Hole once, as a
     `BulletHoleConfirmed` (#155): a Stream's as it is announced, a
@@ -1657,7 +1695,13 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
 
     `timing`, a path, times each Look past the baseline (#129): a CSV row a
     Look there, and n/P50/P95/P99/max printed at the end (`_report_timing`).
-    Without it nothing is written, printed or kept."""
+    Without it nothing is written, printed or kept.
+
+    `watching`, when given, is called once the baseline is built, with
+    Board space and its Baseline Marks: the Run is watching from then, and a
+    Hit before it may be absorbed into the baseline. The Detection Service
+    answers a start with it, and builds the Run's Baseline View from it
+    (#223, ADR-0009)."""
     if timing:
         open(timing, "w").close()   # a path it cannot write fails now, not after the run
     match_px = loop.view.match_radius
@@ -1701,6 +1745,8 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
     print(f"[INFO] baseline: {len(baseline)} Baseline Marks over "
           f"{len(baseline_detections)} frame(s) from "
           f"{loop.when(0) if loop.live else f'{loop.source.start_s}s'}{short}")
+    if watching:
+        watching(loop.view, baseline)
 
     # ponytail: a live run still keeps every look's index, time and
     # residuals, and every candidate, for the end-of-run report: a few MB an
@@ -1727,7 +1773,9 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
                 corroborating = [p for p, seen in zip(pts, evidence) if seen]
                 corroboration += corroborating
             loop.clock.lap("change filter")
-        persisted_now = persistence.add(look.index, pts)  # empty is meaningful: looked, saw nothing
+        finishing = loop.finishing   # read once: the Look opens and stops by the same answer
+        # empty is meaningful: looked, saw nothing
+        persisted_now = persistence.add(look.index, pts, opening=not finishing)
         # The Look's clock stops once Persistence has taken it: the announcer's
         # Change Evidence check and print fall outside it, as a recording's
         # end-of-run check does (#129).
@@ -1736,6 +1784,8 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
             timed.append(_timing_row(look, loop.clock))
         if announce:
             announce(persisted_now, corroborating)
+        if finishing and not persistence.unjudged:
+            loop.stop()   # every Candidate judged, as at any Look (ADR-0003, #228)
 
     processed = loop.processed
     if persistence.lost:
@@ -2105,6 +2155,22 @@ def _render(video, start, n_frames, views, baseline, new, out_video,
     print(f"[INFO] -> {out_video}")
 
 
+@contextlib.contextmanager
+def _stopped_by_signals(loop):
+    """SIGINT and SIGTERM stop the live Run `loop` inside the block, and the
+    handlers before are restored on leaving it: how the command line ends a
+    Run (#83). Not the Stream's, since Python installs a handler on the main
+    thread only, and a Run may run on another (#221)."""
+    print("[LIVE] SIGINT or SIGTERM ends the run with its report (#83)")
+    before = {s: signal.signal(s, lambda *_: loop.stop())
+              for s in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        yield
+    finally:
+        for s, handler in before.items():
+            signal.signal(s, handler)
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser("Report Bullet Holes that are new since the baseline")
     p.add_argument("video", help="a recording, or a stream's rtsp:// URL, normally a "
@@ -2212,8 +2278,9 @@ if __name__ == "__main__":
     # Drained on leaving, after the report and even if the run raised (#155).
     with (webapp.WebAppPublisher(a.session_id, a.backend_url) if a.session_id
           else contextlib.nullcontext()) as publisher:
-        loop = RegisteredFrames.open(a.video, a.start, a.model, a.confidence, a.template,
-                                     ref_time, a.device)
-        process(loop, a.end, a.out, scale, not a.no_change_filter, a.merge_displaced,
-                a.baseline_frames, a.stride, publish=publisher.publish if publisher else None,
-                timing=a.timing)
+        loop = RegisteredFrames.open(a.video, a.start, load_model(a.model), a.confidence,
+                                     a.template, ref_time, a.device)
+        with _stopped_by_signals(loop) if loop.live else contextlib.nullcontext():
+            process(loop, a.end, a.out, scale, not a.no_change_filter, a.merge_displaced,
+                    a.baseline_frames, a.stride,
+                    publish=publisher.publish if publisher else None, timing=a.timing)

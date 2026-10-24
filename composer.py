@@ -45,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
             """\
             Examples:
               python composer.py up prod -d
+              python composer.py up dev -d --mediamtx --detection
               python composer.py status
               python composer.py build
               python composer.py release osx-arm64
@@ -69,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_up.add_argument("-d", "--detached", action="store_true")
     p_up.add_argument("--mediamtx", action="store_true", help="Start MediaMtx service")
+    p_up.add_argument("--detection", action="store_true", help="Start the Detection Service")
 
     # stop
     p_stop = sub.add_parser("stop", help="Stop environment")

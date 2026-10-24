@@ -756,6 +756,18 @@ Everything runs from `ImageRecognitionService/` with its `.venv`. The pipeline
 lives in `detection/`, the scoring and truth tooling in `tools/`, so each runs
 as a module (`python -m detection.new_bullet_holes`), not as a file path.
 
+The Python version is declared once, in `.python-version`. It is the only one
+the detector has run on, and CI's `image-recognition.yml` reads it (#222).
+Build the `.venv` on it:
+
+```bash
+python$(cat .python-version) -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+On Windows, `py -<version> -m venv .venv` with the version `.python-version`
+holds, then `.venv\Scripts\pip install -r requirements.txt`.
+
 ```bash
 # Detect new Bullet Holes, optionally rendering the rectified Board
 .venv/bin/python -m detection.new_bullet_holes CLIP.mkv --start 13 --end 25 --out out.mp4
@@ -833,6 +845,56 @@ Two known limitations of the live run, neither closed by #83:
   by hand: replay only spent recordings through MediaMTX. The same holds for
   the H.264 copy a replay needs: a transcode has a hash the manifest cannot
   trace, so never make one of a Sealed recording.
+
+**The Detection Service** (#223, ADR-0008) is how the WebApp backend gets a
+live Run. `detection.service` loads the detector once and serves a control
+API on 127.0.0.1 only, port 8010 (`DEFAULT_PORT`, `--port`). It has no
+authentication, which is why it is bound to the loopback. It runs one Run at a
+time, on a worker thread. A Run is the live run above on the Stream it is
+given, posting to `--backend-url` as `--session-id` does, one publisher per
+Run. A Run takes the defaults, with no print scale, so `x_mm` and `y_mm` stay
+empty. SIGINT or SIGTERM ends any Run as an end does, its open Candidates
+judged and its posts drained, and then the service.
+`composer up --detection` runs it in a Terminal window of its own, and `stop`
+and `kill` stop it (#225).
+
+```bash
+.venv/bin/python -m detection.service    # --port 8010 --backend-url http://localhost:8000 --model ...
+# Start: answered once the baseline is built and the Run is watching. A repeat for
+# the same Session is answered with its Run. Another Session's start while one is
+# active is a 409, and so is the same Session's once its Run is ending. A Stream
+# that does not open within STREAM_TIMEOUT_MS, a baseline frame with no Target, or
+# no baseline built by START_TIMEOUT_S (15 s) is a 502 naming the reason, and
+# leaves no Run.
+curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "rtsp://127.0.0.1:8554/<path>"}'
+# {"session_id": "<uuid>", "state": "watching", "since": "<UTC>", "baseline_marks": 3,
+#  "baseline_view": {"taken_at": "<UTC>", "picture": {"width": 1920, "height": 1080},
+#                    "template_to_picture": [[...], [...], [...]], "targets": [[[x, y], ...], ...],
+#                    "baseline_marks": [[x, y], ...]},
+#  "registered": {"at": "<UTC>", "template_to_picture": [[...], [...], [...]]},
+#  "looked_at": "<UTC>"}
+# The Baseline View (ADR-0009) is null until the Run is watching: the baseline frame's
+# time, size and template-to-picture homography, each Target's outline in template
+# px, in target_index order, cut to at most OUTLINE_POINTS (64), and each Baseline
+# Mark in template px. `registered` is the latest registered Look's frame time and
+# homography, which a Lost Look leaves as it was, and `looked_at` the latest Look's
+# frame time, registered or Lost: both null until watching.
+# Status: {"run": null}, or the Run, its state (starting, watching, ending) and since when.
+curl -s 127.0.0.1:8010/status
+# End: answered once the Run has ended and its posts are drained, with its
+# `baseline_view`, which names it, and its final `registered` and `looked_at`.
+# No such Run is a 404.
+curl -s -X POST 127.0.0.1:8010/runs/<uuid>/end    # {"session_id": "<uuid>", "state": "ended", "baseline_view": ..., "registered": ..., "looked_at": ...}
+```
+
+An end does not stop a watching Run at once (#228). The Run keeps looking,
+opening no new Candidate, until every Candidate it has open is judged as at
+any Look: at most one persistence window, ~3 s on the development Mac. So a
+Bullet Hole fired just before the end is still posted, and the backend keeps
+its Session active until the end is answered. A Stream that gives no frames
+meanwhile is stopped past `ENDING_TIMEOUT_S` (5 s), its open Candidates
+unconfirmable. A Run still starting stops at once. The command line's SIGINT
+and SIGTERM still stop a Run at once.
 
 ```bash
 
@@ -927,6 +989,7 @@ came from. Gating the extraction is what keeps sealed pixels out of it.
 |---|---|
 | `detection/board.py` | Board geometry: find, register, rectify, Target/Miss, scoring, mm |
 | `detection/new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
+| `detection/service.py` | The Detection Service: the detector loaded once, one live Run at a time, started and ended over a control API on 127.0.0.1 (#223, ADR-0008) |
 | `detection/groups.py` | Group statistics per Target (MPI, CEP50, Mean Radius, RMS, Extreme Spread), printed as `[GROUP]` blocks; pure, for SOW 2.4.1 to reuse (#86) |
 | `tools/evaluate.py`, `tools/derive_truth.py` | Scoring a run against labelled ground truth; deriving that truth from a photograph pair |
 | `tools/position_error.py` | SOW 2.3.2 stage 1: Position Error pooled over the unsealed truth recordings, per camera, labelled internal (#126) |

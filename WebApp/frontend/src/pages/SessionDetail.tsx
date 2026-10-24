@@ -9,6 +9,7 @@ import { getSession, updateSession, exportUrl } from '../api/sessions'
 import { deleteBullet } from '../api/bullets'
 import { BulletHole } from '../types'
 import { StatusBadge } from '../components/UI/StatusBadge'
+import { DetectionBadge } from '../components/Session/DetectionBadge'
 import { StatTile } from '../components/UI/StatTile'
 import { ConfirmDialog } from '../components/UI/ConfirmDialog'
 import { AddBulletModal } from '../components/Session/AddBulletModal'
@@ -17,6 +18,7 @@ import { LiveDetectionsPanel } from '../components/Session/LiveDetectionsPanel'
 import { CameraFeeds } from '../components/Camera/CameraFeeds'
 import { RecordingControl } from '../components/Session/RecordingControl'
 import { RecordingsCard } from '../components/Session/RecordingsCard'
+import { GroupsCard } from '../components/Session/GroupsCard'
 import { ReplayModal, ReplayTarget } from '../components/Session/ReplayModal'
 import { useRecordings } from '../hooks/useRecordings'
 import { findMoment } from '../utils/recordings'
@@ -106,6 +108,9 @@ export function SessionDetail() {
 
   const bullets = session.bullet_holes ?? []
   const active = session.status === 'active'
+  // The Overlay: the latest Run's, over its camera, only while a Run watches (ADR-0009)
+  const run = session.runs?.[session.runs.length - 1]
+  const runWatches = session.detection?.state === 'watching' || session.detection?.state === 'ending'
 
   return (
     // An active session fills the window: the cameras and the live detections
@@ -124,6 +129,10 @@ export function SessionDetail() {
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{session.name}</h1>
               <StatusBadge status={session.status} />
+              {/* Once ended, only to say its Run's end was not confirmed */}
+              {session.detection && (active || session.detection.state === 'end_unconfirmed') && (
+                <DetectionBadge detection={session.detection} />
+              )}
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
               {format(new Date(session.started_at), 'EEEE, MMM d yyyy · HH:mm')}
@@ -206,7 +215,7 @@ export function SessionDetail() {
             <div className="lg:col-span-2 flex flex-col min-h-0">
               <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 shrink-0">Camera Feed</p>
               <div className="flex-1 min-h-[300px]">
-                <CameraFeeds />
+                <CameraFeeds run={runWatches ? run : undefined} runs={session.runs ?? []} bullets={bullets} />
               </div>
             </div>
 
@@ -226,6 +235,8 @@ export function SessionDetail() {
             <StatTile label="Duration" value={formatDuration(session.started_at, session.ended_at)} />
           </div>
 
+          {session.grouping && <GroupsCard grouping={session.grouping} />}
+
           <RecordingsCard
             recordings={recordings.data}
             isLoading={recordings.isLoading}
@@ -239,7 +250,11 @@ export function SessionDetail() {
             onDelete={setDeleteTarget}
             canReplay={b => !!recordings.data && findMoment(recordings.data, b.first_seen_at) !== null}
             onReplay={b => {
-              const moment = recordings.data && findMoment(recordings.data, b.first_seen_at, REPLAY_PREROLL_S)
+              // From a Run's camera when it recorded then, where the Overlay draws
+              const runCameras = new Set(session.runs?.map(r => r.camera_alias))
+              const first = recordings.data?.filter(r => runCameras.has(r.alias)) ?? []
+              const rest = recordings.data?.filter(r => !runCameras.has(r.alias)) ?? []
+              const moment = findMoment([...first, ...rest], b.first_seen_at, REPLAY_PREROLL_S)
               if (moment) setReplay({ alias: moment.alias, part: moment.part, offsetS: moment.offsetS })
             }}
           />
@@ -247,6 +262,8 @@ export function SessionDetail() {
           <ReplayModal
             sessionId={session.id}
             recordings={recordings.data ?? []}
+            runs={session.runs ?? []}
+            bullets={bullets}
             target={replay}
             onChange={setReplay}
           />
@@ -257,7 +274,8 @@ export function SessionDetail() {
         open={showEndConfirm}
         title="End Session"
         message={`End "${session.name}"?`}
-        loadingLabel="Ending…"
+        // Until the Run has judged its last Candidates and posted them, up to ~3 s
+        loadingLabel="Closing…"
         confirmLabel="End Session"
         onConfirm={() => endMutation.mutate()}
         onCancel={() => {

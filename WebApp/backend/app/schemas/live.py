@@ -5,6 +5,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from app.schemas.bullet_hole import BulletHoleInSession
+from app.schemas.session import Detection
 
 
 # Events pushed to the frontends watching a Session, as Server-Sent Events from
@@ -32,4 +33,19 @@ class SessionUpdatedEvent(BaseModel):
     record: bool
 
 
-LiveEvent = BulletCreatedEvent | BulletDeletedEvent | SessionUpdatedEvent
+class DetectionUpdatedEvent(BaseModel):
+    """Whether a Run watches the Session now (services/detection.py)."""
+
+    type: Literal["detection_updated"] = "detection_updated"
+    detection: Detection
+
+
+class RunMovedEvent(BaseModel):
+    """A Run of the Session kept a new place for the Board in the picture
+    (services/detection.py, ADR-0009); the Session's detail carries it."""
+
+    type: Literal["run_moved"] = "run_moved"
+    taken_at: datetime
+
+
+LiveEvent = BulletCreatedEvent | BulletDeletedEvent | SessionUpdatedEvent | DetectionUpdatedEvent | RunMovedEvent

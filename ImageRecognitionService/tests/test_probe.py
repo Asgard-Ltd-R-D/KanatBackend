@@ -153,6 +153,7 @@ def test_the_command_line_gates_once_for_every_model(monkeypatch):
     gates = []
 
     monkeypatch.setattr(manifest, "gate", lambda *args, **where: gates.append(args))
+    monkeypatch.setattr(nbh, "load_model", lambda path: None)
     monkeypatch.setattr(nbh.RegisteredFrames, "open", opened)
     monkeypatch.delitem(sys.modules, "tools.probe")   # run afresh, not the imported one
     monkeypatch.setattr(sys, "argv", ["probe.py", "clip.mkv", "--start", "0", "--end", "1",

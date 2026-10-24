@@ -1,14 +1,19 @@
+import { useState } from 'react'
 import { VideoOff, Loader2, RotateCcw } from 'lucide-react'
 import { useWhepStream } from '../../hooks/useWhepStream'
+import { Overlay, OverlayContent, OverlayToggle } from './Overlay'
 
 interface WhepPlayerProps {
   path: string // MediaMTX path name, e.g. "camA"
   label?: string // shown over the video, top right
+  overlay?: OverlayContent // drawn over the video, with a toggle to hide it
 }
 
 // Fills its container; the video keeps its proportions inside it
-export function WhepPlayer({ path, label }: WhepPlayerProps) {
+export function WhepPlayer({ path, label, overlay }: WhepPlayerProps) {
   const { videoRef, status, reason, reconnect, onPlaying } = useWhepStream(path)
+  // On whenever the player opens: never remembered
+  const [showOverlay, setShowOverlay] = useState(true)
 
   return (
     <div className="relative w-full h-full min-h-0 bg-black rounded-xl overflow-hidden">
@@ -20,6 +25,8 @@ export function WhepPlayer({ path, label }: WhepPlayerProps) {
         onPlaying={onPlaying}
         className="w-full h-full object-contain"
       />
+
+      {overlay && showOverlay && <Overlay {...overlay} videoRef={videoRef} />}
 
       {status === 'loading' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80">
@@ -56,6 +63,8 @@ export function WhepPlayer({ path, label }: WhepPlayerProps) {
           <span className="text-[10px] font-medium text-white/80 uppercase tracking-wider">Live</span>
         </div>
       )}
+
+      {overlay && <OverlayToggle checked={showOverlay} onChange={setShowOverlay} className="absolute bottom-3 right-3" />}
     </div>
   )
 }

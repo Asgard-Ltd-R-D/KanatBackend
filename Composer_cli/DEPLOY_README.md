@@ -233,6 +233,17 @@ Start in detached mode (background):
 
 Detached mode launches the containers and opens a new Terminal window that runs `PacketProcessingService.dll`, leaving the originating shell free.
 
+Start the video and detection services alongside it, each in a window of its own (a Terminal window on macOS, a console on Windows):
+
+```bash
+python composer.py up dev -d --mediamtx --detection
+```
+
+Both run from a source checkout only: they need `VideoService/` and `ImageRecognitionService/` next to composer, and the installer ships neither.
+
+- `--mediamtx` runs MediaMTX from `VideoService/`. Its binary is not committed: place it there first.
+- `--detection` runs the Detection Service (`python -m detection.service`) from `ImageRecognitionService/` on its own `.venv`, at the Python version `ImageRecognitionService/.python-version` declares. Build that `.venv` first, as `ImageRecognitionService/HANDOVER.md`'s "Running it" says, and copy in the detector's weights, `ImageRecognitionService/trained_models/kanat_yolo26n_v1/weights/best.pt`: `trained_models/` is not committed. Composer waits until its control API answers on `127.0.0.1:8010`. A missing `.venv`, the wrong Python, missing requirements or missing weights are reported, and it is not started. If it does not start, or does not answer within 60 s, `up` exits non-zero there and does not launch PacketProcessingService; the containers and MediaMTX stay up, so fix it and run `up` again. One that does not answer in time is stopped, so it cannot come up later; on macOS its window stays open to read. Nothing restarts it if it stops (ADR-0008).
+
 **Note**:
 
 - Starting one environment automatically stops the other if it's running.
@@ -251,6 +262,8 @@ Stop the running environment:
 ```
 
 #### Kill Environment
+
+`stop` and `kill` also stop MediaMTX and the Detection Service. On macOS and Linux the Detection Service gets SIGTERM, which ends any Run and posts its last Bullet Holes. If it is still running 10 s later, while the backend is down for instance, it is killed, and the Bullet Holes it has not posted are lost. Windows has no SIGTERM, so there it is killed at once: end the Session first, so its Run has ended before you stop.
 
 Kill and clean up an environment (removes containers and DLL):
 
@@ -290,6 +303,7 @@ Shows:
 
 - Running Docker containers
 - PacketProcessingService build status and whether the process is currently running (with environment/port)
+- MediaMTX and the Detection Service: whether each can run here (or why not) and whether it is running
 - Available release packages
 
 #### Help

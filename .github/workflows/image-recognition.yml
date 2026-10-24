@@ -21,10 +21,12 @@ jobs:
       - name: ⬆️ Check out repository
         uses: actions/checkout@v4
 
+      # The version the detector runs on, declared once. The path is from the
+      # repo root: working-directory does not apply to `uses` steps.
       - name: 🧰 Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version-file: ImageRecognitionService/.python-version
 
       # requirements.txt minus ultralytics, which pulls torch (~2GB): the tests
       # inject a fake detector, so the model is never loaded here. The rest comes

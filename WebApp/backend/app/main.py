@@ -1,20 +1,26 @@
 import asyncio
+import math
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config.settings import settings
 from app.core.router import include_routers
-from app.services import camera_sync
+from app.services import camera_sync, detection
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Keeps MediaMTX's camera paths in step with the database while the app runs
-    task = asyncio.create_task(camera_sync.run_forever()) if settings.camera_sync_interval_s > 0 else None
+    # Keeps MediaMTX's camera paths in step with the database while the app
+    # runs, and the Detection Service's Run on the Session to watch
+    loops = [camera_sync.run_forever(), detection.run_forever()] if settings.camera_sync_interval_s > 0 else []
+    tasks = [asyncio.create_task(loop) for loop in loops]
     yield
-    if task:
+    for task in tasks:
         task.cancel()
 
 
@@ -30,6 +36,14 @@ app.add_middleware(
 )
 
 include_routers(app)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # FastAPI's own 422, but a refused NaN or infinity is echoed back as text:
+    # JSON cannot carry it, and the answer would fail as a 500
+    non_finite_as_text = {float: lambda v: v if math.isfinite(v) else str(v)}
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors(), custom_encoder=non_finite_as_text)})
 
 
 @app.get("/health", tags=["meta"])

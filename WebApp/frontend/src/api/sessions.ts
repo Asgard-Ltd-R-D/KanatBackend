@@ -10,10 +10,11 @@ export function getSession(id: string): Promise<Session> {
   return apiFetch<Session>(`/sessions/${id}`)
 }
 
-export function createSession(name: string, record: boolean): Promise<Session> {
+// cameraId: the camera whose stream detection watches, or null for none
+export function createSession(name: string, record: boolean, cameraId: string | null): Promise<Session> {
   return apiFetch<Session>('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ name, record }),
+    body: JSON.stringify({ name, record, camera_id: cameraId }),
   })
 }
 

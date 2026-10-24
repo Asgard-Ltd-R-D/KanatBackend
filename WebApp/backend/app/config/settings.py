@@ -12,8 +12,14 @@ class Settings(BaseSettings):
     # cameras are configured and recording is switched, and its playback server
     mediamtx_api_url: str = "http://127.0.0.1:9997"
     mediamtx_playback_url: str = "http://127.0.0.1:9996"
+    # MediaMTX's RTSP server, on which each camera is a path named after its
+    # alias: the Stream a Session's Run watches
+    mediamtx_rtsp_url: str = "rtsp://127.0.0.1:8554"
+    # The Detection Service's control API on this PC (ADR-0008), its --port
+    detection_service_url: str = "http://127.0.0.1:8010"
     # How often the cameras are re-applied to MediaMTX, which forgets them when
-    # it restarts; 0 turns the sync loop off (tests)
+    # it restarts, and the Detection Service's Run reconciled with the Session
+    # to watch; 0 turns both loops off (tests)
     camera_sync_interval_s: float = 5
     # Where replayed recordings are kept as files, so the player can seek in
     # them; empty means VideoService/replay-cache beside the recordings

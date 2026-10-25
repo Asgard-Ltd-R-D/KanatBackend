@@ -10,6 +10,7 @@ from datetime import datetime
 import anyio
 import httpx
 import pytest
+from sqlalchemy.exc import PendingRollbackError
 
 from app.core.live import hub
 from app.repositories import bullets as bullets_repo
@@ -567,6 +568,35 @@ def test_a_completion_that_fails_after_its_commit_still_warns_of_an_unconfirmed_
         client.patch(f"/sessions/{session_id}", json={"status": "completed"})
 
     assert detection_of(client, session_id) == END_UNCONFIRMED
+
+
+def test_a_completion_that_fails_mid_flush_still_lets_go_of_ending(client, db, detection, monkeypatch):
+    # A flush that fails leaves the Session expired in a transaction to roll
+    # back: reading its id then raises, so the end must not need it
+    session_id = start_session(client, add_camera(db))
+    found, failed = sessions_svc.get_session_or_404, []
+
+    class Expired:
+        """The Session as the failed flush leaves it."""
+
+        def __init__(self, session):
+            self.session = session
+
+        def __getattr__(self, name):
+            if failed:
+                raise PendingRollbackError("This Session's transaction has been rolled back", None, None)
+            return getattr(self.session, name)
+
+    def fail_mid_flush(*args):
+        failed.append(True)
+        raise RuntimeError("the connection dropped")
+
+    monkeypatch.setattr(sessions_svc, "get_session_or_404", lambda *args: Expired(found(*args)))
+    monkeypatch.setattr(sessions_svc, "update_session", fail_mid_flush)
+    with pytest.raises(RuntimeError):
+        client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert detection_sync.state_of(session_id).state == "none"
 
 
 def test_a_run_already_ending_is_left_to_its_end(client, db, detection):

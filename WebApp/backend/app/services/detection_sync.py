@@ -248,7 +248,11 @@ def ending(session: Session) -> Iterator[None]:
     if session.status != "active" or (session.camera_id is None and session.id not in _states):
         yield
         return
-    _set(session.id, Detection(state="ending"))
+    # Read before the block: one that fails mid-flush leaves `session`
+    # expired in a transaction to roll back, so reading its id afterwards
+    # raises, and the Session would read `ending` for good
+    session_id = session.id
+    _set(session_id, Detection(state="ending"))
     confirmed = False
     try:
         # Whether a Run watched it is read by _set once the end is answered: a
@@ -258,12 +262,12 @@ def ending(session: Session) -> Iterator[None]:
         # tick's end, so this end's 404 can come first and read end_unconfirmed,
         # the safe way round. Waiting on an end of the same Run already under
         # way closes it if it ever matters
-        confirmed = _end_run(session.id)
+        confirmed = _end_run(session_id)
         yield
     except BaseException:
-        _set(session.id, NONE if confirmed or _still_active(session.id) else END_UNCONFIRMED)
+        _set(session_id, NONE if confirmed or _still_active(session_id) else END_UNCONFIRMED)
         raise
-    _set(session.id, NONE if confirmed else END_UNCONFIRMED)
+    _set(session_id, NONE if confirmed else END_UNCONFIRMED)
 
 
 def _still_active(session_id: uuid.UUID) -> bool:

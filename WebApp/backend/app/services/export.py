@@ -197,7 +197,7 @@ def generate_excel(session: Session) -> bytes:
             b.first_seen_at.strftime("%Y-%m-%d %H:%M:%S"),
             b.position_x,
             b.position_y,
-            b.source,
+            b.source.capitalize(),   # Model or Manual, as the app shows it
         ])
     _fit_columns(ws)
 

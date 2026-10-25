@@ -1,5 +1,17 @@
-# The WebApp's database. The backend runs on the PC itself, not here: it
-# drives MediaMTX on 127.0.0.1 and reads VideoService/recordings (CONTEXT.md).
+# The WebApp's database and its logs. The backend runs on the PC itself, not
+# here: it drives MediaMTX on 127.0.0.1 and reads VideoService/recordings
+# (CONTEXT.md).
+#
+# Settings it needs are in .env (.env.example).
+#
+# Logs: the backend writes backend.log, the app frontend.log and the
+# Detection Service detection.log (JSON lines) in one folder, WebApp/logs here;
+# on the range PC /var/log/kanat, set for this file with KANAT_LOG_DIR.
+# Postgres writes its own JSON log in its postgres/ subfolder. Alloy ships the
+# folder to Loki, and Grafana shows it, in the app's Logs tab too. Grafana and
+# Loki answer on 127.0.0.1 only.
+#   docker compose up -d                          everything
+#   docker compose up -d loki alloy grafana       the logs only
 services:
   postgres:
     image: postgres:15-alpine
@@ -10,8 +22,20 @@ services:
       POSTGRES_DB: pdb
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+    # Its log as JSON lines in the shared log folder's postgres/ subfolder
+    # (observability/postgres/start.sh, which still starts it if the folder
+    # cannot be written): errors, warnings, startup and shutdown,
+    # checkpoints, queries slower than 1 s and waits on a lock past 1 s.
+    entrypoint: ["sh", "/usr/local/bin/kanat-start.sh"]
+    command:
+      - -c
+      - log_min_duration_statement=1000
+      - -c
+      - log_lock_waits=on
     volumes:
       - webapp_postgres_data:/var/lib/postgresql/data
+      - ${KANAT_LOG_DIR:-./logs}:/var/log/kanat
+      - ./observability/postgres/start.sh:/usr/local/bin/kanat-start.sh:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d pdb"]
@@ -19,5 +43,64 @@ services:
       timeout: 5s
       retries: 5
 
+  loki:
+    image: grafana/loki:3.5.0
+    container_name: webapp-loki
+    command: ["-config.file=/etc/loki/config.yaml"]
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
+      - webapp_loki_data:/loki
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.8.3
+    container_name: webapp-alloy
+    command: ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ${KANAT_LOG_DIR:-./logs}:/var/log/kanat:ro
+      # Where it stopped reading each file, so a restart neither skips nor repeats lines
+      - webapp_alloy_data:/var/lib/alloy/data
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.0.0
+    container_name: webapp-grafana
+    ports:
+      - "127.0.0.1:3300:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      # Set in WebApp/.env (not committed; .env.example): no default to
+      # leave in place on a range PC
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in WebApp/.env, see .env.example}
+      # Anyone on this PC sees the logs without logging in, as the app's Logs
+      # tab needs; viewers may explore and query but not save. The admin
+      # account above edits.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
+      # Shown inside the app (frontend/src/pages/Logs.tsx)
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/kanat-webapp.json
+      # The range PC is offline: no update checks, news or usage reports
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - webapp_grafana_data:/var/lib/grafana
+    depends_on:
+      - loki
+    restart: unless-stopped
+
 volumes:
   webapp_postgres_data:
+  webapp_loki_data:
+  webapp_alloy_data:
+  webapp_grafana_data:

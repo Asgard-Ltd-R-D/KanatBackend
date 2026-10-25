@@ -1,0 +1,11 @@
+# The dashboards in grafana/dashboards, loaded at start; edits made in Grafana
+# are not saved back to these files
+apiVersion: 1
+providers:
+  - name: kanat
+    folder: Kanat
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

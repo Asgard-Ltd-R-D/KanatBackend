@@ -1,0 +1,105 @@
+// Grafana Alloy: reads the JSON logs in the shared log folder (WebApp/logs,
+// /var/log/kanat on the range PC, mounted at /var/log/kanat by
+// docker-compose.yml) and ships them to Loki: backend.log, frontend.log and
+// detection.log, which carry their own service and level, and Postgres's
+// postgres/postgres-<weekday>.json, in Postgres's own shape.
+//
+// Labels stay few (app, service, level), as Loki wants; everything else in a
+// line (session_id, camera, request_id...) is read at query time with `| json`.
+
+local.file_match "webapp" {
+  path_targets = [{"__path__" = "/var/log/kanat/*.log"}]
+}
+
+loki.source.file "webapp" {
+  targets    = local.file_match.webapp.targets
+  forward_to = [loki.process.webapp.receiver]
+}
+
+loki.process "webapp" {
+  stage.json {
+    expressions = {
+      level   = "level",
+      service = "service",
+      time    = "time",
+    }
+  }
+
+  // Python's CRITICAL counted with the errors: one level fewer to look for
+  stage.template {
+    source   = "level"
+    template = `{{ if eq .level "critical" }}error{{ else }}{{ .level }}{{ end }}`
+  }
+
+  // The line's own time, not when Alloy read it
+  stage.timestamp {
+    source = "time"
+    format = "RFC3339"
+  }
+
+  stage.labels {
+    values = {
+      level   = "",
+      service = "",
+    }
+  }
+
+  stage.static_labels {
+    values = {
+      app = "kanat-webapp",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+// Postgres's jsonlog: its error_severity read as the level the others use,
+// its timestamp ("2026-10-25 09:00:05.123 UTC") as the line's time
+local.file_match "postgres" {
+  path_targets = [{"__path__" = "/var/log/kanat/postgres/*.json"}]
+}
+
+loki.source.file "postgres" {
+  targets    = local.file_match.postgres.targets
+  forward_to = [loki.process.postgres.receiver]
+}
+
+loki.process "postgres" {
+  stage.json {
+    expressions = {
+      severity = "error_severity",
+      time     = "timestamp",
+    }
+  }
+
+  stage.template {
+    source   = "level"
+    template = `{{ if or (eq .severity "ERROR") (eq .severity "FATAL") (eq .severity "PANIC") }}error{{ else if eq .severity "WARNING" }}warning{{ else if hasPrefix "DEBUG" .severity }}debug{{ else }}info{{ end }}`
+  }
+
+  stage.timestamp {
+    source = "time"
+    format = "2006-01-02 15:04:05.000 MST"
+  }
+
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  stage.static_labels {
+    values = {
+      app     = "kanat-webapp",
+      service = "postgres",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

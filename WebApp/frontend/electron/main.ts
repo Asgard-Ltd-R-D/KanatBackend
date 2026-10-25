@@ -1,11 +1,17 @@
 import { app, BrowserWindow, dialog } from 'electron'
+import { join } from 'path'
 import { readConfig } from './config'
 import { registerIpcHandlers } from './ipc'
 import { mainLog, resolveLogDir, startFileLog } from './logs'
 import { registerAppScheme, serveApp } from './protocol'
-import { createWindow } from './window'
+import { APP_ICON, createWindow } from './window'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+// Shown as KANAT; its data stays in the folder named after the package, where
+// kanat-config.json and the window's saved settings already are
+app.setPath('userData', join(app.getPath('appData'), 'kanat-webapp'))
+app.setName('KANAT')
 
 registerAppScheme()
 
@@ -36,6 +42,9 @@ app.whenReady().then(() => {
     grafana_url: config.grafanaUrl,
     log_dir: config.logDir,
   })
+
+  // A packaged app takes its Dock icon from its bundle; `npm run dev` runs Electron's own
+  if (process.platform === 'darwin') app.dock?.setIcon(APP_ICON)
 
   registerIpcHandlers(config)
   if (!isDev) serveApp(config)

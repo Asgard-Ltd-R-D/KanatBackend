@@ -653,6 +653,25 @@ def target_span(view):
     return spread(np.vstack([t.reshape(-1, 2) for t in view.targets]))
 
 
+def _clip_to_box(poly, x0, y0, x1, y1):
+    """A convex polygon cut to an axis-aligned box, under three points when
+    they miss. Clipped side by side, not by `cv2.intersectConvexConvex`, which
+    turns a shared edge, or vertices a hair apart, into junk; `uncovered_view`
+    draws its box on the footprint's own extent, so both are the rule (#257)."""
+    pts = np.float64(poly).reshape(-1, 2).tolist()
+    for axis, bound, side in ((0, x0, 1), (0, x1, -1), (1, y0, 1), (1, y1, -1)):
+        inside = lambda p: (p[axis] - bound) * side >= 0
+        kept = []
+        for a, b in zip(pts, pts[1:] + pts[:1]):
+            if inside(a):
+                kept.append(a)
+            if inside(a) != inside(b):
+                t = (bound - a[axis]) / (b[axis] - a[axis])
+                kept.append([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])])
+        pts = kept
+    return np.float32(pts).reshape(-1, 2)
+
+
 def uncovered_view(view, frame_size):
     """How much of the Board in the camera's view the canvas leaves out, and
     where.
@@ -686,16 +705,15 @@ def uncovered_view(view, frame_size):
     bound = lambda side, fallback: fallback if view.edges[side] is None else view.edges[side]
     x0, x1 = bound("left", lo[0]), bound("right", hi[0])
     y0, y1 = bound("above", lo[1]), bound("below", hi[1])
-    in_frame = lambda poly: 0.0 if poly is None else cv2.contourArea(
-        view.board_to_frame(poly.reshape(-1, 2)))
-    _, seen = cv2.intersectConvexConvex(
-        footprint, np.float32([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]))
-    if seen is None:
+    in_frame = lambda poly: 0.0 if len(poly) < 3 else cv2.contourArea(
+        view.board_to_frame(poly))
+    seen = _clip_to_box(footprint, x0, y0, x1, y1)
+    if len(seen) < 3:
         return 0.0, dict.fromkeys(SIDES, 0.0)
-    _, searched = cv2.intersectConvexConvex(seen, canvas)
+    searched = _clip_to_box(seen, 0, 0, cw, ch)
     fraction = (in_frame(seen) - in_frame(searched)) / float(w * h)
 
-    lo, hi = seen.reshape(-1, 2).min(axis=0), seen.reshape(-1, 2).max(axis=0)
+    lo, hi = seen.min(axis=0), seen.max(axis=0)
     reach = {"left": -lo[0], "right": hi[0] - cw, "above": -lo[1], "below": hi[1] - ch}
     return fraction, {k: float(v) if v >= ROUNDING_PX else 0.0
                       for k, v in reach.items()}

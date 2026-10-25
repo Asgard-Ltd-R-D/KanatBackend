@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,9 @@ class Session(Base):
     __tablename__ = "sessions"
     __table_args__ = (
         CheckConstraint("status IN ('active', 'completed')", name="ck_sessions_status"),
+        # One active Session at a time (services/sessions.py checks it first,
+        # with a message; this holds when two requests race)
+        Index("uq_sessions_one_active", "status", unique=True, postgresql_where=text("status = 'active'")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

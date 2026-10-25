@@ -14,7 +14,7 @@ interface Props {
 function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">{label}</dt>
+      <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-400">{label}</dt>
       <dd className="text-sm font-mono text-slate-700 dark:text-slate-300 truncate" title={value}>{value}</dd>
     </div>
   )

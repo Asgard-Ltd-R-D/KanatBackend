@@ -9,10 +9,10 @@ export function LiveDetectionsPanel({ bullets }: { bullets: BulletHole[] }) {
     <div className="flex-1 min-h-[300px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm dark:shadow-none flex flex-col">
       {/* Panel header */}
       <div className="shrink-0 px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-400">
           Newest first
         </span>
-        <span className="text-[10px] tabular-nums text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] tabular-nums text-slate-400 dark:text-slate-400">
           {bullets.length} detected
         </span>
       </div>

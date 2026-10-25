@@ -1,18 +1,24 @@
-import { BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { KanatConfig } from './config'
 import { mainLog } from './logs'
 import { APP_ORIGIN } from './protocol'
 
+// The sidebar's logo (public/icon.svg, rendered to icon.png): Vite copies
+// public/ into dist/ for the packaged app
+export const APP_ICON = join(__dirname, app.isPackaged ? '../dist/icon.png' : '../public/icon.png')
+
 const DEV_URL = 'http://localhost:5173'
 
 export function createWindow(isDev: boolean, config: KanatConfig) {
   const win = new BrowserWindow({
+    title: 'KANAT',
+    icon: APP_ICON, // the window's and taskbar's, on Windows and Linux
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#020617',
+    backgroundColor: '#1e1f22', // slate-950 (tailwind.config.ts): no flash before the page paints
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

@@ -5,7 +5,7 @@ import { Size, baselineMarksToDraw, holesOver, labelGroups, templateToElement } 
 import { Toggle } from '../UI/Toggle'
 
 const OUTLINE_COLOUR = '#22d3ee'
-const BASELINE_MARK_COLOUR = '#94a3b8'
+const BASELINE_MARK_COLOUR = '#a3a8b0' // slate-400 (tailwind.config.ts)
 const TARGET_COLOUR = '#34d399'
 const MISS_COLOUR = '#f87171'
 const MANUAL_COLOUR = '#fbbf24' // the manual source badge's amber

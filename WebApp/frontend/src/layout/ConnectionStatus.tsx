@@ -4,7 +4,7 @@ import { ServiceState, useSystemStatus } from '../hooks/useSystemStatus'
 const STATE: Record<ServiceState, { label: string; dot: string; text: string }> = {
   online: { label: 'Online', dot: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400' },
   offline: { label: 'Offline', dot: 'bg-red-500', text: 'text-red-600 dark:text-red-400' },
-  unknown: { label: '—', dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400 dark:text-slate-500' },
+  unknown: { label: '—', dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400 dark:text-slate-400' },
 }
 
 function Row({ name, state }: { name: string; state: ServiceState }) {

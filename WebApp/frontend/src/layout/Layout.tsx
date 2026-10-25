@@ -36,7 +36,7 @@ export function Layout() {
   }, [pathname])
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-[#020617]">
+    <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
       {/* Sidebar */}
       <aside className="w-60 flex-shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
         {/* Logo */}
@@ -49,7 +49,7 @@ export function Layout() {
               <div className="font-mono text-xs font-bold tracking-[0.2em] text-blue-600 dark:text-blue-400 uppercase">
                 Kanat
               </div>
-              <div className="font-mono text-[10px] tracking-[0.15em] text-slate-400 dark:text-slate-500 uppercase">
+              <div className="font-mono text-[10px] tracking-[0.15em] text-slate-400 dark:text-slate-400 uppercase">
                 Range System
               </div>
             </div>

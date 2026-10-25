@@ -288,6 +288,56 @@ def test_once_the_boards_edge_is_known_only_the_board_counts():
     assert reach == pytest.approx({"left": 0, "right": 50, "above": 0, "below": 150})
 
 
+def test_a_view_clipped_to_its_own_bounds_still_counts_the_canvas():
+    """CamA_20260914_141546 from 5 s: clipping this footprint to its bounding
+    box leaves vertices 4e-5 px apart, which OpenCV then intersects with the
+    canvas into junk: the whole view read as off it, or less than none (#257)."""
+    corners = np.float32([[0, 0], [1920, 0], [1920, 1080], [0, 1080]])
+    footprint = np.float32([[-368.613, 223.564], [1551.381, 223.715],
+                            [1531.728, 1192.679], [-395.958, 1209.592]])
+    # float32, as ECC returns it, which is what puts the vertices 4e-5 apart
+    H = cv2.getPerspectiveTransform(footprint, corners).astype(np.float32)
+    view = board.BoardView(H=H, tpl_to_board=board._as_matrix(1.0),
+                           canvas_size=(1267, 1602), targets=[])
+    outside, reach = board.uncovered_view(view, frame_size=(1920, 1080))
+    assert outside == pytest.approx(0.341, abs=0.005)  # 0.3408 clipped in float64
+    assert reach == pytest.approx({"left": 395.958, "right": 284.381,
+                                   "above": 0, "below": 0}, abs=1e-2)
+
+
+def test_a_view_sharing_the_canvas_corner_still_counts_the_canvas():
+    """A footprint square to the Board, its top-left corner inside the canvas:
+    the box it is clipped to shares two of its edges, which OpenCV intersects
+    into nothing (#257)."""
+    corners = np.float32([[0, 0], [1920, 0], [1920, 1080], [0, 1080]])
+    footprint = np.float32([[577.47265625, 1036.118896484375],
+                            [3855.398681640625, 1036.118896484375],
+                            [3821.77880859375, 2666.677001953125],
+                            [577.47265625, 2700.296630859375]])
+    H = cv2.getPerspectiveTransform(footprint, corners).astype(np.float32)
+    view = board.BoardView(H=H, tpl_to_board=board._as_matrix(1.0),
+                           canvas_size=(1848, 2397), targets=[])
+    outside, _ = board.uncovered_view(view, frame_size=(1920, 1080))
+    assert outside == pytest.approx(0.685, abs=0.005)
+
+
+def test_a_seen_polygon_with_a_repeated_vertex_clips_whole():
+    """The searched area survives a `seen` that repeats a vertex (#257)."""
+    seen = np.float32([[-10, -10], [-10, -10], [50, -10], [50, 50], [-10, 50]])
+    clipped = board._clip_to_box(seen, 0, 0, 100, 100)
+    assert cv2.contourArea(clipped) == pytest.approx(50 * 50)
+
+
+def test_a_view_wholly_off_the_canvas_is_all_uncovered():
+    """OpenCV returns junk vertices, not None, for an empty intersection."""
+    view = board.BoardView(H=np.eye(3, dtype=np.float32),
+                           tpl_to_board=board._as_matrix(1.0, (200, 0)),
+                           canvas_size=(100, 100), targets=[_square(200, 0, 100)])
+    outside, reach = board.uncovered_view(view, frame_size=(100, 100))
+    assert outside == pytest.approx(1.0)
+    assert reach == pytest.approx({"left": 0, "right": 200, "above": 0, "below": 0})
+
+
 def test_view_past_the_board_planes_horizon_is_not_measured():
     """A frame corner behind the plane flips the footprint; no fraction then."""
     H = np.array([[1, 0, 0], [0, 1, 0], [0, -0.02, 1]], np.float32)  # y=50 at infinity

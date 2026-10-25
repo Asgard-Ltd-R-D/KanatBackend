@@ -23,6 +23,10 @@ END_TIMEOUT_S = 15   # PROVISIONAL
 # The status check answers within the frontend's own 2 s limit, as MediaMTX's
 # does beside it (routers/status.py)
 STATUS_TIMEOUT_S = 1
+# The reconcile loop's status read waits longer: no one waits on it, and a
+# read that times out marks every watchable Session service_down until the
+# next tick, so one slow answer would flicker the badge
+STATUS_READ_TIMEOUT_S = 3
 # An answer this recent counts as the Detection Service being up, so a stopped
 # service reads down within it, plus the frontend's 3 s poll
 FRESH_S = 12
@@ -68,11 +72,12 @@ def _run(view: dict) -> Run:
 class RunRefused(Exception):
     """The Detection Service answered a start with an error: 409 while another
     Session's Run is active (or this one's is ending), 502 when the Run failed
-    to start, with the service's reason as `detail`."""
+    to start, with the service's reason as `detail`. A 409 names the Session
+    whose Run holds the service as `holder`, when the answer carries it."""
 
-    def __init__(self, status: int, detail: str):
+    def __init__(self, status: int, detail: str, holder: uuid.UUID | None = None):
         super().__init__(f"HTTP {status}: {detail}")
-        self.status, self.detail = status, detail
+        self.status, self.detail, self.holder = status, detail, holder
 
 
 def _request(method: str, path: str, timeout: float, **kwargs) -> httpx.Response:
@@ -100,7 +105,7 @@ def is_reachable() -> bool:
 def status() -> Run | None:
     """The Detection Service's Run, or None without one. Raises
     DetectionServiceUnreachable, also for an answer that is not its status."""
-    res = _request("GET", "/status", STATUS_TIMEOUT_S)
+    res = _request("GET", "/status", STATUS_READ_TIMEOUT_S)
     try:
         run = res.raise_for_status().json()["run"]
         return None if run is None else _run(run)
@@ -119,7 +124,11 @@ def start_run(session_id: uuid.UUID, stream_url: str) -> Run:
             detail = res.json()["detail"]
         except (ValueError, KeyError, TypeError):
             detail = res.text[:200]
-        raise RunRefused(res.status_code, detail)
+        try:
+            holder = uuid.UUID(res.json()["run"]["session_id"])
+        except (ValueError, KeyError, TypeError):
+            holder = None
+        raise RunRefused(res.status_code, detail, holder)
     try:
         return _run(res.json())
     except (ValueError, KeyError, TypeError) as e:

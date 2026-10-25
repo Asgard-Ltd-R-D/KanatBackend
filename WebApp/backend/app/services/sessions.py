@@ -45,7 +45,26 @@ def _follow_recording(session: Session, now: datetime) -> None:
         open_interval.ended_at = session.ended_at or now
 
 
+def _refuse_if_another_is_active(db: DBSession, session_id: uuid.UUID | None = None) -> None:
+    """One active Session at a time: the operator completes it first. The
+    database holds this too, when two requests race (uq_sessions_one_active)."""
+    other = next((s for s in repo.list_active(db) if s.id != session_id), None)
+    if other is not None:
+        raise HTTPException(status_code=409, detail=_ANOTHER_ACTIVE.format(other.name))
+
+
+def _refused_as_second_active(db: DBSession, session_id: uuid.UUID | None = None) -> HTTPException:
+    """The database refused a second active Session: named if it is still
+    active, else it completed in the meantime, and the operator tries again."""
+    _refuse_if_another_is_active(db, session_id)
+    return HTTPException(status_code=409, detail="Another Session was active: try again")
+
+
+_ANOTHER_ACTIVE = "Session '{}' is still active: complete it first"
+
+
 def create_session(body: SessionCreate, db: DBSession) -> Session:
+    _refuse_if_another_is_active(db)
     if body.camera_id is not None:
         camera = cameras_repo.get(db, body.camera_id)
         if camera is None or not camera.enabled:
@@ -59,7 +78,11 @@ def create_session(body: SessionCreate, db: DBSession) -> Session:
         camera_id=body.camera_id,
     )
     _follow_recording(session, session.started_at)
-    return repo.add(db, session)
+    try:
+        session = repo.add(db, session)
+    except repo.SecondActiveSession as e:
+        raise _refused_as_second_active(db) from e
+    return session
 
 
 def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) -> Session:
@@ -69,6 +92,7 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) ->
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    before = {"session_name": session.name, "record": session.record, "status": session.status}
     if body.name is not None:
         session.name = body.name
     if body.record is not None:
@@ -78,10 +102,15 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) ->
         if body.status == "completed" and session.ended_at is None:
             session.ended_at = datetime.now(timezone.utc)
         elif body.status == "active":
+            if before["status"] != "active":
+                _refuse_if_another_is_active(db, session_id)
             session.ended_at = None
     _follow_recording(session, datetime.now(timezone.utc))
 
-    repo.save(db)
+    try:
+        repo.save(db)
+    except repo.SecondActiveSession as e:
+        raise _refused_as_second_active(db, session_id) from e
     return get_session_detail(session_id, db)
 
 

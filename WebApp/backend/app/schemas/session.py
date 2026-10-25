@@ -10,7 +10,7 @@ from app.schemas.run import RunResponse
 
 class Detection(BaseModel):
     """Whether a Run of the Detection Service watches the Session
-    (services/detection.py). `none`: no camera, or no Run is wanted any more.
+    (services/detection_sync.py). `none`: no camera, or no Run is wanted any more.
     `end_unconfirmed`: the Session completed without the Detection Service
     confirming it ended its Run, so Bullet Holes fired last may be missing."""
 

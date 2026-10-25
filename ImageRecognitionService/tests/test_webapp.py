@@ -66,24 +66,32 @@ def test_a_value_becomes_the_v1_payload(monkeypatch):
     assert miss["target_index"] is miss["x_mm"] is miss["y_mm"] is None
 
 
-def test_a_5xx_or_a_network_error_is_retried_with_the_same_key(monkeypatch, capsys):
+def _logged(caplog):
+    """The poster's log: (level, message, attempt) a line."""
+    return [(r.levelname, r.getMessage(), getattr(r, "attempt", None))
+            for r in caplog.records if r.name == "detection.post"]
+
+
+def test_a_5xx_or_a_network_error_is_retried_with_the_same_key(monkeypatch, caplog):
+    caplog.set_level("INFO")
     sent = _backend(monkeypatch, 503, urllib.error.URLError("refused"), 201)
     with webapp.WebAppPublisher("session", "http://backend:8000") as publisher:
         publisher.publish(_value())
     assert len(sent) == 3 and sent[0] == sent[1] == sent[2]
-    out = capsys.readouterr().out
-    assert f"[POST] Bullet Hole first seen {AT} -> HTTP 503: the body" in out
-    assert f"[POST] Bullet Hole first seen {AT} (attempt 2/9) -> ERROR:" in out
-    assert f"[POST] Bullet Hole first seen {AT} (attempt 3/9) -> HTTP 201" in out
+    logged = _logged(caplog)
+    assert ("WARNING", f"Bullet Hole first seen {AT} failed (attempt 1/9): HTTP 503: the body", 1) in logged
+    assert ("WARNING", f"Bullet Hole first seen {AT} failed (attempt 2/9): <urlopen error refused>", 2) in logged
+    assert ("INFO", f"Bullet Hole first seen {AT} posted: HTTP 201", 3) in logged
+    posted = next(r for r in caplog.records if getattr(r, "status", None) == 201)
+    assert (posted.session_id, posted.target_index) == ("session", _value().target)
 
 
-def test_a_4xx_is_dropped_without_a_retry(monkeypatch, capsys):
+def test_a_4xx_is_dropped_without_a_retry(monkeypatch, caplog):
     sent = _backend(monkeypatch, 422, 201)
     with webapp.WebAppPublisher("session", "http://backend:8000") as publisher:
         publisher.publish(_value())
     assert len(sent) == 1
-    assert f"[POST] Bullet Hole first seen {AT} -> HTTP 422: the body" in \
-        capsys.readouterr().out
+    assert ("ERROR", f"Bullet Hole first seen {AT} refused: HTTP 422: the body", 1) in _logged(caplog)
 
 
 def test_leaving_the_with_even_by_raising_sends_everything_queued_in_order(monkeypatch):
@@ -98,7 +106,7 @@ def test_leaving_the_with_even_by_raising_sends_everything_queued_in_order(monke
     assert [p["position"]["x"] for _, p in sent] == [100.0, 200.0, 300.0]
 
 
-def test_a_drain_that_times_out_stops_pending_retries(monkeypatch, capsys):
+def test_a_drain_that_times_out_stops_pending_retries(monkeypatch, caplog):
     """The WebApp answers 503 for good and each retry waits a minute: past
     the drain's timeout the retry is woken and abandoned, and the value
     queued behind it is never sent."""
@@ -111,6 +119,6 @@ def test_a_drain_that_times_out_stops_pending_retries(monkeypatch, capsys):
         publisher.publish(_value(frame=14))
     assert time.monotonic() - began < 5
     assert len(sent) == 1
-    out = capsys.readouterr().out
-    assert "[POST] drain timed out after 0.1 s" in out
-    assert out.count(f"[POST] Bullet Hole first seen {AT}: not posted") == 2
+    messages = [message for _, message, _ in _logged(caplog)]
+    assert "Drain timed out after 0.1 s; interrupting retries" in messages
+    assert messages.count(f"Bullet Hole first seen {AT} not posted: the drain timed out") == 2

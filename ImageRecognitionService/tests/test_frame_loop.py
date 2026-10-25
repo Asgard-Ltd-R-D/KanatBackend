@@ -266,12 +266,14 @@ def _openable(monkeypatch):
                             ("left", "right", "above", "below"), 0.0)))
 
 
-def test_opening_reports_how_long_building_board_space_took(monkeypatch, capsys):
-    """Wall time from opening the source to Board space built, printed once (#79).
+def test_opening_reports_how_long_building_board_space_took(monkeypatch, caplog):
+    """Wall time from opening the source to Board space built, logged once (#79).
     The value is the machine's, so only that it is reported is checked."""
     _openable(monkeypatch)
+    caplog.set_level("INFO")
     nbh.RegisteredFrames.open("clip.mkv", 10.0, _FakeModel())
-    assert capsys.readouterr().out.count("[REGISTRATION] Board space built in ") == 1
+    assert [r.name for r in caplog.records if r.getMessage().startswith("Board space built in ")] == [
+        "detection.registration"]
 
 
 def test_a_recording_times_its_frames_from_ref_time_or_when_it_was_opened(monkeypatch):
@@ -415,7 +417,7 @@ def test_rendering_gets_the_view_of_every_frame_read(monkeypatch):
     assert rendered == [list(range(10))]
 
 
-def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch, capsys):
+def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch, caplog):
     """The #110 floor counts frames tried and lost, so `process` must hand
     `Persistence` each Lost Look; the Board-lost warning counts what it holds.
     The one loop test with the real `Registration` in it (#138): frames 7 and
@@ -429,7 +431,8 @@ def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch, capsys):
     base = np.zeros((8, 8, 3), np.uint8)
     loop = _loop(view=view, registration=nbh.Registration(view, base, None, str))
     nbh.process(loop, 10.4)
-    assert "[WARN] Board lost on 2 frame(s);" in capsys.readouterr().out
+    assert any(r.levelname == "WARNING" and r.getMessage().startswith("Board lost on 2 frame(s);")
+               for r in caplog.records)
 
 
 # --- a stride: look at every Nth frame (#81) ---------------------------------
@@ -852,9 +855,11 @@ def test_an_unregistered_file_is_still_refused(tmp_path):
         nbh._gate(str(clip), False, "model.pt")
 
 
-def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd):
+def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd, caplog):
     """Through real OpenCV, on a port nothing listens on: OpenCV's default
-    backends print a URL they cannot open, password and all (#83)."""
+    backends print a URL they cannot open, password and all (#83). Nor
+    logged."""
+    caplog.set_level("INFO")
     monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
     monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
     with socket.socket() as s:
@@ -864,19 +869,20 @@ def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd):
         nbh.RegisteredFrames.open(f"rtsp://operator:secret@127.0.0.1:{port}/cam",
                                   None, _FakeModel())
     out, err = capfd.readouterr()
-    shown = out + err + str(refused.value)
+    shown = out + err + caplog.text + str(refused.value)
     url = f"rtsp://127.0.0.1:{port}/cam"
-    assert url in out and url in str(refused.value)
+    assert url in caplog.text and url in str(refused.value)
     assert "secret" not in shown and "operator" not in shown
 
 
 # --- recovering from a stream drop (#84) ---------------------------------------
 
 
-def test_a_stream_that_drops_is_reopened_and_iteration_continues(monkeypatch, capsys):
+def test_a_stream_that_drops_is_reopened_and_iteration_continues(monkeypatch, capsys, caplog):
     """Down after 20 frames, and the first reopen fails too. Indices count on
     across the drop, the frames it missed are gaps, and the reopened stream's
     first frame goes to the same registration, in the same Board space (#84)."""
+    caplog.set_level("INFO")
     reopened = iter([_FakeStream(n=0), _FakeStream(interval=0.002)])
     loop = _live(monkeypatch, _FakeStream(n=20, interval=0.002), lambda: next(reopened))
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
@@ -889,10 +895,10 @@ def test_a_stream_that_drops_is_reopened_and_iteration_continues(monkeypatch, ca
     assert loop.source.unseen == list(range(21, 21 + missed))   # stride 1: all were due
     assert loop.lost == 0 and loop.view is view
     assert loop.registration.calls[20] == (21 + missed, 1)   # the first look after the drop
-    out = capsys.readouterr().out
-    assert out.count("[LIVE] stream dropped") == 1
-    assert re.search(rf"\[LIVE\] stream back .* after {seconds:.1f} s without a frame: "
-                     rf"{missed} frame\(s\) missed", out)
+    out, logged = capsys.readouterr().out, caplog.text
+    assert logged.count("Stream dropped") == 1
+    assert re.search(rf"Stream back .* after {seconds:.1f} s without a frame: "
+                     rf"{missed} frame\(s\) missed", logged)
     assert re.search(rf"\[LIVE\] 1 drop\(s\), {seconds:.1f} s down in all, {missed} "
                      rf"frame\(s\) missed", out)
 
@@ -936,9 +942,10 @@ class _Undecodable(_FakeStream):
         return super().retrieve()
 
 
-def test_a_reopened_stream_that_cannot_decode_is_still_the_same_drop(monkeypatch, capsys):
+def test_a_reopened_stream_that_cannot_decode_is_still_the_same_drop(monkeypatch, caplog):
     """Grabbed but not decoded is no frame received: the drop stays open
     through it, one drop as long as the whole outage, not two (#84)."""
+    caplog.set_level("INFO")
     reopened = iter([_Undecodable(failures=1), _FakeStream(interval=0.002)])
     loop = _live(monkeypatch, _FakeStream(n=20, interval=0.002), lambda: next(reopened))
     monkeypatch.setattr(nbh, "RECONNECT_EVERY_S", 0.1)
@@ -946,7 +953,7 @@ def test_a_reopened_stream_that_cannot_decode_is_still_the_same_drop(monkeypatch
     (seconds, missed), = loop.source.drops
     assert seconds >= 0.2
     assert indices == list(range(21)) + list(range(21 + missed, 60))
-    assert capsys.readouterr().out.count("[LIVE] stream dropped") == 1
+    assert caplog.text.count("Stream dropped") == 1
 
 
 def test_a_window_a_drop_emptied_confirms_nothing(monkeypatch, capsys):
@@ -1033,17 +1040,18 @@ def test_a_window_emptied_upstream_confirms_nothing(monkeypatch, capsys):
     assert "[NEW]" not in capsys.readouterr().out and run.holes == []
 
 
-def test_a_gap_upstream_is_logged_when_found_and_in_the_totals(monkeypatch, capsys):
+def test_a_gap_upstream_is_logged_when_found_and_in_the_totals(monkeypatch, capsys, caplog):
     """100 frames lost after frame 10, at stride 3: 33 of them due a look,
     12 to 108. Logged when found, with the stream time it covers, and in the
     end-of-run totals (#117)."""
+    caplog.set_level("INFO")
     loop = _live(monkeypatch, _Losing(after=10, lost=100, n=150, interval=0.002))
     list(loop.looks(math.inf, stride=3, baseline_frames=5))
     out = capsys.readouterr().out
-    assert re.search(r"\[LIVE\] 100 frame\(s\) lost upstream, 4\.0 s of stream before "
+    assert re.search(r"WARNING +detection\.live:\S+ 100 frame\(s\) lost upstream, 4\.0 s of stream before "
                      r"\d\d:\d\d:\d\d\.\d\d: 33 of them due a look, counted against "
                      r"persistence's floor\. Frames up to the next keyframe may decode "
-                     r"corrupt \(#117\)", out)
+                     r"corrupt \(#117\)", caplog.text)
     assert re.search(r"\[LIVE\] 1 gap\(s\) upstream, 100 frame\(s\) lost, 33 of them due "
                      r"a look; 0 frame\(s\) untimed", out)
     # 50 frames after frame 0 came, over the 6 s (150 frames) of stream they span.

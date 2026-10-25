@@ -14,10 +14,10 @@ from urllib.request import Request, urlopen
 
 import numpy as np
 import pytest
-
-from detection import board, service, webapp
-from detection import new_bullet_holes as nbh
 from test_frame_loop import _FakeStream, _FakeView, _Marking, _openable, _Scripted
+
+from detection import board, logs, service, webapp
+from detection import new_bullet_holes as nbh
 
 SESSION = "6f1c0d3e-2b7a-4c1e-9d3f-0a1b2c3d4e5f"
 OTHER = "0b9e8d7c-6a5f-4e3d-8c2b-1a0f9e8d7c6b"
@@ -181,6 +181,17 @@ def test_a_start_for_another_session_is_refused_while_a_run_is_active(api):
     status, body = api.start(OTHER)
     assert (status, _still(body["run"])) == (409, _still(run))
     assert _still(_status(api)) == _still(run)
+
+
+def test_a_refused_start_is_logged_under_the_session_refused(api, caplog):
+    """Found by the refused Session's id in Grafana, not the active Run's."""
+    caplog.set_level("INFO")
+    api.start()
+    api.start(OTHER)
+
+    [refused] = [r for r in caplog.records if r.getMessage().startswith("Run refused")]
+    line = json.loads(logs.JsonFormatter().format(refused))
+    assert (line["session_id"], line["active_session_id"]) == (str(OTHER), str(SESSION))
 
 
 def _cannot_open(monkeypatch, api):
@@ -419,6 +430,23 @@ def test_an_end_whose_stream_stops_giving_frames_returns_by_its_timeout(
         np.zeros((8, 8, 3), np.int64))
     assert _ends(_end_just_after_a_shot(shot_before_end)) == [ENDED]
     assert shot_before_end.posted == [] and _status(shot_before_end) is None
+
+
+def test_a_runs_lines_carry_its_session_until_it_ends(api, caplog):
+    """Every line logged while the Run is active is its Session's, whichever
+    thread logs it (detection/logs.py): the service's, the Stream's, the
+    poster's."""
+    caplog.set_level("INFO")
+    api.start()
+    assert api.model.past.wait(10)
+    during = logs.current_session
+    api.call("POST", f"/runs/{SESSION}/end")
+
+    assert during == SESSION and logs.current_session is None
+    messages = [(r.name, r.levelname, r.getMessage()) for r in caplog.records if r.name == "detection.service"]
+    assert ("detection.service", "INFO", "Run watching, 1 Baseline Mark(s) on the Board") in messages
+    assert messages[-1] == ("detection.service", "INFO", "Run ended")
+    assert any(r.name == "detection.post" and r.getMessage().endswith("posted: HTTP 201") for r in caplog.records)
 
 
 @pytest.mark.parametrize("session_id", [SESSION, OTHER, "not-a-uuid"])

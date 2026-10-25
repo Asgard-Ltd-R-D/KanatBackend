@@ -34,5 +34,12 @@ class Settings(BaseSettings):
     # empty means this repo's VideoService/mediamtx.yml
     mediamtx_config: str = ""
 
+    # Logs (core/logs.py): the lowest level written, and the folder of
+    # backend.log, shared with the app's frontend.log, which Grafana Alloy
+    # ships to Loki (WebApp/observability); empty means WebApp/logs. On the
+    # range PC, /var/log/kanat
+    log_level: str = "INFO"
+    log_dir: str = ""
+
 
 settings = Settings()

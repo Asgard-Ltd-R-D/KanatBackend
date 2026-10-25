@@ -1,8 +1,13 @@
+import tempfile
 from types import SimpleNamespace
 
 import pytest
 
 from app.config.settings import settings
+
+# Before any test imports app.main, which starts logging: the tests' log lines
+# go to a folder of their own, never into logs/backend.log
+settings.log_dir = tempfile.mkdtemp(prefix="kanat-test-logs-")
 from app.repositories import cameras as cameras_repo
 from app.repositories import runs as runs_repo
 from app.repositories import sessions as sessions_repo

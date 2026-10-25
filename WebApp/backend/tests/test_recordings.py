@@ -113,7 +113,7 @@ def test_deleting_a_session_locks_it_before_reading_its_recording_windows(monkey
     from app.services import sessions as session_svc
 
     t0 = NOW - timedelta(hours=1)
-    session = SimpleNamespace(recording_intervals=[RecordingInterval(started_at=t0, ended_at=t0 + timedelta(minutes=5))])
+    session = SimpleNamespace(name="Range A", recording_intervals=[RecordingInterval(started_at=t0, ended_at=t0 + timedelta(minutes=5))])
     deleted = []
     monkeypatch.setattr(sessions_repo, "get", lambda db, session_id: pytest.fail("read without the lock"))
     monkeypatch.setattr(sessions_repo, "get_for_update", lambda db, session_id: session)

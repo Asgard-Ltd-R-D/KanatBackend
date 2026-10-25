@@ -87,7 +87,10 @@ def delete_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
     # goes back to the pool first
     db.close()
     try:
-        recording_svc.delete_session_video(windows, others)
+        deleted = recording_svc.delete_session_video(windows, others)
+        if deleted:
+            log.info("Deleted %s recording file(s) of session %s", deleted, session_id,
+                     extra={"session_id": session_id, "files_deleted": deleted})
     except OSError:
         # The Session is already deleted; its files expire with MediaMTX's
         # recordDeleteAfter anyway

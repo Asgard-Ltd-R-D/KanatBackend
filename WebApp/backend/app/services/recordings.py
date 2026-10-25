@@ -155,6 +155,7 @@ def _prune_cache(directory: Path) -> None:
     An expired copy being played goes once it is no longer played. A copy's
     mtime is when it was last played (replay_file touches it)."""
     _forget_finished_plays()
+    expired_count, freed = 0, 0
     now = time.time()
     expired = datetime.now(timezone.utc) - timedelta(seconds=CACHE_MAX_AGE_S)
     kept = []
@@ -169,7 +170,9 @@ def _prune_cache(directory: Path) -> None:
                 # A name that cannot be read: its age by the time it was written
                 too_old = named[1] < expired if named else now - stat.st_mtime > CACHE_MAX_AGE_S
                 if too_old:
-                    _unlink_unless_in_use(file)
+                    if _unlink_unless_in_use(file):
+                        expired_count += 1
+                        freed += stat.st_size
                 else:
                     kept.append((stat.st_mtime, stat.st_size, file))
         except FileNotFoundError:
@@ -177,11 +180,21 @@ def _prune_cache(directory: Path) -> None:
 
     budget = settings.replay_cache_max_gb * 1024**3
     total = sum(size for _, size, _ in kept)
+    over_limit = 0
     for _, size, file in sorted(kept):
         if total <= budget:
             break
         if _unlink_unless_in_use(file):
             total -= size
+            over_limit += 1
+            freed += size
+    if expired_count or over_limit:
+        log.info(
+            "Replay cache cleaned: %s expired and %s over the limit removed, %.1f MB freed",
+            expired_count, over_limit, freed / 1024**2,
+            extra={"expired": expired_count, "over_limit": over_limit, "freed_mb": round(freed / 1024**2, 1),
+                   "cache_mb": round(total / 1024**2, 1)},
+        )
 
 
 def clean_cache() -> None:
@@ -233,6 +246,8 @@ def replay_file(alias: str, start: datetime, duration_s: float, still_allowed: C
         else:
             _prune_cache(directory)
             partial = path.with_suffix(".part")
+            fields = {"camera": alias, "part_start": start, "duration_s": duration_s}
+            began = time.monotonic()
             video = mediamtx.open_recording(alias, start, duration_s)
             try:
                 with open(partial, "wb") as out:
@@ -241,10 +256,16 @@ def replay_file(alias: str, start: datetime, duration_s: float, still_allowed: C
             except httpx.HTTPError as e:
                 # MediaMTX stopped or stalled mid-download: nothing half-written is kept
                 partial.unlink(missing_ok=True)
+                log.warning("Fetching a replay part from MediaMTX failed: %s", e, extra=fields)
                 raise mediamtx.MediaMTXUnreachable(f"playback get {alias}: {e}") from e
             finally:
                 video.close()
             partial.replace(path)
+            log.info(
+                "Replay part of '%s' fetched from MediaMTX", alias,
+                extra={**fields, "size_mb": round(path.stat().st_size / 1024**2, 1),
+                       "took_s": round(time.monotonic() - began, 2)},
+            )
             _prune_cache(directory)  # keep the total within the limit with this one in
     return path
 

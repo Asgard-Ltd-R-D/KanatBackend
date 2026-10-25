@@ -6,73 +6,18 @@ import json
 import uuid
 from contextlib import contextmanager
 from datetime import datetime
-from types import SimpleNamespace
 
 import anyio
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
-from app.core.deps import get_db
 from app.core.live import hub
-from app.main import app
 from app.repositories import bullets as bullets_repo
-from app.repositories import cameras as cameras_repo
-from app.repositories import runs as runs_repo
 from app.repositories import sessions as sessions_repo
-from app.services import camera_sync, detection_service
-from app.services import detection as detection_svc
+from app.services import detection_client, detection_sync
 from app.services import recordings as recording_svc
-from tests.fakes import NOW, FakeDetectionService, baseline_view, make_camera, place
-
-
-class FakeDB:
-    def close(self):
-        pass
-
-
-@pytest.fixture
-def db(monkeypatch):
-    """The database replaced: its Sessions and cameras by id. A Run is
-    stored nowhere: tests/test_runs.py stores them on a real database."""
-    state = SimpleNamespace(sessions={}, cameras={})
-
-    def add(db, session):
-        session.created_at = NOW
-        state.sessions[session.id] = session
-        return session
-
-    def by_id(db, session_id):
-        return state.sessions.get(session_id)
-
-    monkeypatch.setattr(sessions_repo, "add", add)
-    for name in ("get", "get_for_update", "get_with_bullets"):
-        monkeypatch.setattr(sessions_repo, name, by_id)
-    monkeypatch.setattr(sessions_repo, "save", lambda db: None)
-    # Sessions are added in the order they start
-    monkeypatch.setattr(sessions_repo, "list_active", lambda db: [s for s in state.sessions.values() if s.status == "active"])
-    monkeypatch.setattr(cameras_repo, "get", lambda db, camera_id: state.cameras.get(camera_id))
-    monkeypatch.setattr(cameras_repo, "list_all", lambda db: list(state.cameras.values()))
-    monkeypatch.setattr(detection_svc, "SessionLocal", FakeDB)
-    monkeypatch.setattr(sessions_repo, "exists", lambda db, session_id: session_id in state.sessions)
-    monkeypatch.setattr(runs_repo, "add_once", lambda db, *run: None)
-    monkeypatch.setattr(runs_repo, "get_for_update", lambda db, *run: None)
-    # Nothing to tell MediaMTX: the database is fake
-    monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
-    return state
-
-
-@pytest.fixture
-def client(db):
-    app.dependency_overrides[get_db] = FakeDB
-    with TestClient(app) as c:
-        yield c
-    app.dependency_overrides.clear()
-
-
-@pytest.fixture
-def detection(monkeypatch):
-    return FakeDetectionService(monkeypatch)
+from app.services import sessions as sessions_svc
+from tests.fakes import NOW, FakeDB, baseline_view, make_camera, place
 
 
 def add_camera(db, alias="lane1", enabled=True):
@@ -120,7 +65,7 @@ def detection_of(client, session_id):
 def tick(client):
     """One round of the loop that reconciles the Detection Service's Run, on a
     worker thread of the app's event loop as the loop runs it."""
-    client.portal.call(anyio.to_thread.run_sync, detection_svc.reconcile, FakeDB())
+    client.portal.call(anyio.to_thread.run_sync, detection_sync.reconcile, FakeDB())
 
 
 def not_watching(reason):
@@ -183,9 +128,9 @@ def test_the_session_is_starting_then_watching_and_says_so_live(client, db, dete
 
 
 @pytest.mark.parametrize("error, reason, detail", [
-    (detection_service.RunRefused(502, "no Target on the baseline frame"), "stream_failed", "no Target on the baseline frame"),
-    (detection_service.RunRefused(409, "another Session's Run is active"), "other_session", "another Session's Run is active"),
-    (detection_service.DetectionServiceUnreachable("connection refused"), "service_down", None),
+    (detection_client.RunRefused(502, "no Target on the baseline frame"), "stream_failed", "no Target on the baseline frame"),
+    (detection_client.RunRefused(409, "another Session's Run is active"), "other_session", "another Session's Run is active"),
+    (detection_client.DetectionServiceUnreachable("connection refused"), "service_down", None),
 ])
 def test_a_start_that_fails_reads_not_watching_with_its_reason(client, db, detection, streams, error, reason, detail):
     detection.start_error = error
@@ -259,7 +204,7 @@ def test_completing_still_succeeds_when_the_detection_service_is_down(client, db
     session_id = client.post("/sessions", json={"name": "Range 1", "camera_id": str(add_camera(db).id)}).json()["id"]
 
     def down(session_id):
-        raise detection_service.DetectionServiceUnreachable("connection refused")
+        raise detection_client.DetectionServiceUnreachable("connection refused")
 
     detection.on_end = down
 
@@ -317,7 +262,7 @@ def test_a_run_another_end_confirmed_meanwhile_leaves_the_end_confirmed(client, 
     def ended_by_a_tick(sid):
         detection.on_end = lambda sid: None
         detection.run = run
-        detection_svc._end_run(sid)
+        detection_sync._end_run(sid)
 
     detection.on_end = ended_by_a_tick
 
@@ -327,10 +272,9 @@ def test_a_run_another_end_confirmed_meanwhile_leaves_the_end_confirmed(client, 
 
 
 def test_a_session_no_run_watched_reads_none_however_its_end_went(client, db, detection):
-    # Waiting for another Session's Run: nothing of its own was in flight
-    start_session(client, add_camera(db))
-    waiting = start_session(client, add_camera(db, "lane2"))
-    tick(client)
+    # Its Run never started: nothing of its own was in flight
+    detection.start_error = detection_client.RunRefused(502, "no Target on the baseline frame")
+    waiting = start_session(client, add_camera(db))
     detection.down = True
 
     res = client.patch(f"/sessions/{waiting}", json={"status": "completed"})
@@ -372,7 +316,7 @@ def test_a_start_answered_after_the_session_ended_changes_nothing(client, db, de
     # The operator ends the Session while its Run is still starting: the
     # service then refuses the start, which must not mark a completed Session
     # as not watching
-    detection.start_error = detection_service.RunRefused(409, "the Session's Run is ending")
+    detection.start_error = detection_client.RunRefused(409, "the Session's Run is ending")
     detection.on_start = lambda session_id: client.patch(f"/sessions/{session_id}", json={"status": "completed"})
 
     session_id = client.post("/sessions", json={"name": "Range 1", "camera_id": str(add_camera(db).id)}).json()["id"]
@@ -424,7 +368,7 @@ def test_the_run_of_a_session_completed_while_the_service_was_down_is_ended(clie
 
 def test_the_run_of_a_deleted_session_is_ended(client, db, detection):
     deleted = uuid.uuid4()
-    detection.run = detection_service.Run(deleted, "watching")
+    detection.run = detection_client.Run(deleted, "watching")
 
     tick(client)
 
@@ -451,34 +395,6 @@ def test_a_camera_disabled_or_deleted_mid_session_ends_its_run(client, db, detec
     assert (session["status"], session["detection"]) == ("active", not_watching("camera_disabled"))
 
 
-def test_a_second_session_gets_the_run_once_the_watched_one_completes(client, db, detection):
-    first = start_session(client, add_camera(db))
-    second = start_session(client, add_camera(db, "lane2"))
-    tick(client)
-    waiting = detection_of(client, second)
-
-    client.patch(f"/sessions/{first}", json={"status": "completed"})
-    tick(client)
-
-    assert (waiting["state"], waiting["reason"]) == ("not_watching", "other_session")
-    assert detection.calls[-1] == ("start", second, "rtsp://127.0.0.1:8554/lane2")
-    assert detection_of(client, second) == WATCHING
-
-
-def test_the_session_holding_the_run_keeps_it_over_an_earlier_one(client, db, detection):
-    detection.start_error = detection_service.RunRefused(502, "no Target on the baseline frame")
-    earlier = start_session(client, add_camera(db))
-    detection.start_error = None
-    holder = start_session(client, add_camera(db, "lane2"))
-    calls = list(detection.calls)
-
-    tick(client)
-
-    assert detection.calls == calls
-    assert detection.run[:2] == (holder, "watching")
-    assert (detection_of(client, earlier)["state"], detection_of(client, earlier)["reason"]) == ("not_watching", "other_session")
-
-
 @pytest.mark.parametrize("confirmed", [True, False])
 def test_a_reopened_session_gets_a_new_run(client, db, detection, confirmed):
     session_id = start_session(client, add_camera(db))
@@ -496,7 +412,7 @@ def test_a_reopened_session_gets_a_new_run(client, db, detection, confirmed):
 
 def test_after_a_backend_restart_a_watched_session_reads_watching_by_the_next_tick(client, db, detection):
     session_id = start_session(client, add_camera(db))
-    detection_svc._states.clear()   # the backend restarted; its Run did not
+    detection_sync._states.clear()   # the backend restarted; its Run did not
     calls = list(detection.calls)
 
     tick(client)
@@ -526,7 +442,7 @@ def test_a_second_start_for_a_watched_session_leaves_its_run(client, db, detecti
     # Detection Service answers both with the one Run
     session_id = start_session(client, add_camera(db))
 
-    client.portal.call(anyio.to_thread.run_sync, detection_svc.watch, session_id, "lane1")
+    client.portal.call(anyio.to_thread.run_sync, detection_sync.watch, session_id, "lane1")
 
     assert detection.run[:2] == (session_id, "watching")
     assert detection_of(client, session_id) == WATCHING
@@ -534,7 +450,7 @@ def test_a_second_start_for_a_watched_session_leaves_its_run(client, db, detecti
 
 def test_a_tick_while_a_session_ends_leaves_it_to_its_end(client, db, detection):
     session_id = start_session(client, add_camera(db))
-    detection.on_end = lambda sid: detection_svc.reconcile(FakeDB())
+    detection.on_end = lambda sid: detection_sync.reconcile(FakeDB())
 
     client.patch(f"/sessions/{session_id}", json={"status": "completed"})
 
@@ -542,11 +458,135 @@ def test_a_tick_while_a_session_ends_leaves_it_to_its_end(client, db, detection)
     assert detection_of(client, session_id)["state"] == "none"
 
 
+def test_a_tick_before_a_completion_is_committed_starts_no_run(client, db, detection, monkeypatch):
+    # The Run has ended, but the Session still reads active in the database
+    session_id = start_session(client, add_camera(db))
+    update = sessions_svc.update_session
+
+    def tick_first(*args):
+        detection_sync.reconcile(FakeDB())
+        return update(*args)
+
+    monkeypatch.setattr(sessions_svc, "update_session", tick_first)
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert [call[0] for call in detection.calls] == ["start", "end"]
+    assert detection_of(client, session_id)["state"] == "none"
+
+
+def test_a_completion_that_fails_leaves_the_session_to_be_watched_again(client, db, detection, monkeypatch):
+    session_id = start_session(client, add_camera(db))
+    update, failing = sessions_svc.update_session, [True]
+
+    def fail_once(*args):
+        if failing.pop():
+            raise RuntimeError("the database went away")
+        return update(*args)
+
+    monkeypatch.setattr(sessions_svc, "update_session", fail_once)
+    with pytest.raises(RuntimeError):
+        client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert detection_sync.state_of(session_id).state == "none"
+    tick(client)
+    assert detection.calls[-1] == ("start", session_id, "rtsp://127.0.0.1:8554/lane1")
+    assert detection_of(client, session_id) == WATCHING
+
+
+def test_a_start_that_fails_unexpectedly_reads_not_watching_and_is_retried(client, db, detection):
+    detection.start_error = ZeroDivisionError("float division by zero")
+    session_id = start_session(client, add_camera(db))
+
+    assert detection_of(client, session_id) == not_watching(None)
+    detection.start_error = None
+    tick(client)
+    assert detection_of(client, session_id) == WATCHING
+
+
+def test_a_start_refused_for_its_own_run_still_ending_reads_no_reason(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    detection.run = detection.run._replace(state="starting")   # a lost Run's, still ending
+    detection.start_error = detection_client.RunRefused(409, "the Session's Run is ending", session_id)
+    detection_sync._states[session_id] = detection_sync.RUN_LOST
+
+    client.portal.call(anyio.to_thread.run_sync, lambda: detection_sync.watch(session_id, "lane1", ("not_watching",)))
+
+    assert detection_of(client, session_id) == {"state": "not_watching", "reason": None,
+                                                "detail": "the Session's Run is ending"}
+
+
+def test_a_start_lost_to_an_error_is_let_go_by_a_tick(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    detection.run = None
+    client.portal.call(anyio.to_thread.run_sync, detection_sync._set, session_id, detection_sync.Detection(state="starting"))
+    calls = list(detection.calls)
+    tick(client)
+    assert detection.calls == calls   # still under way, as far as the tick knows
+
+    detection_sync._since[session_id] -= detection_sync.STUCK_S + 1
+    tick(client)   # lets it go
+    tick(client)   # and watches it again
+
+    assert detection.calls[-1] == ("start", session_id, "rtsp://127.0.0.1:8554/lane1")
+    assert detection_of(client, session_id) == WATCHING
+
+
+def test_a_slow_end_is_never_let_go_while_its_completion_is_under_way(client, db, detection, monkeypatch):
+    # The completion's commit hangs past STUCK_S: a tick meanwhile starts no
+    # Run for the Session being completed
+    session_id = start_session(client, add_camera(db))
+    update = sessions_svc.update_session
+
+    def slow(*args):
+        detection_sync._since[session_id] -= detection_sync.STUCK_S + 1
+        detection_sync.reconcile(FakeDB())
+        detection_sync.reconcile(FakeDB())
+        return update(*args)
+
+    monkeypatch.setattr(sessions_svc, "update_session", slow)
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert [call[0] for call in detection.calls] == ["start", "end"]
+    assert detection_of(client, session_id)["state"] == "none"
+
+
+def test_a_completion_that_fails_after_its_commit_still_warns_of_an_unconfirmed_end(client, db, detection, monkeypatch):
+    # Its Run already gone, so its end is not confirmed; the Session is
+    # completed, but reading it back fails
+    session_id = start_session(client, add_camera(db))
+    detection.run = None
+    update = sessions_svc.update_session
+
+    def fail_after(*args):
+        update(*args)
+        raise RuntimeError("the database went away")
+
+    monkeypatch.setattr(sessions_svc, "update_session", fail_after)
+    with pytest.raises(RuntimeError):
+        client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert detection_of(client, session_id) == END_UNCONFIRMED
+
+
+def test_a_run_already_ending_is_left_to_its_end(client, db, detection):
+    # Its end blocks for up to END_TIMEOUT_S: a tick does not wait on it again
+    session_id = start_session(client, add_camera(db))
+    run = detection.run
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+    detection.run = run._replace(state="ending")   # its end not answered yet
+    calls = list(detection.calls)
+
+    tick(client)
+
+    assert detection.calls == calls
+
+
 def test_a_session_no_longer_active_reads_none_by_the_next_tick(client, db, detection):
     session_id = start_session(client, add_camera(db))
     client.patch(f"/sessions/{session_id}", json={"status": "completed"})
     # As a start that raced its end leaves it
-    detection_svc._states[session_id] = detection_svc.RUN_LOST
+    detection_sync._states[session_id] = detection_sync.RUN_LOST
 
     tick(client)
 
@@ -554,14 +594,13 @@ def test_a_session_no_longer_active_reads_none_by_the_next_tick(client, db, dete
 
 
 def test_a_tick_with_nothing_to_change_makes_no_call_and_pushes_nothing(client, db, detection):
-    first = start_session(client, add_camera(db))
-    second = start_session(client, add_camera(db, "lane2"))   # waiting for the first
+    session_id = start_session(client, add_camera(db))
     tick(client)
     calls = list(detection.calls)
 
-    with listening(first) as a, listening(second) as b:
+    with listening(session_id) as stream:
         tick(client)
-        pushed = events(a) + events(b)
+        pushed = events(stream)
 
     assert detection.calls == calls
     assert pushed == []
@@ -576,11 +615,11 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
         status, body = answers[url.rsplit(":8010", 1)[1]]
         return httpx.Response(status, json=body, request=httpx.Request(method, url))
 
-    monkeypatch.setattr(detection_service.httpx, "request", request)
+    monkeypatch.setattr(detection_client.httpx, "request", request)
     session_id = uuid.uuid4()
 
     answers["/status"] = (200, {"run": None})
-    assert detection_service.status() is None
+    assert detection_client.status() is None
     view, registered = baseline_view(NOW), place(NOW, dx=3.0)
     looked_at = "2026-10-22T09:00:05.560+00:00"
     watching = {"session_id": str(session_id), "state": "watching", "since": "2026-10-22T09:00:00+00:00",
@@ -588,34 +627,39 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
                 "registered": registered.model_dump(mode="json"), "looked_at": looked_at}
     read = (session_id, "watching", view, registered, datetime.fromisoformat(looked_at))
     answers["/status"] = (200, {"run": watching})
-    assert detection_service.status() == read
+    assert detection_client.status() == read
     answers["/status"] = (200, {"run": {**watching, "state": "starting", "baseline_view": None,
                                         "registered": None, "looked_at": None}})
-    assert detection_service.status() == (session_id, "starting", None, None, None)
+    assert detection_client.status() == (session_id, "starting", None, None, None)
     for wrong in ({"baseline_view": {"taken_at": "not a time"}}, {"registered": {"at": "not a time"}},
                   {"looked_at": "2026-10-22T09:00:05"}):   # a time with no zone is not on first_seen_at's clock
         answers["/status"] = (200, {"run": {**watching, **wrong}})
-        with pytest.raises(detection_service.DetectionServiceUnreachable):
-            detection_service.status()
+        with pytest.raises(detection_client.DetectionServiceUnreachable):
+            detection_client.status()
     answers["/status"] = (404, {"detail": "not found"})   # something else on its port
-    with pytest.raises(detection_service.DetectionServiceUnreachable):
-        detection_service.status()
+    with pytest.raises(detection_client.DetectionServiceUnreachable):
+        detection_client.status()
 
     answers["/runs"] = (200, watching)
-    assert detection_service.start_run(session_id, "rtsp://127.0.0.1:8554/lane1") == read
+    assert detection_client.start_run(session_id, "rtsp://127.0.0.1:8554/lane1") == read
     answers["/runs"] = (409, {"detail": "another Session's Run is active"})
-    with pytest.raises(detection_service.RunRefused) as refused:
-        detection_service.start_run(session_id, "rtsp://127.0.0.1:8554/lane1")
-    assert (refused.value.status, refused.value.detail) == (409, "another Session's Run is active")
+    with pytest.raises(detection_client.RunRefused) as refused:
+        detection_client.start_run(session_id, "rtsp://127.0.0.1:8554/lane1")
+    assert (refused.value.status, refused.value.detail, refused.value.holder) == (409, "another Session's Run is active", None)
+    other = uuid.uuid4()
+    answers["/runs"] = (409, {"detail": "another Session's Run is active", "run": {**watching, "session_id": str(other)}})
+    with pytest.raises(detection_client.RunRefused) as refused:
+        detection_client.start_run(session_id, "rtsp://127.0.0.1:8554/lane1")
+    assert refused.value.holder == other
 
     answers[f"/runs/{session_id}/end"] = (404, {"detail": "no such Run"})
-    assert detection_service.end_run(session_id) is None   # already ended, not by this end
+    assert detection_client.end_run(session_id) is None   # already ended, not by this end
     answers[f"/runs/{session_id}/end"] = (200, {"session_id": str(session_id), "state": "ended",
                                                 "baseline_view": view.model_dump(mode="json"),
                                                 "registered": registered.model_dump(mode="json"),
                                                 "looked_at": looked_at})
-    assert detection_service.end_run(session_id) == (session_id, "ended", *read[2:])
+    assert detection_client.end_run(session_id) == (session_id, "ended", *read[2:])
     for wrong in ((500, {}), (200, {})):
         answers[f"/runs/{session_id}/end"] = wrong
-        with pytest.raises(detection_service.DetectionServiceUnreachable):
-            detection_service.end_run(session_id)
+        with pytest.raises(detection_client.DetectionServiceUnreachable):
+            detection_client.end_run(session_id)

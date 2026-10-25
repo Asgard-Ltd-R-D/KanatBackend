@@ -9,7 +9,7 @@ from app.core.live import hub
 from app.models import Session
 from app.schemas.live import SessionUpdatedEvent
 from app.schemas.session import SessionCreate, SessionListItem, SessionResponse, SessionUpdate
-from app.services import camera_sync, detection, groups
+from app.services import camera_sync, detection_sync, groups
 from app.services import cameras as camera_svc
 from app.services import recordings as recording_svc
 from app.services import sessions as svc
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 def _response(session: Session) -> SessionResponse:
     """The Session with its detection, which is held in memory, and its Groups."""
     response = SessionResponse.model_validate(session)
-    response.detection = detection.state_of(session.id)
+    response.detection = detection_sync.state_of(session.id)
     response.grouping = groups.grouping(response.bullet_holes)
     return response
 
@@ -36,8 +36,8 @@ def create_session(body: SessionCreate, background: BackgroundTasks, db: DBSessi
         alias = camera_svc.get_camera_or_404(session.camera_id, db).alias
         # Answered "starting" at once: the Run is asked for after the answer,
         # as it takes seconds to be watching
-        detection.starting(session.id)
-        background.add_task(detection.watch, session.id, alias)
+        detection_sync.starting(session.id)
+        background.add_task(detection_sync.watch, session.id, alias)
     return _response(session)
 
 
@@ -56,10 +56,12 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = D
     if body.status == "completed":
         # Its Run ends first, the Session still active, so the Bullet Holes
         # it posts on the way out are stored
-        detection.end(svc.get_session_or_404(session_id, db))
-    session = svc.update_session(session_id, body, db)
+        with detection_sync.ending(svc.get_session_or_404(session_id, db)):
+            session = svc.update_session(session_id, body, db)
+    else:
+        session = svc.update_session(session_id, body, db)
     if body.status == "active":
-        detection.reopened(session_id)
+        detection_sync.reopened(session_id)
     # Ending a Session or switching its recording starts or stops the cameras recording
     camera_sync.sync_soon(db)
     hub.publish_from_thread(
@@ -75,8 +77,8 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = D
 def delete_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
     # Its Run ends first: nothing is left for it to post into, and the
     # Detection Service holds one Run at a time
-    detection.end(svc.get_session_or_404(session_id, db))
-    windows = svc.delete_session(session_id, db)
+    with detection_sync.ending(svc.get_session_or_404(session_id, db)):
+        windows = svc.delete_session(session_id, db)
     # Stop the recording first if this Session was recording, then delete its
     # video: no Session is left to replay it
     camera_sync.sync_soon(db)

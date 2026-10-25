@@ -10,14 +10,14 @@ from fastapi.responses import JSONResponse
 
 from app.config.settings import settings
 from app.core.router import include_routers
-from app.services import camera_sync, detection
+from app.services import camera_sync, detection_sync
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Keeps MediaMTX's camera paths in step with the database while the app
     # runs, and the Detection Service's Run on the Session to watch
-    loops = [camera_sync.run_forever(), detection.run_forever()] if settings.camera_sync_interval_s > 0 else []
+    loops = [camera_sync.run_forever(), detection_sync.run_forever()] if settings.camera_sync_interval_s > 0 else []
     tasks = [asyncio.create_task(loop) for loop in loops]
     yield
     for task in tasks:

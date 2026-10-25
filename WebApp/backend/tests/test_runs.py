@@ -16,8 +16,8 @@ from sqlalchemy.orm import sessionmaker
 from app.core.deps import get_db
 from app.core.live import hub
 from app.main import app
-from app.services import camera_sync, detection_service
-from app.services import detection as detection_svc
+from app.services import camera_sync, detection_client
+from app.services import detection_sync
 from app.services import recordings as recording_svc
 from tests.fakes import NOW, FakeDetectionService, baseline_view, place
 from tests.test_detection import events, listening
@@ -39,7 +39,7 @@ def client(engine, monkeypatch):
     """The app on the test's database, the Detection Service's loop included;
     MediaMTX and the recordings are left alone."""
     local = sessionmaker(bind=engine)
-    monkeypatch.setattr(detection_svc, "SessionLocal", local)
+    monkeypatch.setattr(detection_sync, "SessionLocal", local)
     monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
     monkeypatch.setattr(recording_svc, "delete_session_video", lambda windows, others: 0)
 
@@ -81,7 +81,7 @@ def runs_of(client, session_id):
 def tick(client):
     """One round of the loop that reconciles the Detection Service's Run, on a
     worker thread of the app's event loop as the loop runs it."""
-    client.portal.call(anyio.to_thread.run_sync, detection_svc._reconcile_once)
+    client.portal.call(anyio.to_thread.run_sync, detection_sync._reconcile_once)
 
 
 def taken_at(run):
@@ -155,8 +155,8 @@ def test_a_run_first_seen_through_a_status_read_after_a_restart_is_stored(client
     detection.down = True
     session_id = start_session(client, camera)
     detection.down = False
-    detection.run = detection_service.Run(session_id, "watching", baseline_view(NOW))
-    detection_svc._states.clear()
+    detection.run = detection_client.Run(session_id, "watching", baseline_view(NOW))
+    detection_sync._states.clear()
     calls = list(detection.calls)
 
     tick(client)
@@ -204,7 +204,7 @@ def test_the_run_is_stored_before_the_watching_push_goes_out(client, detection, 
     publish = hub.publish_from_thread
 
     def publish_watching(session_id, event):
-        if getattr(event, "detection", None) == detection_svc.WATCHING:
+        if getattr(event, "detection", None) == detection_sync.WATCHING:
             stored_at_push.append(len(runs_of(client, session_id)))
         publish(session_id, event)
 
@@ -215,7 +215,7 @@ def test_the_run_is_stored_before_the_watching_push_goes_out(client, detection, 
         detection.down = True
         session_id = start_session(client, camera)
         detection.down = False
-        detection.run = detection_service.Run(session_id, "watching", baseline_view(NOW))
+        detection.run = detection_client.Run(session_id, "watching", baseline_view(NOW))
         tick(client)
 
     assert stored_at_push == [1]

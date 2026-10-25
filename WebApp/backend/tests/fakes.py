@@ -4,9 +4,17 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.schemas.run import BaselineView, Place
-from app.services import detection_service, mediamtx
+from app.services import detection_client, mediamtx
 
 NOW = datetime.now(timezone.utc)
+
+
+class FakeDB:
+    """A database session that is never used: the repositories it would be
+    handed to are replaced (the `db` fixture, tests/conftest.py)."""
+
+    def close(self):
+        pass
 
 
 def make_camera(alias="cam1", iface=None, enabled=True):
@@ -62,7 +70,7 @@ def place(at, dx=0.0, sx=0.25):
 
 
 class FakeDetectionService:
-    """The Detection Service's control API (services/detection_service.py),
+    """The Detection Service's control API (services/detection_client.py),
     holding one Run at a time as the service does: `run`, or None. Every start
     and end made is in `calls`. A start is answered with `start_error` raised,
     a 409 while another Session's Run is active or this one's ending, or else
@@ -80,13 +88,13 @@ class FakeDetectionService:
         self.down = False
         self.on_status = lambda: None
         self.on_start = self.on_end = lambda session_id: None
-        monkeypatch.setattr(detection_service, "start_run", self._start)
-        monkeypatch.setattr(detection_service, "end_run", self._end)
-        monkeypatch.setattr(detection_service, "status", self._status)
+        monkeypatch.setattr(detection_client, "start_run", self._start)
+        monkeypatch.setattr(detection_client, "end_run", self._end)
+        monkeypatch.setattr(detection_client, "status", self._status)
 
     def _answer(self):
         if self.down:
-            raise detection_service.DetectionServiceUnreachable("connection refused")
+            raise detection_client.DetectionServiceUnreachable("connection refused")
 
     def _status(self):
         self.on_status()
@@ -100,12 +108,12 @@ class FakeDetectionService:
         if self.start_error:
             raise self.start_error
         if self.run and self.run.session_id != session_id:
-            raise detection_service.RunRefused(409, "another Session's Run is active")
+            raise detection_client.RunRefused(409, "another Session's Run is active", self.run.session_id)
         if self.run and self.run.state == "ending":
-            raise detection_service.RunRefused(409, "the Session's Run is ending")
+            raise detection_client.RunRefused(409, "the Session's Run is ending", self.run.session_id)
         if not self.run:   # a repeat start is answered with the Run already watching
             taken_at = NOW + timedelta(seconds=len(self.calls))
-            self.run = detection_service.Run(session_id, "watching", baseline_view(taken_at),
+            self.run = detection_client.Run(session_id, "watching", baseline_view(taken_at),
                                              place(taken_at), taken_at)
         return self.run
 

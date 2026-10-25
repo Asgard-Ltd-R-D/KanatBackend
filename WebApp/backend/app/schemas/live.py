@@ -34,7 +34,7 @@ class SessionUpdatedEvent(BaseModel):
 
 
 class DetectionUpdatedEvent(BaseModel):
-    """Whether a Run watches the Session now (services/detection.py)."""
+    """Whether a Run watches the Session now (services/detection_sync.py)."""
 
     type: Literal["detection_updated"] = "detection_updated"
     detection: Detection
@@ -42,7 +42,7 @@ class DetectionUpdatedEvent(BaseModel):
 
 class RunMovedEvent(BaseModel):
     """A Run of the Session kept a new place for the Board in the picture
-    (services/detection.py, ADR-0009); the Session's detail carries it."""
+    (services/detection_sync.py, ADR-0009); the Session's detail carries it."""
 
     type: Literal["run_moved"] = "run_moved"
     taken_at: datetime

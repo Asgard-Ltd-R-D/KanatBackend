@@ -1,7 +1,6 @@
 import { Crosshair } from 'lucide-react'
 import { BulletHole } from '../../types'
 import { formatClock } from '../../utils/format'
-import { locationLabel, mmLabel } from '../../utils/bullets'
 import { SourceBadge } from './SourceBadge'
 
 // An active session's Bullet Holes as they arrive, newest first
@@ -34,18 +33,9 @@ export function LiveDetectionsPanel({ bullets }: { bullets: BulletHole[] }) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
                   <SourceBadge source={b.source} />
-                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                    {locationLabel(b)}
-                  </span>
                 </div>
                 <p className="text-[10px] font-mono text-slate-400 dark:text-slate-600">
                   {formatClock(b.first_seen_at)}
-                  {b.x_mm != null && b.y_mm != null && (
-                    <>
-                      <span className="mx-1 text-slate-300 dark:text-slate-700">·</span>
-                      {mmLabel(b)}
-                    </>
-                  )}
                 </p>
               </div>
             </li>

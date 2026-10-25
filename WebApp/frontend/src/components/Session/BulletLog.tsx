@@ -1,7 +1,6 @@
 import { Crosshair, Play, Trash2 } from 'lucide-react'
 import { BulletHole } from '../../types'
 import { formatClock } from '../../utils/format'
-import { locationLabel, mmLabel } from '../../utils/bullets'
 import { SourceBadge } from './SourceBadge'
 
 interface Props {
@@ -30,8 +29,6 @@ export function BulletLog({ bullets, onDelete, canReplay, onReplay }: Props) {
             <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider w-12">#</th>
             <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Detected At</th>
             <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Position</th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Location</th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Offset</th>
             <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Source</th>
             <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
           </tr>
@@ -39,7 +36,7 @@ export function BulletLog({ bullets, onDelete, canReplay, onReplay }: Props) {
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
           {bullets.length === 0 && (
             <tr>
-              <td colSpan={7} className="py-16 text-center">
+              <td colSpan={5} className="py-16 text-center">
                 <div className="flex flex-col items-center gap-3">
                   <Crosshair size={32} className="text-slate-300 dark:text-slate-700" />
                   <p className="text-slate-500 dark:text-slate-500 text-sm">No bullets recorded</p>
@@ -67,8 +64,6 @@ export function BulletLog({ bullets, onDelete, canReplay, onReplay }: Props) {
               <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">
                 {b.position_x.toFixed(0)}, {b.position_y.toFixed(0)}
               </td>
-              <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-400">{locationLabel(b)}</td>
-              <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">{mmLabel(b)}</td>
               <td className="px-4 py-3"><SourceBadge source={b.source} /></td>
               <td className="px-4 py-3">
                 <div className="flex justify-end">

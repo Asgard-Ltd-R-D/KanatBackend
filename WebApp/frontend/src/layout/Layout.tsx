@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ReactNode, useEffect } from 'react'
-import { Crosshair, LayoutList, Settings as SettingsIcon, Sun, Moon } from 'lucide-react'
+import { Crosshair, LayoutList, ScrollText, Settings as SettingsIcon, Sun, Moon } from 'lucide-react'
 import clsx from 'clsx'
 import { ErrorBoundary } from '../components/UI/ErrorBoundary'
 import { useDarkMode } from '../hooks/useDarkMode'
@@ -59,6 +59,7 @@ export function Layout() {
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-1">
           <NavItem to="/" icon={<LayoutList size={16} />} label="Sessions" end />
+          <NavItem to="/logs" icon={<ScrollText size={16} />} label="Logs" />
           <NavItem to="/settings" icon={<SettingsIcon size={16} />} label="Settings" />
         </nav>
 

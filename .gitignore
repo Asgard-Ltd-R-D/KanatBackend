@@ -78,6 +78,12 @@ bld/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+# The WebApp's shared log folder is kept, empty: made by Docker's bind mount
+# instead it would be root's on Linux, and the backend, the Detection Service
+# and the app could not write their logs into it (WebApp/docker-compose.yml)
+!WebApp/logs/
+WebApp/logs/*
+!WebApp/logs/.gitkeep
 release/
 deploy/
 dev/

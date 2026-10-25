@@ -9,7 +9,11 @@
 # on the range PC /var/log/kanat, set for this file with KANAT_LOG_DIR.
 # Postgres writes its own JSON log in its postgres/ subfolder. Alloy ships the
 # folder to Loki, and Grafana shows it, in the app's Logs tab too. Grafana and
-# Loki answer on 127.0.0.1 only.
+# Loki answer on 127.0.0.1 only. The folder must exist, writable by the user
+# running the backend, the Detection Service and the app, before the first
+# `up`: one Docker makes is root's on Linux. WebApp/logs is in the repo (kept
+# empty) and start-all.sh makes KANAT_LOG_DIR; on the range PC the installer
+# makes /var/log/kanat.
 #   docker compose up -d                          everything
 #   docker compose up -d loki alloy grafana       the logs only
 services:

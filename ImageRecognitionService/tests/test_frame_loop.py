@@ -1087,7 +1087,9 @@ def test_a_window_emptied_upstream_confirms_nothing(monkeypatch, capsys):
     """Seen on every look from frame 20, past the baseline, to a gap of 100
     frames lost upstream after frame 30: seen on every look after it too,
     which once filled its window with the shifted indices. The due frames
-    lost count against the floor, so it is unconfirmable (#117)."""
+    lost count against the floor, so the Candidate at 20 is unconfirmable
+    (#117). It gathers nothing more, so the mark seen on every look after the
+    gap opens a Candidate at 131 and is reported once from there (#259)."""
     loop = _live(monkeypatch, _Losing(after=30, lost=100, interval=0.002))
     loop.model = _Watching(lambda i: i >= 20, stop_at=200)
     monkeypatch.setattr(nbh.board, "changed_regions",
@@ -1095,7 +1097,8 @@ def test_a_window_emptied_upstream_confirms_nothing(monkeypatch, capsys):
     with nbh._stopped_by_signals(loop):
         run = nbh.process(loop, None, stride=1)
     assert loop.source.unseen == list(range(31, 131))   # stride 1: all were due
-    assert "[NEW]" not in capsys.readouterr().out and run.holes == []
+    assert capsys.readouterr().out.count("[NEW]") == 1
+    assert [h["first_frame"] for h in run.holes] == [131]
 
 
 def test_a_gap_upstream_is_logged_when_found_and_in_the_totals(monkeypatch, capsys, caplog):

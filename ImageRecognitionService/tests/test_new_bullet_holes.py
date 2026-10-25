@@ -490,6 +490,43 @@ def test_end_gives_the_final_position_and_sightings_not_those_at_judgement():
     assert np.array_equal(persistence.position(final)[:2], final["pos"])
 
 
+def test_a_place_whose_candidate_was_rejected_is_judged_again_from_its_next_detection():
+    """A blip at 10 is rejected over [10, 30); the Bullet Hole seen on every
+    Look from 40 then opens a Candidate of its own and persists. Folded into
+    the rejected one, as before #259, it was never reported."""
+    got = _persisted(_looked(range(10, 70), {10, *range(40, 70)}),
+                     n_frames=70, match_px=MATCH, window=20)
+    assert [h["first_frame"] for h in got] == [40]
+
+
+def test_a_place_whose_candidate_was_unconfirmable_is_judged_again_from_its_next_detection():
+    """Seen at 10, then Lost to 29: 1 of 20 frames tried registered, under the
+    floor, so [10, 30) is unconfirmable (#110). No evidence either way, so the
+    Bullet Hole seen on every Look from 40 opens a Candidate and persists."""
+    got = _persisted(_looked([10, *range(30, 70)], {10, *range(40, 70)}),
+                     n_frames=70, match_px=MATCH, window=20, lost=range(11, 30))
+    assert [h["first_frame"] for h in got] == [40]
+
+
+def test_the_first_look_past_a_window_that_did_not_persist_opens_the_next_candidate():
+    """Looks every 5 frames: the blip at 10 is seen on 1 of the 4 Looks in
+    [10, 30), and the Bullet Hole on every Look from 30. The window has ended
+    by the Look at 30, so that Look's Detection starts the next Candidate
+    rather than folding into the one about to be rejected (#259)."""
+    got = _persisted(_looked(range(10, 70, 5), {10, *range(30, 70, 5)}),
+                     n_frames=70, match_px=MATCH, window=20)
+    assert [h["first_frame"] for h in got] == [30]
+
+
+def test_a_persisted_candidate_still_absorbs_its_place_s_later_detections():
+    """Persisted over [10, 30), then unseen, then seen again from 40: the
+    later sightings fold into the reported Bullet Hole, not a second one."""
+    got = _persisted(_looked(range(10, 70), {*range(10, 30), *range(40, 70)}),
+                     n_frames=70, match_px=MATCH, window=20)
+    assert [h["first_frame"] for h in got] == [10]
+    assert got[0]["seen"][-1] == 69
+
+
 # --- Change Evidence on the sheet canvases (ADR-0011) ------------------------
 
 def test_a_point_is_judged_on_the_change_mask_of_its_own_sheet_canvas(monkeypatch):

@@ -304,16 +304,22 @@ def strip_pre_existing(pts, baseline, match_px):
     return pts[distance >= match_px], distance[distance < match_px]
 
 
-def _fold(candidates, idx, pts, match_px, opening=True):
+def _fold(candidates, idx, pts, match_px, opening=True, closed=()):
     """One Look's Detections into the candidates, in place, for `Persistence`.
     A candidate is [pos, seen_frame_idxs, first_idx]. Without `opening`, a
     Detection matching none is dropped rather than opening a candidate.
 
-    ponytail: each Detection is matched against every candidate so far, kept
-    or not, as the whole-run fold always was. That is once a Look, so a very
-    long Range slows its Looks; index candidates spatially if one does."""
+    `closed` holds the ids of candidates judged and not persisted: they gather
+    nothing more, so a Detection at their place opens a new candidate (#259).
+    Folded into the dead one instead, a Bullet Hole seen on 93% of Looks after
+    a weak first window was never reported (#256).
+
+    ponytail: each Detection is scanned against every candidate so far, closed
+    ones included. That is once a Look, so a very long Range slows its Looks;
+    index candidates spatially if one does."""
     for p in np.asarray(pts, np.float32):  # (cx, cy) or (cx, cy, w, h), always 2-D
-        match = next((c for c in candidates if same_bullet_hole(c[0], p, match_px)), None)
+        match = next((c for c in candidates
+                      if id(c) not in closed and same_bullet_hole(c[0], p, match_px)), None)
         if match is None:
             if opening:
                 candidates.append([p.copy(), [idx], idx])
@@ -1276,6 +1282,8 @@ class Persistence:
     the window's end gives, so `end` drops a Candidate that persisted early
     but whose window never passed: on a recording it is unconfirmable, as
     before. Live, what was announced stays announced (ADR-0004).
+    One that did not persist gathers nothing more: a later Detection at its
+    place opens a new Candidate, judged over a window of its own (#259).
 
     Change Evidence is not checked here: when it is differs by mode, on
     purpose (ADR-0003, amended 2026-10-11).
@@ -1292,21 +1300,27 @@ class Persistence:
         self._candidates = []
         self._open = []   # candidates not yet judged, in frame order
         self._persisted = {}   # id(hole) -> (hole, its candidate)
+        self._closed = set()   # ids of candidates judged and not persisted (#259)
 
     def add(self, index, pts, opening=True):
         """One Look: its Detections, or None if it was Lost. Returns the
         Candidates that persisted at it, each with its position and sightings
         as of now. `index + 1` frames have passed, in both modes. Without
         `opening`, as while a live Run ends, a Detection opens no Candidate
-        (#228)."""
+        (#228).
+
+        A window that ended before this Look is judged before its Detections
+        fold: past a stride's gap or a stream's, one about to be rejected
+        would otherwise take the first Look of the next Candidate (#259)."""
+        persisted = self._judge_due(index)
         if pts is None:
             self.lost.append(index)
         else:
             self.looked_at.append(index)
             made = len(self._candidates)
-            _fold(self._candidates, index, pts, self.match_px, opening)
+            _fold(self._candidates, index, pts, self.match_px, opening, self._closed)
             self._open += self._candidates[made:]
-        return self._judge_due(index + 1)
+        return persisted + self._judge_due(index + 1)
 
     @property
     def unjudged(self):
@@ -1363,7 +1377,9 @@ class Persistence:
                           unseen, remaining)
             if hole is None:
                 if window_end > processed:
-                    still_open.append(candidate)   # undecided; past its window, rejected
+                    still_open.append(candidate)   # undecided
+                else:
+                    self._closed.add(id(candidate))   # past its window: rejected
             else:
                 # The Look that judged it: when a run reports it, before the
                 # Change Evidence check (#272).

@@ -48,6 +48,8 @@ _clock = time.monotonic
 # Aliases already reported as clashing with a mediamtx.yml path, so the sync
 # loop logs each once rather than every round
 _conflicts: set[str] = set()
+# Whether the cameras were last set to record, so a change is logged once
+_recording: bool | None = None
 # Whether the sync last found mediamtx.yml unknown, so that is logged once
 _config_unknown = False
 
@@ -124,6 +126,7 @@ def sync(db: DBSession) -> None:
     MediaMTX lists a ~regexp path under its key, not the names it covers, so
     any name might be its. Raises MediaMTXUnreachable if it cannot be reached."""
     global _config_unknown
+    global _recording
     with _lock:
         record = sessions_repo.recording_session_active(db)
         wanted = {
@@ -155,14 +158,26 @@ def sync(db: DBSession) -> None:
                 continue
             if existing is None:
                 mediamtx.add_path(name, config)
+                log.info("MediaMTX path '%s' added", name, extra={"camera": name, "record": config["record"]})
                 continue
             changed = {key: value for key, value in config.items() if existing.get(key) != value}
             if changed:
                 mediamtx.patch_path(name, changed)
+                log.info("MediaMTX path '%s' updated: %s", name, ", ".join(sorted(changed)),
+                         extra={"camera": name, "fields": sorted(changed)})
 
         for name, existing in current.items():
             if name not in wanted and is_camera_path(name, existing, config_paths):
                 mediamtx.delete_path(name)
+                log.info("MediaMTX path '%s' removed: no camera has that name", name, extra={"camera": name})
+
+        if record != _recording and wanted:
+            # Once MediaMTX has the cameras set to it, not when only asked; at
+            # startup only if they record, there being no "stopped" before
+            if _recording is not None or record:
+                log.info("Cameras %s recording", "started" if record else "stopped",
+                         extra={"record": record, "cameras": sorted(wanted)})
+            _recording = record
 
 
 def sync_soon(db: DBSession) -> None:
@@ -182,7 +197,10 @@ def _sync_once() -> None:
     finally:
         db.close()
     cameras.watch_traffic()
-    recordings.remove_unused_recordings(aliases)
+    removed = recordings.remove_unused_recordings(aliases)
+    if removed:
+        log.info("Deleted %s day-old recording file(s) of cameras that no longer exist", removed,
+                 extra={"files_deleted": removed})
 
 
 async def run_forever() -> None:

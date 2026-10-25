@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -8,6 +9,8 @@ from app.models import RecordingInterval, Session
 from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as repo
 from app.schemas.session import SessionCreate, SessionListItem, SessionUpdate
+
+log = logging.getLogger(__name__)
 
 
 def get_session_or_404(session_id: uuid.UUID, db: DBSession) -> Session:
@@ -82,6 +85,10 @@ def create_session(body: SessionCreate, db: DBSession) -> Session:
         session = repo.add(db, session)
     except repo.SecondActiveSession as e:
         raise _refused_as_second_active(db) from e
+    log.info(
+        "Session '%s' created", session.name,
+        extra={"session_id": session.id, "session_name": session.name, "record": session.record},
+    )
     return session
 
 
@@ -111,7 +118,30 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) ->
         repo.save(db)
     except repo.SecondActiveSession as e:
         raise _refused_as_second_active(db, session_id) from e
+    _log_changes(session, before)
     return get_session_detail(session_id, db)
+
+
+def _log_changes(session: Session, before: dict) -> None:
+    """One line for each thing that changed, in words an operator would use."""
+    fields = {"session_id": session.id, "session_name": session.name}
+    if session.status != before["status"]:
+        if session.status == "completed":
+            started = session.started_at
+            duration_s = (session.ended_at - started).total_seconds() if session.ended_at and started else None
+            log.info("Session '%s' completed", session.name, extra={**fields, "duration_s": duration_s})
+        else:
+            log.info("Session '%s' reopened", session.name, extra=fields)
+    if session.record != before["record"]:
+        log.info(
+            "Session '%s': recording switched %s", session.name, "on" if session.record else "off",
+            extra={**fields, "record": session.record},
+        )
+    if session.name != before["session_name"]:
+        log.info(
+            "Session renamed from '%s' to '%s'", before["session_name"], session.name,
+            extra={**fields, "previous_name": before["session_name"]},
+        )
 
 
 def recorded_windows(intervals: list[RecordingInterval]) -> list[tuple[datetime, datetime]]:
@@ -130,7 +160,12 @@ def delete_session(session_id: uuid.UUID, db: DBSession) -> list[tuple[datetime,
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     windows = recorded_windows(session.recording_intervals)
+    name = session.name
     repo.delete(db, session)
+    log.info(
+        "Session '%s' deleted", name,
+        extra={"session_id": session_id, "session_name": name, "recorded_windows": len(windows)},
+    )
     return windows
 
 

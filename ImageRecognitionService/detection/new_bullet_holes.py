@@ -34,6 +34,7 @@ import bisect
 import contextlib
 import csv
 import itertools
+import logging
 import math
 import os
 import platform
@@ -48,8 +49,15 @@ from urllib.parse import urlsplit, urlunsplit
 import cv2
 import numpy as np
 
-from detection import board, groups, webapp
+from detection import board, groups, logs, webapp
 from tools import manifest
+
+# What happens while a Run watches is logged (detection/logs.py); the
+# command line's report on it stays printed
+log_live = logging.getLogger("detection.live")
+log_registration = logging.getLogger("detection.registration")
+log_board = logging.getLogger("detection.board")
+log_run = logging.getLogger("detection.run")
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
 
@@ -739,9 +747,9 @@ class Stream:
         """The stream at `url`, read from where it is, and frame 0. `start`
         and `ref_time` are a Recording's: a stream cannot be seeked (#83), and
         its times are its own (#117)."""
-        print(f"[LIVE] {_redacted(url)}: a stream, read from where it is. Board space "
-              f"is built from the first frame read, times are the stream's timestamps "
-              f"from the wall clock it was read at (#117)")
+        log_live.info("Opening the stream %s, read from where it is. Board space is built from "
+                      "the first frame read, times are the stream's timestamps from the wall "
+                      "clock it was read at (#117)", _redacted(url))
         cap = _open_stream(url)
         ok, frame = cap.read()
         arrived = time.time()
@@ -826,8 +834,9 @@ class Stream:
         self._origin = self._trusted = None
         if not self._down:
             self._down = True
-            print(f"[LIVE] stream dropped: no frame since {_clock(self.latest)}; reopening "
-                  f"every {RECONNECT_EVERY_S:g} s until it is back or the run is stopped (#84)")
+            log_live.warning("Stream dropped: no frame since %s; reopening every %g s until it "
+                             "is back or the run is stopped (#84)", _clock(self.latest),
+                             RECONNECT_EVERY_S)
         self.cap.release()
         resume = time.monotonic() + RECONNECT_EVERY_S
         while not self.stopped and time.monotonic() < resume:
@@ -911,9 +920,10 @@ class Stream:
         due = [i for i in gap if _looked_at(i, stride, baseline_frames)]
         self.unseen += due   # one extend: the loop's thread bisects it
         self.upstream.append((len(gap), len(due)))
-        print(f"[LIVE] {len(gap)} frame(s) lost upstream, {len(gap) / LIVE_FPS:.1f} s of "
-              f"stream before {_clock(at)}: {len(due)} of them due a look, counted against "
-              f"persistence's floor. Frames up to the next keyframe may decode corrupt (#117)")
+        log_live.warning("%d frame(s) lost upstream, %.1f s of stream before %s: %d of them due "
+                         "a look, counted against persistence's floor. Frames up to the next "
+                         "keyframe may decode corrupt (#117)", len(gap), len(gap) / LIVE_FPS,
+                         _clock(at), len(due), extra={"frames_lost": len(gap), "looks_lost": len(due)})
 
     def _back_from_drop(self, now, gap, stride, baseline_frames):
         """Close the drop the stream is back from. `gap` is the indices of the
@@ -923,9 +933,10 @@ class Stream:
         due = [i for i in gap if _looked_at(i, stride, baseline_frames)]
         self.unseen += due   # one extend: the loop's thread bisects it
         self.drops.append((seconds, len(gap)))
-        print(f"[LIVE] stream back at {_clock(now)} after {seconds:.1f} s without a frame: "
-              f"{len(gap)} frame(s) missed at {LIVE_FPS} fps, {len(due)} of them due a "
-              f"look and counted against persistence's floor (#84)")
+        log_live.info("Stream back at %s after %.1f s without a frame: %d frame(s) missed at "
+                      "%d fps, %d of them due a look and counted against persistence's floor "
+                      "(#84)", _clock(now), seconds, len(gap), LIVE_FPS, len(due),
+                      extra={"down_s": round(seconds, 1), "frames_lost": len(gap), "looks_lost": len(due)})
 
     def read(self):
         if self.passed >= self._wanted:
@@ -1179,8 +1190,9 @@ class Registration:
         result = ("registered" if registered else
                   f"failed, the frame stays lost; next attempt after "
                   f"{REANCHOR_AFTER_LOST} more")
-        print(f"[REGISTRATION] re-anchor at t={self._when(index)} "
-              f"(frame {index}) after {self._lost_run} lost frame(s): {result} (#80)")
+        (log_registration.info if registered else log_registration.warning)(
+            "Re-anchor at t=%s (frame %d) after %d lost frame(s): %s (#80)",
+            self._when(index), index, self._lost_run, result)
 
     def _track_reach(self, current, frame):
         if self._reach is None:
@@ -1429,9 +1441,10 @@ class RegisteredFrames:
                                                            ref_time, opener)
         # A disclosure for agreeing what "fast" means with the customer, and
         # never a gate: no bar is agreed (#77).
-        print(f"[REGISTRATION] Board space built in {time.perf_counter() - opened_at:.2f} s, "
-              f"wall time from opening the source. Not a pass/fail bar; none is "
-              f"agreed (#79)")
+        built_s = time.perf_counter() - opened_at
+        log_registration.info("Board space built in %.2f s, wall time from opening the source. "
+                              "Not a pass/fail bar; none is agreed (#79)", built_s,
+                              extra={"built_s": round(built_s, 2)})
         canvas_w, canvas_h = view.canvas_size
         # The detector is shown the margin canvas exactly as before #46, and
         # the Board past it as bands of their own (#46); imgsz and the net scale
@@ -1453,23 +1466,24 @@ class RegisteredFrames:
         # stationary mark's Board-space position walked 4.6 px out of place. It says
         # the ECC fit converged, nothing more. The [REGISTRATION] line in `process`
         # is the figure that bears on geometry.
-        print(f"[BOARD] {len(view.targets)} Target(s), ECC converged at {correlation:.4f} "
-              f"(convergence, not geometric accuracy)")
+        log_board.info("%d Target(s), ECC converged at %.4f (convergence, not geometric accuracy)",
+                       len(view.targets), correlation, extra={"targets": len(view.targets)})
         if not view.grew:
-            print(f"[BOARD] rectified {canvas_w}x{canvas_h}, imgsz {imgsz}, net scale {scale:.2f}")
+            log_board.info("Rectified %dx%d, imgsz %d, net scale %.2f", canvas_w, canvas_h, imgsz, scale)
         else:
             bands = view.exposed_bands(BAND_CONTEXT_PX)
             band_scales = ", ".join(
                 f"{x1 - x0}x{y1 - y0} at net scale "
                 f"{board.net_scale(view.board_scale, tpl_span, frame_span, _band_imgsz(b.crop), max(x1 - x0, y1 - y0)):.2f}"
                 for b in bands for x0, y0, x1, y1 in [b.crop])
-            print(f"[BOARD] rectified {canvas_w}x{canvas_h} to the Board's edge: the margin "
-                  f"canvas {inner_w}x{inner_h} at {view.inner.offset}, imgsz {imgsz}, net scale "
-                  f"{scale:.2f}, and {len(bands)} band(s) of Board past it: {band_scales} (#46)")
+            log_board.info("Rectified %dx%d to the Board's edge: the margin canvas %dx%d at %s, "
+                           "imgsz %d, net scale %.2f, and %d band(s) of Board past it: %s (#46)",
+                           canvas_w, canvas_h, inner_w, inner_h, view.inner.offset, imgsz, scale,
+                           len(bands), band_scales)
         uncovered = board.uncovered_view(view, (base.shape[1], base.shape[0]))
         if uncovered is None:
-            print("[WARN] the camera's view does not map onto the Board plane; "
-                  "how much of it is off the canvas is unknown (#41)")
+            log_board.warning("The camera's view does not map onto the Board plane; how much of "
+                              "it is off the canvas is unknown (#41)")
         # Any reach past the canvas warns; uncovered_view already drops rounding.
         elif any(uncovered[1].values()):
             outside, reach = uncovered
@@ -1479,13 +1493,14 @@ class RegisteredFrames:
                                else "view, no edge found")
             where = ", ".join(f"{v / span:.2f} {k} ({found(k)})"
                               for k, v in reach.items() if v)
-            print(f"[WARN] {outside:.1%} of the camera's view is off the canvas short of "
-                  f"any Board edge found, up to {where} (Target spans). Board there is "
-                  f"never searched: a Bullet Hole on it is a miss no setting can recover "
-                  f"(#41, #46)")
+            log_board.warning("%.1f%% of the camera's view is off the canvas short of any Board "
+                              "edge found, up to %s (Target spans). Board there is never "
+                              "searched: a Bullet Hole on it is a miss no setting can recover "
+                              "(#41, #46)", outside * 100, where)
         if not 0.5 <= scale <= 1.2:
-            print(f"[WARN] net scale {scale:.2f} is outside the measured working band "
-                  f"(0.5-1.2, flat within it); detection is zero by ~1.8")
+            log_board.warning("Net scale %.2f is outside the measured working band (0.5-1.2, flat "
+                              "within it); detection is zero by ~1.8", scale,
+                              extra={"net_scale": round(scale, 2)})
         registration = Registration(view, base, template_mask, source.when)
         loop = cls(source, model, view, base, imgsz, conf, registration, device)
         loop.net_scale = scale
@@ -1789,8 +1804,9 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
 
     processed = loop.processed
     if persistence.lost:
-        print(f"[WARN] Board lost on {len(persistence.lost)} frame(s); excluded from "
-              f"persistence, and a window mostly lost confirms nothing (#110)")
+        log_run.warning("Board lost on %d frame(s); excluded from persistence, and a window "
+                        "mostly lost confirms nothing (#110)", len(persistence.lost),
+                        extra={"frames_lost": len(persistence.lost)})
 
     # A short read is not a crash. The interpreter is alive, the window is simply
     # shorter than asked for, and the frames never read must not lengthen the
@@ -1798,8 +1814,8 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
     # stopped is unconfirmable, exactly as one running past --end is. A stream
     # has no end to fall short of.
     if not loop.live and processed < n_frames:
-        print(f"[WARN] truncated: processed {processed} of {n_frames} requested "
-              f"frames; confirmation is measured against what was read")
+        log_run.warning("Truncated: processed %d of %d requested frames; confirmation is "
+                        "measured against what was read", processed, n_frames)
 
     # Registration error on stationary marks. Each residual is the distance from
     # a detection to the baseline mark it matched — same physical mark, so the
@@ -2237,6 +2253,8 @@ if __name__ == "__main__":
                         "else CPU, never MPS")
     manifest.add_flag(p)
     a = p.parse_args()
+    # The console only: a command-line run is not the range's (detection/logs.py)
+    logs.configure(to_file=False)
     if _is_stream(a.video):
         if a.start is not None or a.end is not None or a.out:
             p.error("a stream takes no --start, --end or --out: it can be neither "

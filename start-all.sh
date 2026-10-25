@@ -34,6 +34,9 @@ if lsof -a -c postgres -iTCP:5432 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "[start-all] a local Postgres holds port 5432: brew services stop postgresql@17" >&2
   exit 1
 fi
+# The log folder is made here, as this user, before Docker would make it as
+# root: the services below write their logs into it
+(cd "$ROOT/WebApp" && mkdir -p "${KANAT_LOG_DIR:-logs}")
 docker compose -f "$ROOT/WebApp/docker-compose.yml" up -d --wait
 (cd "$ROOT/WebApp/backend" && uv run alembic upgrade head)
 

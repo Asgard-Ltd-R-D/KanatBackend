@@ -14,18 +14,21 @@ bound to its Session, on the unchanged v1 contract.
 """
 import argparse
 import json
+import logging
 import signal
 import threading
 import time
-import traceback
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import cv2
 
+from detection import logs, webapp
 from detection import new_bullet_holes as nbh
-from detection import webapp
+
+log = logging.getLogger("detection.service")
 
 # The control API's port unless --port says otherwise: beside the backend's 8000,
 # and clear of MediaMTX's, whose RTP and RTCP default to UDP 8000 and 8001.
@@ -111,12 +114,18 @@ class DetectionService:
             run = self._run
             if run is None:
                 run = self._run = _Run(session_id)
-                print(f"[SERVICE] Session {session_id}: starting on {nbh._redacted(stream_url)}")
+                logs.current_session = session_id
+                log.info("Run starting on %s", nbh._redacted(stream_url),
+                         extra={"stream_url": nbh._redacted(stream_url)})
                 threading.Thread(target=self._work, args=(run, stream_url), daemon=True,
                                  name=f"Run {session_id}").start()
             elif run.session_id != session_id:
+                # Filed under the Session refused, not the active Run's
+                log.warning("Run refused for session %s: another Session's Run is active", session_id,
+                            extra={"session_id": session_id, "active_session_id": run.session_id})
                 return 409, {"detail": "another Session's Run is active", "run": run.view()}
         if not run.ready.wait(max(0.0, run.deadline - time.monotonic())):
+            log.error("Run not watching within %g s: no baseline was built, so it is ended", START_TIMEOUT_S)
             self._end(run)
             return 502, {"detail": f"not watching within {START_TIMEOUT_S:g} s: "
                                    f"no baseline was built"}
@@ -138,6 +147,7 @@ class DetectionService:
             run = self._run
             if run is None or run.session_id != session_id:
                 return 404, {"detail": "no such Run"}
+        log.info("Run ending: judging the Candidates it has open, then draining its posts")
         self._end(run)
         return 200, {"session_id": session_id, "state": "ended", "baseline_view": run.baseline_view,
                      **run.watched()}
@@ -177,14 +187,15 @@ class DetectionService:
                             watching=lambda view, marks: self._watching(run, view, marks))
         except BaseException as error:   # SystemExit too: how a Run's open fails
             run.error = str(error) or type(error).__name__
-            print(f"[SERVICE] Session {run.session_id}: the Run failed: {run.error}")
-            if not isinstance(error, SystemExit):
-                traceback.print_exc()
+            # A SystemExit is how a Stream that cannot be opened or read says
+            # so: its message is the whole story, with no traceback to add
+            log.error("Run failed: %s", run.error, exc_info=not isinstance(error, SystemExit))
         finally:
+            log.info("Run ended")
             with self._lock:
                 if self._run is run:
                     self._run = None
-            print(f"[SERVICE] Session {run.session_id}: the Run has ended")
+                    logs.current_session = None
             run.ready.set()
             run.ended.set()
 
@@ -194,7 +205,8 @@ class DetectionService:
             run.baseline_marks, run.baseline_view = len(marks), baseline_view
             if run.state == "starting":
                 run.enter("watching")
-        print(f"[SERVICE] Session {run.session_id}: watching, {len(marks)} Baseline Mark(s)")
+        log.info("Run watching, %d Baseline Mark(s) on the Board", len(marks),
+                 extra={"baseline_marks": len(marks)})
         run.ready.set()
 
 
@@ -263,6 +275,10 @@ def serve(service, port=DEFAULT_PORT):
             else:
                 self._answer(404, {"detail": "no such resource"})
 
+        def log_message(self, format, *args):
+            # Each request, the backend's status read every 5 s included
+            log.debug(format, *args)
+
         def _answer(self, status, body):
             data = json.dumps(body).encode()
             self.send_response(status)
@@ -282,16 +298,23 @@ if __name__ == "__main__":
     p.add_argument("--model", default=nbh.DEFAULT_MODEL)
     p.add_argument("--backend-url", default="http://localhost:8000",
                    help="WebApp backend base URL (default: http://localhost:8000)")
+    p.add_argument("--log-dir", type=Path, default=None,
+                   help=f"where to write {logs.LOG_FILE} (default: KANAT_LOG_DIR, "
+                        "else the repo's WebApp/logs when it exists)")
     a = p.parse_args()
+    log_file = logs.configure(a.log_dir)
+    log.info("Loading the detector %s", a.model, extra={"log_file": str(log_file)})
     service = DetectionService(nbh.load_model(a.model), a.backend_url)
     server = serve(service, a.port)
-    print(f"[SERVICE] control API on http://127.0.0.1:{a.port}, detector {a.model}; "
-          f"SIGINT or SIGTERM ends any Run as an end does, then the service")
+    log.info("Detection Service started: control API on http://127.0.0.1:%d; SIGINT or SIGTERM "
+             "ends any Run as an end does, then the service", a.port,
+             extra={"port": a.port, "model": a.model, "backend_url": a.backend_url})
     signal.signal(signal.SIGTERM, signal.default_int_handler)   # a stop, as Ctrl-C is
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        log.info("Detection Service stopping")
         server.server_close()
         service.close()

@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 import uuid
@@ -9,6 +10,8 @@ from app.models import Camera
 from app.repositories import cameras as repo
 from app.schemas.camera import CameraInput, CameraResponse
 from app.services import mediamtx
+
+log = logging.getLogger(__name__)
 
 
 def get_camera_or_404(camera_id: uuid.UUID, db: DBSession) -> Camera:
@@ -28,6 +31,8 @@ def list_cameras(db: DBSession) -> list[Camera]:
 STALE_S = 10
 _traffic: dict[str, tuple[int, float | None]] = {}
 _traffic_lock = threading.Lock()
+# The paths the sync loop last saw video arriving on, so a change is logged once
+_arriving: set[str] = set()
 
 
 def receiving(paths: dict[str, dict]) -> set[str]:
@@ -56,8 +61,15 @@ def receiving(paths: dict[str, dict]) -> set[str]:
 
 def watch_traffic() -> None:
     """Takes a look at every path's counter (camera_sync's loop), so a status
-    asked for later already has something to compare with."""
-    receiving(mediamtx.path_states())
+    asked for later already has something to compare with, and logs each
+    camera whose video starts or stops arriving."""
+    global _arriving
+    live = receiving(mediamtx.path_states())
+    for path in sorted(live - _arriving):
+        log.info("Video arriving from '%s'", path, extra={"camera": path})
+    for path in sorted(_arriving - live):
+        log.warning("Video stopped arriving from '%s'", path, extra={"camera": path, "stale_s": STALE_S})
+    _arriving = live
 
 
 def with_status(cameras: list[Camera]) -> list[CameraResponse]:
@@ -80,6 +92,13 @@ def with_status(cameras: list[Camera]) -> list[CameraResponse]:
     return out
 
 
+def _fields(camera: Camera) -> dict:
+    return {
+        "camera": camera.alias, "mcast_ip": camera.mcast_ip, "mcast_port": camera.mcast_port,
+        "iface": camera.iface, "enabled": camera.enabled,
+    }
+
+
 def _save(camera: Camera, body: CameraInput, db: DBSession) -> Camera:
     camera.alias = body.alias
     camera.mcast_ip = str(body.mcast_ip)
@@ -93,7 +112,9 @@ def _save(camera: Camera, body: CameraInput, db: DBSession) -> Camera:
 
 
 def create_camera(body: CameraInput, db: DBSession) -> Camera:
-    return _save(Camera(id=uuid.uuid4()), body, db)
+    camera = _save(Camera(id=uuid.uuid4()), body, db)
+    log.info("Camera '%s' added", camera.alias, extra=_fields(camera))
+    return camera
 
 
 def update_camera(camera_id: uuid.UUID, body: CameraInput, db: DBSession) -> Camera:
@@ -106,8 +127,17 @@ def update_camera(camera_id: uuid.UUID, body: CameraInput, db: DBSession) -> Cam
             status_code=409,
             detail="A camera's name cannot be changed: it names its stream and recordings. Add a new camera instead.",
         )
-    return _save(camera, body, db)
+    before = _fields(camera)
+    camera = _save(camera, body, db)
+    after = _fields(camera)
+    changed = {key: {"from": before[key], "to": after[key]} for key in after if before[key] != after[key]}
+    if changed:
+        log.info("Camera '%s' changed: %s", camera.alias, ", ".join(changed), extra={**after, "changes": changed})
+    return camera
 
 
 def delete_camera(camera_id: uuid.UUID, db: DBSession) -> None:
-    repo.delete(db, get_camera_or_404(camera_id, db))
+    camera = get_camera_or_404(camera_id, db)
+    fields = _fields(camera)
+    repo.delete(db, camera)
+    log.info("Camera '%s' deleted", fields["camera"], extra=fields)

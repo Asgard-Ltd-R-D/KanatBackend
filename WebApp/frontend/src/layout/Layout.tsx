@@ -1,8 +1,10 @@
-import { NavLink, Outlet } from 'react-router-dom'
-import { ReactNode } from 'react'
-import { Crosshair, LayoutList, Settings as SettingsIcon, Sun, Moon } from 'lucide-react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { ReactNode, useEffect } from 'react'
+import { Crosshair, LayoutList, ScrollText, Settings as SettingsIcon, Sun, Moon } from 'lucide-react'
 import clsx from 'clsx'
+import { ErrorBoundary } from '../components/UI/ErrorBoundary'
 import { useDarkMode } from '../hooks/useDarkMode'
+import { log } from '../utils/logger'
 import { ConnectionStatus } from './ConnectionStatus'
 
 function NavItem({ to, icon, label, end = false }: { to: string; icon: ReactNode; label: string; end?: boolean }) {
@@ -27,6 +29,11 @@ function NavItem({ to, icon, label, end = false }: { to: string; icon: ReactNode
 
 export function Layout() {
   const { dark, toggle } = useDarkMode()
+  const { pathname } = useLocation()
+
+  useEffect(() => {
+    log.info('Page opened', { path: pathname })
+  }, [pathname])
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-[#020617]">
@@ -52,6 +59,7 @@ export function Layout() {
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-1">
           <NavItem to="/" icon={<LayoutList size={16} />} label="Sessions" end />
+          <NavItem to="/logs" icon={<ScrollText size={16} />} label="Logs" />
           <NavItem to="/settings" icon={<SettingsIcon size={16} />} label="Settings" />
         </nav>
 
@@ -72,7 +80,10 @@ export function Layout() {
 
       {/* Main */}
       <main className="flex-1 overflow-y-auto">
-        <Outlet />
+        {/* Keyed by page, so opening another page clears a crash */}
+        <ErrorBoundary key={pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   )

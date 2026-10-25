@@ -122,12 +122,15 @@ def test_a_registered_frame_resets_the_count(monkeypatch):
     assert _reanchored(reg) == []
 
 
-def test_each_re_anchor_is_reported_and_counted_at_the_end(monkeypatch, capsys):
+def test_each_re_anchor_is_logged_and_counted_at_the_end(monkeypatch, capsys, caplog):
+    caplog.set_level("INFO")
     reg = _registration(monkeypatch, lambda i: False, reanchors=lambda i: i == 2 * N + 1)
     _register(reg, 2 * N + 2)
     reg.report()
     out = capsys.readouterr().out
-    lines = [l for l in out.splitlines() if "[REGISTRATION] re-anchor at" in l]
+    records = [r for r in caplog.records if r.getMessage().startswith("Re-anchor at")]
+    assert [r.levelname for r in records] == ["WARNING", "INFO"]   # failed, then registered
+    lines = [r.getMessage() for r in records]
     assert len(lines) == 2
     assert f"frame {N + 1}" in lines[0] and f"after {N} lost" in lines[0]
     assert "failed" in lines[0]

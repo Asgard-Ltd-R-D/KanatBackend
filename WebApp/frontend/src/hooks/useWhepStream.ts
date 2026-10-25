@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { whepConnect, whepDisconnect } from '../api/whep'
 import { StreamStatus } from '../types'
+import { log } from '../utils/logger'
 
 // How long a dropped connection may stay down before we report it as lost
 const STALL_MS = 5000
@@ -19,9 +20,23 @@ export function useWhepStream(path: string) {
   const [status, setStatus] = useState<StreamStatus>('loading')
   const [reason, setReason] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  // The problem last logged: a camera that stays down retries every RETRY_MS,
+  // and only a new reason, or the video coming back, is logged again
+  const problem = useRef<string | null>(null)
+
+  // Another camera in the same player: its problems are its own
+  useEffect(() => {
+    problem.current = null
+  }, [path])
 
   const reconnect = useCallback(() => setAttempt((a) => a + 1), [])
-  const onPlaying = useCallback(() => setStatus('playing'), [])
+  const onPlaying = useCallback(() => {
+    setStatus('playing')
+    if (problem.current !== null) {
+      log.info(`Camera '${path}': video playing again`, { camera: path, after: problem.current })
+      problem.current = null
+    }
+  }, [path])
 
   useEffect(() => {
     setStatus('loading')
@@ -57,6 +72,10 @@ export function useWhepStream(path: string) {
 
     const fail = (why: string) => {
       if (closed || retryTimer) return
+      if (problem.current !== why) {
+        log.warning(`Camera '${path}': ${why}`, { camera: path, reason: why, retry_in_s: RETRY_MS / 1000 })
+        problem.current = why
+      }
       setReason(why)
       setStatus('error')
       retryTimer = setTimeout(() => setAttempt((a) => a + 1), RETRY_MS)

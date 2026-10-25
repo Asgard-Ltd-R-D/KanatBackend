@@ -16,9 +16,11 @@ export function registerAppScheme() {
   ])
 }
 
-function contentSecurityPolicy({ apiUrl, mediaUrl }: KanatConfig): string {
+function contentSecurityPolicy({ apiUrl, mediaUrl, grafanaUrl }: KanatConfig): string {
   return [
-    `default-src 'self' ${apiUrl} ${mediaUrl}`,
+    // Grafana: the Logs tab embeds it, and asks it whether it is up
+    `default-src 'self' ${apiUrl} ${mediaUrl} ${grafanaUrl}`,
+    `frame-src ${grafanaUrl}`,
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob:`,
     `script-src 'self' 'unsafe-eval'`,

@@ -4,6 +4,7 @@ import { ApiError } from '../api/client'
 import { openSessionLive } from '../api/live'
 import { getSession } from '../api/sessions'
 import { BulletHole, LiveEvent, Session } from '../types'
+import { log } from '../utils/logger'
 
 // Retries after the backend refuses the stream because the Session is unknown,
 // before giving up. Any other refusal (the database down) is retried until it
@@ -65,10 +66,13 @@ export function useSessionLive(sessionId: string | undefined, enabled: boolean) 
     let reconcileTimer: ReturnType<typeof setTimeout> | undefined
     let unknown = 0
     let stopped = false
+    // Refused since the stream was last open: logged once, then retried quietly
+    let refusedSince: number | null = null
 
     const heard = () => {
       clearTimeout(silenceTimer)
       silenceTimer = setTimeout(() => {
+        log.warning('Live updates went silent; reconnecting', { session_id: sessionId, silent_s: SILENCE_MS / 1000 })
         source?.close()
         connect()
       }, SILENCE_MS)
@@ -90,6 +94,10 @@ export function useSessionLive(sessionId: string | undefined, enabled: boolean) 
       // Also fires after each of the browser's own reconnects
       source.onopen = () => {
         unknown = 0
+        if (refusedSince !== null) {
+          log.info('Live updates back', { session_id: sessionId, refused_s: Math.round((Date.now() - refusedSince) / 1000) })
+          refusedSince = null
+        }
         heard()
         // Catch up on anything that happened before this stream was listening
         reconcile()
@@ -123,6 +131,10 @@ export function useSessionLive(sessionId: string | undefined, enabled: boolean) 
     // The browser does not say why it was refused: ask. The answer also lands
     // in the cache, so a Session that has ended stops this hook.
     const refused = async () => {
+      if (refusedSince === null) {
+        refusedSince = Date.now()
+        log.warning('Live updates refused by the backend', { session_id: sessionId })
+      }
       try {
         await qc.fetchQuery({ queryKey: key, queryFn: () => getSession(sessionId), retry: false })
       } catch (err) {

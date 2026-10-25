@@ -35,7 +35,7 @@ export function Modal({ open, title, subtitle, size = 'md', headerExtra, onClose
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
-            {subtitle && <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{subtitle}</p>}
+            {subtitle && <p className="text-xs text-slate-400 dark:text-slate-400 mt-0.5">{subtitle}</p>}
           </div>
           <div className="flex items-center gap-3">
             {headerExtra}

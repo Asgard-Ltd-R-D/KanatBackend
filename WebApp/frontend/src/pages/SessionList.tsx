@@ -102,12 +102,12 @@ export function SessionList() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-500 uppercase tracking-wider">Session</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-500 uppercase tracking-wider">Date</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-500 uppercase tracking-wider">Duration</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-500 uppercase tracking-wider">Status</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-500 uppercase tracking-wider">Bullets</th>
-              <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-500 uppercase tracking-wider">Actions</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Session</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Date</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Duration</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Status</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Bullets</th>
+              <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">

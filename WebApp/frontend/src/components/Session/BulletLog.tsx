@@ -19,7 +19,7 @@ export function BulletLog({ bullets, onDelete, canReplay, onReplay }: Props) {
       <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
           Bullet Log
-          <span className="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">({bullets.length})</span>
+          <span className="ml-2 text-xs font-normal text-slate-400 dark:text-slate-400">({bullets.length})</span>
         </h2>
       </div>
 
@@ -39,7 +39,7 @@ export function BulletLog({ bullets, onDelete, canReplay, onReplay }: Props) {
               <td colSpan={5} className="py-16 text-center">
                 <div className="flex flex-col items-center gap-3">
                   <Crosshair size={32} className="text-slate-300 dark:text-slate-700" />
-                  <p className="text-slate-500 dark:text-slate-500 text-sm">No bullets recorded</p>
+                  <p className="text-slate-500 dark:text-slate-400 text-sm">No bullets recorded</p>
                 </div>
               </td>
             </tr>

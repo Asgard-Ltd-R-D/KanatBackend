@@ -12,7 +12,7 @@ export function createWindow(isDev: boolean, config: KanatConfig) {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#020617',
+    backgroundColor: '#1e1f22', // slate-950 (tailwind.config.ts): no flash before the page paints
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

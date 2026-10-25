@@ -55,7 +55,8 @@ export function SessionList() {
   })
 
   const totalBullets = sessions?.reduce((s, sess) => s + (sess.status === 'active' ? 0 : (sess.bullet_count ?? 0)), 0) ?? 0
-  const activeSessions = sessions?.filter(s => s.status === 'active').length ?? 0
+  // One active Session at a time: a new one waits until it is completed
+  const active = sessions?.find(s => s.status === 'active')
 
   return (
     <div className="p-8">
@@ -66,7 +67,9 @@ export function SessionList() {
         </div>
         <button
           onClick={() => setShowNew(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors shadow-lg shadow-blue-600/20"
+          disabled={!!active}
+          title={active ? `Session '${active.name}' is still active: complete it first` : undefined}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors shadow-lg shadow-blue-600/20"
         >
           <Plus size={16} />
           New Session
@@ -77,9 +80,8 @@ export function SessionList() {
 
       {/* Stats */}
       {sessions && sessions.length > 0 && (
-        <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-2 gap-4 mb-8">
           <StatTile label="Total Sessions" value={sessions.length} />
-          <StatTile label="Active" value={activeSessions} />
           <StatTile label="Total Bullets" value={totalBullets} />
         </div>
       )}

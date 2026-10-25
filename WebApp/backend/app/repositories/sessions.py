@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession, selectinload
 
 from app.models import BulletHole, RecordingInterval, Session
@@ -65,16 +66,30 @@ def intervals_of_other_sessions(db: DBSession, session_id: uuid.UUID) -> list[Re
     return db.query(RecordingInterval).filter(RecordingInterval.session_id != session_id).all()
 
 
+class SecondActiveSession(Exception):
+    """Another Session became active first: uq_sessions_one_active refused this one."""
+
+
+def _commit(db: DBSession) -> None:
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        if "uq_sessions_one_active" in str(e.orig):
+            raise SecondActiveSession from e
+        raise
+
+
 def add(db: DBSession, session: Session) -> Session:
     db.add(session)
-    db.commit()
+    _commit(db)
     db.refresh(session)
     return session
 
 
 def save(db: DBSession) -> None:
     """Commits the changes made to Sessions loaded from `db`."""
-    db.commit()
+    _commit(db)
 
 
 def delete(db: DBSession, session: Session) -> None:

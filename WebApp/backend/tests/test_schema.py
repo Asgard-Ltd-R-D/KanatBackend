@@ -7,14 +7,19 @@ import uuid
 from pathlib import Path
 
 import pytest
-from alembic import command
 from alembic.config import Config
+from fastapi import HTTPException
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
+from alembic import command
 from app.config.settings import settings
+from app.repositories import sessions as sessions_repo
+from app.schemas.session import SessionCreate, SessionUpdate
 from app.services import cameras as camera_svc
+from app.services import sessions as sessions_svc
 
 URL = os.environ.get("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")
@@ -22,6 +27,7 @@ pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")
 BEFORE_CAMERA_ID = "e5f6a7b8c9d0"
 BEFORE_RUNS = "f6a7b8c9d0e1"
 BEFORE_PLACES = "a7b8c9d0e1f2"
+BEFORE_ONE_ACTIVE = "b8c9d0e1f2a3"
 
 
 @pytest.fixture
@@ -126,3 +132,103 @@ def test_a_run_stored_before_its_places_is_placed_and_watched_as_its_baseline(db
     columns = {c["name"] for c in inspect(engine).get_columns("runs")}
     engine.dispose()
     assert not {"places", "watched_until"} & columns
+
+
+def test_the_database_holds_one_active_session_at_a_time(db_url):
+    command.upgrade(alembic_config(), "head")
+    engine = create_engine(db_url)
+    insert = text("INSERT INTO sessions (id, name, status, started_at) VALUES (:id, :name, :status, now())")
+    with engine.begin() as conn:
+        conn.execute(insert, {"id": uuid.uuid4(), "name": "Range A", "status": "active"})
+        conn.execute(insert, {"id": uuid.uuid4(), "name": "Old", "status": "completed"})
+        conn.execute(insert, {"id": uuid.uuid4(), "name": "Older", "status": "completed"})
+    with pytest.raises(IntegrityError, match="uq_sessions_one_active"), engine.begin() as conn:
+        conn.execute(insert, {"id": uuid.uuid4(), "name": "Range B", "status": "active"})
+    engine.dispose()
+
+
+def test_two_starts_at_once_answer_the_second_one_409(db_url, monkeypatch):
+    """Both pass the service's check before either commits: the database
+    refuses the second, answered as the check would have."""
+    command.upgrade(alembic_config(), "head")
+    engine = create_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO sessions (id, name, status, started_at) "
+                          "VALUES (:id, 'Range A', 'active', now())"), {"id": uuid.uuid4()})
+    list_active = sessions_repo.list_active
+    stale = [[]]   # the first check's answer, as it read just before Range A committed
+    monkeypatch.setattr(sessions_repo, "list_active", lambda db: stale.pop() if stale else list_active(db))
+
+    with DBSession(engine) as db, pytest.raises(HTTPException) as refused:
+        sessions_svc.create_session(SessionCreate(name="Range B"), db)
+    engine.dispose()
+    assert (refused.value.status_code, refused.value.detail) == (409, "Session 'Range A' is still active: complete it first")
+
+
+def test_a_start_refused_by_the_database_after_the_other_completed_is_answered_409(db_url, monkeypatch):
+    """The database refused it while Range A was active, but Range A completed
+    before the refusal was explained: still a 409, not a 500."""
+    command.upgrade(alembic_config(), "head")
+    engine = create_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO sessions (id, name, status, started_at) "
+                          "VALUES (:id, 'Range A', 'active', now())"), {"id": uuid.uuid4()})
+    stale = [[], []]   # both checks read no other active Session
+    monkeypatch.setattr(sessions_repo, "list_active", lambda db: stale.pop())
+
+    with DBSession(engine) as db, pytest.raises(HTTPException) as refused:
+        sessions_svc.create_session(SessionCreate(name="Range B"), db)
+    engine.dispose()
+    assert (refused.value.status_code, refused.value.detail) == (409, "Another Session was active: try again")
+
+
+def test_a_reopen_racing_a_start_is_answered_409(db_url, monkeypatch):
+    command.upgrade(alembic_config(), "head")
+    engine = create_engine(db_url)
+    old = uuid.uuid4()
+    insert = text("INSERT INTO sessions (id, name, status, started_at) VALUES (:id, :name, :status, now())")
+    with engine.begin() as conn:
+        conn.execute(insert, {"id": uuid.uuid4(), "name": "Range A", "status": "active"})
+        conn.execute(insert, {"id": old, "name": "Old", "status": "completed"})
+    list_active = sessions_repo.list_active
+    stale = [[]]
+    monkeypatch.setattr(sessions_repo, "list_active", lambda db: stale.pop() if stale else list_active(db))
+
+    # Not flushed before the commit, as the app's sessions (core/database.py)
+    with DBSession(engine, autoflush=False) as db, pytest.raises(HTTPException) as refused:
+        sessions_svc.update_session(old, SessionUpdate(status="active"), db)
+    with engine.connect() as conn:
+        status = conn.execute(text("SELECT status FROM sessions WHERE id = :id"), {"id": old}).scalar()
+    engine.dispose()
+    assert (refused.value.status_code, refused.value.detail) == (409, "Session 'Range A' is still active: complete it first")
+    assert status == "completed"
+
+
+def test_the_one_active_session_migration_refuses_several_active_naming_them(db_url):
+    config = alembic_config()
+    command.upgrade(config, BEFORE_ONE_ACTIVE)
+    engine = create_engine(db_url)
+    insert = text("INSERT INTO sessions (id, name, status, started_at) "
+                  "VALUES (:id, :name, 'active', now() - make_interval(mins => :ago))")
+    with engine.begin() as conn:
+        conn.execute(insert, {"id": uuid.uuid4(), "name": "Range A", "ago": 10})
+        conn.execute(insert, {"id": uuid.uuid4(), "name": "Range B", "ago": 5})
+
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO recording_intervals (id, session_id, started_at) "
+                          "SELECT gen_random_uuid(), id, now() FROM sessions"))
+
+    with pytest.raises(RuntimeError, match=r"2 Sessions are active \(Range A, Range B\)") as refused:
+        command.upgrade(config, "head")
+    # The command it names completes all but the latest, as the app would
+    sql = str(refused.value).split('-c "')[1].split('"\n')[0]
+    with engine.begin() as conn:
+        conn.execute(text(sql))
+        left = conn.execute(text("SELECT s.name, s.status, s.ended_at IS NULL, i.ended_at IS NULL FROM sessions s "
+                                 "JOIN recording_intervals i ON i.session_id = s.id ORDER BY s.name")).all()
+    assert left == [("Range A", "completed", False, False), ("Range B", "active", True, True)]
+    command.upgrade(config, "head")
+    command.downgrade(config, BEFORE_ONE_ACTIVE)
+    indexes = {i["name"] for i in inspect(engine).get_indexes("sessions")}
+    engine.dispose()
+    assert "uq_sessions_one_active" not in indexes

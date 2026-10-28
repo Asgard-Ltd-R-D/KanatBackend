@@ -45,7 +45,7 @@ import numpy as np
 
 from detection import board
 from detection import new_bullet_holes as nbh
-from tools import evaluate, manifest
+from tools import evaluate
 
 PATCH = 10        # half-size of a mark's patch, frame px: a hole plus its rim
 SEARCH = 12       # how far from the predicted position to look, frame px
@@ -251,8 +251,6 @@ if __name__ == "__main__":
     p.add_argument("--cut-marks", action="store_true",
                    help="runtime mode: cut the measured marks out of the ECC region")
     a = p.parse_args()
-    # No --final-run: this is an investigation, never the sealed measurement.
-    manifest.gate(a.video, False, None, "registration_reach.py")
 
     _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
     span = board.contour_span(board.template_contour(template_mask))

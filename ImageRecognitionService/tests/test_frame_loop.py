@@ -840,19 +840,32 @@ def test_a_live_run_reports_its_rate_and_the_frames_it_looked_at(monkeypatch, ca
     assert f"[LIVE] {len(looked)} frame(s) looked at;" in out
 
 
-def test_a_stream_bypasses_the_manifest_gate(monkeypatch):
-    """rtsps too: gated as a file, its URL reached a traceback, password and all."""
-    monkeypatch.setattr(nbh.manifest, "authorise",
-                        lambda *args, **kwargs: pytest.fail("a stream was gated"))
+def test_a_stream_is_never_looked_up_in_the_manifest(monkeypatch):
+    """rtsps too: hashed as a file, its URL reached a traceback, password and all."""
+    monkeypatch.setattr(nbh.manifest, "lookup",
+                        lambda *args, **kwargs: pytest.fail("a stream was looked up"))
     for url in ("rtsp://mtx:8554/cam", "rtsps://operator:secret@mtx:8322/cam"):
-        assert nbh._gate(url, False, "model.pt") is None
+        assert nbh._print_scale(url, None, {"x": 0.2}) is None
+        assert nbh._print_scale(url, 0.3, {"x": 0.2}) == 0.3
 
 
-def test_an_unregistered_file_is_still_refused(tmp_path):
+def test_an_unregistered_file_runs_without_millimetres_and_says_why(tmp_path, capsys):
+    """ADR-0010: no file is refused. Unlisted, it has no Capture Setup, so no
+    print scale unless --mm-per-px gives one."""
     clip = tmp_path / "clip.mkv"
     clip.write_bytes(b"in no manifest")
-    with pytest.raises(SystemExit, match=r"\[REFUSED\]"):
-        nbh._gate(str(clip), False, "model.pt")
+    assert nbh._print_scale(str(clip), None, {"x": 0.2}) is None
+    assert "no Capture Setup" in capsys.readouterr().out
+    assert nbh._print_scale(str(clip), 0.3, {"x": 0.2}) == 0.3
+
+
+def test_a_listed_file_takes_its_capture_setups_print_scale(tmp_path, monkeypatch):
+    clip = tmp_path / "renamed.mkv"
+    clip.write_bytes(b"listed bytes")
+    entries = {nbh.manifest.content_hash(str(clip)): {"capture_setup": "x"}}
+    monkeypatch.setattr(nbh.manifest, "load", lambda: entries)
+    assert nbh._print_scale(str(clip), None, {"x": 0.2}) == 0.2
+    assert nbh._print_scale(str(clip), 0.3, {"x": 0.2}) == 0.3
 
 
 def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd, caplog):

@@ -1,15 +1,14 @@
-"""Background negatives from unsealed footage: gravel tiles with empty label files.
+"""Background negatives from footage: gravel tiles with empty label files.
 
 86% of raw detections land on gravel — dark specks on a light ground, which the
 training set never contained as a negative (ADR-0003). The fix is images with
-no annotation. This makes them from spent and threshold-work footage — the
-sources ADR-0005 allows — and makes them safely:
+no annotation. This makes them from any recording (ADR-0010), and makes them
+safely:
 
-- **Sealed footage is refused outright.** Every recording is looked up in the
-  manifest by content hash; a sealed one stops the run, and unlike scoring
-  there is no `--final-run` — a final run measures once, mining trains on it,
-  and a checkpoint cannot un-see it (ADR-0005). An unallocated one stops it too,
-  and so does one in `sealed_runs.log`, whatever its role now says (#63).
+- **Every recording is looked up in the manifest by content hash**, for its
+  Capture Setup. One the manifest does not list is mined all the same, with
+  none. A checkpoint trained on a Capture Setup's gravel makes every result on
+  that setup regression, never unseen (ADR-0010).
 - **The image is the one the runtime shows the model**: the rectified Board
   canvas at detection scale, cut into `TILE_PX` tiles so training does not
   rescale it. `TILE_PX` is the checkpoint's training `imgsz`.
@@ -21,8 +20,10 @@ sources ADR-0005 allows — and makes them safely:
 - **Sparse.** One frame per `STEP_S`, and a tile that nearly repeats one already
   kept from the same Capture Setup is dropped: a static camera over static
   gravel is one image, however many frames — or files — show it.
-- **Auditable.** `sources.csv` names the recording, hash, Capture Setup, role,
-  frame and tile of every negative written. It is committed; the images are not.
+- **Auditable.** `sources.csv` names the recording, hash, Capture Setup,
+  frame and tile of every negative written. It is committed; the images are
+  not. The committed one also carries each recording's role from when sealing
+  stood, as history.
 
 The manifest's analysis `window` is not used. It bounds what is scored, and a
 negative is scored against nothing: gravel is gravel anywhere in the clip.
@@ -76,32 +77,14 @@ MAX_CANVAS_PX = 4096     # beyond this the Board fit is wrong, not merely large
 MIN_CORRELATION = 0.80   # PROVISIONAL
 THUMB_PX = 32            # near-duplicate comparison size; see DUP_MAD
 
-SOURCE_FIELDS = ["image", "sha256", "file", "capture_setup", "role", "frame",
+SOURCE_FIELDS = ["image", "sha256", "file", "capture_setup", "frame",
                  "time_s", "x", "y", "w", "h", "ground_fraction"]
 
 
-def refuse_sealed(entries, sha, log_path=manifest.RUN_LOG_PATH):
-    """The manifest entry, if the recording may be mined. Sealed never may, nor
-    may a recording in the run log, whatever its role now says (#63).
-
-    Not `manifest.check_allowed`: its refusal offers `--final-run`, and here
-    there is none to offer. Role lookup, and its errors, are the manifest's.
-    """
-    role = manifest.role_for(entries, sha)
-    earlier = manifest.previous_look(sha, log_path)
-    if earlier:
-        raise SystemExit(
-            f"[REFUSED] sha256 {sha} was measured on {earlier[0]} at commit "
-            f"{earlier[1]} ({os.path.basename(log_path)}). A measured recording "
-            "stays sealed whatever its manifest role (ADR-0005), and no pixel "
-            "of it may become a negative.")
-    if role == manifest.SEALED:
-        raise SystemExit(
-            f"[REFUSED] sha256 {sha} is sealed held-out footage (ADR-0005). No "
-            "pixel of it may become a negative, not even gravel with an empty "
-            "label: the background is the domain shift the sealed set measures, "
-            "and a checkpoint cannot un-see it. There is no flag for this.")
-    return entries[sha]
+def source(entries, sha, video):
+    """The manifest entry for `sha`, or for a recording it does not list, one
+    naming the file with no Capture Setup (ADR-0010)."""
+    return entries.get(sha) or {"file": os.path.basename(video), "capture_setup": ""}
 
 
 def ground_mask(canvas):
@@ -258,14 +241,14 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
             cv2.imwrite(os.path.join(out, "images", name + ".jpg"), tile)
             open(os.path.join(out, "labels", name + ".txt"), "w").close()
             writer.writerow({"image": name + ".jpg", "sha256": sha, "file": entry["file"],
-                             "capture_setup": entry["capture_setup"], "role": entry["role"],
+                             "capture_setup": entry["capture_setup"],
                              "frame": index, "time_s": f"{index / fps:.2f}",
                              "x": x, "y": y, "w": region.shape[1], "h": region.shape[0],
                              "ground_fraction": f"{fraction:.3f}"})
     cap.release()
     if index < 0:
         raise SystemExit(f"[FAILED] {video} opened but yielded no frame")
-    print(f"[MINE] {os.path.basename(video)} ({entry['capture_setup']}, {entry['role']}): "
+    print(f"[MINE] {os.path.basename(video)} ({entry['capture_setup'] or 'no Capture Setup'}): "
           f"{written} negative(s) from {looked} sampled frame(s); "
           f"{repeats} tile(s) repeating its Capture Setup; "
           f"{unusable} without a usable Board, {failed} failed to register"
@@ -275,7 +258,7 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser("Background negatives from spent and threshold-work footage")
+    p = argparse.ArgumentParser("Background negatives from gravel in any recording")
     p.add_argument("video", nargs="+")
     p.add_argument("--out", required=True, help="a new or empty directory")
     p.add_argument("--step", type=float, default=STEP_S, help="seconds between sampled frames")
@@ -284,16 +267,11 @@ if __name__ == "__main__":
 
     if os.path.isdir(a.out) and os.listdir(a.out):
         p.error(f"{a.out} is not empty; sources.csv must list every image beside it")
-    # Every recording is cleared before any is read: a sealed one late in the
-    # list must not arrive after the others have already been mined.
     entries = manifest.load()
-    cleared = []
+    sources = []
     for v in a.video:
         sha = manifest.content_hash(v)
-        try:
-            cleared.append((v, sha, refuse_sealed(entries, sha)))
-        except manifest.ManifestError as why:
-            raise SystemExit(f"[REFUSED] {os.path.basename(v)}: {why}")
+        sources.append((v, sha, source(entries, sha, v)))
 
     template = cv2.imread(a.template)
     _, template_mask = board.find_targets(template, min_area=1)
@@ -303,7 +281,9 @@ if __name__ == "__main__":
         writer = csv.DictWriter(f, SOURCE_FIELDS)
         writer.writeheader()
         kept = {}   # Capture Setup -> thumbnails written
+        # An unlisted recording is its own Capture Setup: whose gravel it
+        # repeats is unknown.
         total = sum(mine(v, sha, entry, a.out, writer, template_mask,
-                         kept.setdefault(entry["capture_setup"], []), a.step)
-                    for v, sha, entry in cleared)
+                         kept.setdefault(entry["capture_setup"] or sha, []), a.step)
+                    for v, sha, entry in sources)
     print(f"[MINE] {total} negative(s) in {a.out}")

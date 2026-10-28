@@ -119,21 +119,6 @@ def two_ranges(range_1, range_2):
              3 in {j for j, _ in range_2["in_baseline"]})]
 
 
-def refuse_sealed(files, entries):
-    """Refuse the run if the manifest makes any of `files` Sealed, or knows
-    one not at all: by role and file name, before anything is opened, so a
-    refusal never comes hours in (ADR-0005). The gate still rules on each
-    Recording's content as it is scored."""
-    roles = {e["file"]: manifest.role_for(entries, sha)
-             for sha, e in entries.items() if e["file"] in files}
-    for file in sorted(files):
-        if file not in roles:
-            raise manifest.NotInManifest(f"{file} is in no manifest entry")
-        if roles[file] == manifest.SEALED:
-            raise manifest.Sealed(f"{file} is Sealed (ADR-0005): its one measurement is "
-                                  f"never spent on a synthetic case")
-
-
 class _Tee:
     """Every write to each of `streams`: the terminal and a file."""
     def __init__(self, *streams):
@@ -162,10 +147,10 @@ def score(case, stride, label, out, move=None):
         r = evaluate.score_recording(
             os.path.join(position_error.VIDEO_DIR, case.file), case.start, case.end,
             position_error.truth_dir({"file": case.file}), stride=stride, move=move)
-    # Chosen by file name, gated by content: the window and truth are this file's.
-    if r["entry"]["file"] != case.file:
-        raise SystemExit(f"[REFUSED] {case.file} holds the bytes of {r['entry']['file']} "
-                         f"in the manifest; its window and truth folder would be wrong")
+    # Chosen by file name, looked up by content: the window and truth are this file's.
+    if (r["entry"] or {}).get("file") != case.file:
+        raise SystemExit(f"[REFUSED] {case.file} does not hold the bytes the manifest "
+                         f"lists under that name; its window and truth folder would be wrong")
     return r
 
 
@@ -240,13 +225,6 @@ if __name__ == "__main__":
         help="where every run's printed output is kept")
     a = p.parse_args()
     names = a.case or [*CASES, TWO_RANGES]
-
-    files = {CASES[n].file for n in names if n in CASES}
-    files |= {c.file for c in RANGES} if TWO_RANGES in names else set()
-    try:
-        refuse_sealed(files, manifest.load())
-    except manifest.ManifestError as why:
-        raise SystemExit(f"[REFUSED] {why}")
     os.makedirs(a.out, exist_ok=True)
 
     moved, ranges = [], []

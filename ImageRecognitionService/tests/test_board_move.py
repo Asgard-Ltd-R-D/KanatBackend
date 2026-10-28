@@ -3,8 +3,7 @@ import math
 
 import pytest
 
-from tools import manifest
-from tools.board_move import compare, refuse_sealed, two_ranges
+from tools.board_move import compare, two_ranges
 from tools.evaluate import DETECTOR, DISPLACEMENT, UNKNOWN
 
 
@@ -87,20 +86,3 @@ def test_a_bullet_hole_reported_before_it_was_fired_fails():
     assert failed == ["Range 1 reports truth #3, and no other"]
 
 
-def _entry(file, role):
-    return {"file": file, "role": role, "capture_setup": "x", "window": [0, 1]}
-
-
-ENTRIES = {"a": _entry("CamB_1.mkv", "spent"), "b": _entry("CamB_2.mkv", "sealed"),
-           "c": _entry("CamA_3.mkv", "threshold-work")}
-
-
-def test_cases_on_unsealed_recordings_are_let_through():
-    refuse_sealed({"CamB_1.mkv", "CamA_3.mkv"}, ENTRIES)
-
-
-@pytest.mark.parametrize("files", [{"CamB_1.mkv", "CamB_2.mkv"}, {"CamB_1.mkv", "CamA_9.mkv"}])
-def test_a_sealed_or_unallocated_recording_is_refused_before_anything_is_opened(files):
-    """The recordings do not exist here: the refusal must not need them."""
-    with pytest.raises(manifest.ManifestError):
-        refuse_sealed(files, ENTRIES)

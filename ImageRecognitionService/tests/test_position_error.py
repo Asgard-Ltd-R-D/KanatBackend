@@ -2,7 +2,6 @@
 import numpy as np
 import pytest
 
-from tools.manifest import ManifestError
 from tools.position_error import select, summarise
 
 # (dX, dY, radial) mm, as `evaluate.position_errors` gives them. The third sits
@@ -34,29 +33,14 @@ def test_nothing_matched_is_no_statistic():
     assert summarise(np.zeros((0, 3)), []) == {"n": 0, "on_target": 0}
 
 
-def _entry(file, role):
-    return {"file": file, "role": role, "capture_setup": "x", "window": [0, 1]}
+def _entry(file):
+    return {"file": file, "capture_setup": "x", "window": [0, 1]}
 
 
-def test_sealed_recordings_are_skipped_by_role_before_anything_is_opened(tmp_path):
-    """The recordings do not exist here: choosing must not need to open them
-    (ADR-0005). A Sealed one with a truth folder is skipped and named; one with
-    no truth folder is not a candidate at all."""
-    for name in ("camb-1", "camb-2", "cama-3"):
-        (tmp_path / name).mkdir()
-    entries = {"a": _entry("CamB_1.mkv", "sealed"),
-               "b": _entry("CamB_2.mkv", "threshold-work"),
-               "c": _entry("CamA_3.mkv", "spent"),
-               "d": _entry("CamA_4.mkv", "spent"),
-               "e": _entry("CamA_5.mkv", "sealed")}
-    chosen, sealed = select(entries, str(tmp_path))
-    assert [e["file"] for e in chosen] == ["CamA_3.mkv", "CamB_2.mkv"]
-    assert sealed == ["CamB_1.mkv"]
-
-
-def test_a_mistyped_role_is_refused_not_read_as_unsealed(tmp_path):
-    """`"Sealed"` is one shift key from `"sealed"`; a guard that lets through
-    what it does not recognise fails open (manifest.py)."""
+def test_every_recording_with_a_truth_folder_is_scored(tmp_path):
+    """Nothing is skipped by role any more (ADR-0010), the CamB wide pair
+    included; one with no truth folder is not scored."""
     (tmp_path / "camb-1").mkdir()
-    with pytest.raises(ManifestError):
-        select({"a": _entry("CamB_1.mkv", "Sealed")}, str(tmp_path))
+    (tmp_path / "cama-3").mkdir()
+    entries = {"a": _entry("CamB_1.mkv"), "b": _entry("CamB_2.mkv"), "c": _entry("CamA_3.mkv")}
+    assert select(entries, str(tmp_path)) == [entries["c"], entries["a"]]

@@ -434,6 +434,7 @@ def test_an_unlisted_recording_runs_in_template_px_and_says_why(monkeypatch, cap
     so no print scale unless --mm-per-px gives one."""
     monkeypatch.setattr(manifest, "lookup", lambda video: None)
     monkeypatch.setattr(cv2, "VideoCapture", _Clip25)
+    monkeypatch.setattr(nbh, "load_model", lambda path: None)
     monkeypatch.setattr(nbh.RegisteredFrames, "open", _opened)
     with pytest.raises(_Opened):
         score_recording("clip.mkv", 20, 46, "truth")
@@ -456,6 +457,7 @@ def test_a_listed_capture_setup_without_a_print_scale_is_still_refused(monkeypat
     monkeypatch.setattr(board, "print_scales", lambda: {})
     monkeypatch.setattr(manifest, "lookup",
                         lambda video: {"capture_setup": "setup", "fps": 25.0})
+    monkeypatch.setattr(nbh, "load_model", lambda path: None)
     monkeypatch.setattr(nbh.RegisteredFrames, "open", _opened)
     with pytest.raises(SystemExit, match="no print scale"):
         score_recording("clip.mkv", 20, 46, "truth")

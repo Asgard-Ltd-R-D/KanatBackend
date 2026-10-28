@@ -42,6 +42,14 @@ above the matching tolerance (40 template px, ≈ 7.1 mm radial) appear only as
 an unmatched detection plus a missed Bullet Hole. No compliance verdict: the
 acceptance statistic is the customer's to confirm."""
 
+# ADR-0010's label, stated by hand: no tool can know what was in view when the
+# commit was chosen. Change it when a recording of an unseen Capture Setup gains
+# truth.
+FOOTAGE = """\
+   Footage: REGRESSION, every recording (ADR-0010). Each one's Capture Setup was
+   in view when this commit's model and constants were chosen, so this shows a
+   change broke nothing here, not that it generalises."""
+
 
 def truth_dir(entry, root=TRUTH_DIR):
     """`CamB_20260915_102250.mkv` -> `<root>/camb-20260915-102250`."""
@@ -124,6 +132,7 @@ if __name__ == "__main__":
     print(f"\n\n[POSITION ERROR REPORT] SOW 2.3.2 stage 1, stride {stride}"
           + (" (LIVE_STRIDE, the headline)" if stride == nbh.LIVE_STRIDE else "")
           + f", {len(scored)} recording(s)")
+    print(FOOTAGE)
     if orphans:
         print(f"[WARN] truth folder(s) no manifest entry maps to, not scored: "
               f"{', '.join(orphans)}")

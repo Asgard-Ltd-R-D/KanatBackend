@@ -1042,7 +1042,8 @@ def _open_source(video, start, ref_time=None):
     return (Stream if _is_stream(video) else Recording).open(video, start, ref_time)
 
 
-def open_board_space(video, start, template_mask, ref_time=None, opener=None):
+def open_board_space(video, start, template_mask, ref_time=None, opener=None,
+                     canvas_shift=0):
     """The source opened at `start` by `opener` (by default `_open_source`),
     its frame 0, the baseline frame, Board space built from that frame, and
     the registration's correlation: `(source, base, view, correlation)`.
@@ -1052,12 +1053,15 @@ def open_board_space(video, start, template_mask, ref_time=None, opener=None):
     #185), the detector probe and the registration-reach tool all come
     through here, so none of them can build it from a different frame. The
     negatives miner's per-frame build is no Run's. It needs no model and
-    prints nothing; the caller closes the source.
+    prints nothing; the caller closes the source. A `canvas_shift` of d
+    Board px translates both canvases (`board.shifted`, #272).
     """
     source, base = (opener or _open_source)(video, start, ref_time)
     view, correlation = board.build_view(base, template_mask)
     if view is None:
         raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
+    if canvas_shift:
+        view = board.shifted(view, canvas_shift)
     return source, base, view, correlation
 
 
@@ -1319,6 +1323,9 @@ class Persistence:
             hole = _judge(candidate, self.looked_at, self.lost, self.persist, self.window,
                           self.unseen)
             if hole is not None:
+                # The Look that judged it: when a run reports it, before the
+                # Change Evidence check (#272).
+                hole["judged_frame"] = processed - 1
                 self._persisted[id(hole)] = (hole, candidate)
                 persisted.append(hole)
         return persisted
@@ -1435,9 +1442,11 @@ class RegisteredFrames:
 
     @classmethod
     def open(cls, video, start, model, conf=DEFAULT_CONFIDENCE,
-             template_path=board.DEFAULT_TEMPLATE, ref_time=None, device=None, opener=None):
+             template_path=board.DEFAULT_TEMPLATE, ref_time=None, device=None, opener=None,
+             canvas_shift=0):
         """The Run on `model`, a detector `load_model` loaded: whoever opens
-        Runs loads it, once for all of them if it likes (#221)."""
+        Runs loads it, once for all of them if it likes (#221). `canvas_shift`
+        is the regression bench's control (`board.shifted`, #272)."""
         template = cv2.imread(template_path)
         if template is None:
             raise SystemExit(f"cannot read Target artwork at {template_path}")
@@ -1447,7 +1456,7 @@ class RegisteredFrames:
         # source, so no model load is in it (#79).
         opened_at = time.perf_counter()
         source, base, view, correlation = open_board_space(video, start, template_mask,
-                                                           ref_time, opener)
+                                                           ref_time, opener, canvas_shift)
         # A disclosure for agreeing what "fast" means with the customer, and
         # never a gate: no bar is agreed (#77).
         built_s = time.perf_counter() - opened_at
@@ -1617,12 +1626,15 @@ class Run(NamedTuple):
     `holes[i]["pos"]`. `lost` and `reanchors` are the Lost Looks past the
     baseline and the re-anchor attempts, as the end-of-run lines count them:
     what tells a Board move never noticed from one lost and recovered (#165).
+    `persisted` is every Candidate that persisted, before the change filter:
+    what the regression bench counts the filter's false positives by (#272).
     """
     holes: list
     baseline: np.ndarray   # pre-existing marks, (cx, cy, w, h)
     residual: np.ndarray   # distance from a suppressed detection to its mark
     lost: int
     reanchors: int
+    persisted: list = ()
 
 
 # The stride a live 25 fps stream is looked at with (ADR-0007, #82): the
@@ -1876,7 +1888,8 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
     if out_video:
         _render(loop.source.path, loop.source.start_s, processed, views, baseline, new,
                 out_video, stride, baseline_frames)
-    return Run(new, baseline, residuals, len(persistence.lost), loop.registration.reanchors)
+    return Run(new, baseline, residuals, len(persistence.lost), loop.registration.reanchors,
+               persisted)
 
 
 # A Look's stages, in order (#129). Each runs from the boundary before it, so

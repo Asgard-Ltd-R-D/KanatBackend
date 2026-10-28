@@ -1,3 +1,4 @@
+"""Checks for #272's regression rule and the canvas-shift control. No model, no video."""
 import numpy as np
 
 from detection import board
@@ -49,7 +50,8 @@ def test_an_added_false_positive_fails():
 
 
 def test_a_hole_moved_over_1_mm_fails_and_under_passes():
-    assert _kinds(REF, _result(_shift([_tp(1, 2.1, 1.0), _tp(2)])))[1] is False
+    assert _kinds(REF, _result(_shift([_tp(1, 2.1, 1.0), _tp(2)]))) == (
+        [("moved", "truth #1", False, True)], False)
     assert _kinds(REF, _result(_shift([_tp(1, 1.9, 1.0), _tp(2)]))) == ([], True)
 
 
@@ -78,3 +80,9 @@ def test_the_canvas_shift_moves_the_canvas_not_the_positions():
     assert moved.targets[0].tolist() == [[[42, 52]]]
     assert moved.edges["above"] == -3.0
     assert moved.canvas_size == view.canvas_size
+
+
+def test_results_in_template_px_are_not_ruled_on():
+    px = _shift([_tp(1), _tp(2)])
+    px["unit"] = "template px"
+    assert _kinds(REF, _result(px)) == ([("not comparable", "-", False, True)], False)

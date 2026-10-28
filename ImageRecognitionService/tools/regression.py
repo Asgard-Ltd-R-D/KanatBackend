@@ -11,14 +11,16 @@ result. `compare` reads two and rules on them:
     python -m tools.regression compare main.json branch.json
 
 The rule, per Bullet Hole of the new result against the reference, at 0 px:
-no truth hole the reference finds is lost; no false positive is added; each
-matched hole's Position Error moves at most `MOVE_MM` and stays under
+no truth Bullet Hole the reference finds is lost; no false positive is
+added; each matched Bullet Hole's Position Error moves at most `MOVE_MM` and stays under
 `position_error.LIMIT_MM` on both axes. A failure the reference itself shows
 under its shifted runs (the hole lost, the false positive there, the error
 moved or over the limit) flips under the control: it is grid noise,
-reported, and does not fail.
+reported, and does not fail. Only the reference's shifted runs are read, but
+`run` makes them by default all the same: today's result is the next
+change's reference.
 
-Hit-to-report is from each truth hole's arrival frame, `board.arrival.txt`
+Hit-to-report is from each truth Bullet Hole's arrival frame, `board.arrival.txt`
 beside its truth (#273): one line per truth line, the frame of the Recording
 it was first visible in, `-` where none is labelled. Blank where none is,
 never estimated from the detector. Its report time is the Look that judged
@@ -45,7 +47,7 @@ MOVE_MM = 1.0             # #268: a matched hole's Position Error may move this 
 ARRIVAL_NAME = "board.arrival.txt"
 TIMED = {"look": "look_ms", "inference": "inference_ms", "registration": "registration_ms"}
 # What fails the rule; anything else compare finds is reported only.
-FAILS = ("lost", "added", "moved", "over limit", "not run")
+FAILS = ("lost", "added", "moved", "over limit", "not run", "not comparable")
 
 
 def arrival_frames(truth_dir):
@@ -54,7 +56,8 @@ def arrival_frames(truth_dir):
     path = os.path.join(truth_dir, ARRIVAL_NAME)
     if not os.path.exists(path):
         return []
-    first = [(l.split() or ["-"])[0] for l in open(path).read().splitlines()]
+    with open(path) as f:
+        first = [(l.split() or ["-"])[0] for l in f.read().splitlines()]
     return [None if f == "-" else int(f) for f in first]
 
 
@@ -176,6 +179,12 @@ def compare(ref, new):
         r0, n0 = r["shifts"]["0"], n["shifts"]["0"]
         control = [s for k, s in r["shifts"].items() if k != "0"]
         unit = n0["unit"]
+        # The rule's bounds are mm, on one truth: anything else is not ruled on.
+        if (r0["unit"], unit) != ("mm", "mm") or len(r0["truth"]) != len(n0["truth"]):
+            note(name, "not comparable", "-",
+                 f"{len(r0['truth'])} truth in {r0['unit']} against "
+                 f"{len(n0['truth'])} in {unit}")
+            continue
         for t in n0["truth"]:
             j, was = t["truth"], _truth(r0, t["truth"])
             hole = f"truth #{j}"
@@ -221,6 +230,11 @@ def compare(ref, new):
     return findings, not any(f["fails"] for f in findings)
 
 
+def _load(path):
+    with open(path) as f:
+        return json.load(f)
+
+
 def _footage(result):
     return manifest.footage_line(
         manifest.pooled_footage(r["footage"] for r in result["recordings"].values()),
@@ -252,10 +266,10 @@ def print_result(result):
                   f"{_cell(t['radial'], '6.1f'):>6} {_cell(t['first_seen'], '7.2f'):>7} "
                   f"{_cell(t['reported'], '10.2f'):>10} {_cell(t['arrival'], 'd'):>7} "
                   f"{_cell(t['hit_to_report'], '15.2f'):>15}")
-        for name_, p in r.get("timing", {}).items():
+        for stage, p in r.get("timing", {}).items():
             line = (f"n {p['n']}  P50 {p['p50']:.1f}  P95 {p['p95']:.1f}  "
                     f"P99 {p['p99']:.1f}  max {p['max']:.1f} ms" if p["n"] else "n 0")
-            print(f"   {name_:<13} {line}")
+            print(f"   {stage:<13} {line}")
 
 
 def print_compare(ref, new, findings, passed):
@@ -309,7 +323,7 @@ if __name__ == "__main__":
                 p.error(f"--only names a recording with no truth folder: {a.only}")
         run(entries, a.stride or 1, a.device, a.shifts, a.out)
     else:
-        ref, new = (json.load(open(path)) for path in (a.reference, a.new))
+        ref, new = map(_load, (a.reference, a.new))
         findings, passed = compare(ref, new)
         print_compare(ref, new, findings, passed)
         sys.exit(0 if passed else 1)

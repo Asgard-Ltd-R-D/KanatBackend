@@ -1008,6 +1008,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
         cap = cv2.VideoCapture(video)
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.release()
+        if not fps > 0:
+            raise SystemExit(f"[FAILED] cannot read a frame rate from {video} (fps {fps})")
     if move is not None:
         refuse_move(move, start, end, fps, baseline_frames, stride or 1)
 
@@ -1063,10 +1065,10 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
         target = run.holes[i]["target"]
         where = "MISS" if target is None else f"Target {target + 1}"
         rows.append((i + 1, j + 1, where, dx, dy, radial))
-    unit = "mm" if mm_per_tpl_px else "template px"
+    unit = "template px" if mm_per_tpl_px is None else "mm"
     scale = (f"{mm_per_tpl_px} mm per template px "
-             f"({entry['capture_setup'] if entry else '--mm-per-px'})" if mm_per_tpl_px
-             else "no print scale")
+             f"({entry['capture_setup'] if entry else '--mm-per-px'})"
+             if mm_per_tpl_px is not None else "no print scale")
     print(f"\n[POSITION ERROR] {len(errors)} matched pair(s), {unit} along the "
           f"Target's printed axes (X right, Y up), system minus truth, at {scale}. "
           f"Internal: against truth in this footage's own frame of reference")

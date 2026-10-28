@@ -417,10 +417,23 @@ def _opened(*args, **kwargs):
     raise _Opened
 
 
+class _Clip25:
+    """A container that gives 25 fps, and no frame."""
+    def __init__(self, path):
+        pass
+
+    def get(self, prop):
+        return 25.0
+
+    def release(self):
+        pass
+
+
 def test_an_unlisted_recording_runs_in_template_px_and_says_why(monkeypatch, capsys):
     """ADR-0010: no recording is refused. Unlisted, it has no Capture Setup,
     so no print scale unless --mm-per-px gives one."""
     monkeypatch.setattr(manifest, "lookup", lambda video: None)
+    monkeypatch.setattr(cv2, "VideoCapture", _Clip25)
     monkeypatch.setattr(nbh.RegisteredFrames, "open", _opened)
     with pytest.raises(_Opened):
         score_recording("clip.mkv", 20, 46, "truth")
@@ -428,6 +441,14 @@ def test_an_unlisted_recording_runs_in_template_px_and_says_why(monkeypatch, cap
     with pytest.raises(_Opened):
         score_recording("clip.mkv", 20, 46, "truth", mm_per_px=0.2)
     assert "no Capture Setup" not in capsys.readouterr().out
+
+
+def test_an_unlisted_recording_without_a_frame_rate_fails_before_opening(monkeypatch):
+    """Its times divide by the frame rate the container gives; 0 must not reach them."""
+    monkeypatch.setattr(manifest, "lookup", lambda video: None)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", _opened)
+    with pytest.raises(SystemExit, match="frame rate"):
+        score_recording("no-such-clip.mkv", 20, 46, "truth", mm_per_px=0.2)
 
 
 def test_a_listed_capture_setup_without_a_print_scale_is_still_refused(monkeypatch):

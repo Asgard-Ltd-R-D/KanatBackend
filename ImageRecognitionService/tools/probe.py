@@ -42,7 +42,7 @@ import numpy as np
 
 from detection import board
 from detection import new_bullet_holes as nbh
-from tools import evaluate
+from tools import evaluate, manifest
 
 # Low enough that no operating threshold is part of the answer: the pipeline
 # runs at 0.40, and the CamB finding was a mark absent even at this floor.
@@ -195,6 +195,8 @@ if __name__ == "__main__":
         truth, _ = evaluate.load_truth(a.truth_image, a.truth_labels, frame, view)
         names = None
 
+    print(manifest.footage_line(manifest.footage(manifest.lookup(a.video)),
+                                os.path.basename(a.video)))
     for model in a.model:
         probe(a.video, a.start, a.end, model, truth, a.radius, a.confidence,
               a.template, names)

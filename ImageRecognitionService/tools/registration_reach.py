@@ -45,7 +45,7 @@ import numpy as np
 
 from detection import board
 from detection import new_bullet_holes as nbh
-from tools import evaluate
+from tools import evaluate, manifest
 
 PATCH = 10        # half-size of a mark's patch, frame px: a hole plus its rim
 SEARCH = 12       # how far from the predicted position to look, frame px
@@ -276,6 +276,8 @@ if __name__ == "__main__":
         track = _silhouette(template_mask)
     else:
         track = _green_affine(base)
+    print(manifest.footage_line(manifest.footage(manifest.lookup(a.video)),
+                                os.path.basename(a.video)))
     print(f"[REACH] registration: {a.registration}{', marks cut' if a.cut_marks else ''}")
     frames = _registered(source, base, int((a.end - a.start) * source.fps), view, track)
     _report(measure(frames, marks, from_index), span, label)

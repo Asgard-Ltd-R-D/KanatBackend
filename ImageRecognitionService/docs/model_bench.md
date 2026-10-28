@@ -248,8 +248,8 @@ anyway.
   The sealed run evaluates whichever model is frozen; it does not compare
   these.
 
-> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no sealed run remains to evaluate a model; the comparison is
-> made on every truth recording, labelled regression or unseen.
+  > **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no sealed run remains to evaluate a model; the comparison is
+  > made on every truth recording, labelled regression or unseen.
 
 ## yolo26n with background negatives
 
@@ -384,7 +384,7 @@ Each Bullet Hole, ✓ found and ✗ not found:
   fix gravel is not measured here. The sealed run can show it only for the
   model frozen before it.
 
-> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no sealed run remains; gravel is measured on any recording.
+  > **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no sealed run remains; gravel is measured on any recording.
 - **The differences are the size of CamA's grid noise** (above), and these are
   the fitted clips, with every constant fitted to n. Pooled, F1 0.93 against
   0.88 is one Bullet Hole lost and three false positives gone, over 16 Bullet

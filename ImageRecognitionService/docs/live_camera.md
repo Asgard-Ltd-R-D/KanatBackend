@@ -133,6 +133,9 @@ Each drop is logged when it starts, and again when the stream is back with that 
    - An H.264 reader gets nothing until the next IDR.
 
    The copy is of a spent recording, so it is spent too (ADR-0005). It is not in the manifest and is not committed.
+
+   > **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** recordings carry no role; an unlisted copy runs too.
+
    ```bash
    ffmpeg -i data/videos/CamB_20260915_102250.mkv -map 0:v -c:v libx264 -preset medium \
      -profile:v main -bf 0 -g 25 -keyint_min 25 -sc_threshold 0 -b:v 8M -maxrate 8M -bufsize 8M \

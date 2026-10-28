@@ -184,7 +184,7 @@ the ruling on `_103223` found #3 are unchanged.
 - **Generalisation.** One Capture Setup, already fitted. The sealed wide pair is
   the only held-out pose (#31).
 
-> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** nothing is held out; the wide pair is regression footage now.
+  > **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** nothing is held out; the wide pair is regression footage now.
 - **Recall over the whole Board.** A third of the new Bullet Holes here are
   outside the image the detector sees (#41). The pooled 67% is a canvas bound,
   and on-canvas recall (4 of 4) says nothing about the Board below it.

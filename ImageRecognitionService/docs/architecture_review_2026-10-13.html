@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bullet Hole Publishing Review</title>
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { curve: "basis" } });
+</script>
+<style>
+  .seam { border-left: 3px dashed #6366f1; }
+  .seam-h { border-top: 3px dashed #6366f1; }
+  .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+  pre code { white-space: pre; }
+  .mermaid { display: flex; justify-content: center; }
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900 font-sans">
+<main class="max-w-5xl mx-auto px-4 sm:px-6 py-12 space-y-12">
+
+<header class="space-y-4">
+  <p class="text-xs uppercase tracking-wider text-slate-500">KanatBackend · ImageRecognitionService · 2026-10-13 · main @ 5300d1d</p>
+  <h1 class="font-serif text-4xl">Posting Confirmed Bullet Holes to the WebApp</h1>
+  <p class="text-slate-600">Scope: <code>_BulletPostWorker</code> from PR #135, as it stands after #150 (PR #151) and #152 (PR #153). The question is whether an adapter and a small publisher interface should separate it from Image Recognition.</p>
+  <div class="flex flex-wrap gap-4 text-xs uppercase tracking-wider text-slate-600">
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-4 border-2 border-slate-700 rounded-sm"></span>module</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-6 seam-h"></span>seam</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-6 h-0.5 bg-red-600"></span>leak across a seam</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-4 deep rounded-sm"></span>deep module</span>
+  </div>
+</header>
+
+<section class="rounded-lg border border-emerald-300 bg-emerald-50 p-5 space-y-2">
+  <h2 class="text-xs uppercase tracking-wider text-emerald-800 font-semibold">Already fixed on main: the <code>loop.cap</code> leak</h2>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>#150 / PR #151 fixed the crash. <code>process</code> read the Stream-only <code>loop.cap.first</code>, and #148 had renamed <code>cap</code> to <code>source</code>.</li>
+    <li>#152 / PR #153 removed the <code>if loop.live</code> anchor. The worker now takes <code>loop.wall_clock</code> and <code>loop.last</code>, which are part of the documented <code>RegisteredFrames</code> interface, not its internals (<code>new_bullet_holes.py:1542</code>).</li>
+    <li>So the proposal no longer fixes a live bug. Its case rests on the four problems listed below.</li>
+  </ul>
+</section>
+
+<section id="candidates" class="space-y-14">
+
+<!-- ───────────────────────── Candidate 1 ───────────────────────── -->
+<article id="c1" class="rounded-xl border border-slate-200 bg-white p-6 space-y-6 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold px-3 py-1">Strong</span>
+    <span class="rounded-full bg-indigo-100 text-indigo-800 text-xs font-semibold px-3 py-1">ports &amp; adapters</span>
+  </div>
+  <h2 class="font-serif text-2xl">1 · One posting path behind a <code>publish</code> seam</h2>
+  <p class="text-sm text-slate-600">This is your proposal, with one correction: build the payload on both sides of the seam, not only in the adapter.</p>
+
+  <div class="font-mono text-sm text-slate-700 space-y-0.5">
+    <div>detection/new_bullet_holes.py — process 1482–1632 · _Announcer 1635–1674 · _BulletPostWorker 1774–1876 · _bullet_payload 1878 · _post_bullets 1899–1932 · main 2030–2077</div>
+    <div>detection/webapp.py — <span class="text-emerald-700">new</span>, the adapter</div>
+    <div>tests/test_frame_loop.py — _posting 1067, two posting tests 1082 / 1103</div>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="text-xs uppercase tracking-wider text-red-700 mb-2">Before: two paths, adapter holds Board space</p>
+      <pre class="mermaid">
+flowchart TB
+  P["process"]
+  A["_Announcer.announced"]
+  W["_BulletPostWorker<br/>session · url · wall_clock · view"]
+  B["_post_bullets<br/>session · url · wall_clock · view"]
+  BP["_bullet_payload"]
+  U1["urllib + retry<br/>key: uuid4 per run"]
+  U2["urllib, no retry<br/>key: uuid5"]
+  H[("hole dict<br/>shared, mutable")]
+  P -- "slice announced[prev:]" --> A
+  P -- "live: submit(holes)" --> W
+  P -- "recording: at end" --> B
+  W --> BP
+  B --> BP
+  W --> U1
+  B --> U2
+  W -. "reads on its thread<br/>writes hole_id" .-> H
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  class W,B,H leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="text-xs uppercase tracking-wider text-emerald-700 mb-2">After: one event, one adapter</p>
+      <div class="flex flex-col gap-3 text-xs uppercase tracking-wider">
+        <div class="grid grid-cols-2 gap-2">
+          <div class="border-2 border-slate-700 rounded p-2 text-center">_Announcer<br/><span class="normal-case text-slate-500 tracking-normal">live: on [NEW]</span></div>
+          <div class="border-2 border-slate-700 rounded p-2 text-center">process<br/><span class="normal-case text-slate-500 tracking-normal">recording: after _report</span></div>
+        </div>
+        <div class="text-center normal-case tracking-normal font-mono text-slate-700">publish(BulletHoleConfirmed)<br/><span class="text-slate-500">immutable · template px · first_seen_at · target · mm</span></div>
+        <div class="seam-h"></div>
+        <div class="grid grid-cols-3 gap-2 items-stretch">
+          <div class="col-span-2 deep text-slate-100 rounded p-3 space-y-1">
+            <div class="font-semibold">WebApp adapter</div>
+            <div class="normal-case tracking-normal text-slate-300 text-[11px] leading-snug">v1 JSON · idempotency key · queue · retry 5xx / drop 4xx · drain on exit</div>
+            <div class="normal-case tracking-normal text-slate-500 text-[11px]">holds: session id, url. nothing else</div>
+          </div>
+          <div class="border-2 border-dashed border-slate-400 rounded p-2 text-center text-slate-600">tests<br/><span class="normal-case tracking-normal font-mono">posted.append</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-6 text-sm">
+    <div><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-1">Problem</h3>
+      <ul class="list-disc pl-5 space-y-1">
+        <li>There are two posting paths. Live posts are queued with retries and a per-run <code>uuid4</code> key. Recordings post synchronously with no retry and a <code>uuid5</code> key. Each path has its own <code>urllib</code> code.</li>
+        <li>The worker reads the shared hole dict on its own thread. It is correct only because <code>process</code> calls <code>flush()</code> (1569) before <code>Persistence.end</code> (1596) refreshes the dict in place. That ordering is written down nowhere, and a flush timeout breaks it.</li>
+        <li><code>process</code> slices <code>_Announcer.announced[prev:]</code> to find what is new (1560–1565).</li>
+      </ul>
+    </div>
+    <div><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-1">Solution</h3>
+      <p>When a Bullet Hole is Confirmed, the detection thread snapshots it into an immutable <code>BulletHoleConfirmed</code>, already in the backend's units, and calls <code>publish(event)</code>. One WebApp adapter, in its own module, owns the v1 wire format, the key, the queue, retries and the final drain.</p>
+    </div>
+  </div>
+
+  <div>
+    <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-1">Wins</h3>
+    <ul class="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-sm list-disc pl-5">
+      <li>Deletes <code>_post_bullets</code> and the <code>announced[prev:]</code> slice</li>
+      <li>Recordings get retries with no new code</li>
+      <li>One idempotency rule instead of two</li>
+      <li><code>process</code> drops <code>session_id</code> and <code>backend_url</code></li>
+      <li>Tests pass <code>posted.append</code>, with no urlopen patch</li>
+      <li>Retry, 4xx handling and drain become testable at the adapter's interface (none are tested today)</li>
+      <li>Locality: every HTTP failure is debugged in one module</li>
+      <li>The adapter never touches a hole dict</li>
+    </ul>
+  </div>
+
+  <div class="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm space-y-1">
+    <p class="font-semibold text-amber-900">Correction to the proposal: build the payload on both sides of the seam</p>
+    <ul class="list-disc pl-5 text-amber-900">
+      <li><b>Detection side, at emit:</b> Board px → template px needs Board space (<code>view.tpl_to_board</code>). The frame → wall clock needs the source (<code>wall_clock</code>). These are domain facts.</li>
+      <li><b>Adapter side:</b> the field names, the <code>…Z</code> timestamp format, the 0–1405 / 0–1120 clip, <code>version</code>, <code>source: "model"</code> and the key. These are the WebApp's contract.</li>
+      <li>Moving all of it into the adapter means the adapter needs <code>view</code> and <code>wall_clock</code> again. That is today's coupling with a new name.</li>
+    </ul>
+  </div>
+  <div class="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">ADR-0004 says a Confirmed Bullet Hole is never retracted. That is why one event type is enough: there is no update or retract event to design.</div>
+</article>
+
+<!-- ───────────────────────── Candidate 2 ───────────────────────── -->
+<article id="c2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-6 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-3 py-1">Worth exploring</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs font-semibold px-3 py-1">in-process</span>
+  </div>
+  <h2 class="font-serif text-2xl">2 · Minimal: keep the worker, feed it finished payloads</h2>
+  <div class="font-mono text-sm text-slate-700">detection/new_bullet_holes.py — _BulletPostWorker.submit, _post_bullets, process</div>
+
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 space-y-1">
+      <p class="text-xs uppercase tracking-wider text-red-700 mb-2">Before</p>
+      <div class="h-10 border-l-4 border-red-400 bg-red-50 px-3 flex items-center text-xs uppercase tracking-wider">process · slices announced · session, url</div>
+      <div class="h-10 border-l-4 border-red-400 bg-red-50 px-3 flex items-center text-xs uppercase tracking-wider">worker · builds payload on its thread</div>
+      <div class="h-10 border-l-4 border-red-400 bg-red-50 px-3 flex items-center text-xs uppercase tracking-wider">_post_bullets · second urllib copy</div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 space-y-1">
+      <p class="text-xs uppercase tracking-wider text-amber-700 mb-2">After</p>
+      <div class="h-10 border-l-4 border-amber-400 bg-amber-50 px-3 flex items-center text-xs uppercase tracking-wider">process · slices announced · session, url</div>
+      <div class="h-20 border-l-4 border-emerald-500 bg-emerald-50 px-3 flex items-center text-xs uppercase tracking-wider">worker · takes payloads · both modes</div>
+    </div>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-6 text-sm">
+    <div><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-1">Problem</h3><p>Same as candidate 1: two posting paths and payloads built late on the worker's thread.</p></div>
+    <div><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-1">Solution</h3><p>Build each payload in <code>submit</code>, on the detection thread. Send recordings through the same worker, then delete <code>_post_bullets</code>. There is no new module and no seam.</p></div>
+  </div>
+  <ul class="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-sm list-disc pl-5">
+    <li>Smallest diff, about −40 lines</li>
+    <li>Fixes the duplication and the late payload build</li>
+    <li class="text-slate-500">But <code>process</code> keeps <code>session_id</code>/<code>backend_url</code> and the slice</li>
+    <li class="text-slate-500">But tests still patch <code>urlopen</code></li>
+    <li class="text-slate-500">But HTTP stays in a 2,077-line vision file</li>
+  </ul>
+</article>
+
+<!-- ───────────────────────── Candidate 3 ───────────────────────── -->
+<article id="c3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-6 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="rounded-full bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1">Speculative</span>
+    <span class="rounded-full bg-indigo-100 text-indigo-800 text-xs font-semibold px-3 py-1">ports &amp; adapters</span>
+  </div>
+  <h2 class="font-serif text-2xl">3 · The proposal as written: a Publisher class whose adapter builds the payload</h2>
+  <div class="font-mono text-sm text-slate-700">detection/publisher.py (Protocol) · detection/webapp.py · process</div>
+
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="text-xs uppercase tracking-wider text-red-700 mb-2">As proposed</p>
+      <pre class="mermaid">
+flowchart TB
+  P["process"] -- "publish(hole) / close()" --> I["Publisher (Protocol)"]
+  I --> W["WebAppPublisher<br/>builds payload"]
+  W -. "needs view.tpl_to_board" .-> V["Board space"]
+  W -. "needs wall_clock" .-> S["Recording / Stream"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  class V,S leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 flex flex-col justify-center gap-3">
+      <p class="text-xs uppercase tracking-wider text-slate-500">Mass of the interface</p>
+      <div class="flex items-end gap-6 h-40">
+        <div class="flex flex-col items-center gap-1"><div class="w-14 bg-red-300 rounded-t" style="height:110px"></div><span class="text-[11px] uppercase tracking-wider">Protocol +<br/>publish + close</span></div>
+        <div class="flex flex-col items-center gap-1"><div class="w-14 bg-emerald-400 rounded-t" style="height:28px"></div><span class="text-[11px] uppercase tracking-wider">one<br/>callable</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-6 text-sm">
+    <div><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-1">Problem</h3><p>When the adapter builds the payload from a raw hole, it needs Board space and the source's clock. The coupling you wanted to remove comes back. A Protocol with one production adapter is ceremony, and <code>close()</code> on the interface moves the adapter's lifetime into <code>process</code>.</p></div>
+    <div><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-1">Solution</h3><p>Take candidate 1 instead. The interface is a plain callable, which Python's duck typing covers. <code>main</code> owns the adapter's lifetime with <code>with</code>.</p></div>
+  </div>
+</article>
+
+<!-- ───────────────────────── Candidate 4 ───────────────────────── -->
+<article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-6 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="rounded-full bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1">Speculative</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs font-semibold px-3 py-1">in-process</span>
+  </div>
+  <h2 class="font-serif text-2xl">4 · Don't: the <code>[NEW]</code> print as a second publisher</h2>
+  <div class="grid md:grid-cols-2 gap-4 text-xs uppercase tracking-wider">
+    <div class="rounded-lg border border-slate-200 p-4 space-y-2">
+      <p class="text-red-700">Tempting</p>
+      <div class="flex gap-2"><div class="flex-1 border-2 border-slate-700 rounded p-2 text-center">console</div><div class="flex-1 border-2 border-slate-700 rounded p-2 text-center">WebApp</div><div class="flex-1 border-2 border-dashed border-slate-400 rounded p-2 text-center">tests</div></div>
+      <div class="seam-h"></div>
+      <div class="border-2 border-red-400 rounded p-2 text-center normal-case tracking-normal">event grows: <code>when</code> string · persistence % · evidence · mm availability</div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 normal-case tracking-normal text-sm space-y-2">
+      <p>On a Recording, the line prints in <code>_report</code> at the end, not on confirmation. It also needs fields the WebApp never sees, so the event would grow to carry what the printer needs. A third adapter does not justify a seam whose adapters disagree on what crosses it.</p>
+      <p class="text-slate-500">Keep the printing where it is.</p>
+    </div>
+  </div>
+</article>
+</section>
+
+<!-- ───────────────────────── Top recommendation ───────────────────────── -->
+<section id="top-recommendation" class="rounded-2xl deep text-slate-100 p-6 sm:p-8 space-y-6">
+  <p class="text-xs uppercase tracking-wider text-emerald-300">Top recommendation</p>
+  <h2 class="font-serif text-3xl"><a href="#c1" class="underline decoration-emerald-400">Candidate 1</a>: one posting path behind a <code>publish</code> seam</h2>
+  <p class="text-slate-300">It passes the deletion test. Delete <code>publish</code>, and <code>session_id</code>, <code>backend_url</code>, two urllib copies and two key rules come back into <code>process</code>. Two adapters make it a real seam: the WebApp adapter in production and <code>list.append</code> in tests.</p>
+
+  <div>
+    <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">Simplest implementation (sketch, not code to land)</p>
+<pre class="bg-black/40 rounded-lg p-4 text-[12.5px] leading-relaxed overflow-x-auto"><code># detection/new_bullet_holes.py, the Image Recognition side
+class BulletHoleConfirmed(NamedTuple):
+    """A Confirmed Bullet Hole as it leaves the pipeline. Never retracted (ADR-0004)."""
+    first_frame: int
+    first_seen_at: datetime            # the source's wall_clock(first_frame), #152
+    template_px: tuple[float, float]   # its place on the template, not its Position
+    target: int | None                 # None: a Miss
+    mm: tuple[float, float] | None     # its Position, when calibrated
+
+def _confirmed(hole, wall_clock, view):
+    # moved from _bullet_payload: the same cv2.perspectiveTransform, on this thread
+    ...
+
+def process(..., publish=None):        # replaces session_id, backend_url
+    announce = _Announcer(..., publish)   # live: publish(_confirmed(...)) right after [NEW]
+    ...
+    _report(new, ...)
+    if publish and not loop.live:         # a recording is Confirmed at the end
+        for hole in new:
+            publish(_confirmed(hole, loop.wall_clock, loop.last))
+
+# detection/webapp.py, the adapter (today's _BulletPostWorker, moved and narrowed)
+class WebAppPublisher:
+    def __init__(self, session_id, backend_url): ...   # starts the worker thread
+    def publish(self, event): self._q.put(event)       # never blocks detection
+    def __enter__(self): return self
+    def __exit__(self, *exc): self._drain(timeout=120)
+    # private: _payload(event, key) v1 JSON · _key(event) uuid5 · _post_with_retry
+
+# main
+with WebAppPublisher(a.session_id, a.backend_url) if a.session_id else nullcontext() as pub:
+    process(..., publish=pub.publish if pub else None)</code></pre>
+  </div>
+
+  <div class="overflow-x-auto">
+    <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">Trade-offs</p>
+    <table class="w-full text-sm text-left border-collapse">
+      <thead class="text-xs uppercase tracking-wider text-slate-400">
+        <tr><th class="py-2 pr-4">Decision</th><th class="py-2 pr-4">Gain</th><th class="py-2">Cost</th></tr>
+      </thead>
+      <tbody class="divide-y divide-slate-700 align-top">
+        <tr><td class="py-2 pr-4">Immutable snapshot at Confirmed</td><td class="py-2 pr-4">The adapter never reads or writes a hole dict. The flush-timeout race closes, and <code>hole_id</code> stops being written into the dict.</td><td class="py-2">One 3×3 transform per Bullet Hole runs on the detection thread. Negligible.</td></tr>
+        <tr><td class="py-2 pr-4">Recordings use the same queued adapter</td><td class="py-2 pr-4">Retries, one key rule, and <code>_post_bullets</code> is deleted.</td><td class="py-2">A thread for an end-of-run batch. Posts keep their order, because one FIFO worker sends them.</td></tr>
+        <tr><td class="py-2 pr-4"><code>publish</code> is a callable; <code>main</code> owns the drain</td><td class="py-2 pr-4"><code>process</code> never learns about draining. The test fake is <code>list.append</code>.</td><td class="py-2">On a live run the drain moves from before the end-of-run report to after it, so the <code>[POST]</code> lines print later. Any other caller that wants posting must use <code>with</code> itself.</td></tr>
+        <tr><td class="py-2 pr-4">The adapter derives the key from the event (<code>uuid5</code>: session, first_frame, rounded template px)</td><td class="py-2 pr-4">Retries and Recording re-runs both dedup. No state is kept per hole.</td><td class="py-2">After a live restart, frame indices repeat within the session. A collision needs the same index <i>and</i> the same rounded template px, and a hole Confirmed before the restart sits in the new baseline anyway. Recording keys change once, from Board px to template px.</td></tr>
+        <tr><td class="py-2 pr-4">New module <code>detection/webapp.py</code></td><td class="py-2 pr-4"><code>new_bullet_holes.py</code> loses <code>urllib</code>, <code>json</code>, <code>queue</code> and <code>uuid</code>, about 130 lines.</td><td class="py-2">One more file.</td></tr>
+        <tr><td class="py-2 pr-4">No Protocol or ABC</td><td class="py-2 pr-4">No ceremony.</td><td class="py-2">The interface lives in a docstring, not a type.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-6 text-sm">
+    <div>
+      <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">Open questions to settle by grilling</p>
+      <ul class="list-disc pl-5 space-y-1 text-slate-300">
+        <li>Key from <code>first_frame</code> or from <code>first_seen_at</code>? A Recording run without <code>--ref-time</code> changes its <code>first_seen_at</code> on every run.</li>
+        <li>Drain inside <code>process</code> before the report, as today, or in <code>main</code> after it?</li>
+        <li>Should <code>BulletHoleConfirmed</code> go into CONTEXT.md, or is it covered by the existing Confirmed entry?</li>
+        <li>Should <code>api_contract.md</code> be fixed in the same change?</li>
+      </ul>
+    </div>
+    <div>
+      <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">Also found</p>
+      <ul class="list-disc pl-5 space-y-1 text-slate-300">
+        <li><code>WebApp/backend/docs/api_contract.md</code> doesn't mention <code>idempotency_key</code>, or that a duplicate returns the existing row with 201 (<code>services/bullets.py:33-39</code>).</li>
+        <li>The v1 field <code>position</code> is in template px. In CONTEXT.md, <b>Position</b> is the mm offset from the Target's centre. Keep the wire name, but don't carry it into the event.</li>
+        <li>The flush-timeout race is narrow. The worker is a daemon with no sentinel, so it can build a payload while <code>Persistence.end</code> (1596) refreshes <code>pos</code>. That only happens after a backend stall of about 120 s at stop.</li>
+        <li>Retry, 4xx versus 5xx handling, flush timeout and the keys have no tests.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+</main>
+</body>
+</html>

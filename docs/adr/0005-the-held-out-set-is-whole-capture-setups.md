@@ -1,5 +1,10 @@
 # The held-out set is whole Capture Setups, and none of it is trained on
 
+*Superseded in part by [ADR-0010](0010-every-recording-may-be-opened.md),
+2026-10-28: nothing is sealed any more. "Why ground truth is photographs, not
+annotated frames" and "Detector evaluation and pipeline evaluation stay apart"
+still stand.*
+
 Five new customer recordings, roughly 3–5 Bullet Holes each, all go to
 evaluation. None becomes training data. They are split by **Capture Setup** —
 camera pose, Board, lighting, distance — not by file and not by frame: two go to

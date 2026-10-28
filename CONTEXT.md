@@ -29,6 +29,11 @@ _Avoid_: paper, sheet
 A single printed aiming mark on a Board. A Board commonly carries several.
 _Avoid_: bullseye
 
+**Target Sheet**:
+The printed page one Target's artwork is on, fixed to a Board. The white
+margin around the artwork is part of the sheet, not of the Target.
+_Avoid_: A4, page, paper
+
 **Hit**:
 One bullet's passage through a Board, as a physical event.
 _Avoid_: shot, round
@@ -48,7 +53,7 @@ _Avoid_: hit, sighting, hole
 
 **Recording**:
 Footage saved to a file and read back at will: from any point, every frame
-available, never late. Only a Recording can be Sealed or scored against truth.
+available, never late. Only a Recording can be scored against truth.
 _Avoid_: clip, file, video
 
 **Stream**:
@@ -160,8 +165,10 @@ buffering ahead of the decoder — is end-to-end latency, not Frame Wait.
 _Avoid_: latency, lag, buffering, delay
 
 **Miss**:
-A Bullet Hole on a Board that falls outside every Target on it. A real Hit, and
-counted as one, but carrying no Shot Distance and no score.
+A Bullet Hole on a Target Sheet, or within 5 mm of its edge, that falls
+outside the Target printed on it. A real Hit, and counted as one, but carrying
+no Shot Distance and no score. A Bullet Hole further than 5 mm off every Target
+Sheet is not a Miss: the system does not look there (ADR-0011).
 _Avoid_: stray, off-target hit
 
 **Position**:
@@ -210,9 +217,9 @@ _Avoid_: range profile, lane profile, calibration
 
 **Capture Setup**:
 One physical arrangement that footage was shot in — camera pose, Board,
-lighting, distance. The unit the held-out split is allocated by: three files
-from one afternoon on one camera are one Capture Setup, and all three land on
-the same side of the boundary. Distinct from a Capture Profile, which is the
+lighting, distance. The unit evidence is counted in: three files from one
+afternoon on one camera are one Capture Setup, and a result on all three is one
+setup's evidence, not three. Distinct from a Capture Profile, which is the
 settings chosen for a setup rather than the setup itself.
 _Avoid_: scene, clip, session
 
@@ -224,11 +231,3 @@ a new one — a false positive that persists perfectly, which persistence is
 structurally unable to filter. Named as one of the three causes a false positive
 is attributed to, beside the detector and `unknown`.
 _Avoid_: drift, registration error, misregistration
-
-**Sealed**:
-A Recording held out from every kind of tuning. No pixels of it are used for
-anything — not thresholds, not labels, not unlabelled background crops — except
-its one logged final measurement. It stays Sealed after it: it is never opened
-again, and its result may point at a mechanism but never justifies a change.
-See ADR-0005.
-_Avoid_: held back, reserved, test split

@@ -109,3 +109,87 @@ registration fits.
 `e2a0fcb3…`, not in the repo) shares the canvas. Its 10-ring is about 211 px, and
 its background is grey. The first two attempts at #62 printed it. A grey
 rectangle behind the silhouette means the wrong file.
+
+## Where the sheet lies around the artwork
+
+**Measured 2026-10-28.** Issue #271, for ADR-0011's bound: the Target Sheet plus
+5 mm. Both photographs above, re-read for the sheet's four edges against the
+green silhouette.
+
+### Result
+
+The artwork is not centred on the sheet. It sits **4.5 mm toward the head** of
+where a centred sheet puts it: the silhouette is 3.3 mm from the sheet's edge at
+the head and 17.4 mm at the feet, against 8.0 and 13.0 centred. Across the
+shoulders it is centred within 1 mm.
+
+| Margin, mm | Side to side | Head to feet | Centred sheet predicts |
+|---|---|---|---|
+| Left body side (template x) | 55.4 | 55.7 | 55.1 |
+| Right body side | 57.5 | 57.3 | 56.9 |
+| Head apex (template y) | 3.2 | 3.4 | 8.0 |
+| Feet | 17.4 | 17.4 | 13.0 |
+
+The sheet in template px, the mean of both photographs (they agree within
+2.6 px, 0.5 mm). It is in the fit's own scale, 0.1755 / 0.1766 mm per template
+px, so at the configured 0.1763 it spans 298.5 × 209.6 mm. Most of x0's 0.9 mm
+is that scale, not placement:
+
+| | x0 | y0 | x1 | y1 |
+|---|---|---|---|---|
+| Fitted | **−145** | **−9** | **1548** | **1180** |
+| Centred sheet at 0.1763 | −140 | −36 | 1545 | 1156 |
+| Difference, mm | 0.9 | 4.7 | 0.5 | 4.2 |
+
+Head and feet differ by more than 1 mm, so the fitted rectangle is configured
+for every Capture Setup in `config/print_scale.json` (`sheet_tpl_px`, with its
+`sheet_source`). The Boards' Targets were printed the same way as this print
+(item 1 above).
+
+### Why head and feet disagreed with the centred sheet
+
+Two causes: where the artwork was printed on the sheet, and a misreading.
+- **Not the print scale.** The fit gives 0.1755 mm per template px along x and
+  0.1766 along y, the scales measured above. Head and feet margins together
+  come to 20.7 mm, against 21.0 mm for a centred sheet. The difference is in how
+  they split.
+- **Not this reading.** The tape readings above put the head 3.2 mm and the feet
+  17.5 mm from the sheet's edges, within 0.2 mm of the fit.
+- **The earlier eyeball reading was wrong at the head**, which is why it found
+  extra margin at both ends rather than a shift. It gave 14.0 mm there
+  and 17.7 mm at the feet. Both photographs show the head apex 3–4 mm from the
+  sheet's edge.
+
+The earlier test print sat about 4.5 mm off-centre in the same direction
+(item 1), which points to the printer rather than to this sheet.
+
+Across the shoulders the tape readings give 57.0 / 56.4 mm, 0.9–1.6 mm away from
+the fit in opposite directions, with the same sum. That is a shift along the
+tape, which fits the hook end's parallax. The fit does not use the tape.
+
+### Method
+
+`tools/sheet_fit.py` (`.venv/bin/python -m tools.sheet_fit`):
+- **The sheet is the ruler.** Each of the sheet's four edges is fitted as a line
+  through its outermost pixels, away from the tape, with a residual of 0.4–1.0
+  px. The corners map the photograph onto the 297 × 210 mm sheet, which removes
+  perspective.
+- **The artwork is fitted onto the sheet.** The template's green mask is
+  registered to the sheet's by an affine ECC (correlation 0.988–0.991), with the
+  tape masked out. The silhouette's extremes give the margins: the body sides
+  at template x 172.5 / 1221.5, the head apex at y 9.5, the feet at y 1081.5.
+- **The sheet's corners, carried back through the fit,** give the rectangle. Each
+  side is the mean of its two corners. The fit is rotated 0.08–0.14°, which
+  moves a corner at most 0.4 mm.
+
+`tests/test_board.py` re-fits both photographs and checks the configured
+rectangle against them.
+
+### Against the Boards' own photographs
+
+The after photographs of the recorded Boards show some sheet edges, but too
+coarsely to fit them: about 1.3 mm per pixel on CamB, and blurred, low-contrast
+edges on CamA. On `_102450`'s after photograph the head runs to the sheet's
+top edge, which looks folded over it. Truth #1 there lies clearly above that
+edge, off the sheet. The fitted sheet agrees (6.0 mm beyond the edge). The
+centred sheet did not (1.3 mm).

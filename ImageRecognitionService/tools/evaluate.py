@@ -970,6 +970,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     - `placement`: the placement-check note as printed;
     - `entry`: the manifest entry found by content hash, None for a
       recording it does not list (ADR-0010);
+    - `footage`: ADR-0010's label, `manifest.footage(entry)`;
 
     and what the Board-move table reads (board_move.py, #165):
 
@@ -1048,7 +1049,9 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     print(placement)
 
     result = score(truth, found, tolerance)
-    print(f"\n[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "
+    footage = manifest.footage(entry)
+    print("\n" + manifest.footage_line(footage, os.path.basename(video)))
+    print(f"[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "
           f"precision {result['precision']:.0%}  recall {result['recall']:.0%}  "
           f"F1 {result['f1']:.2f}")
     for i, j, d in sorted(result["pairs"], key=lambda t: t[1]):
@@ -1103,7 +1106,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
         board.MATCH_TPL_PX, "template px"))
 
     return {"rows": rows, "unmatched": result["fp"], "missed": result["fn"],
-            "placement": placement, "entry": entry, "truths": len(truth),
+            "placement": placement, "entry": entry, "footage": footage,
+            "truths": len(truth),
             "times": [start + h["first_frame"] / fps for h in run.holes],
             "false_positives": [(i + 1, tuple(found[i]), cause, distance)
                                 for i, cause, distance in attribution],

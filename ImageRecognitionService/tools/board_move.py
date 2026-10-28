@@ -173,6 +173,10 @@ def print_table(moved, ranges, out):
     print(f"\n\n[BOARD MOVE] SOW 2.1.6 (#162) at commit {manifest.git_commit()}: each case "
           f"against its unmoved control at the same stride; every run's output in {out}")
     print(f"   python -m tools.board_move {' '.join(sys.argv[1:])}".rstrip())
+    runs = [r for *_, control, case in moved for r in (control, case)]
+    runs += [r for _, *pair in ranges for r in pair]
+    print("   " + manifest.footage_line(
+        manifest.pooled_footage(r["footage"] for r in runs), "every run"))
     print("   Pass: no false positive the control lacks, no true positive the control "
           "found dropped. Moved (mm, X right, Y up) and delay (first seen, s) are case "
           "minus control, reported, not judged")

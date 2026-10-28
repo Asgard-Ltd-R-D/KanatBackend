@@ -50,3 +50,24 @@ def test_every_shipped_entry_carries_the_documented_fields():
 def test_no_shipped_entry_carries_a_role():
     """Roles went with sealing (ADR-0010)."""
     assert not [e["file"] for e in manifest.load().values() if "role" in e]
+
+
+def test_each_result_is_labelled_by_its_capture_setup():
+    """ADR-0010: unseen only from a setup nothing was chosen on; unlisted
+    footage has no setup to judge by."""
+    assert manifest.footage(ENTRY) == "REGRESSION"
+    assert manifest.footage({**ENTRY, "capture_setup": "cama-20260914-wide"}) == "UNSEEN"
+    assert manifest.footage(None) == "UNLABELLED"
+
+
+def test_a_pooled_result_is_unseen_only_if_all_of_it_is():
+    assert manifest.pooled_footage(["UNSEEN", "REGRESSION"]) == "REGRESSION"
+    assert manifest.pooled_footage(["UNSEEN", "UNLABELLED"]) == "UNLABELLED"
+    assert manifest.pooled_footage(["UNSEEN", "UNSEEN"]) == "UNSEEN"
+    assert manifest.pooled_footage([]) == "UNLABELLED"
+
+
+def test_every_unseen_setup_is_a_shipped_one():
+    """A misspelt name would label nothing unseen, and nothing would say so."""
+    shipped = {e["capture_setup"] for e in manifest.load().values()}
+    assert manifest.UNSEEN_SETUPS <= shipped

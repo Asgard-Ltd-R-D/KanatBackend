@@ -49,6 +49,40 @@ def lookup(video, entries=None):
     return (load() if entries is None else entries).get(content_hash(video))
 
 
+# ADR-0010's label, kept by hand, as no tool can know what was in view: the
+# Capture Setups nothing at HEAD was chosen with in view. Take one out as soon
+# as anything is chosen with any of its recordings in view.
+UNSEEN_SETUPS = {"cama-20260914-wide", "cama-20260914-wide-tight"}
+
+FOOTAGE_MEANING = {
+    "REGRESSION": "shows a change broke nothing here, not that it generalises",
+    "UNSEEN": "evidence of generalisation; tuning on its Capture Setup makes it "
+              "regression, so take that setup out of UNSEEN_SETUPS first",
+    "UNLABELLED": "unlisted, so no Capture Setup to judge by; not evidence of "
+                  "generalisation until it is listed",
+}
+
+
+def footage(entry):
+    """ADR-0010's label for a recording's results, from its manifest entry:
+    UNSEEN, REGRESSION, or UNLABELLED for an unlisted one."""
+    if entry is None:
+        return "UNLABELLED"
+    return "UNSEEN" if entry["capture_setup"] in UNSEEN_SETUPS else "REGRESSION"
+
+
+def pooled_footage(labels):
+    """A pooled result is unseen only if all of it is."""
+    labels = set(labels)
+    if "REGRESSION" in labels:
+        return "REGRESSION"
+    return "UNSEEN" if labels == {"UNSEEN"} else "UNLABELLED"
+
+
+def footage_line(label, what):
+    return f"[FOOTAGE] {what}: {label} (ADR-0010), {FOOTAGE_MEANING[label]}"
+
+
 def git_commit():
     """Short HEAD, marked when the tree is dirty. A report naming a clean
     commit that never existed is worse than none."""

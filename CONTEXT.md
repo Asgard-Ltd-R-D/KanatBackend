@@ -165,10 +165,10 @@ buffering ahead of the decoder — is end-to-end latency, not Frame Wait.
 _Avoid_: latency, lag, buffering, delay
 
 **Miss**:
-A Bullet Hole on a Target Sheet that falls outside the Target printed on it. A
-real Hit, and counted as one, but carrying no Shot Distance and no score. A
-Bullet Hole off every Target Sheet is not a Miss: the system does not look
-there (ADR-0011).
+A Bullet Hole on a Target Sheet, or within 5 mm of its edge, that falls
+outside the Target printed on it. A real Hit, and counted as one, but carrying
+no Shot Distance and no score. A Bullet Hole further than 5 mm off every Target
+Sheet is not a Miss: the system does not look there (ADR-0011).
 _Avoid_: stray, off-target hit
 
 **Position**:

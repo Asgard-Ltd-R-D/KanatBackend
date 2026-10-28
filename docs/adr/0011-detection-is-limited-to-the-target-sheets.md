@@ -3,8 +3,8 @@
 The system looks for Bullet Holes only on the Target Sheets, the printed pages
 the Targets are on, plus 5 mm. A Hit anywhere else on the Board is not
 detected, reported or scored. If it matters, the operator adds it by hand (the
-WebApp's Manual source). A Miss now means a hole on a sheet's white margin,
-outside its Target. Decided 2026-10-28, while planning the latency and accuracy
+WebApp's Manual source). A Miss now means a hole outside its Target, on a
+sheet's white margin or within those 5 mm of its edge. Decided 2026-10-28, while planning the latency and accuracy
 work.
 
 ## Why
@@ -64,8 +64,8 @@ centred page predicts. Fit it properly before the bound is fixed in code.
 
 ## Consequences
 
-- Truth holes off every sheet are left out of scoring and listed as out of
-  scope, not counted as misses. Regression results run on 10–13 holes, not 18.
+- Truth holes more than 5 mm off every sheet are left out of scoring and
+  listed as out of scope, not counted as misses. Regression results run on 10–13 holes, not 18.
 - ADR-0001's reported counts were a floor on Hits. They are now a floor on Hits
   on the sheets.
 - Registration only has to place points on the sheets. #50's Board-texture

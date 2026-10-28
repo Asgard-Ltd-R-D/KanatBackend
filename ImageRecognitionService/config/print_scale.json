@@ -1,26 +1,38 @@
 {
   "cama-20260914": {
     "mm_per_tpl_px": 0.1763,
-    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way.",
+    "sheet_tpl_px": [-145, -9, 1548, 1180],
+    "sheet_source": "#271 fit on #62's two photographs of the same print (tools/sheet_fit.py, docs/ring_measurement.md 2026-10-28): the Target Sheet as x0, y0, x1, y1 in template px. The artwork sits 4.5 mm off-centre toward the head: the centred page (-140, -36, 1545, 1156) puts the sheet's edge 4.7 mm too far out at the head and 4.2 mm too far in at the feet."
   },
   "cama-20260914-close-cross": {
     "mm_per_tpl_px": 0.1763,
-    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way.",
+    "sheet_tpl_px": [-145, -9, 1548, 1180],
+    "sheet_source": "#271 fit on #62's two photographs of the same print (tools/sheet_fit.py, docs/ring_measurement.md 2026-10-28): the Target Sheet as x0, y0, x1, y1 in template px. The artwork sits 4.5 mm off-centre toward the head: the centred page (-140, -36, 1545, 1156) puts the sheet's edge 4.7 mm too far out at the head and 4.2 mm too far in at the feet."
   },
   "cama-20260914-wide": {
     "mm_per_tpl_px": 0.1763,
-    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way.",
+    "sheet_tpl_px": [-145, -9, 1548, 1180],
+    "sheet_source": "#271 fit on #62's two photographs of the same print (tools/sheet_fit.py, docs/ring_measurement.md 2026-10-28): the Target Sheet as x0, y0, x1, y1 in template px. The artwork sits 4.5 mm off-centre toward the head: the centred page (-140, -36, 1545, 1156) puts the sheet's edge 4.7 mm too far out at the head and 4.2 mm too far in at the feet."
   },
   "cama-20260914-wide-tight": {
     "mm_per_tpl_px": 0.1763,
-    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way.",
+    "sheet_tpl_px": [-145, -9, 1548, 1180],
+    "sheet_source": "#271 fit on #62's two photographs of the same print (tools/sheet_fit.py, docs/ring_measurement.md 2026-10-28): the Target Sheet as x0, y0, x1, y1 in template px. The artwork sits 4.5 mm off-centre toward the head: the centred page (-140, -36, 1545, 1156) puts the sheet's edge 4.7 mm too far out at the head and 4.2 mm too far in at the feet."
   },
   "camb-20260915-close-one-board": {
     "mm_per_tpl_px": 0.1763,
-    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way.",
+    "sheet_tpl_px": [-145, -9, 1548, 1180],
+    "sheet_source": "#271 fit on #62's two photographs of the same print (tools/sheet_fit.py, docs/ring_measurement.md 2026-10-28): the Target Sheet as x0, y0, x1, y1 in template px. The artwork sits 4.5 mm off-centre toward the head: the centred page (-140, -36, 1545, 1156) puts the sheet's edge 4.7 mm too far out at the head and 4.2 mm too far in at the feet."
   },
   "camb-20260915-wide-two-boards": {
     "mm_per_tpl_px": 0.1763,
-    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way."
+    "source": "#62 measured A4 print: repo artwork kanat_silhouette_a4.png, A4 Scale to Fit, 0.1758 / 0.1768 mm per template px, mean 0.1763 (docs/ring_measurement.md). The user confirmed 2026-10-04 that the recorded Boards' Targets were printed the same way.",
+    "sheet_tpl_px": [-145, -9, 1548, 1180],
+    "sheet_source": "#271 fit on #62's two photographs of the same print (tools/sheet_fit.py, docs/ring_measurement.md 2026-10-28): the Target Sheet as x0, y0, x1, y1 in template px. The artwork sits 4.5 mm off-centre toward the head: the centred page (-140, -36, 1545, 1156) puts the sheet's edge 4.7 mm too far out at the head and 4.2 mm too far in at the feet."
   }
 }

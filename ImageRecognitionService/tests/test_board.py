@@ -1,11 +1,13 @@
 """Checks for Board geometry. No model, no video, no torch."""
 
+import json
+
 import cv2
 import numpy as np
 import pytest
 
 from detection import board
-from tools import ring_landmarks
+from tools import ring_landmarks, sheet_fit
 
 
 def _square(x0, y0, side):
@@ -146,6 +148,17 @@ def test_ring_landmarks_match_the_artwork():
     edge, line_radii = ring_landmarks.measure()
     assert 2 * edge == pytest.approx(board.RING_DIAMETER_TPL, abs=0.1)
     assert line_radii == pytest.approx(board.RING_RADII_TPL[1:], abs=0.1)
+
+
+def test_configured_sheet_matches_the_photographs():
+    """Every Capture Setup's sheet rectangle is #271's fit; re-fitting both
+    #62 photographs must agree with it to 2 template px (0.35 mm)."""
+    rects = [sheet_fit.measure(p)[1] for p in sheet_fit.PHOTOS]
+    with open(board.PRINT_SCALE_PATH) as f:
+        entries = json.load(f)
+    for entry in entries.values():
+        assert entry["sheet_source"]
+        assert entry["sheet_tpl_px"] == pytest.approx(np.mean(rects, axis=0), abs=2)
 
 
 def test_beyond_the_outer_ring_scores_outside():

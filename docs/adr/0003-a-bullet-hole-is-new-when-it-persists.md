@@ -152,10 +152,13 @@ before the sealed run, which evaluates them once and does not re-set them
 
 ## Consequences
 
-Nothing can be reported until its confirmation window has elapsed — about two
+Nothing can be reported until its verdict can no longer change (the
+2026-10-28 amendment above). A clean Hit's verdict is fixed before its window
+ends, about 0.8 s after its first Detection at a stride of about 5. A marginal
+Candidate, and every rejection, still waits out the whole window, about two
 seconds at 25fps. This is affordable only because the latency budget was
-relaxed to 5–10 seconds; it does not fit SOW 2.3.4's 0.5 seconds, which is
-recorded as needing renegotiation.
+relaxed to 5–10 seconds; even the early case does not fit SOW 2.3.4's 0.5
+seconds, which is recorded as needing renegotiation.
 
 The camera is not static (~16px drift over 12 seconds on this footage), so every
 frame is registered to the baseline before positions are compared.
@@ -170,11 +173,19 @@ tuning them on what it reveals would spend it ([ADR-0005](0005-the-held-out-set-
 Recall on the only window with ground truth is **5 of 6**. That is the number to
 beat, and it is far from SOW 2.3.6.
 
-A Bullet Hole appearing within `PERSIST_FRAMES` of the end of the clip is **not
-reported**, because its confirmation window has not elapsed. Shortening the
-denominator to the frames that happen to remain is what made the verdict depend
-on clip length in the first place, so the window is required to complete instead.
-Any analysis must therefore run at least 50 frames past the last expected Hit.
+On a recording, a Bullet Hole appearing within `PERSIST_FRAMES` of the end of
+the clip is **not reported**, because its confirmation window has not elapsed.
+That holds even when its verdict was fixed early: reporting it would make a
+recording's results differ from the end-of-window verdicts, which the
+2026-10-28 amendment keeps identical. Shortening the denominator to the frames
+that happen to remain is what made the verdict depend on clip length in the
+first place, so the window is required to complete instead. Any analysis must
+therefore run at least 50 frames past the last expected Hit.
+
+Live, a Range has no clip end to wait for. A Candidate whose verdict was fixed
+early is reported at once and stays reported
+([ADR-0004](0004-a-confirmed-bullet-hole-is-never-retracted.md)); one still
+undecided when the Range ends is unconfirmable, not rejected.
 
 Frames where registration fails are excluded from the denominator rather than
 counted as a sighting missed. A lost frame is no evidence either way, and

@@ -177,6 +177,9 @@ The steps below ran on 2026-10-20. The results are recorded below and were poste
 
 Footage from this camera is a new Capture Setup. Its role under ADR-0005 (spent, threshold-work or sealed) is decided before anyone scores it. Recording the Range with the video service (`record: true` on the path) waits for that decision, and acceptance does not need a recording.
 
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** recordings carry no role; this camera's footage may be recorded and scored
+> once it has a manifest entry, or without one.
+
 **Security.** The Control API (:9997, on all interfaces) is unauthenticated, and it returns a path's `source` with the camera credentials in clear (#89). For acceptance, use the viewer-only camera account and keep :9997 off untrusted networks. This is out of scope on the closed range network; [`.out-of-scope/closed-network-service-hardening.md`](../../.out-of-scope/closed-network-service-hardening.md) says why and when it reopens (#89). The pipeline's URL carries no credentials, because reading from MediaMTX is anonymous, and `_redacted` keeps any URL credentials out of its output.
 
 ## The replay, 2026-10-07

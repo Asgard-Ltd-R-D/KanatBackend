@@ -31,6 +31,8 @@ Wait** is live only. All figures are milliseconds unless marked.
 - **Recordings:** the two spent ones with truth. The pipeline's own gate passed both.
   No Sealed recording was opened (ADR-0005), and `data/sealed_runs.log` is
   unchanged.
+
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no recording is sealed now, and the log is deleted.
 - **Conditions:** one run at a time, on mains power. No other heavy job ran, but desktop apps were open.
   At the start a browser tab was taking about 74% of one core; it had closed before the CamB CPU run
   quoted below. Load averages were 2.0–4.8 across the runs. No idle sleep was logged during any run
@@ -214,6 +216,8 @@ small delay from the camera.
   ffmpeg 9.0.2 (Homebrew 9.0.2_1) and libx264 r3222. 1,150 frames, H.264 Main, 1920×1080, 25 fps, GOP 25. The copy
   is spent too, and is not committed. No Sealed recording was opened (ADR-0005), and
   `data/sealed_runs.log` is unchanged.
+
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no recording is sealed now, and the log is deleted.
 - **MediaMTX** v1.21.1 (darwin arm64), started in `VideoService/` with `mediamtx.yml` unchanged. The
   `replay` path was added through the Control API and published on demand by `ffmpeg -re … -c copy`.
 - **The run,** at the live stride (17), kept awake with `caffeinate -i`. No sleep was logged. It was stopped

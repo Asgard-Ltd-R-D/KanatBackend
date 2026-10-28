@@ -1,5 +1,8 @@
 # The sealed run
 
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** sealing is gone, and every recording may be opened. This
+> document is kept as the record of the one sealed run, as it stood on 2026-10-01.
+
 **Measured once, 2026-10-01, at `54a49a8`.** Issue #31. This is the one evaluation
 of the frozen system on footage nothing was tuned or chosen on (ADR-0005). The
 model, the constants and the commit were written down in #31 before any sealed

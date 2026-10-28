@@ -7,6 +7,8 @@ threshold-work pair `config/recordings.json` allocates, each run over its manife
 window. No sealed recording was opened and no `--final-run` was passed, so no
 sealed run was logged.
 
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no recording is sealed now, and `--final-run` is gone.
+
 These recordings may falsify a constant, not optimise one (ADR-0005). Nothing
 here moves a value. One constant breaks, and it is a defect naming its
 mechanism: **#41** (the canvas ends before the Board does).
@@ -181,6 +183,8 @@ the ruling on `_103223` found #3 are unchanged.
 
 - **Generalisation.** One Capture Setup, already fitted. The sealed wide pair is
   the only held-out pose (#31).
+
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** nothing is held out; the wide pair is regression footage now.
 - **Recall over the whole Board.** A third of the new Bullet Holes here are
   outside the image the detector sees (#41). The pooled 67% is a canvas bound,
   and on-canvas recall (4 of 4) says nothing about the Board below it.

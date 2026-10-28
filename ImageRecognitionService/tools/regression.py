@@ -16,7 +16,9 @@ added; each matched Bullet Hole's Position Error moves at most `MOVE_MM` and sta
 `position_error.LIMIT_MM` on both axes. A failure the reference itself shows
 under its shifted runs (the hole lost, the false positive there, the error
 moved or over the limit) flips under the control: it is grid noise,
-reported, and does not fail. Only the reference's shifted runs are read, but
+reported, and does not fail. A position failure flips only where a shifted
+run found the hole and shows it: a shifted miss has no position to show.
+Recordings run at another window, stride or device are not ruled on. Only the reference's shifted runs are read, but
 `run` makes them by default all the same: today's result is the next
 change's reference.
 
@@ -185,6 +187,13 @@ def compare(ref, new):
                  f"{len(r0['truth'])} truth in {r0['unit']} against "
                  f"{len(n0['truth'])} in {unit}")
             continue
+        # Another window, stride or device is another experiment, not a change.
+        was_run, now_run = (f"stride {x['stride']}, {y['window'][0]:g}-{y['window'][1]:g} s, "
+                            f"device {y['shifts']['0']['device']}"
+                            for x, y in ((ref, r), (new, n)))
+        if was_run != now_run:
+            note(name, "not comparable", "-", f"{now_run} against {was_run}")
+            continue
         for t in n0["truth"]:
             j, was = t["truth"], _truth(r0, t["truth"])
             hole = f"truth #{j}"
@@ -206,12 +215,12 @@ def compare(ref, new):
                 note(name, "moved", hole,
                      f"dX {was['dx']:+.1f} -> {t['dx']:+.1f}, dY {was['dy']:+.1f} -> "
                      f"{t['dy']:+.1f}: moved {moved:.2f} {unit}, over {MOVE_MM:g}",
-                     any(u["outcome"] != "TP" or _moved(was, u) > MOVE_MM for u in under))
+                     any(u["outcome"] == "TP" and _moved(was, u) > MOVE_MM for u in under))
             if _over(t):
                 note(name, "over limit", hole,
                      f"dX {t['dx']:+.1f}, dY {t['dy']:+.1f} {unit}: at or over "
                      f"{position_error.LIMIT_MM:g}",
-                     any(u["outcome"] != "TP" or _over(u) for u in under))
+                     any(u["outcome"] == "TP" and _over(u) for u in under))
         tol = evaluate.MATCH_TOLERANCE_TPL
         before, after = _points(r0["false_positives"]), _points(n0["false_positives"])
         pairs, removed = evaluate.match(before, after, tol)

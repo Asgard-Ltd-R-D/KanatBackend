@@ -19,11 +19,12 @@ def _fp(x, y):
 
 def _shift(truth, fps=()):
     return {"truth": truth, "false_positives": list(fps), "unit": "mm",
-            "fp_before_change_filter": 0}
+            "fp_before_change_filter": 0, "device": "cpu"}
 
 
-def _result(*shifts):
-    return {"recordings": {"rec": {"shifts": {str(d): s for d, s in zip((0, 8, 16, 32), shifts)}}}}
+def _result(*shifts, stride=1, window=(13, 25)):
+    return {"stride": stride, "recordings": {"rec": {"window": list(window), "shifts": {
+        str(d): s for d, s in zip((0, 8, 16, 32), shifts)}}}}
 
 
 def _kinds(ref, new):
@@ -86,3 +87,22 @@ def test_results_in_template_px_are_not_ruled_on():
     px = _shift([_tp(1), _tp(2)])
     px["unit"] = "template px"
     assert _kinds(REF, _result(px)) == ([("not comparable", "-", False, True)], False)
+
+
+def test_a_shifted_miss_does_not_excuse_a_move_or_the_limit():
+    ref = _result(_shift([_tp(1, 4.5, 0.0)]), _shift([_fn(1)]))
+    assert _kinds(ref, _result(_shift([_tp(1, 5.6, 0.0)]))) == (
+        [("moved", "truth #1", False, True), ("over limit", "truth #1", False, True)], False)
+
+
+def test_a_shifted_move_over_the_bound_is_noise():
+    ref = _result(_shift([_tp(1)]), _shift([_tp(1, 2.5, 1.0)]))
+    assert _kinds(ref, _result(_shift([_tp(1, 2.1, 1.0)]))) == (
+        [("moved", "truth #1", True, False)], True)
+
+
+def test_results_from_other_settings_are_not_ruled_on():
+    mps = _shift([_tp(1), _tp(2)])
+    mps["device"] = "mps"
+    for new in (_result(STEADY, stride=17), _result(STEADY, window=(13, 20)), _result(mps)):
+        assert _kinds(REF, new) == ([("not comparable", "-", False, True)], False)

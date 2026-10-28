@@ -36,6 +36,8 @@ HOLE_TPL = 12.0    # a Bullet Hole's radius, template px (about 25 across)
 DISK_HOLES = 2     # the difference is read over this many radii: placements land up to one off
 CROP_HOLES = 4     # strip crop half-width, in hole radii
 STRIP_PX = 160     # each strip cell, px
+HEAD_PX = 110      # the strip's row-name column, px
+MIN_HALF = 16      # crop half-width floor, frame px: a CamB hole is ~4 px across
 SHOWN = range(-3, 4)
 STRIPS_DIR = os.path.join(manifest.BASE_DIR, "docs", "arrival")
 
@@ -71,38 +73,29 @@ def write(truth_dir, frames):
         f.writelines(f"{'-' if a is None else a} proposed\n" for a in frames)
 
 
-def place(entry):
-    """Each truth Bullet Hole in the Recording's frame px, as a Run places it
-    (Board space from the window's first frame), and a hole's radius there.
+def truth_in_frame(entry, base, view):
+    """Each truth Bullet Hole in the Recording's frame px, placed through the
+    Run's baseline frame and Board space, and a hole's radius there.
 
-    The radius is taken at the 10-ring the homography was fitted to: a hole
-    on a second Board lies near its horizon, where 12 template px came out
-    163 frame px (`_101550`). Its position is a round trip and is exact."""
-    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
-    video = os.path.join(position_error.VIDEO_DIR, entry["file"])
-    source, base, view, _ = nbh.open_board_space(video, entry["window"][0], template_mask)
-    source.close()
+    The radius is taken at the 10-ring the homography was fitted to, not at
+    each hole: a hole on a second Board lies near the homography's horizon,
+    where 12 template px measured 163 frame px (`_101550`). The positions
+    are a round trip through the same matrices, and exact."""
     truth, _ = evaluate.load_truth(None, position_error.truth_dir(entry), base, view)
     to_frame = lambda p: view.board_to_frame(view.template_to_board(np.float32(p).reshape(-1, 2)))
     ring = to_frame(board.RING_CENTRE_TPL)
     return to_frame(truth), float(np.linalg.norm(to_frame(board.RING_CENTRE_TPL + [HOLE_TPL, 0]) - ring))
 
 
-def patches(video, points, half, first, last):
-    """Grey patches of side `2 * half` around each point, per frame from
-    `first` to `last`: `(frames, points, 2 * half, 2 * half)`."""
-    cap = cv2.VideoCapture(video)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, first)
+def patches(frames, points, half):
+    """Grey patches of side `2 * half` around each point, per `Frame`:
+    `(frames, points, 2 * half, 2 * half)`."""
     out = []
-    for _ in range(first, last):
-        ok, frame = cap.read()
-        if not ok:
-            break
-        grey = cv2.copyMakeBorder(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),
+    for frame in frames:
+        grey = cv2.copyMakeBorder(cv2.cvtColor(frame.image, cv2.COLOR_BGR2GRAY),
                                   half, half, half, half, cv2.BORDER_REPLICATE)
         out.append([grey[int(y):int(y) + 2 * half, int(x):int(x) + 2 * half]
                     for x, y in np.round(points)])
-    cap.release()
     return np.asarray(out, np.float32)
 
 
@@ -115,10 +108,10 @@ def differences(stack, radius):
     return np.abs(stack - stack[:1])[..., disk].mean(axis=-1)
 
 
-def strip(stack, rows, first, labels):
+def strip(stack, rows, first, names):
     """One row per truth line: frames -3..+3 around its proposal, each labelled."""
     out = []
-    for j, (at, label) in enumerate(zip(rows, labels)):
+    for j, (at, name) in enumerate(zip(rows, names)):
         cells = []
         for o in SHOWN:
             f = min(max(at + o - first, 0), len(stack) - 1)
@@ -132,32 +125,41 @@ def strip(stack, rows, first, labels):
             if o == 0:
                 cv2.rectangle(cell, (0, 0), (STRIP_PX - 1, STRIP_PX - 1), colour, 2)
             cells.append(cell)
-        head = np.zeros((STRIP_PX, 110, 3), np.uint8)
-        cv2.putText(head, label, (4, STRIP_PX // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+        head = np.zeros((STRIP_PX, HEAD_PX, 3), np.uint8)
+        cv2.putText(head, name, (4, STRIP_PX // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     (255, 255, 255), 1)
         out.append(np.hstack([head] + cells))
     return np.vstack(out)
 
 
-def label(entry):
+def propose_recording(entry):
     """Propose, write the file and the strip for one Recording; print a line
-    per truth line."""
+    per truth line. Frames are read as the Run reads them: the one seek to
+    the window's start, at the Recording's own frame rate."""
     name = os.path.splitext(entry["file"])[0]
-    video = os.path.join(position_error.VIDEO_DIR, entry["file"])
-    points, radius = place(entry)
-    half = max(16, int(round(CROP_HOLES * radius)))
-    first = int(entry["window"][0] * entry["fps"])
-    last = int(entry["window"][1] * entry["fps"])
-    stack = patches(video, points, half, first, last)
+    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    source, base, view, _ = nbh.open_board_space(
+        os.path.join(position_error.VIDEO_DIR, entry["file"]), entry["window"][0], template_mask)
+    try:
+        points, radius = truth_in_frame(entry, base, view)
+        half = max(MIN_HALF, int(round(CROP_HOLES * radius)))
+        first = int(entry["window"][0] * source.fps)
+        n_frames = int((entry["window"][1] - entry["window"][0]) * source.fps)
+        stack = patches(nbh.frames_from(source, base, n_frames), points, half)
+    finally:
+        source.close()
+    if len(stack) < 2 * STEP:
+        raise SystemExit(f"[FAILED] read {len(stack)} frames of {entry['file']}'s window, "
+                         f"too few to find a step in")
     d = differences(stack, DISK_HOLES * radius)
     frames = [first + propose(d[:, j]) for j in range(len(points))]
     write(position_error.truth_dir(entry), frames)
     os.makedirs(STRIPS_DIR, exist_ok=True)
     path = os.path.join(STRIPS_DIR, f"{name}.png")
-    cv2.imwrite(path, strip(stack, frames, first,
-                            [f"truth #{j + 1}" for j in range(len(frames))]))
-    for j, f in enumerate(frames):
-        print(f"{name}  truth #{j + 1}  frame {f}  ({f / entry['fps']:.2f}s)")
+    names = [f"truth #{j + 1}" for j in range(len(frames))]
+    cv2.imwrite(path, strip(stack, frames, first, names))
+    for row, f in zip(names, frames):
+        print(f"{name}  {row}  frame {f}  ({f / source.fps:.2f}s)")
     print(f"strip: {path}")
 
 
@@ -169,4 +171,4 @@ if __name__ == "__main__":
     for entry in position_error.select(manifest.load()):
         if a.only and os.path.splitext(entry["file"])[0] not in a.only:
             continue
-        label(entry)
+        propose_recording(entry)

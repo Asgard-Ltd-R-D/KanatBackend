@@ -46,3 +46,7 @@ def test_every_shipped_entry_carries_the_documented_fields():
         missing = [f for f in DOCUMENTED_FIELDS if f not in entry]
         assert not missing, f"{entry.get('file', sha)} is missing {missing}"
 
+
+def test_no_shipped_entry_carries_a_role():
+    """Roles went with sealing (ADR-0010)."""
+    assert not [e["file"] for e in manifest.load().values() if "role" in e]

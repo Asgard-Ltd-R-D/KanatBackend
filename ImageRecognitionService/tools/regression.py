@@ -18,8 +18,9 @@ under its shifted runs (the hole lost, the false positive there, the error
 moved or over the limit) flips under the control: it is grid noise,
 reported, and does not fail. A position failure flips only where a shifted
 run found the hole and shows it: a shifted miss has no position to show.
-Recordings run at another window, stride or device are not ruled on. Only the reference's shifted runs are read, but
-`run` makes them by default all the same: today's result is the next
+Recordings run on other bytes or truth (both hashed into the result), or at
+another window, stride or device, are not ruled on. Only the reference's
+shifted runs are read, but `run` makes them by default all the same: today's result is the next
 change's reference.
 
 Hit-to-report is from each truth Bullet Hole's arrival frame, `board.arrival.txt`
@@ -33,6 +34,7 @@ judged on, so passing here is not evidence of generalisation.
 """
 import argparse
 import csv
+import hashlib
 import json
 import os
 import platform
@@ -61,6 +63,19 @@ def arrival_frames(truth_dir):
     with open(path) as f:
         first = [(l.split() or ["-"])[0] for l in f.read().splitlines()]
     return [None if f == "-" else int(f) for f in first]
+
+
+def truth_hash(truth_dir):
+    """sha256 over the truth folder's files, by name and bytes. The arrival
+    file is left out: it feeds hit-to-report, not the rule, so labelling it
+    (#273) does not void every reference."""
+    digest = hashlib.sha256()
+    for name in sorted(os.listdir(truth_dir)):
+        if name != ARRIVAL_NAME and not name.startswith("."):
+            digest.update(name.encode() + b"\0")
+            with open(os.path.join(truth_dir, name), "rb") as f:
+                digest.update(f.read() + b"\0")
+    return digest.hexdigest()
 
 
 def timing_summary(path):
@@ -130,6 +145,9 @@ def run(entries, stride, device, shifts, out, truth_filter=None):
     for entry in entries:
         name = os.path.splitext(entry["file"])[0]
         recording = {"window": entry["window"], "footage": manifest.footage(entry),
+                     "sha256": manifest.content_hash(
+                         os.path.join(position_error.VIDEO_DIR, entry["file"])),
+                     "truth_sha256": truth_hash(position_error.truth_dir(entry)),
                      "shifts": {}}
         for d in shifts:
             print(f"\n===== {name}, canvas shift {d} px =====")
@@ -186,6 +204,13 @@ def compare(ref, new):
             note(name, "not comparable", "-",
                  f"{len(r0['truth'])} truth in {r0['unit']} against "
                  f"{len(n0['truth'])} in {unit}")
+            continue
+        # Other footage or other truth is not the same bench.
+        differ = [what for key, what in (("sha256", "recording bytes"), ("truth_sha256", "truth"))
+                  if r.get(key) is None or r.get(key) != n.get(key)]
+        if differ:
+            note(name, "not comparable", "-",
+                 f"{' and '.join(differ)} not the reference's, or unrecorded")
             continue
         # Another window, stride or device is another experiment, not a change.
         was_run, now_run = (f"stride {x['stride']}, {y['window'][0]:g}-{y['window'][1]:g} s, "

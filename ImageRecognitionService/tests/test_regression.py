@@ -22,9 +22,10 @@ def _shift(truth, fps=()):
             "fp_before_change_filter": 0, "device": "cpu"}
 
 
-def _result(*shifts, stride=1, window=(13, 25)):
-    return {"stride": stride, "recordings": {"rec": {"window": list(window), "shifts": {
-        str(d): s for d, s in zip((0, 8, 16, 32), shifts)}}}}
+def _result(*shifts, stride=1, window=(13, 25), sha256="v", truth_sha256="t"):
+    return {"stride": stride, "recordings": {"rec": {
+        "window": list(window), "sha256": sha256, "truth_sha256": truth_sha256,
+        "shifts": {str(d): s for d, s in zip((0, 8, 16, 32), shifts)}}}}
 
 
 def _kinds(ref, new):
@@ -106,3 +107,18 @@ def test_results_from_other_settings_are_not_ruled_on():
     mps["device"] = "mps"
     for new in (_result(STEADY, stride=17), _result(STEADY, window=(13, 20)), _result(mps)):
         assert _kinds(REF, new) == ([("not comparable", "-", False, True)], False)
+
+
+def test_results_on_other_bytes_or_truth_are_not_ruled_on():
+    for new in (_result(STEADY, sha256="w"), _result(STEADY, truth_sha256="u"),
+                _result(STEADY, sha256=None)):
+        assert _kinds(REF, new) == ([("not comparable", "-", False, True)], False)
+
+
+def test_the_truth_hash_reads_labels_but_not_arrivals(tmp_path):
+    (tmp_path / "board.new.txt").write_text("0 0.5 0.5\n")
+    before = regression.truth_hash(tmp_path)
+    (tmp_path / regression.ARRIVAL_NAME).write_text("120\n")
+    assert regression.truth_hash(tmp_path) == before
+    (tmp_path / "board.new.txt").write_text("0 0.5 0.6\n")
+    assert regression.truth_hash(tmp_path) != before

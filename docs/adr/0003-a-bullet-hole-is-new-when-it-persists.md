@@ -55,6 +55,18 @@ than of where the operator stopped the recording. `test_new_bullet_holes.py` pin
 this, in `test_verdict_does_not_depend_on_clip_length` and
 `test_unelapsed_window_is_not_reported`.
 
+*Amended 2026-10-28: a Candidate persists as soon as the verdict can no longer
+change, not only when its window ends. The window, the 50% and the Lost-frame
+floor (#110) stay as they are. The verdict is fixed once the Looks with a
+Detection would reach 50% even if every remaining due Look registered and saw
+nothing, and the floor would hold even if every remaining due Look were Lost.
+Rejection still waits for the window to end. On a recording, the Bullet Holes
+reported are the same; only the moment they are reported moves. Live, Change
+Evidence is first checked at that earlier moment, and then at each later Look
+as before (the 2026-10-11 amendment below). The reason is Hit-to-report
+latency. At a stride of about 5, a clean Hit's verdict is fixed about 0.8 s
+after its first Detection, about 1.2 s before its window ends.*
+
 ## Why change detection is evidence, not the gate
 
 The obvious cheaper design runs `cv2.absdiff` against the baseline and hands

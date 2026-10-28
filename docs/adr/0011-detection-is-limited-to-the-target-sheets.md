@@ -48,10 +48,19 @@ The 5 mm allows for three things: the edge is derived, not seen; SOW 2.3.2
 allows 5 mm of placement error; and a 5.56–9 mm hole that close still tears the
 sheet.
 
-The centring is not yet confirmed. An eyeball check on #62's photograph
-(`ImageRecognitionService/docs/ring_measurement/side_to_side.jpg`) agrees within
-2 mm across the shoulders. At head and feet it finds 5–6 mm more margin than the
-centred page predicts. Fit it properly before the bound is fixed in code.
+**Amended 2026-10-28 (#271): the page is not centred.** Fitted on both of
+#62's photographs, the artwork sits 4.5 mm off-centre toward the head. The
+sheet is template x −145…1548, y −9…1180, configured per Capture Setup as
+`sheet_tpl_px` in `ImageRecognitionService/config/print_scale.json`
+(`docs/ring_measurement.md`, "Where the sheet lies around the artwork"). Across
+the shoulders the centred page was within 1 mm. At the head its edge was 4.7 mm
+too far out, and at the feet 4.2 mm too far in. The eyeball check behind the
+earlier "5–6 mm more margin at head and feet" misread the head.
+
+With the fitted sheet, `_102450` #1 moves from 1.3 mm to 6.0 mm beyond the
+edge, past the 5 mm bound. Its after photograph shows it above the sheet. The
+table above was taken with the centred page. With the fitted sheet it is 10 on a
+sheet, 2 within the bound (CamA #2, #3) and 6 beyond it.
 
 ## Considered options
 
@@ -66,7 +75,7 @@ centred page predicts. Fit it properly before the bound is fixed in code.
 
 - Truth holes more than 5 mm off every sheet are left out of scoring and
   listed as out of scope, not counted as misses. Regression results run on
-  10–13 holes, not 18.
+  10–12 holes, not 18 (10–13 before #271 fitted the sheet).
 - ADR-0001's reported counts were a floor on Hits. They are now a floor on Hits
   on the sheets.
 - Registration only has to place points on the sheets. #50's Board-texture

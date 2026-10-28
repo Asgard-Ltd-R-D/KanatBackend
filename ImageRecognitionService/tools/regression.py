@@ -66,15 +66,20 @@ def arrival_frames(truth_dir):
 
 
 def truth_hash(truth_dir):
-    """sha256 over the truth folder's files, by name and bytes. The arrival
-    file is left out: it feeds hit-to-report, not the rule, so labelling it
-    (#273) does not void every reference."""
+    """sha256 over the truth folder's files, by name and bytes, and the
+    photographs its source file names, which the labels are registered
+    through. The arrival file is left out: it feeds hit-to-report, not the
+    rule, so labelling it (#273) does not void every reference."""
     digest = hashlib.sha256()
-    for name in sorted(os.listdir(truth_dir)):
-        if name != ARRIVAL_NAME and not name.startswith("."):
-            digest.update(name.encode() + b"\0")
-            with open(os.path.join(truth_dir, name), "rb") as f:
-                digest.update(f.read() + b"\0")
+    names = sorted(n for n in os.listdir(truth_dir)
+                   if n != ARRIVAL_NAME and not n.startswith("."))
+    any_label = os.path.join(truth_dir, evaluate.SOURCE_NAME)
+    photographs = [p for p in (evaluate._source_field(any_label, f"{w}-image")
+                               for w in ("before", "after")) if p]
+    for path in [os.path.join(truth_dir, n) for n in names] + photographs:
+        digest.update(os.path.basename(path).encode() + b"\0")
+        with open(path, "rb") as f:
+            digest.update(f.read() + b"\0")
     return digest.hexdigest()
 
 
@@ -132,7 +137,7 @@ def score(entry, stride, device, shift, timing=None, truth_filter=None):
     pairs, _ = evaluate.match(r["truth"], r["persisted"], evaluate.MATCH_TOLERANCE_TPL)
     return {"truth": truth, "false_positives": false_positives,
             "fp_before_change_filter": len(r["persisted"]) - len(pairs),
-            "unit": r["unit"], "device": r["device"]}
+            "unit": r["unit"], "mm_per_tpl_px": r["mm_per_tpl_px"], "device": r["device"]}
 
 
 def run(entries, stride, device, shifts, out, truth_filter=None):
@@ -191,6 +196,8 @@ def compare(ref, new):
                          "detail": detail, "noise": noise,
                          "fails": kind in FAILS and not noise})
 
+    for name in new["recordings"].keys() - ref["recordings"].keys():
+        note(name, "not comparable", "-", "in the new result, not in the reference")
     for name, r in ref["recordings"].items():
         n = new["recordings"].get(name)
         if n is None or "0" not in n["shifts"]:
@@ -212,9 +219,11 @@ def compare(ref, new):
             note(name, "not comparable", "-",
                  f"{' and '.join(differ)} not the reference's, or unrecorded")
             continue
-        # Another window, stride or device is another experiment, not a change.
+        # Another window, stride, device or print scale is another experiment,
+        # not a change.
         was_run, now_run = (f"stride {x['stride']}, {y['window'][0]:g}-{y['window'][1]:g} s, "
-                            f"device {y['shifts']['0']['device']}"
+                            f"device {y['shifts']['0']['device']}, "
+                            f"{y['shifts']['0'].get('mm_per_tpl_px')} mm per template px"
                             for x, y in ((ref, r), (new, n)))
         if was_run != now_run:
             note(name, "not comparable", "-", f"{now_run} against {was_run}")

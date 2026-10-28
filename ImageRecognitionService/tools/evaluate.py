@@ -1130,7 +1130,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
             "reported": [start + h["judged_frame"] / fps for h in run.holes],
             "persisted": view.board_to_template(
                 np.array([h["pos"] for h in run.persisted], np.float32).reshape(-1, 2)),
-            "fps": fps, "unit": unit,
+            "fps": fps, "unit": unit, "mm_per_tpl_px": mm_per_tpl_px,
             "device": str(getattr(getattr(loop.model, "predictor", None), "device", None))}
 
 

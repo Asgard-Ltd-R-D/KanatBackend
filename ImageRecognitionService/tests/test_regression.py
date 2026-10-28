@@ -19,7 +19,7 @@ def _fp(x, y):
 
 def _shift(truth, fps=()):
     return {"truth": truth, "false_positives": list(fps), "unit": "mm",
-            "fp_before_change_filter": 0, "device": "cpu"}
+            "fp_before_change_filter": 0, "device": "cpu", "mm_per_tpl_px": 0.1763}
 
 
 def _result(*shifts, stride=1, window=(13, 25), sha256="v", truth_sha256="t"):
@@ -103,9 +103,10 @@ def test_a_shifted_move_over_the_bound_is_noise():
 
 
 def test_results_from_other_settings_are_not_ruled_on():
-    mps = _shift([_tp(1), _tp(2)])
-    mps["device"] = "mps"
-    for new in (_result(STEADY, stride=17), _result(STEADY, window=(13, 20)), _result(mps)):
+    mps, rescaled = _shift([_tp(1), _tp(2)]), _shift([_tp(1), _tp(2)])
+    mps["device"], rescaled["mm_per_tpl_px"] = "mps", 0.18
+    for new in (_result(STEADY, stride=17), _result(STEADY, window=(13, 20)), _result(mps),
+                _result(rescaled)):
         assert _kinds(REF, new) == ([("not comparable", "-", False, True)], False)
 
 
@@ -115,10 +116,23 @@ def test_results_on_other_bytes_or_truth_are_not_ruled_on():
         assert _kinds(REF, new) == ([("not comparable", "-", False, True)], False)
 
 
-def test_the_truth_hash_reads_labels_but_not_arrivals(tmp_path):
-    (tmp_path / "board.new.txt").write_text("0 0.5 0.5\n")
-    before = regression.truth_hash(tmp_path)
-    (tmp_path / regression.ARRIVAL_NAME).write_text("120\n")
-    assert regression.truth_hash(tmp_path) == before
-    (tmp_path / "board.new.txt").write_text("0 0.5 0.6\n")
-    assert regression.truth_hash(tmp_path) != before
+def test_the_truth_hash_reads_labels_and_photographs_but_not_arrivals(tmp_path):
+    truth, photo = tmp_path / "truth", tmp_path / "after.jpeg"
+    truth.mkdir()
+    photo.write_bytes(b"jpeg")
+    (truth / "board.source.txt").write_text(f"after-image: {photo}\n")
+    (truth / "board.new.txt").write_text("0 0.5 0.5\n")
+    before = regression.truth_hash(truth)
+    (truth / regression.ARRIVAL_NAME).write_text("120\n")
+    assert regression.truth_hash(truth) == before
+    photo.write_bytes(b"edited jpeg")
+    assert regression.truth_hash(truth) != before
+    photo.write_bytes(b"jpeg")
+    (truth / "board.new.txt").write_text("0 0.5 0.6\n")
+    assert regression.truth_hash(truth) != before
+
+
+def test_a_recording_the_reference_never_ran_is_not_ruled_on():
+    new = _result(STEADY)
+    new["recordings"]["late"] = new["recordings"]["rec"]
+    assert _kinds(REF, new) == ([("not comparable", "-", False, True)], False)

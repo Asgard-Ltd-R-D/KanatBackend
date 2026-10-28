@@ -663,8 +663,9 @@ wall).
   on the sides across it.
 - `EDGE_MIN` (20), the gap and the 2 span search were set on these four
   baseline frames and never swept.
-- The shift control is not in the repo. It was a scratch wrapper around
-  `evaluate.py` that translated the canvas.
+- The shift control was a scratch wrapper around `evaluate.py` that
+  translated the canvas. It is in the repo now: `board.shifted`, run by
+  `tools.regression` (#272).
 - Bands see less context than one grown image would: a band is as thin as
   the growth plus 32 px (38 px on `_103223`'s top). Nothing was lost to that
   here; it is not validated (`ponytail:` on `exposed_bands`).
@@ -930,6 +931,11 @@ and SIGTERM still stop a Run at once.
 .venv/bin/python -m tools.position_error --stride 17   # the headline (LIVE_STRIDE)
 .venv/bin/python -m tools.position_error --stride 1
 
+# #268's regression bench: every truth recording per Bullet Hole, at the
+# 0/8/16/32 px canvas-shift control, to JSON; then a change against a reference
+caffeinate -i .venv/bin/python -m tools.regression run --out main.json
+.venv/bin/python -m tools.regression compare main.json branch.json
+
 .venv/bin/python -m pytest -q
 ```
 
@@ -1010,6 +1016,7 @@ came from. Gating the extraction is what keeps sealed pixels out of it.
 | `detection/groups.py` | Group statistics per Target (MPI, CEP50, Mean Radius, RMS, Extreme Spread), printed as `[GROUP]` blocks; pure, for SOW 2.4.1 to reuse (#86) |
 | `tools/evaluate.py`, `tools/derive_truth.py` | Scoring a run against labelled ground truth; deriving that truth from a photograph pair |
 | `tools/position_error.py` | SOW 2.3.2 stage 1: Position Error pooled over every truth recording, per camera, labelled internal (#126) |
+| `tools/regression.py` | #268's regression bench: every truth recording per Bullet Hole with the canvas-shift control, timing and Hit-to-report, to JSON; `compare` rules on a change (#272) |
 | `tools/probe.py`, `tools/registration_reach.py` | Per-mark detection and registration measurements over a clip |
 | `tools/ring_landmarks.py` | Re-reads the 10-ring diameter and scoring-ring radii off the artwork (#70) |
 | `tools/mine_negatives.py` | Background negatives from any recording's gravel, into `data/negatives/` |

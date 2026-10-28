@@ -34,6 +34,9 @@ for why the detection design is what it is.
 Bullet Holes, which is not a statistically meaningful validation. The table
 below is not held-out footage. See "The held-out set, and its one run" below.
 
+> **Superseded by [ADR-0010](../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no recording is held out any more. That 0 of 2 measured a system that has
+> changed since, so no unseen evidence stands: every recording with truth is regression.
+
 Two clips now carry operator-labelled ground truth.
 
 | Clip | Window | Labelled | TP | FP | FN | Precision | Recall | F1 | FP attributed to |
@@ -409,6 +412,9 @@ mined from them were trained into the `*_neg_v1` checkpoints (below). So
 `--final-run` included. The role stays `sealed`, not `spent`, so nothing mines
 the Board and light of the sealed wide setups from it (ADR-0005).
 
+> **Superseded by [ADR-0010](../docs/adr/0010-every-recording-may-be-opened.md) (#270):** roles and `data/sealed_runs.log` are gone, and close-cross opens like
+> any other recording.
+
 What separates a wrong fit from a right one, on this evidence: a **gross**
 failure (the camera on something else) separates on every signal, best on
 silhouette disagreement (≥180 against ≤24 on `_141846`, its artefact burst at
@@ -675,6 +681,9 @@ wall).
 
 ## The held-out set, and its one run
 
+> **Superseded by [ADR-0010](../docs/adr/0010-every-recording-may-be-opened.md) (#270):** nothing is held out, and `config/recordings.json` carries no role.
+> This section records how sealing stood until 2026-10-28.
+
 The six delivered files are **three** Capture Setups, and the five customer
 recordings are **two** — not the one ADR-0005 allowed they might collapse to.
 Which recording carries which role is `config/recordings.json`, and the grounds are
@@ -846,6 +855,9 @@ Two known limitations of the live run, neither closed by #83:
   the H.264 copy a replay needs: a transcode has a hash the manifest cannot
   trace, so never make one of a Sealed recording.
 
+  > **Superseded by [ADR-0010](../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no recording
+  > is sealed, so any may be streamed or transcoded.
+
 **The Detection Service** (#223, ADR-0008) is how the WebApp backend gets a
 live Run. `detection.service` loads the detector once and serves a control
 API on 127.0.0.1 only, port 8010 (`DEFAULT_PORT`, `--port`). It has no
@@ -913,8 +925,8 @@ and SIGTERM still stop a Run at once.
 .venv/bin/python -m tools.evaluate data/videos/CamB_20260915_102250.mkv --start 0 --end 46 \
     --truth-labels data/truth/camb-20260915-102250
 
-# SOW 2.3.2 stage 1: Position Error over every unsealed recording with truth,
-# window and Capture Setup from the manifest; Sealed ones skipped by role (#126)
+# SOW 2.3.2 stage 1: Position Error over every recording with truth, window
+# and Capture Setup from the manifest (#126, #270)
 .venv/bin/python -m tools.position_error --stride 17   # the headline (LIVE_STRIDE)
 .venv/bin/python -m tools.position_error --stride 1
 
@@ -956,6 +968,11 @@ Where an export needs correcting, **keep the raw file** and correct a derived
 copy: in a derived truth directory `board.after.export.txt` is the export's
 bytes unchanged, and `board.new.txt` is the file the evaluation reads.
 
+> **Superseded by [ADR-0010](../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no tool refuses a recording. One the manifest does not list runs
+> with no Capture Setup, its print scale from `--mm-per-px` or none. Entries carry
+> no role; `manifest.gate`, `--final-run` and `data/sealed_runs.log` are gone. An
+> entry still gives a recording its Capture Setup, frame rate and window.
+
 **Every recording needs a manifest entry before any tool will open it.**
 `config/recordings.json` maps sha256 to Capture Setup, role (`sealed`,
 `threshold-work` or `spent`), frame rate and analysis window, plus a
@@ -992,11 +1009,11 @@ came from. Gating the extraction is what keeps sealed pixels out of it.
 | `detection/service.py` | The Detection Service: the detector loaded once, one live Run at a time, started and ended over a control API on 127.0.0.1 (#223, ADR-0008) |
 | `detection/groups.py` | Group statistics per Target (MPI, CEP50, Mean Radius, RMS, Extreme Spread), printed as `[GROUP]` blocks; pure, for SOW 2.4.1 to reuse (#86) |
 | `tools/evaluate.py`, `tools/derive_truth.py` | Scoring a run against labelled ground truth; deriving that truth from a photograph pair |
-| `tools/position_error.py` | SOW 2.3.2 stage 1: Position Error pooled over the unsealed truth recordings, per camera, labelled internal (#126) |
+| `tools/position_error.py` | SOW 2.3.2 stage 1: Position Error pooled over every truth recording, per camera, labelled internal (#126) |
 | `tools/probe.py`, `tools/registration_reach.py` | Per-mark detection and registration measurements over a clip |
 | `tools/ring_landmarks.py` | Re-reads the 10-ring diameter and scoring-ring radii off the artwork (#70) |
-| `tools/mine_negatives.py` | Background negatives from unsealed footage, into `data/negatives/` |
-| `tools/manifest.py`, `config/recordings.json` | Split membership by content hash, the sealed guard, the run log |
+| `tools/mine_negatives.py` | Background negatives from any recording's gravel, into `data/negatives/` |
+| `tools/manifest.py`, `config/recordings.json` | Each recording's Capture Setup, frame rate and window, by content hash (ADR-0010) |
 | `docs/model_bench.md` | Every checkpoint's training record, the dataset each one trained on, and its bench (#30) |
 | `docs/ring_measurement.md` | The printed 10-ring in millimetres: the print scale for `--mm-per-px`, its readings, and what it depends on (#62) |
 | `docs/live_camera.md` | The AXIS Q6315-LE through VideoService's MediaMTX: its path, stream settings, the fixed-view rule, the manual acceptance and the replay's record (#85) |
@@ -1229,6 +1246,9 @@ what that residual shows would leave no held-out set to test the redesign
 (ADR-0005), so the case for a redesign has to be made on footage that is not
 sealed.
 
+> **Superseded by [ADR-0010](../docs/adr/0010-every-recording-may-be-opened.md) (#270):** nothing is held out. A redesign is measured on every recording, each
+> result labelled regression or unseen.
+
 `MAX_DISPLACEMENT_FRACTION` is scaled by distance on the strength of the
 distance ordering, which CamB's three marks support (0.019x / 0.039x / 0.036x of
 reach) and CamA's anchor 2 contradicts. It should be re-derived on footage with
@@ -1357,6 +1377,9 @@ settled, or left provisional, on footage that is not sealed. Nothing is changed
 on what the sealed run revealed (ADR-0005). **Do not move any constant further
 on CamA and CamB alone.**
 
+> **Superseded by [ADR-0010](../docs/adr/0010-every-recording-may-be-opened.md) (#270):** every recording may now be opened, so the sample is
+> whatever has truth. Each result says whether it is regression or unseen.
+
 1. Duplicate / split behaviour — the 0.59x vs 0.74x collision above.
 2. Genuinely close Bullet Holes, and how near two real marks actually get.
 3. Persistence: `PERSIST` 0.50 and the fixed 50-frame window.
@@ -1418,6 +1441,8 @@ gate fires. That is luck, and `test_camb_split_is_not_merged_by_the_gate_alone`
 pins it so nobody mistakes it for a property. Settling it needs new footage
 that is not sealed, not a nudged constant. The sealed run tested only the gate
 as it was fixed before the run (ADR-0005).
+
+> **Superseded by [ADR-0010](../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no footage is sealed any more.
 
 **The box arms must not gate baseline suppression.** Applied there they swallowed
 a real new Bullet Hole next to a pre-existing one on CamB, taking recall from
@@ -1499,6 +1524,9 @@ across the whole Capture Setup, so its seventh file, `_141446`, adds nothing new
 whose canvas is all Board, or from the legacy clips, which carry no green Target.
 A static camera gives only a few distinct gravel tiles per clip, so more
 negatives means more Capture Setups, not a smaller `--step`.
+
+> **Superseded by [ADR-0010](../docs/adr/0010-every-recording-may-be-opened.md) (#270):** `mine_negatives.py` mines any recording now. A Capture Setup
+> whose gravel is trained on makes every result on it regression.
 
 **Two of those were removed on 2026-10-06 (#92); 13 remain.** `_150248`'s two
 frame-50 tiles (2.00s) came from after its camera pans onto the view of the

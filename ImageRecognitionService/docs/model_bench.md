@@ -6,12 +6,17 @@ inference on CPU (the runtime's default device), every constant at its current
 value. No sealed recording was opened and no
 `--final-run` was passed; `data/sealed_runs.log` still does not exist.
 
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** this is wrong now: `data/sealed_runs.log` was created on
+> 2026-10-01 by #31's sealed run, and deleted with every role by #270.
+
 **Nothing is promoted.** `DEFAULT_MODEL` is still `kanat_yolo26n_v1`. The four
 recordings below are the fitted clips and the threshold-work pair. The standing
 order is not to move anything on them, and a model is not an exception. Nor
 does the sealed set choose one: #31 requires the model, the constants and the
 commit to be chosen and written down before the sealed run, which then evaluates
 that one frozen choice. It has not been run.
+
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** the sealed run was made once (#31); no set is held out any more.
 
 ## The checkpoints
 
@@ -67,6 +72,8 @@ nobody has checked that 16-bit hash groups stop it on `pibh`. Those are also
 The same for every checkpoint: the four recordings carrying photograph-derived
 truth that the manifest does not seal. That is 16 new Bullet Holes over 2
 Capture Setups, each recording run over its manifest window.
+
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** the manifest seals nothing now; the CamB wide pair also has truth.
 
 | Recording | Capture Setup | Window | New Bullet Holes |
 |---|---|---|---:|
@@ -241,6 +248,9 @@ anyway.
   The sealed run evaluates whichever model is frozen; it does not compare
   these.
 
+  > **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no sealed run remains to evaluate a model; the comparison is
+  > made on every truth recording, labelled regression or unseen.
+
 ## yolo26n with background negatives
 
 **Measured 2026-10-01 at `3baf632`.** Same code (only docs have changed since
@@ -373,6 +383,8 @@ Each Bullet Hole, ✓ found and ✗ not found:
   confirms anything on CamA's gravel, in-sample or not. Whether the negatives
   fix gravel is not measured here. The sealed run can show it only for the
   model frozen before it.
+
+  > **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no sealed run remains; gravel is measured on any recording.
 - **The differences are the size of CamA's grid noise** (above), and these are
   the fitted clips, with every constant fitted to n. Pooled, F1 0.93 against
   0.88 is one Bullet Hole lost and three false positives gone, over 16 Bullet

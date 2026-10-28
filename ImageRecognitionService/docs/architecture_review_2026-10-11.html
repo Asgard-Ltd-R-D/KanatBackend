@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ImageRecognitionService review</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { curve: "basis" } });
+</script>
+<style>
+  .seam { border-top: 2px dashed #6366f1; }
+  .seam-v { border-left: 2px dashed #6366f1; }
+  .leak { color: #dc2626; border-color: #dc2626; }
+  .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+  .chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; padding: 2px 6px; border-radius: 4px; display: inline-block; }
+  .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+  .diagram { min-height: 300px; }
+  pre.mermaid { background: transparent; display: flex; justify-content: center; }
+  .arrow-r::after { content: "→"; margin: 0 6px; color: #64748b; }
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900 font-sans">
+<main class="max-w-6xl mx-auto px-4 sm:px-6 py-12 space-y-12">
+
+<header class="space-y-4">
+  <p class="lbl text-slate-500">Architecture review · 2026-10-11</p>
+  <h1 class="font-serif text-4xl">KanatBackend / ImageRecognitionService</h1>
+  <p class="text-slate-600 text-sm">Scope: <code>detection/</code> + <code>tools/</code>, weighted by the hot spots (<code>new_bullet_holes.py</code> 44 commits, <code>test_frame_loop.py</code> 31) and the next build, SOW 2.3.1 latency #129–#132.</p>
+  <div class="flex flex-wrap gap-5 text-xs text-slate-600 items-center pt-2">
+    <span class="flex items-center gap-2"><span class="inline-block w-6 h-4 border border-slate-400 bg-white rounded-sm"></span>module</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-8 seam"></span>seam</span>
+    <span class="flex items-center gap-2"><span class="leak font-bold">→</span>leakage</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-6 h-4 deep rounded-sm"></span>deep module</span>
+    <span class="flex items-center gap-2"><span class="chip bg-emerald-100 text-emerald-800">Strong</span><span class="chip bg-amber-100 text-amber-800">Worth exploring</span><span class="chip bg-slate-200 text-slate-700">Speculative</span></span>
+  </div>
+</header>
+
+<section id="candidates" class="space-y-10">
+
+<!-- A ─────────────────────────────────────────── -->
+<article id="registration" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 class="font-serif text-2xl">1 · Deepen registration into one module</h2>
+    <span class="chip bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="chip bg-slate-100 text-slate-600">in-process</span>
+  </div>
+  <div class="font-mono text-sm text-slate-600 leading-6">
+    detection/new_bullet_holes.py — _next_view 866 · RegisteredFrames.looks 1122–1143 · _grossly_wrong 1164 · _report_checks 1189 · _report_reanchor 1202 · _track_reach 1224 · _report_reach 1233<br>
+    detection/board.py — track_view 673 · reanchor_view 715 · silhouette_disagreement 748 · uncovered_view 625<br>
+    tests/test_frame_loop.py — _loop 130–145
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram">
+      <p class="lbl text-slate-500 mb-2">Before · ~14 symbols, 2 files, read fused in</p>
+      <pre class="mermaid">
+flowchart LR
+  L[looks]:::mod --> N["_next_view<br/>read + register"]:::leak
+  N --> T[board.track_view]
+  N --> RA[board.reanchor_view]
+  L --> G[_grossly_wrong]:::mod
+  G --> S[board.silhouette_disagreement]
+  G -. reads .-> F[board.REANCHOR_MIN_CORRELATION]:::leak
+  L --> TR[_track_reach]:::mod
+  TR --> U[board.uncovered_view]
+  L --> C[("12 of 24 attrs<br/>are counters")]:::leak
+  C --> R1[_report_checks]
+  C --> R2[_report_reanchor]
+  C --> R3[_report_reach]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  classDef mod stroke:#334155;
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col justify-center gap-3">
+      <p class="lbl text-slate-500">After · read, then one call</p>
+      <div class="flex items-center gap-2 text-sm">
+        <div class="border border-slate-400 rounded px-3 py-2 bg-white"><span class="lbl text-slate-500 block">looks()</span><span class="font-mono text-xs">read frame</span></div>
+        <div class="flex flex-col items-center text-[10px] text-indigo-600"><span>#129 clock starts</span><span class="h-8 seam-v"></span></div>
+        <span class="text-slate-400">→</span>
+        <div class="deep rounded-lg p-4 text-white flex-1 border-4 border-slate-900">
+          <span class="lbl text-emerald-300">Registration</span>
+          <div class="font-mono text-sm mt-1">frame → view | lost</div>
+          <div class="flex flex-wrap gap-1 mt-3 opacity-40">
+            <span class="chip bg-slate-700">track</span><span class="chip bg-slate-700">re-anchor cadence</span><span class="chip bg-slate-700">gross-fit check</span><span class="chip bg-slate-700">reach</span><span class="chip bg-slate-700">counters</span><span class="chip bg-slate-700">end-of-run lines</span>
+          </div>
+        </div>
+      </div>
+      <div class="text-xs text-slate-500 pl-2">tests: <span class="font-mono">one fake registration</span> replaces <span class="font-mono leak">5 board.* patches × 52 tests</span></div>
+    </div>
+  </div>
+  <p><b>Problem.</b> Registering one frame is spread over ~14 symbols in two files and fused with <code>cap.read()</code> in <code>_next_view</code>, so #129's clock cannot start between the read and registration, and 52 loop tests patch five <code>board</code> globals to get past it.</p>
+  <p><b>Solution.</b> One registration module, built from the baseline view and the artwork mask: a frame goes in, a view or "lost" comes out, and the re-anchor cadence, gross-fit check, reach tracking and their counters sit behind it.</p>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>#129's registration stage: one timed call</li>
+    <li>locality: re-anchor and gross-fit check together</li>
+    <li>loop tests inject one fake</li>
+    <li>RegisteredFrames sheds 12 counters</li>
+    <li>stream-reader tests stop patching registration</li>
+  </ul>
+</article>
+
+<!-- B ─────────────────────────────────────────── -->
+<article id="frame-source" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 class="font-serif text-2xl">2 · One frame source, two adapters: recording and stream</h2>
+    <span class="chip bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="chip bg-slate-100 text-slate-600">ports &amp; adapters</span>
+  </div>
+  <div class="font-mono text-sm text-slate-600 leading-6">
+    detection/new_bullet_holes.py — _Stream 530–857 (read 797, retrieve 650, _held 673) · RegisteredFrames.open 986–1066 · looks 1110–1162 (stride skip 1117–1121) · when 1076 · _Announcer 1531
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-3">
+      <p class="lbl text-slate-500">Before · the loop reaches past read()</p>
+      <div class="flex gap-3 items-stretch flex-1">
+        <div class="border border-slate-400 rounded p-3 w-28 flex flex-col justify-center bg-white"><span class="lbl text-slate-500">frame loop</span><span class="text-[11px] text-slate-500 mt-1">~18 <span class="font-mono">live</span> branches</span></div>
+        <div class="flex flex-col justify-center gap-1 text-[11px]">
+          <span class="chip bg-slate-100 text-slate-700">.read() → (ok, frame)</span>
+          <span class="chip leak border bg-red-50">.index</span>
+          <span class="chip leak border bg-red-50">.times</span>
+          <span class="chip leak border bg-red-50">.start · .stop</span>
+          <span class="chip leak border bg-red-50">.report</span>
+          <span class="chip leak border bg-red-50">isinstance(_Stream)</span>
+          <span class="chip leak border bg-red-50">_Announcer → loop.cap.unseen</span>
+        </div>
+        <div class="flex flex-col gap-2 justify-center flex-1">
+          <div class="border border-slate-400 rounded p-2 bg-white"><span class="lbl text-slate-500">cv2.VideoCapture</span><div class="text-[11px] text-slate-500">stride skipped by the loop</div></div>
+          <div class="border border-slate-400 rounded p-2 bg-white"><span class="lbl text-slate-500">_Stream</span><div class="text-[11px] text-slate-500">stride skipped in the thread</div><div class="text-[11px] leak">Frame Wait = 5th side channel</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-3">
+      <p class="lbl text-slate-500">After · one read, a frame record</p>
+      <div class="border border-slate-400 rounded p-3 bg-white mx-auto w-48 text-center"><span class="lbl text-slate-500">frame loop</span></div>
+      <div class="seam mx-6 relative"><span class="absolute -top-3 left-1/2 -translate-x-1/2 bg-white px-2 font-mono text-[11px] text-indigo-700">read() → (index, frame, time, Frame Wait | None)</span></div>
+      <div class="grid grid-cols-3 gap-2 pt-2">
+        <div class="border-2 border-slate-700 rounded p-2 bg-white"><span class="lbl text-slate-600">Recording</span><div class="text-[11px] text-slate-500">seek · stride · index</div></div>
+        <div class="border-2 border-slate-700 rounded p-2 bg-white"><span class="lbl text-slate-600">Stream</span><div class="text-[11px] text-slate-500">today's thread, internals untouched</div></div>
+        <div class="border border-dashed border-slate-400 rounded p-2 bg-stone-50"><span class="lbl text-slate-500">In-memory</span><div class="text-[11px] text-slate-500">tests</div></div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> <code>_Stream</code> imitates <code>cv2.VideoCapture.read</code>, but the loop reaches past it for <code>index</code>, <code>times</code>, <code>start</code>, <code>stop</code>, <code>report</code> and an <code>isinstance</code> check, so #130's Frame Wait would become one more side channel and one more <code>if live</code>.</p>
+  <p><b>Solution.</b> One read returns a frame record; the recording adapter owns seeking and the stride skip, and the stream adapter is today's reader thread with its gap and drop accounting untouched.</p>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>two adapters: a real seam</li>
+    <li>stride skipping lives in one place</li>
+    <li>Frame Wait: a field, not a side channel</li>
+    <li>reader tests skip RegisteredFrames entirely</li>
+  </ul>
+  <div class="rounded-md bg-indigo-50 border border-indigo-200 px-3 py-2 text-sm">Leaves <code>_Stream</code>'s internals (<code>_place</code>, <code>_count</code>, gap/drop accounting) alone: they survived ~10 review rounds on #117. Only its outer read changes. ADR-0007's stride 17 is unchanged; only <i>where</i> the skip happens moves.</div>
+</article>
+
+<!-- C ─────────────────────────────────────────── -->
+<article id="tracker" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 class="font-serif text-2xl">3 · One persistence tracker for recordings and streams</h2>
+    <span class="chip bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="chip bg-slate-100 text-slate-600">in-process</span>
+  </div>
+  <div class="font-mono text-sm text-slate-600 leading-6">
+    detection/new_bullet_holes.py — process 1405–1466 (per_frame.append 1429, judge 1460) · _Announcer 1493–1554 · track_new_bullet_holes 293–329 · _fold · _judge
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-4 justify-center">
+      <p class="lbl text-slate-500">Before · two paths, two meanings of "persistence"</p>
+      <div>
+        <p class="lbl text-slate-400 mb-1">recording</p>
+        <div class="flex items-center text-xs flex-wrap gap-y-1">
+          <span class="chip bg-slate-100">Look</span><span class="arrow-r"></span>
+          <span class="chip bg-slate-100">per_frame.append</span><span class="arrow-r"></span>
+          <span class="text-slate-400">… loop ends …</span><span class="arrow-r"></span>
+          <span class="chip leak border bg-red-50">fold + judge: cost in no Look's row</span>
+        </div>
+      </div>
+      <div>
+        <p class="lbl text-slate-400 mb-1">stream</p>
+        <div class="flex items-center text-xs flex-wrap gap-y-1">
+          <span class="chip bg-slate-100">Look</span><span class="arrow-r"></span>
+          <span class="chip leak border bg-red-50">_Announcer: fold · judge · Targets · measure · print</span>
+        </div>
+      </div>
+      <p class="text-[11px] text-slate-500">caller honours <span class="font-mono">lost</span> / empty Looks / <span class="font-mono">n_frames</span> twice · live path tested only through a threaded fake + <span class="font-mono">os.kill</span></p>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-3 justify-center">
+      <p class="lbl text-slate-500">After · every Look feeds one tracker</p>
+      <div class="flex items-center gap-3">
+        <div class="flex flex-col gap-2 text-xs">
+          <span class="chip bg-slate-100">recording Look</span>
+          <span class="chip bg-slate-100">stream Look</span>
+        </div>
+        <span class="text-slate-400">→</span>
+        <div class="deep rounded-lg p-4 text-white flex-1 border-4 border-slate-900">
+          <span class="lbl text-emerald-300">Persistence tracker</span>
+          <div class="font-mono text-sm mt-1">add(points) · lost() · due()</div>
+          <div class="flex flex-wrap gap-1 mt-3 opacity-40"><span class="chip bg-slate-700">_fold</span><span class="chip bg-slate-700">_judge</span><span class="chip bg-slate-700">_count_in</span><span class="chip bg-slate-700">window</span></div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <div class="border border-slate-300 rounded p-2">recording: report at end, same fold order</div>
+        <div class="border border-slate-300 rounded p-2">stream: print on confirm</div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> On a recording a Look's "persistence" is an <code>append</code> and the real fold runs once after the loop; on a stream <code>_Announcer</code> folds, judges, assigns Targets and prints in one call. #129's persistence stage would mean different things in each mode.</p>
+  <p><b>Solution.</b> One incremental tracker that every Look feeds (points, or lost) and that judges whatever is due; recordings still judge in the same fold order, and the announcer shrinks to print-on-confirm.</p>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>persistence stage means one thing</li>
+    <li>locality: invariants honoured once</li>
+    <li>live path gains pure tests</li>
+    <li>recording results unchanged</li>
+  </ul>
+  <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm">Caveat: keep <i>when</i> corroboration is checked as it is (at judge time live, final position on a recording). Unifying that changes recording results, which ADR-0003's measured thresholds rest on. ADR-0003 window and ADR-0004 no-retraction are untouched.</div>
+</article>
+
+<!-- D ─────────────────────────────────────────── -->
+<article id="gate" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 class="font-serif text-2xl">4 · One call opens a recording</h2>
+    <span class="chip bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="chip bg-slate-100 text-slate-600">local-substitutable</span>
+  </div>
+  <div class="font-mono text-sm text-slate-600 leading-6">
+    tools/manifest.py — authorise · gate 159–205<br>
+    tools/mine_negatives.py — refuse_sealed 80–94 · main 279–286 · tools/probe.py 185–186 · tools/evaluate.py score_recording 846–859<br>
+    detection/new_bullet_holes.py — _gate 503–511 · main 1765–1772 · tools/registration_reach.py 256 · tools/position_error.py 130
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram">
+      <p class="lbl text-slate-500 mb-2">Before · six tools, five routes</p>
+      <pre class="mermaid">
+flowchart LR
+  nbh[new_bullet_holes] --> gate[manifest.gate]
+  ev[evaluate] --> peek["scale peek<br/>2nd hash"]:::leak --> gate
+  pr[probe] -- "once per --model" --> gate
+  rr[registration_reach] --> gate
+  pe["position_error<br/>checks identity after scoring"]:::leak --> gate
+  mn[mine_negatives]:::leak --> parts["content_hash · load · role_for"]
+  gate --> pl[previous_look]
+  mn -. "skips" .-> pl
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  linkStyle 3,8 stroke:#dc2626,stroke-width:2px;
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram">
+      <p class="lbl text-slate-500 mb-2">After · one interface, one hash</p>
+      <pre class="mermaid">
+flowchart LR
+  nbh[new_bullet_holes] --> open
+  ev[evaluate] --> open
+  pr[probe] --> open
+  rr[registration_reach] --> open
+  pe[position_error] --> open
+  mn[mine_negatives] --> open
+  open["open a recording<br/>(policy: final run allowed | never)"]:::deep --> out["entry · sha · scale"]
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a,stroke-width:3px;
+      </pre>
+    </div>
+  </div>
+  <p><b>Problem.</b> The ADR-0005 gate is a convention each <code>__main__</code> follows its own way: <code>probe</code> gates once per model, so <code>--final-run --model a b</code> spends a Sealed recording and measures nothing; <code>mine_negatives</code> rebuilds it without the log check; the print-scale preflight exists twice.</p>
+  <p><b>Solution.</b> One manifest call hashes once, applies a policy, runs the preflight before logging and hands back entry, hash and scale; every tool calls it once per recording.</p>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>a Sealed look can't be wasted</li>
+    <li>log check covers mining too</li>
+    <li>one hash per recording</li>
+    <li>leverage: one interface, six call sites</li>
+    <li>mine_negatives gate tests collapse into test_manifest</li>
+  </ul>
+  <div class="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm">Tightens ADR-0005; no conflict. The <code>probe</code> defect is worth fixing on its own now (gate once, before the model loop), whatever happens to the deepening.</div>
+</article>
+
+<!-- E ─────────────────────────────────────────── -->
+<article id="board-space" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 class="font-serif text-2xl">5 · Board space: built once per run, converted in one module</h2>
+    <span class="chip bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="chip bg-slate-100 text-slate-600">in-process</span>
+  </div>
+  <div class="font-mono text-sm text-slate-600 leading-6">
+    tools/evaluate.py — baseline_view 189–204 · score_recording 861–883 · position_errors 280<br>
+    detection/new_bullet_holes.py — Run 1261–1275 · RegisteredFrames.open 972–1071 (_base) · detection/board.py — _apply · to_millimetres ~893<br>
+    tools/probe.py 128–132, 194–197 · tools/registration_reach.py 134–197
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-3 justify-center">
+      <p class="lbl text-slate-500">Before · two builds that must agree</p>
+      <div class="grid grid-cols-2 gap-6 relative">
+        <div class="border border-slate-400 rounded p-3 bg-white"><span class="lbl text-slate-500">runtime</span><div class="font-mono text-[11px] mt-1">RegisteredFrames.open<br>→ build_view(frame int(start·fps))</div></div>
+        <div class="border border-slate-400 rounded p-3 bg-white"><span class="lbl text-slate-500">evaluate · probe</span><div class="font-mono text-[11px] mt-1">baseline_view<br>→ build_view(frame int(start·fps))</div></div>
+        <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] leak bg-white px-1 border border-dashed rounded">must agree</div>
+      </div>
+      <div class="flex flex-wrap gap-1 pt-2">
+        <span class="chip leak border bg-red-50">board._apply ×10 from tools</span>
+        <span class="chip leak border bg-red-50">hand-composed H ×3</span>
+        <span class="chip leak border bg-red-50">printed-axis Y flip ×2</span>
+        <span class="chip leak border bg-red-50">artwork mask load ×6</span>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-3 justify-center">
+      <p class="lbl text-slate-500">After · the run's own view, public conversions</p>
+      <div class="flex items-center gap-3">
+        <div class="border border-slate-400 rounded p-3 bg-white text-center"><span class="lbl text-slate-500">Run</span><div class="font-mono text-[11px]">baseline frame + view</div></div>
+        <span class="text-slate-400">→</span>
+        <div class="border border-slate-400 rounded p-3 bg-white text-center"><span class="lbl text-slate-500">place truth</span><div class="text-[11px]">evaluate · probe</div></div>
+      </div>
+      <div class="deep rounded-lg p-4 text-white border-4 border-slate-900">
+        <span class="lbl text-emerald-300">BoardView</span>
+        <div class="flex flex-wrap gap-1 mt-2"><span class="chip bg-slate-700">frame_to_board</span><span class="chip bg-slate-700">template ↔ Board</span><span class="chip bg-slate-700">frame ↔ template</span><span class="chip bg-slate-700">mm on printed axes</span></div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> <code>RegisteredFrames</code> says Board space is fixed "here and only here", yet <code>evaluate.baseline_view</code> builds it a second time, so scoring rests on two copies of <code>int(start*fps)</code> and a deterministic <code>build_view</code>, while tools compose homographies by hand through the private <code>board._apply</code>.</p>
+  <p><b>Solution.</b> The run exposes its baseline frame and view so truth is placed through it, and <code>BoardView</code> owns template ↔ Board ↔ frame and millimetre conversion publicly.</p>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>one Board space per run</li>
+    <li>private <code>_apply</code> leaves the tools</li>
+    <li>locality: Y flip lives once</li>
+    <li>Position Error truth shares the runtime view</li>
+  </ul>
+</article>
+
+<!-- F ─────────────────────────────────────────── -->
+<article id="process" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 class="font-serif text-2xl">6 · <code>process</code> takes an opened run</h2>
+    <span class="chip bg-amber-100 text-amber-800">Worth exploring</span>
+    <span class="chip bg-slate-100 text-slate-600">in-process</span>
+  </div>
+  <div class="font-mono text-sm text-slate-600 leading-6">
+    detection/new_bullet_holes.py — process 1350–1490 · __main__ 1774–1776 · add_stride_flag 1303<br>
+    tools/evaluate.py — score_recording 827–831, 871–875 · CLI 958–966
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex items-end gap-6 justify-center">
+      <div class="flex flex-col items-center gap-1">
+        <div class="w-24 h-48 border-2 border-red-500 bg-red-50 rounded-t flex items-center justify-center text-[11px] text-red-700 text-center px-1">interface<br>12 params<br>→ 14 with #129</div>
+        <div class="w-24 h-24 border border-slate-400 bg-white flex items-center justify-center text-[11px] text-center">opens its own loop</div>
+        <span class="lbl text-slate-500 mt-1">before</span>
+      </div>
+      <div class="text-[11px] text-slate-600 max-w-[11rem] space-y-2">
+        <p><span class="font-mono leak">monkeypatch RegisteredFrames.open</span> ×8 tests</p>
+        <p>evaluate redeclares 7 settings and 6 flags</p>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex items-end gap-6 justify-center">
+      <div class="flex flex-col items-center gap-1">
+        <div class="w-24 h-14 border-2 border-slate-800 bg-white rounded-t flex items-center justify-center text-[11px] text-center">run + options</div>
+        <div class="w-24 h-56 deep flex items-center justify-center text-[11px] text-white text-center px-1">stride · baseline · strip · change · persistence</div>
+        <span class="lbl text-slate-500 mt-1">after</span>
+      </div>
+      <div class="text-[11px] text-slate-600 max-w-[11rem] space-y-2">
+        <p>CLIs open the run; tests hand one in</p>
+        <p>flags shared like <span class="font-mono">add_stride_flag</span></p>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> <code>process</code> takes 12 parameters and opens its own loop from paths, so tests can only reach it by patching <code>RegisteredFrames.open</code>, and <code>--device</code>/<code>--timing</code> would push it to 14 across three CLIs.</p>
+  <p><b>Solution.</b> <code>process</code> accepts an opened run; the CLIs open it, and the shared flags follow the <code>add_stride_flag</code> pattern.</p>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>interface shrinks by the open-args</li>
+    <li>tests hand in a run, no patch</li>
+    <li>falls out of candidates 1–2</li>
+  </ul>
+</article>
+
+<!-- G ─────────────────────────────────────────── -->
+<article id="scoring" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 class="font-serif text-2xl">7 · Score a run as data, print it separately</h2>
+    <span class="chip bg-amber-100 text-amber-800">Worth exploring</span>
+    <span class="chip bg-slate-100 text-slate-600">in-process</span>
+  </div>
+  <div class="font-mono text-sm text-slate-600 leading-6">
+    tools/evaluate.py — score_recording 827–946 · SystemExit ×14 · tools/position_error.py — main 121–171 (re-splits placement 162–164)
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram">
+      <p class="lbl text-slate-500 mb-2">Before · computed, printed, dropped</p>
+      <pre class="mermaid">
+flowchart TB
+  S["score_recording<br/>~120 lines"]:::leak --> P[["stdout<br/>TP/FP/FN · P/R/F1 · attribution · residual"]]
+  S --> R["returns 5 facts<br/>placement as text"]
+  R --> PE[position_error]
+  PE -. "re-splits text" .-> R
+  S -. "SystemExit in helpers" .-> X((pooled caller dies))
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  linkStyle 3,4 stroke:#dc2626,stroke-width:2px;
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram">
+      <p class="lbl text-slate-500 mb-2">After · one result record, many readers</p>
+      <pre class="mermaid">
+flowchart TB
+  SC["score(truth, positions, baseline, residual)"]:::deep --> RR["result record"]
+  RR --> FM[formatter: today's output]
+  RR --> PE[position_error]
+  RR --> NX[next pooled report]
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a,stroke-width:3px;
+      </pre>
+    </div>
+  </div>
+  <p><b>Problem.</b> <code>score_recording</code> has been callable since #126, but it computes the counts, the ADR-0006 attribution and the residual only to print them, returns <code>placement</code> as text that <code>position_error</code> re-splits, and exits the process from its helpers. No test calls it.</p>
+  <p><b>Solution.</b> A pure scoring step returns a full result record, a formatter prints it, and only <code>__main__</code> turns errors into an exit.</p>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>next pooled report: no carving</li>
+    <li>scoring tests need no video</li>
+    <li>pooling survives one bad recording</li>
+  </ul>
+  <div class="rounded-md bg-slate-50 border border-slate-200 px-3 py-2 text-sm">YAGNI check: pays off only when a second pooled report (precision or attribution across truth recordings) is actually asked for. Nothing in #128–#132 asks.</div>
+</article>
+
+<!-- H ─────────────────────────────────────────── -->
+<article id="truth" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 class="font-serif text-2xl">8 · A truth module owns the truth folder</h2>
+    <span class="chip bg-amber-100 text-amber-800">Worth exploring</span>
+    <span class="chip bg-slate-100 text-slate-600">local-substitutable</span>
+  </div>
+  <div class="font-mono text-sm text-slate-600 leading-6">
+    tools/evaluate.py 369–782 — read_export · derive_new_holes · write_derived · truth_photograph · truth_labels · pre_existing_labels · load_truth<br>
+    tools/position_error.py truth_dir 46–49 · tools/registration_reach.py 262–263 · tools/derive_truth.py
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-3 justify-center">
+      <p class="lbl text-slate-500">Before · evaluate.py, 978 lines</p>
+      <div class="flex h-10 w-full rounded overflow-hidden text-[11px]">
+        <div class="bg-amber-200 flex items-center justify-center" style="width:42%">truth folder · ~410</div>
+        <div class="bg-slate-200 flex items-center justify-center" style="width:58%">matching · scoring · CLI · ~568</div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-[11px] pt-3">
+        <div class="border border-red-400 bg-red-50 rounded p-2 text-red-800">position_error<br><span class="font-mono">owns the naming rule</span></div>
+        <div class="border border-red-400 bg-red-50 rounded p-2 text-red-800">registration_reach<br><span class="font-mono">RAW_NAMES["before"]</span></div>
+        <div class="border border-red-400 bg-red-50 rounded p-2 text-red-800">derive_truth<br><span class="font-mono">"lives in evaluate.py"</span></div>
+      </div>
+      <p class="text-[11px] text-slate-500">one recording's truth: truth_dir → truth_labels → truth_photograph → _source_field → truth_in_template → pre_existing_labels</p>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-3 justify-center">
+      <p class="lbl text-slate-500">After · two modules</p>
+      <div class="deep rounded-lg p-3 text-white border-4 border-slate-900">
+        <span class="lbl text-emerald-300">Truth</span>
+        <div class="font-mono text-[12px] mt-1">truth for (manifest entry, baseline view) → new · pre-existing · before · caveats</div>
+        <div class="flex flex-wrap gap-1 mt-2 opacity-40"><span class="chip bg-slate-700">naming</span><span class="chip bg-slate-700">layout</span><span class="chip bg-slate-700">derive</span><span class="chip bg-slate-700">read/write</span></div>
+      </div>
+      <div class="border border-slate-400 rounded p-3 bg-white"><span class="lbl text-slate-500">evaluate</span><div class="text-[11px]">matching + scoring, ~568 lines</div></div>
+    </div>
+  </div>
+  <p><b>Problem.</b> About 410 of evaluate.py's 978 lines are the truth folder's format and derivation, three tools know its layout and naming, and getting one recording's truth walks six functions.</p>
+  <p><b>Solution.</b> One truth module owns naming from a manifest entry, the layout, derivation and I/O, and hands back a recording's truth placed through a given baseline view; evaluate keeps matching and scoring.</p>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>locality: layout known in one place</li>
+    <li>load_truth gets its first tests</li>
+    <li>pairs naturally with candidate 5</li>
+  </ul>
+</article>
+
+<!-- I ─────────────────────────────────────────── -->
+<article id="detector" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 class="font-serif text-2xl">9 · The detector as one module</h2>
+    <span class="chip bg-slate-200 text-slate-700">Speculative</span>
+    <span class="chip bg-slate-100 text-slate-600">ports &amp; adapters</span>
+  </div>
+  <div class="font-mono text-sm text-slate-600 leading-6">
+    detection/new_bullet_holes.py — _detect 397 (model.predict 409, sole call) · _bullet_hole_classes 416 · _band_imgsz 427 · merge_band_detections 442 · _detect_grown 1211 · branch 1145–1151
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-2 justify-center">
+      <p class="lbl text-slate-500">Before · looks() decides the calls</p>
+      <div class="border border-slate-400 rounded p-3 bg-white">
+        <span class="lbl text-slate-500">looks()</span>
+        <div class="border border-slate-300 rounded p-2 mt-2 text-[11px]">grown canvas? <span class="font-mono">_detect</span> or <span class="font-mono">_detect_grown</span>
+          <div class="border border-slate-300 rounded p-2 mt-1"><span class="font-mono">_band_imgsz</span> · <span class="font-mono">merge_band_detections</span> · <span class="font-mono">_bullet_hole_classes</span>
+            <div class="border border-slate-300 rounded p-1 mt-1 font-mono">model.predict</div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-1 mt-2"><span class="chip leak border bg-red-50">loose attrs: model · imgsz · conf · bands</span><span class="chip leak border bg-red-50">7 fake ultralytics Results classes</span></div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram flex flex-col gap-2 justify-center">
+      <p class="lbl text-slate-500">After · collapsed</p>
+      <div class="deep rounded-lg p-4 text-white border-4 border-slate-900">
+        <span class="lbl text-emerald-300">Detector</span>
+        <div class="font-mono text-sm mt-1">(view, frame) → Detections + call times</div>
+        <div class="flex flex-wrap gap-1 mt-3 opacity-40"><span class="chip bg-slate-700">device</span><span class="chip bg-slate-700">band split</span><span class="chip bg-slate-700">merge</span><span class="chip bg-slate-700">classes</span><span class="chip bg-slate-700">predict</span></div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> How many detector calls a Look makes is decided in <code>looks()</code>, the detector's settings ride as four loose attributes, and tests imitate ultralytics' <code>Results</code> in seven fake classes.</p>
+  <p><b>Solution.</b> A detector built once (model, confidence, device, classes) turns a view and frame into Detections, keeps its own per-call times, and owns the band split.</p>
+  <ul class="list-disc pl-5 text-sm space-y-1">
+    <li>Inference Time: the detector's own accounting</li>
+    <li>tests fake Detections, not ultralytics</li>
+  </ul>
+  <div class="rounded-md bg-slate-50 border border-slate-200 px-3 py-2 text-sm">#129 needs less: <code>device=</code> on <code>_detect</code> (the one <code>predict</code> call) plus a list of call times. Do that; deepen only if the fake classes keep hurting.</div>
+</article>
+
+</section>
+
+<section id="along-the-way" class="rounded-xl border border-slate-200 bg-white p-6 space-y-3">
+  <h2 class="font-serif text-xl">Found along the way</h2>
+  <ul class="text-sm space-y-2 list-disc pl-5">
+    <li><b class="text-red-700">Defect:</b> <code>tools/probe.py:185</code> gates once per <code>--model</code>. <code>--final-run --model a b</code> on a Sealed recording writes the look, then the second gate refuses through <code>previous_look</code>. One look spent, nothing measured.</li>
+    <li><b class="text-amber-700">Latent:</b> <code>mine_negatives.refuse_sealed</code> checks the role only, never <code>sealed_runs.log</code>. A measured recording relabelled away from <code>sealed</code> could be mined. All 5 logged hashes are still <code>sealed</code> today.</li>
+    <li><b>ADR-0002 drift:</b> it says the gate is <code>tagging_bullets.is_duplicate_bullet</code> and nothing else merges Bullet Holes. The delivered gate is <code>new_bullet_holes.same_bullet_hole</code> (230, with a floor arm), and <code>merge_band_detections</code>, <code>baseline_marks</code>, <code>merge_displaced_tracks</code> also merge. A documentation fix, not code.</li>
+    <li><b>Deletable (your call):</b> <code>detection/tagging_bullets.py</code>, <code>tools/sweep_profile.py</code>, <code>tests/test_dedup.py</code>, <code>config/capture_profiles.json</code> and <code>pandas</code>. Nothing delivered imports them (#75). Deletion, not deepening, so it isn't a card.</li>
+  </ul>
+  <p class="text-sm text-slate-600"><b>Leave alone:</b> <code>_Stream</code> internals · <code>_fold</code>/<code>_judge</code>/<code>_count_in</code> · the <code>Look</code> NamedTuple (lost vs empty is load-bearing, and it is where timings belong) · <code>baseline_marks</code>/<code>strip_pre_existing</code>/<code>change_evidence</code> · <code>board.BoardView</code>/<code>build_view</code>/<code>track_view</code>/<code>reanchor_view</code> (already deep) · <code>evaluate.match</code>/<code>score</code>/<code>attribute</code>/<code>position_errors</code> · <code>manifest</code> internals · <code>probe.detection_rates</code> · <code>groups.py</code>.</p>
+</section>
+
+<section id="top-recommendation" class="deep rounded-2xl p-8 text-white space-y-3">
+  <p class="lbl text-emerald-300">Top recommendation</p>
+  <h2 class="font-serif text-3xl"><a href="#registration" class="underline decoration-emerald-400 underline-offset-4">1 · Deepen registration into one module</a></h2>
+  <p class="text-slate-200 max-w-3xl">#129's first stage, registration including the gross-fit check and re-anchor, has to be one timed span that starts after the read. Today that span is fused with the read and spread over 14 symbols, so do this before #129. Then do <a href="#tracker" class="underline">3</a>, so the persistence stage means the same thing in both modes, and <a href="#frame-source" class="underline">2</a> before #130. Fix the <code>probe</code> gate defect now, separately.</p>
+</section>
+
+</main>
+</body>
+</html>

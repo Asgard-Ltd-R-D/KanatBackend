@@ -155,14 +155,6 @@ def probe(video, start, end, model_path, truth_tpl, radius_tpl,
     return rates
 
 
-def gate(video, final_run, models, **where):
-    """`manifest.gate` once for all checkpoints: a sealed `--final-run` is one
-    look, its log line names every model, and every model is measured on it.
-    A gate per model would refuse at the second, the look already spent (#139).
-    """
-    return manifest.gate(video, final_run, ",".join(models), "probe.py", **where)
-
-
 if __name__ == "__main__":
     p = argparse.ArgumentParser("Per-Bullet-Hole detection rate, pipeline aside")
     p.add_argument("video")
@@ -183,15 +175,12 @@ if __name__ == "__main__":
     p.add_argument("--radius", type=float, default=evaluate.MATCH_TOLERANCE_TPL,
                    help="template px; the same slack that credits a detection "
                         "with a label when a run is scored")
-    manifest.add_flag(p)
     a = p.parse_args()
     if bool(a.at) == bool(a.truth_image or a.truth_labels):
         p.error("give either --truth-labels (with --truth-image unless the "
                 "truth is derived), or --at")
     if not a.at and not a.truth_labels:
         p.error("--truth-image needs --truth-labels")
-
-    gate(a.video, a.final_run, a.model)
 
     if a.at:
         truth = np.array(a.at, np.float32)
@@ -206,6 +195,8 @@ if __name__ == "__main__":
         truth, _ = evaluate.load_truth(a.truth_image, a.truth_labels, frame, view)
         names = None
 
+    print(manifest.footage_line(manifest.footage(manifest.lookup(a.video)),
+                                os.path.basename(a.video)))
     for model in a.model:
         probe(a.video, a.start, a.end, model, truth, a.radius, a.confidence,
               a.template, names)

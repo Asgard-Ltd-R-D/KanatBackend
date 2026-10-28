@@ -33,6 +33,9 @@ same Board close up. See the last three sections.
 | `cama-20260914-wide` | `CamA_20260914_154008`, `_154108`, `_161935`, `_162035`, `_162936`, `_163036`, `_163136` | **sealed** |
 | `cama-20260914-close-cross` | `CamA_20260914_150348`, `_150448`, `_150548` | **sealed**, exposed by #92: not held out |
 
+> **Superseded by [ADR-0010](../../docs/adr/0010-every-recording-may-be-opened.md) (#270):** no recording is held out, and `config/recordings.json` carries
+> no role. The Role column, and each "Roles" section below, is how sealing stood until 2026-10-28.
+
 ## What was measured
 
 Frame 0 of each recording, and nothing else. Every figure below comes from one

@@ -58,10 +58,9 @@ OUTSIDE_RINGS = 0          # on the Target, beyond the 6-ring
 
 # --- Provisional working values --------------------------------------------
 # NONE of these are validated. They were set by hand against a single clip
-# (CamA_20260914_141546). Any tuning happens on footage that is not sealed; they
-# are fixed before the sealed run, which evaluates them once and changes none of
-# them (ADR-0005, #31). Every number below is a starting point, not a
-# requirement. See docs/adr/0003-a-bullet-hole-is-new-when-it-persists.md.
+# (CamA_20260914_141546) and fixed before the sealed run, which evaluated them
+# once (#31); sealing is gone since (ADR-0010). Every number below is a
+# starting point, not a requirement. See docs/adr/0003-a-bullet-hole-is-new-when-it-persists.md.
 
 GREEN_LO = (35, 40, 30)    # PROVISIONAL: hue gate for the printed Target
 GREEN_HI = (95, 255, 255)  # PROVISIONAL: one artwork, one lighting condition
@@ -891,8 +890,8 @@ def print_scales(path=PRINT_SCALE_PATH):
     scale nobody can trace is a guess.
 
     The whole file is checked, not just one setup's entry, so a caller can read
-    it before the sealed-run gate: a malformed entry found after the gate has
-    logged the look would spend the held-out recording for nothing.
+    it before opening a recording: a malformed entry found after would cost a
+    run that reports nothing.
     """
     name = os.path.basename(path)
     with open(path) as f:

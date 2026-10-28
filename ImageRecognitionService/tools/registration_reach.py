@@ -251,8 +251,6 @@ if __name__ == "__main__":
     p.add_argument("--cut-marks", action="store_true",
                    help="runtime mode: cut the measured marks out of the ECC region")
     a = p.parse_args()
-    # No --final-run: this is an investigation, never the sealed measurement.
-    manifest.gate(a.video, False, None, "registration_reach.py")
 
     _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
     span = board.contour_span(board.template_contour(template_mask))
@@ -278,6 +276,8 @@ if __name__ == "__main__":
         track = _silhouette(template_mask)
     else:
         track = _green_affine(base)
+    print(manifest.footage_line(manifest.footage(manifest.lookup(a.video)),
+                                os.path.basename(a.video)))
     print(f"[REACH] registration: {a.registration}{', marks cut' if a.cut_marks else ''}")
     frames = _registered(source, base, int((a.end - a.start) * source.fps), view, track)
     _report(measure(frames, marks, from_index), span, label)

@@ -651,14 +651,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Customer recordings: hundreds of megabytes, and the sealed ones must not
-# travel. ImageRecognitionService/config/recordings.json links a file on disk to its
-# role by content hash instead (ADR-0005).
+# Customer recordings: hundreds of megabytes.
+# ImageRecognitionService/config/recordings.json links a file on disk to its
+# Capture Setup by content hash instead (ADR-0010).
 ImageRecognitionService/data/videos/*.mkv
-
-# ...but the record of every look at sealed footage is the whole point, and
-# `*.log` above would have swallowed it. It is evidence, so it is committed.
-!ImageRecognitionService/data/sealed_runs.log
 
 # Mined background negatives: regenerated from the recordings by
 # ImageRecognitionService/tools/mine_negatives.py. Its sources.csv is the audit record

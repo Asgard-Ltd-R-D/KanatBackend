@@ -367,9 +367,9 @@ def test_a_move_that_does_not_parse_is_refused(text):
         parse_move(text)
 
 
-def _refuse(at, stride=1, final_run=False):
+def _refuse(at, stride=1):
     """`refuse_move` on a run from 20 s to 46 s at 25 fps, 5 baseline frames."""
-    refuse_move(Move(at, 80, 40), 20, 46, 25.0, 5, stride, final_run)
+    refuse_move(Move(at, 80, 40), 20, 46, 25.0, 5, stride)
 
 
 def test_a_move_inside_the_baseline_window_is_refused():
@@ -395,8 +395,8 @@ def test_a_move_reaching_no_frame_the_run_looks_at_is_refused():
 def test_a_move_that_moves_no_pixel_is_refused(move):
     """It would score the unmoved run, and a case that moves nothing must not pass."""
     with pytest.raises(SystemExit, match="no pixel"):
-        refuse_move(move, 20, 46, 25.0, 5, 1, False)
-    refuse_move(move._replace(deg=1), 20, 46, 25.0, 5, 1, False)
+        refuse_move(move, 20, 46, 25.0, 5, 1)
+    refuse_move(move._replace(deg=1), 20, 46, 25.0, 5, 1)
 
 
 def test_a_move_starts_on_the_frame_the_log_prints_at_its_time():
@@ -409,16 +409,71 @@ def test_a_move_starts_on_the_frame_the_log_prints_at_its_time():
     assert first_moved_index(20, 20, 25.0) == 0
 
 
-def test_a_move_on_a_final_run_is_refused_before_the_gate(monkeypatch):
-    """A Sealed Recording's one measurement is never spent on a synthetic
-    case: refused after the gate, it would already be logged as spent."""
-    monkeypatch.setattr(board, "print_scales", lambda: {"setup": 0.18})
-    monkeypatch.setattr(manifest, "content_hash", lambda video: "sha")
-    monkeypatch.setattr(manifest, "load",
-                        lambda: {"sha": {"capture_setup": "setup", "fps": 25.0}})
-    monkeypatch.setattr(manifest, "gate", lambda *args: pytest.fail("gated"))
-    with pytest.raises(SystemExit, match="ADR-0005"):
-        score_recording("clip.mkv", 20, 46, "truth", move=Move(25, 80, 40), final_run=True)
+class _Opened(Exception):
+    """Raised in place of opening the recording: everything before it ran."""
+
+
+def _opened(*args, **kwargs):
+    raise _Opened
+
+
+class _Clip25:
+    """A container that gives 25 fps, and no frame."""
+    def __init__(self, path):
+        pass
+
+    def get(self, prop):
+        return 25.0
+
+    def release(self):
+        pass
+
+
+def test_an_unlisted_recording_runs_in_template_px_and_says_why(monkeypatch, capsys):
+    """ADR-0010: no recording is refused. Unlisted, it has no Capture Setup,
+    so no print scale unless --mm-per-px gives one."""
+    monkeypatch.setattr(manifest, "lookup", lambda video: None)
+    monkeypatch.setattr(cv2, "VideoCapture", _Clip25)
+    monkeypatch.setattr(nbh, "load_model", lambda path: None)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", _opened)
+    with pytest.raises(_Opened):
+        score_recording("clip.mkv", 20, 46, "truth")
+    assert "no Capture Setup" in capsys.readouterr().out
+    with pytest.raises(_Opened):
+        score_recording("clip.mkv", 20, 46, "truth", mm_per_px=0.2)
+    assert "no Capture Setup" not in capsys.readouterr().out
+
+
+def test_an_unlisted_recording_without_a_frame_rate_fails_before_opening(monkeypatch):
+    """Its times divide by the frame rate the container gives; 0 must not reach them."""
+    monkeypatch.setattr(manifest, "lookup", lambda video: None)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", _opened)
+    with pytest.raises(SystemExit, match="frame rate"):
+        score_recording("no-such-clip.mkv", 20, 46, "truth", mm_per_px=0.2)
+
+
+def test_a_listed_capture_setup_without_a_print_scale_is_still_refused(monkeypatch):
+    """Listed, the recording's millimetres are its Capture Setup's, never guessed."""
+    monkeypatch.setattr(board, "print_scales", lambda: {})
+    monkeypatch.setattr(manifest, "lookup",
+                        lambda video: {"capture_setup": "setup", "fps": 25.0})
+    monkeypatch.setattr(nbh, "load_model", lambda path: None)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", _opened)
+    with pytest.raises(SystemExit, match="no print scale"):
+        score_recording("clip.mkv", 20, 46, "truth")
+    with pytest.raises(_Opened):
+        score_recording("clip.mkv", 20, 46, "truth", mm_per_px=0.2)
+
+
+
+@pytest.mark.parametrize("scale", [0, -0.2, float("nan"), float("inf")])
+def test_a_given_print_scale_is_checked_before_opening(monkeypatch, scale):
+    """Called directly, `mm_per_px` gets the check --mm-per-px gets: 0 would be
+    read as a factor of 1 and still be labelled mm."""
+    monkeypatch.setattr(manifest, "lookup", lambda video: None)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", _opened)
+    with pytest.raises(ValueError, match="mm_per_tpl_px"):
+        score_recording("clip.mkv", 20, 46, "truth", mm_per_px=scale)
 
 
 # --- placing photograph truth through the baseline frame -------------------
@@ -538,3 +593,6 @@ def test_the_placement_range_is_stated_in_mm_too():
     note = placement_note(np.float32([[0, 0], [100, 0]]),
                           np.float32([[3, 4], [100, 10]]), 40.0, 0.2)
     assert "5-10 px (1.0-2.0 mm)" in note
+    note = placement_note(np.float32([[0, 0], [100, 0]]),
+                          np.float32([[3, 4], [100, 10]]), 40.0, None)
+    assert "5-10 px: that is" in note   # no print scale, no mm

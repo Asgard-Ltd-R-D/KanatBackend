@@ -491,15 +491,24 @@ def _redacted(source):
     return urlunsplit(parts._replace(netloc=parts.netloc.rpartition("@")[2]))
 
 
-def _gate(source, final_run, model):
-    """The manifest entry for a recording, refused unless it may be looked at
-    (ADR-0005). A stream is no recording the manifest knows: it is not gated,
-    and has no entry (#83). So nothing here stops a Sealed recording published
-    over RTSP: "never stream a Sealed recording" is #85's acceptance rule, kept
-    by hand."""
-    if _is_stream(source):
+def _print_scale(source, mm_per_px, scales):
+    """The run's print scale: `mm_per_px` when given, else the one `scales`
+    holds for the Capture Setup the manifest gives a recording, else None. A
+    stream has no Capture Setup on record (#83); nor has a recording the
+    manifest does not list, which runs all the same and says so (ADR-0010)."""
+    if mm_per_px is not None or _is_stream(source):
+        return mm_per_px
+    entry = manifest.lookup(source)
+    if entry is None:
+        print(f"[WARN] {source} is in no config/recordings.json entry, so it has no "
+              f"Capture Setup and no print scale: positions are reported without "
+              f"millimetres. Give one with --mm-per-px")
         return None
-    return manifest.gate(source, final_run, model, "new_bullet_holes.py")
+    scale = scales.get(entry["capture_setup"])
+    if scale is not None:
+        print(f"[INFO] print scale {scale} mm per template px, configured for "
+              f"{entry['capture_setup']} in config/print_scale.json")
+    return scale
 
 
 def _open_stream(url):
@@ -2210,7 +2219,8 @@ if __name__ == "__main__":
                         "Target, measured off its outline (docs/ring_measurement.md), "
                         "not a ruler reading of any ring. Overrides "
                         "config/print_scale.json for this recording's Capture "
-                        "Setup; a stream has no Capture Setup on record and takes "
+                        "Setup; a stream, or a recording config/recordings.json "
+                        "does not list, has no Capture Setup on record and takes "
                         "it from here only. Without either, positions stay in Board pixels: "
                         "every millimetre figure scales linearly with this, so "
                         "it is not guessed.")
@@ -2251,7 +2261,6 @@ if __name__ == "__main__":
                    help="the detector's device for every call: cpu, mps, or a CUDA index "
                         "(#129). Without it, its library's default: CUDA if available, "
                         "else CPU, never MPS")
-    manifest.add_flag(p)
     a = p.parse_args()
     # The console only: a command-line run is not the range's (detection/logs.py)
     logs.configure(to_file=False)
@@ -2267,25 +2276,15 @@ if __name__ == "__main__":
                     "Holes already announced (ADR-0004)")
     elif a.start is None or a.end is None:
         p.error("a recording needs --start and --end")
-    # Before the gate, so a refused run spends no sealed recording either.
     for flag, out in (("--timing", a.timing), ("--out", a.out)):
         if out and _same_file(out, (a.video, a.model, a.template)):
             p.error(f"{flag} names an input of the run, which writing it would overwrite")
     if a.timing and a.out and _outputs_clash(a.timing, a.out):
         p.error("--timing and --out name the same file: the video would overwrite the CSV")
 
-    # Split membership before anything is opened: a sealed recording is refused
-    # unless this run says it is the final one. See manifest.py and ADR-0005.
-    # The print scales are checked before the gate too: a malformed one found
-    # after it would spend a sealed recording on a run that reports nothing.
-    scales = board.print_scales()
-    entry = _gate(a.video, a.final_run, a.model)
-    scale = a.mm_per_px
-    if scale is None and entry is not None:
-        scale = scales.get(entry["capture_setup"])
-        if scale is not None:
-            print(f"[INFO] print scale {scale} mm per template px, configured for "
-                  f"{entry['capture_setup']} in config/print_scale.json")
+    # The print scales are checked before anything is opened: a malformed one
+    # found after it would cost a run that reports nothing.
+    scale = _print_scale(a.video, a.mm_per_px, board.print_scales())
 
     ref_time = None
     if a.ref_time:

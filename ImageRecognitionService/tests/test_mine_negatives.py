@@ -1,27 +1,19 @@
 """Checks for the background-negative miner.
 
 Pure functions over synthetic canvases and a hand-built manifest: no video, no
-model. The two rules that matter most are the ones a mistake here breaks
-silently — a sealed recording's pixels reaching a checkpoint (ADR-0005), and a
+model. The rule that matters most is the one a mistake here breaks silently: a
 real Bullet Hole reaching an image whose label file says there is none.
 """
 import cv2
 import numpy as np
-import pytest
 
-from tools.manifest import NotInManifest, SEALED, SPENT, THRESHOLD_WORK
 from tools.mine_negatives import (ground_mask, near_duplicate, pad_to_tile, pick_tiles,
-                            refuse_sealed, sample_step, thumbnail,
-                            to_negative, usable_fit)
+                            sample_step, source, thumbnail, to_negative, usable_fit)
 
 GRAVEL = (40, 80, 110)    # BGR: warm brown, hue ~17 as measured on CamA
 PAPER = (170, 140, 120)   # BGR: bluish white, hue ~108 as measured on CamA
 
-MANIFEST = {
-    "a" * 64: {"file": "spent.mkv", "capture_setup": "cama", "role": SPENT},
-    "b" * 64: {"file": "tw.mkv", "capture_setup": "camb", "role": THRESHOLD_WORK},
-    "c" * 64: {"file": "sealed.mkv", "capture_setup": "camw", "role": SEALED},
-}
+MANIFEST = {"a" * 64: {"file": "listed.mkv", "capture_setup": "cama"}}
 
 
 def board_on_gravel():
@@ -39,23 +31,14 @@ def board_on_gravel():
     return canvas
 
 
-def test_spent_and_threshold_work_footage_may_be_mined():
-    assert refuse_sealed(MANIFEST, "a" * 64)["role"] == SPENT
-    assert refuse_sealed(MANIFEST, "b" * 64)["role"] == THRESHOLD_WORK
+def test_a_listed_recording_is_mined_under_its_capture_setup():
+    assert source(MANIFEST, "a" * 64, "data/videos/renamed.mkv") == MANIFEST["a" * 64]
 
 
-def test_sealed_footage_is_refused_and_there_is_no_flag_to_allow_it():
-    """A final run measures once; mining trains on it, and a checkpoint cannot
-    un-see it. So unlike scoring, no `--final-run` opens it."""
-    with pytest.raises(SystemExit) as why:
-        refuse_sealed(MANIFEST, "c" * 64)
-    assert "sealed" in str(why.value).lower()
-    assert "--final-run" not in str(why.value)
-
-
-def test_an_unallocated_recording_is_refused():
-    with pytest.raises(NotInManifest):
-        refuse_sealed(MANIFEST, "d" * 64)
+def test_an_unlisted_recording_is_mined_with_no_capture_setup():
+    """ADR-0010: nothing is refused. Its entry names the file it came from."""
+    assert source(MANIFEST, "d" * 64, "data/videos/new.mkv") == {
+        "file": "new.mkv", "capture_setup": ""}
 
 
 def test_ground_is_gravel_and_never_paper_or_padding():
@@ -154,16 +137,3 @@ def test_a_fit_that_found_no_target_artwork_is_no_board():
     assert not usable_fit((313, 314), 0.47)
     assert usable_fit((313, 314), 0.95)
     assert not usable_fit((5000, 900), 0.99)
-
-
-def test_a_measured_recording_is_refused_whatever_its_role_now_says(tmp_path):
-    """A measured recording stays sealed for good (ADR-0005, #63): relabelling
-    it `spent` must not reopen it to mining."""
-    log = tmp_path / "sealed_runs.log"
-    log.write_text(f"2026-10-01T11:52:23Z  {'a' * 64}  model=x  commit=abc1234  tool=evaluate.py\n")
-
-    with pytest.raises(SystemExit) as why:   # no entry back, so nothing to mine
-        refuse_sealed(MANIFEST, "a" * 64, str(log))
-    assert "2026-10-01T11:52:23Z" in str(why.value) and "abc1234" in str(why.value)
-    assert "--final-run" not in str(why.value)
-    assert refuse_sealed(MANIFEST, "b" * 64, str(log))["role"] == THRESHOLD_WORK

@@ -25,8 +25,9 @@ photograph in `board.source.txt`, so `--truth-image` can be left off:
     python -m tools.evaluate CLIP.mkv --start 13 --end 25 \\
         --truth-labels data/truth/camb-20260915-103223
 
-The clip needs a `config/recordings.json` entry; sealed footage needs `--final-run`
-on top of it. See manifest.py.
+A clip `config/recordings.json` lists takes its print scale from its Capture
+Setup; any other clip needs `--mm-per-px`, or its Position Errors stay in
+template px (ADR-0010).
 
 `--move` moves the Board synthetically (SOW 2.1.6, #164): from 25 s to the end
 of the run, every frame shifted 80, 40 frame px as it is read:
@@ -824,8 +825,10 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance, mm_per_tpl_px,
             f"template px of a mark the baseline holds")
     if pairs:
         d = sorted(d for _, _, d in pairs)
-        note += (f", {d[0]:.0f}-{d[-1]:.0f} px ({d[0] * mm_per_tpl_px:.1f}-"
-                 f"{d[-1] * mm_per_tpl_px:.1f} mm): that is the placement's error")
+        note += f", {d[0]:.0f}-{d[-1]:.0f} px"
+        if mm_per_tpl_px is not None:
+            note += f" ({d[0] * mm_per_tpl_px:.1f}-{d[-1] * mm_per_tpl_px:.1f} mm)"
+        note += ": that is the placement's error"
     if off_canvas_count:
         note += (f"\n[WARN] {off_canvas_count} more pre-existing mark(s) land off "
                  f"the canvas, where no baseline can hold them: the Board runs "
@@ -881,14 +884,10 @@ def first_moved_index(at, start, fps):
     return index
 
 
-def refuse_move(move, start, end, fps, baseline_frames, stride, final_run):
-    """Refuse a move that would spend a Sealed Recording, move no pixel, move
-    the baseline it is measured against, or move no frame the run looks at.
-    Counted in frames as `process` reads them: a move between two frames lands
-    on the next."""
-    if final_run:
-        raise SystemExit("[REFUSED] --move on a final run: a Sealed Recording's one "
-                         "measurement is never spent on a synthetic case (ADR-0005)")
+def refuse_move(move, start, end, fps, baseline_frames, stride):
+    """Refuse a move that would move no pixel, move the baseline it is measured
+    against, or move no frame the run looks at. Counted in frames as `process`
+    reads them: a move between two frames lands on the next."""
     if not move.dx and not move.dy and not move.deg % 360:
         raise SystemExit(f"[REFUSED] --move {move.dx:g},{move.dy:g},{move.deg:g} moves "
                          f"no pixel: a case that moves nothing must not read as a pass")
@@ -958,7 +957,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
                     model=nbh.DEFAULT_MODEL, template=board.DEFAULT_TEMPLATE,
                     confidence=nbh.DEFAULT_CONFIDENCE, change_filter=True,
                     merge_displaced=False, baseline_frames=nbh.BASELINE_FRAMES,
-                    stride=None, tolerance=MATCH_TOLERANCE_TPL, final_run=False,
+                    stride=None, tolerance=MATCH_TOLERANCE_TPL, mm_per_px=None,
                     move=None):
     """Score one run of `video` against its truth, printing every line as it
     goes, and return what a pooled report reads (position_error.py, #126).
@@ -969,7 +968,9 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     - `unmatched` and `missed`: the detections no truth claimed and the truth
       no detection found;
     - `placement`: the placement-check note as printed;
-    - `entry`: the manifest entry the gate found by content hash;
+    - `entry`: the manifest entry found by content hash, None for a
+      recording it does not list (ADR-0010);
+    - `footage`: ADR-0010's label, `manifest.footage(entry)`;
 
     and what the Board-move table reads (board_move.py, #165):
 
@@ -983,28 +984,38 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     - `lost` and `reanchors`: the run's Lost Looks past the baseline and its
       re-anchor attempts.
     """
-    # The print scale before the gate, looked up as the pipeline looks it up but
-    # refused where the pipeline runs on without millimetres: refused after the
-    # gate, a final run would spend a sealed recording on a score with no
-    # Position Error. The gate still rules on the recording itself.
-    # ponytail: hashes the recording twice; pass the hash to the gate if that matters
+    # The print scale before anything is opened, looked up as the pipeline
+    # looks it up: `mm_per_px`, else the listed Capture Setup's. A listed one
+    # without a scale is refused where the pipeline runs on without
+    # millimetres; an unlisted recording runs, its errors in template px.
     scales = board.print_scales()
-    peek = manifest.load().get(manifest.content_hash(video))
-    if peek is not None and peek["capture_setup"] not in scales:
-        raise SystemExit(
-            f"[REFUSED] Capture Setup {peek['capture_setup']!r} has no print "
-            f"scale in config/print_scale.json, so no Position Error can be put "
-            f"in mm. docs/ring_measurement.md has how it is measured; every mm "
-            f"figure scales linearly with it, so it is not guessed.")
-    # Before the gate too, which logs a final run's Recording as spent. One the
-    # manifest does not know is the gate's to refuse.
-    if move is not None and peek is not None:
-        refuse_move(move, start, end, peek["fps"], baseline_frames, stride or 1, final_run)
-
-    # Split membership before anything is opened: a sealed recording is refused
-    # unless this run says it is the final one. See manifest.py and ADR-0005.
-    entry = manifest.gate(video, final_run, model, "evaluate.py")
-    mm_per_tpl_px = scales[entry["capture_setup"]]
+    entry = manifest.lookup(video)
+    # Checked here as the command line checks it: 0 would fall back to a
+    # factor of 1 and still be labelled mm.
+    mm_per_tpl_px = (None if mm_per_px is None
+                     else board.checked_scale(mm_per_px, "mm_per_px"))
+    if mm_per_tpl_px is None and entry is not None:
+        mm_per_tpl_px = scales.get(entry["capture_setup"])
+        if mm_per_tpl_px is None:
+            raise SystemExit(
+                f"[REFUSED] Capture Setup {entry['capture_setup']!r} has no print "
+                f"scale in config/print_scale.json, so no Position Error can be put "
+                f"in mm. docs/ring_measurement.md has how it is measured; every mm "
+                f"figure scales linearly with it, so it is not guessed.")
+    if mm_per_tpl_px is None:
+        print(f"[WARN] {video} is in no config/recordings.json entry, so it has no "
+              f"Capture Setup and no print scale: Position Errors are reported in "
+              f"template px, not mm. Give one with --mm-per-px")
+    if entry is not None:
+        fps = entry["fps"]
+    else:
+        cap = cv2.VideoCapture(video)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        cap.release()
+        if not fps > 0:
+            raise SystemExit(f"[FAILED] cannot read a frame rate from {video} (fps {fps})")
+    if move is not None:
+        refuse_move(move, start, end, fps, baseline_frames, stride or 1)
 
     # The run's positions are in Board space; ground truth is in template space.
     # The truth is placed through the Run's own baseline frame and Board space,
@@ -1038,7 +1049,9 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     print(placement)
 
     result = score(truth, found, tolerance)
-    print(f"\n[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "
+    footage = manifest.footage(entry)
+    print("\n" + manifest.footage_line(footage, os.path.basename(video)))
+    print(f"[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "
           f"precision {result['precision']:.0%}  recall {result['recall']:.0%}  "
           f"F1 {result['f1']:.2f}")
     for i, j, d in sorted(result["pairs"], key=lambda t: t[1]):
@@ -1051,20 +1064,23 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
 
     # SOW 2.3.2 (#123). Internal: this truth shares the footage's print scale
     # and mapping to the artwork, so errors in those cancel out of it.
-    errors = position_errors(truth, found, result["pairs"], mm_per_tpl_px)
+    errors = position_errors(truth, found, result["pairs"], mm_per_tpl_px or 1.0)
     rows = []
     for (i, j, _), (dx, dy, radial) in sorted(zip(result["pairs"], errors),
                                               key=lambda t: t[0][1]):
         target = run.holes[i]["target"]
         where = "MISS" if target is None else f"Target {target + 1}"
         rows.append((i + 1, j + 1, where, dx, dy, radial))
-    print(f"\n[POSITION ERROR] {len(errors)} matched pair(s), mm along the "
-          f"Target's printed axes (X right, Y up), system minus truth, at "
-          f"{mm_per_tpl_px} mm per template px ({entry['capture_setup']}). "
+    unit = "template px" if mm_per_tpl_px is None else "mm"
+    scale = (f"{mm_per_tpl_px} mm per template px "
+             f"({entry['capture_setup'] if entry else '--mm-per-px'})"
+             if mm_per_tpl_px is not None else "no print scale")
+    print(f"\n[POSITION ERROR] {len(errors)} matched pair(s), {unit} along the "
+          f"Target's printed axes (X right, Y up), system minus truth, at {scale}. "
           f"Internal: against truth in this footage's own frame of reference")
     for i, j, where, dx, dy, radial in rows:
         print(f"   found #{i} -> truth #{j}   {where:<9} dX {dx:+6.1f}  "
-              f"dY {dy:+6.1f}  radial {radial:5.1f} mm")
+              f"dY {dy:+6.1f}  radial {radial:5.1f} {unit}")
 
     # Under the headline, never in it.
     attribution = attribute(found, result["pairs"], pre_existing, tolerance)
@@ -1090,8 +1106,9 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
         board.MATCH_TPL_PX, "template px"))
 
     return {"rows": rows, "unmatched": result["fp"], "missed": result["fn"],
-            "placement": placement, "entry": entry, "truths": len(truth),
-            "times": [start + h["first_frame"] / entry["fps"] for h in run.holes],
+            "placement": placement, "entry": entry, "footage": footage,
+            "truths": len(truth),
+            "times": [start + h["first_frame"] / fps for h in run.holes],
             "false_positives": [(i + 1, tuple(found[i]), cause, distance)
                                 for i, cause, distance in attribution],
             "in_baseline": [(j + 1, k + 1) for j, k, _ in in_baseline],
@@ -1126,8 +1143,11 @@ if __name__ == "__main__":
                         "the baseline frame's Targets' centroid; the vacated border "
                         "replicates the edge. AT is on the log's two-decimal clock. "
                         "Refused when it moves nothing, inside the baseline window, "
-                        "past the last frame looked at, and on a final run")
-    manifest.add_flag(p)
+                        "past the last frame looked at")
+    p.add_argument("--mm-per-px", type=board.checked_scale, default=None,
+                   help="print scale, mm per template px. Overrides the listed "
+                        "Capture Setup's; a recording config/recordings.json does "
+                        "not list takes it from here only, or reports in template px")
     a = p.parse_args()
     score_recording(a.video, a.start, a.end, a.truth_labels, a.truth_image,
                     model=a.model, template=a.template,
@@ -1135,4 +1155,4 @@ if __name__ == "__main__":
                     change_filter=not a.no_change_filter,
                     merge_displaced=a.merge_displaced,
                     baseline_frames=a.baseline_frames, stride=a.stride,
-                    tolerance=a.tolerance, final_run=a.final_run, move=a.move)
+                    tolerance=a.tolerance, mm_per_px=a.mm_per_px, move=a.move)

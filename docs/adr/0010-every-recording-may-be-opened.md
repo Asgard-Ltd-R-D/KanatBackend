@@ -22,21 +22,27 @@ than the one number they protect.
 
 Every reported result names its footage and says which of two kinds it is:
 
-- **Regression:** the footage was in view when something in the measured
-  commit was chosen, whether a model, a constant or a threshold. It shows a
-  change broke nothing it was checked on. It does not show the change works
-  anywhere else.
-- **Unseen:** the footage arrived after the measured commit and was scored by
-  that commit before anything was changed on it. Only this counts as evidence
-  of generalisation. It becomes regression as soon as anything is changed with
-  it in view.
+- **Regression:** the footage, or any recording of its Capture Setup, was in
+  view when something in the measured commit was chosen, whether a model, a
+  constant or a threshold. It shows a change broke nothing it was checked on.
+  It does not show the change works anywhere else.
+- **Unseen:** nothing in the measured commit was chosen with the footage, or
+  any recording of its Capture Setup, in view. Only this counts as evidence of
+  generalisation. When the footage arrived does not matter; what was looked at
+  does. A new file from a tuned Capture Setup is regression, because it
+  re-detects a fitted scene
+  ([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)). The whole
+  Capture Setup becomes regression as soon as anything is chosen with any of
+  its recordings in view.
 
 No tool enforces the label; the report states it. On 2026-10-28 every
 recording with truth is regression, and no unseen evidence stands: the sealed
 run's 0 of 2 measured a system that has changed since. A generalisation claim
-to IAI (SOW 2.3.6) therefore needs footage that has not arrived yet: the AXIS
-camera's first Ranges, or the next customer delivery, scored once before
-anything is tuned on it.
+to IAI (SOW 2.3.6) therefore needs a Capture Setup nothing has been chosen on,
+scored once before anything is tuned on it. That is the AXIS camera's first
+Ranges, the next customer delivery, or `cama-20260914-wide-tight` and
+`cama-20260914-wide`. Those two hold nine recordings that were sealed and never
+watched, and they have no truth yet.
 
 ## Consequences
 

@@ -1,10 +1,10 @@
 """Where the Target Sheet lies around the artwork, from #62's photographs (#271).
 
-Each photograph is rectified onto the A4 page by the sheet's own four edges,
+Each photograph is rectified onto the Target Sheet by the sheet's own four edges,
 so the sheet is the ruler: every edge is fitted as a line above and below the
 tape, and their corners map onto 297 x 210 mm, oriented like the template
-(head up). The artwork's green mask is then fitted onto the page's by an affine
-ECC, the tape masked out. The page's corners, carried back through that fit,
+(head up). The artwork's green mask is then fitted onto the sheet's by an affine
+ECC, the tape masked out. The sheet's corners, carried back through that fit,
 are the sheet's rectangle in template px, and the silhouette's extremes,
 carried forward, are its margins in mm.
 
@@ -19,7 +19,7 @@ from detection.board import BASE_DIR, DEFAULT_TEMPLATE
 
 PHOTOS = [os.path.join(BASE_DIR, "docs", "ring_measurement", f"{name}.jpg")
           for name in ("side_to_side", "head_to_feet")]
-PAGE_MM = (297, 210)
+SHEET_MM = (297, 210)
 PX_PER_MM = 10
 # The silhouette's outermost green, template px, edges at the pixel boundary:
 # body sides, head apex, feet.
@@ -31,24 +31,25 @@ def green(img):
     return (g - r > 40) & (g - b > 20)
 
 
+def largest(mask):
+    _, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+    return labels == 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+
+
 def tape(img):
     """The tape measure, grown to cover its metal hook and shadow."""
     h, s, v = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
-    yellow = ((h > 15) & (h < 40) & (s > 80) & (v > 100)).astype(np.uint8)
-    _, labels, stats, _ = cv2.connectedComponentsWithStats(yellow)
-    largest = labels == 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-    return cv2.dilate(largest.astype(np.uint8), np.ones((81, 81), np.uint8)) > 0
+    yellow = largest(((h > 15) & (h < 40) & (s > 80) & (v > 100)).astype(np.uint8))
+    return cv2.dilate(yellow.astype(np.uint8), np.ones((81, 81), np.uint8)) > 0
 
 
 def sheet(img, covered):
-    """The sheet: white paper, its artwork and the tape lying on it."""
+    """The sheet: its white margin, its artwork and the tape lying on it."""
     grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     sat = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[..., 1]
-    paper = ((grey > 175) & (sat < 40)) | green(img) | covered
-    paper = cv2.morphologyEx(paper.astype(np.uint8), cv2.MORPH_CLOSE,
-                             np.ones((15, 15), np.uint8))
-    _, labels, stats, _ = cv2.connectedComponentsWithStats(paper)
-    return labels == 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+    white = ((grey > 175) & (sat < 40)) | green(img) | covered
+    return largest(cv2.morphologyEx(white.astype(np.uint8), cv2.MORPH_CLOSE,
+                                    np.ones((15, 15), np.uint8)))
 
 
 def edge_line(mask, covered, side):
@@ -83,7 +84,7 @@ def corner(a, b):
 
 
 def rectify(img):
-    """The page at `PX_PER_MM`, head up, and which of it the tape left visible.
+    """The sheet at `PX_PER_MM`, head up, and which of it the tape left visible.
 
     Both photographs have the head to the right, so the template's top-left is
     the photograph's top-right."""
@@ -92,12 +93,12 @@ def rectify(img):
     e = {side: edge_line(mask, covered, side) for side in ("left", "right", "top", "bottom")}
     src = np.float32([corner(e["top"], e["right"]), corner(e["bottom"], e["right"]),
                       corner(e["bottom"], e["left"]), corner(e["top"], e["left"])])
-    w, h = (n * PX_PER_MM for n in PAGE_MM)
+    w, h = (n * PX_PER_MM for n in SHEET_MM)
     H = cv2.getPerspectiveTransform(src, np.float32([[0, 0], [w, 0], [w, h], [0, h]]))
-    page = cv2.warpPerspective(img, H, (w, h), flags=cv2.INTER_CUBIC)
+    rectified = cv2.warpPerspective(img, H, (w, h), flags=cv2.INTER_CUBIC)
     visible = cv2.warpPerspective((~covered).astype(np.uint8), H, (w, h),
                                   flags=cv2.INTER_NEAREST)
-    return page, cv2.erode(visible, np.ones((15, 15), np.uint8))
+    return rectified, cv2.erode(visible, np.ones((15, 15), np.uint8))
 
 
 def measure(photo, template=DEFAULT_TEMPLATE):
@@ -106,22 +107,23 @@ def measure(photo, template=DEFAULT_TEMPLATE):
     Margins are left, right, top (head), bottom (feet); the rectangle is
     `(x0, y0, x1, y1)`, each side the mean of its two corners.
     """
-    page, visible = rectify(cv2.imread(photo))
+    rectified, visible = rectify(cv2.imread(photo))
     artwork = green(cv2.imread(template)).astype(np.float32)
-    s = 0.1763 * PX_PER_MM  # seeded from the centred page
+    s = 0.1763 * PX_PER_MM  # seeded from ADR-0011's centred sheet
     warp = np.float32([[s, 0, s * 140], [0, s, s * 36]])
     criteria = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 100, 1e-6)
     correlation, warp = cv2.findTransformECC(
         cv2.GaussianBlur(artwork, (0, 0), 1.5),
-        cv2.GaussianBlur(green(page).astype(np.float32), (0, 0), 1.5 * s),
+        cv2.GaussianBlur(green(rectified).astype(np.float32), (0, 0), 1.5 * s),
         warp, cv2.MOTION_AFFINE, criteria, visible, 5)
     A = np.vstack([warp, [0, 0, 1]]).astype(float)
     to_mm = lambda x, y: (A @ [x, y, 1])[:2] / PX_PER_MM
+    # Body sides read at y 800, mid-way down them; head and feet at the apex column.
     margins = (to_mm(EXTREMES["left"], 800)[0],
-               PAGE_MM[0] - to_mm(EXTREMES["right"], 800)[0],
+               SHEET_MM[0] - to_mm(EXTREMES["right"], 800)[0],
                to_mm(702, EXTREMES["top"])[1],
-               PAGE_MM[1] - to_mm(702, EXTREMES["bottom"])[1])
-    w, h = PAGE_MM
+               SHEET_MM[1] - to_mm(702, EXTREMES["bottom"])[1])
+    w, h = SHEET_MM
     c = (np.linalg.inv(A) @ np.vstack([np.float64([[0, w, w, 0], [0, 0, h, h]]) * PX_PER_MM,
                                        np.ones(4)]))[:2]
     rect = ((c[0, 0] + c[0, 3]) / 2, (c[1, 0] + c[1, 1]) / 2,

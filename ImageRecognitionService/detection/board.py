@@ -887,7 +887,9 @@ def print_scales(path=PRINT_SCALE_PATH):
     Capture Setup: the Boards of different setups may come from different
     prints. `source` says which print and how it was measured
     (docs/ring_measurement.md); an entry without one is refused, because a
-    scale nobody can trace is a guess.
+    scale nobody can trace is a guess. Each entry also carries the Target
+    Sheet's rectangle, `sheet_tpl_px` with its `sheet_source` (#271), which
+    this does not read.
 
     The whole file is checked, not just one setup's entry, so a caller can read
     it before opening a recording: a malformed entry found after would cost a

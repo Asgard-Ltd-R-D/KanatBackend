@@ -465,6 +465,17 @@ def test_a_listed_capture_setup_without_a_print_scale_is_still_refused(monkeypat
         score_recording("clip.mkv", 20, 46, "truth", mm_per_px=0.2)
 
 
+
+@pytest.mark.parametrize("scale", [0, -0.2, float("nan"), float("inf")])
+def test_a_given_print_scale_is_checked_before_opening(monkeypatch, scale):
+    """Called directly, `mm_per_px` gets the check --mm-per-px gets: 0 would be
+    read as a factor of 1 and still be labelled mm."""
+    monkeypatch.setattr(manifest, "lookup", lambda video: None)
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", _opened)
+    with pytest.raises(ValueError, match="mm_per_tpl_px"):
+        score_recording("clip.mkv", 20, 46, "truth", mm_per_px=scale)
+
+
 # --- placing photograph truth through the baseline frame -------------------
 
 def _scene():

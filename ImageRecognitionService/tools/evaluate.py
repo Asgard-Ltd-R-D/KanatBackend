@@ -989,7 +989,10 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     # millimetres; an unlisted recording runs, its errors in template px.
     scales = board.print_scales()
     entry = manifest.lookup(video)
-    mm_per_tpl_px = mm_per_px
+    # Checked here as the command line checks it: 0 would fall back to a
+    # factor of 1 and still be labelled mm.
+    mm_per_tpl_px = (None if mm_per_px is None
+                     else board.checked_scale(mm_per_px, "mm_per_px"))
     if mm_per_tpl_px is None and entry is not None:
         mm_per_tpl_px = scales.get(entry["capture_setup"])
         if mm_per_tpl_px is None:

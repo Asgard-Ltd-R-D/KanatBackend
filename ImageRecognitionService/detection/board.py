@@ -767,6 +767,19 @@ def track_view(frame, reference, seed=None, previous=None):
                      reference.targets, a, reference.edges, reference.inner), correlation
 
 
+def shifted(view, d):
+    """`view` with both canvases translated up-left by `d` Board px: the
+    canvas-shift control (#46, #272). Everything on the Board lands `d` px up
+    and left of where it was, so each mark sits at another phase of the
+    detector's stride grid. Positions read back through `board_to_template`
+    are unmoved. A result that changes under it is grid noise."""
+    move = _as_matrix(1.0, (-d, -d))
+    return BoardView(view.H, move @ view.tpl_to_board, view.canvas_size,
+                     [t - d for t in view.targets], view.anchor,
+                     {k: None if v is None else v - d for k, v in view.edges.items()},
+                     view.inner._replace(tpl_to_board=move @ view.inner.tpl_to_board))
+
+
 def reanchor_view(frame, template_mask, reference):
     """Find the Board again after tracking lost it, in the same Board space (#80).
 

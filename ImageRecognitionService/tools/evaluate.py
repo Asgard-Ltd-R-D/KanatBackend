@@ -958,7 +958,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
                     confidence=nbh.DEFAULT_CONFIDENCE, change_filter=True,
                     merge_displaced=False, baseline_frames=nbh.BASELINE_FRAMES,
                     stride=None, tolerance=MATCH_TOLERANCE_TPL, mm_per_px=None,
-                    move=None):
+                    move=None, device=None, timing=None, canvas_shift=0):
     """Score one run of `video` against its truth, printing every line as it
     goes, and return what a pooled report reads (position_error.py, #126).
     With a `Move`, the run reads a `MovedRecording` (#164). It returns:
@@ -982,7 +982,19 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
       `attribute` gives them;
     - `in_baseline`: `(truth #, P #)` per missed truth on a Baseline Mark;
     - `lost` and `reanchors`: the run's Lost Looks past the baseline and its
-      re-anchor attempts.
+      re-anchor attempts;
+
+    and what the regression bench reads (regression.py, #272), run on
+    `device`, timed to the `timing` CSV, with its canvas shifted
+    `canvas_shift` Board px (`board.shifted`):
+
+    - `truth` and `found`: template px, by truth # and found # less one;
+    - `pairs`: `score`'s, 0-based;
+    - `reported`: per found #, the seconds into the Recording its Look judged
+      it at;
+    - `persisted`: template px of every Bullet Hole before the change filter;
+    - `fps`, `unit` (mm, else template px) and `device`, the one the detector
+      resolved to.
     """
     # The print scale before anything is opened, looked up as the pipeline
     # looks it up: `mm_per_px`, else the listed Capture Setup's. A listed one
@@ -1023,13 +1035,14 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     # truth that cannot be placed fails before any (#185).
     loop = nbh.RegisteredFrames.open(
         video, start, nbh.load_model(model), confidence, template,
-        opener=None if move is None else functools.partial(open_moved, move))
+        opener=None if move is None else functools.partial(open_moved, move),
+        device=device, canvas_shift=canvas_shift)
     view = loop.view
     truth, pre_labels = load_truth(truth_image, truth_labels, loop.base, view)
 
     run = nbh.process(loop, end, require_change_evidence=change_filter,
                       merge_displaced=merge_displaced,
-                      baseline_frames=baseline_frames, stride=stride)
+                      baseline_frames=baseline_frames, stride=stride, timing=timing)
 
     found = view.board_to_template(
         np.array([h["pos"] for h in run.holes], np.float32).reshape(-1, 2))
@@ -1112,7 +1125,13 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
             "false_positives": [(i + 1, tuple(found[i]), cause, distance)
                                 for i, cause, distance in attribution],
             "in_baseline": [(j + 1, k + 1) for j, k, _ in in_baseline],
-            "lost": run.lost, "reanchors": run.reanchors}
+            "lost": run.lost, "reanchors": run.reanchors,
+            "truth": truth, "found": found, "pairs": result["pairs"],
+            "reported": [start + h["judged_frame"] / fps for h in run.holes],
+            "persisted": view.board_to_template(
+                np.array([h["pos"] for h in run.persisted], np.float32).reshape(-1, 2)),
+            "fps": fps, "unit": unit, "mm_per_tpl_px": mm_per_tpl_px,
+            "device": str(getattr(getattr(loop.model, "predictor", None), "device", None))}
 
 
 if __name__ == "__main__":

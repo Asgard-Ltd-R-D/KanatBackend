@@ -45,3 +45,22 @@ def test_the_file_holds_one_line_per_truth_line_that_regression_reads(tmp_path):
     assert (tmp_path / regression.ARRIVAL_NAME).read_text() == (
         "412 proposed\n- proposed\n77 proposed\n")
     assert regression.arrival_frames(tmp_path) == [412, None, 77]
+
+
+def test_a_rerun_keeps_reviewed_lines(tmp_path):
+    from tools import regression
+    (tmp_path / regression.ARRIVAL_NAME).write_text(
+        "412 confirmed\n90 proposed\n779 corrected\n")
+    arrival.write(tmp_path, [412, 91, 787])
+    assert (tmp_path / regression.ARRIVAL_NAME).read_text() == (
+        "412 confirmed\n91 proposed\n779 corrected\n")
+
+
+def test_a_rerun_refuses_when_the_truth_changed_under_reviewed_lines(tmp_path):
+    import pytest
+    from tools import regression
+    path = tmp_path / regression.ARRIVAL_NAME
+    path.write_text("412 confirmed\n")
+    with pytest.raises(SystemExit):
+        arrival.write(tmp_path, [412, 91])
+    assert path.read_text() == "412 confirmed\n"

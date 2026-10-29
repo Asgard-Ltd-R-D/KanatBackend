@@ -17,8 +17,9 @@ arrival the first frame past the step's midpoint that holds there.
 writes `board.arrival.txt` beside each truth, one line per truth line,
 `<frame> proposed`, and a strip per recording into `docs/arrival/`: per truth
 line, frames -3 to +3 around the proposal. A human looks at the strip and
-rewrites the line `<frame> confirmed` or `<frame> corrected`. Frames are the
-Recording's, from 0, at its manifest frame rate.
+rewrites the line `<frame> confirmed` or `<frame> corrected`; a rerun keeps
+those and rewrites only `proposed` lines. Frames are the Recording's, from 0,
+at its manifest frame rate.
 """
 import argparse
 import os
@@ -66,11 +67,26 @@ def propose(d, step=STEP, hold=HOLD):
     return at
 
 
+def _reviewed(line):
+    return line.split()[1:2] not in ([], ["proposed"])
+
+
 def write(truth_dir, frames):
     """`board.arrival.txt` in `truth_dir`, one `<frame> proposed` per truth line,
-    `-` for none."""
-    with open(os.path.join(truth_dir, regression.ARRIVAL_NAME), "w") as f:
-        f.writelines(f"{'-' if a is None else a} proposed\n" for a in frames)
+    `-` for none. A line a human confirmed or corrected is kept; if the truth
+    no longer has as many lines as a reviewed file, nothing is written."""
+    path = os.path.join(truth_dir, regression.ARRIVAL_NAME)
+    old = []
+    if os.path.exists(path):
+        with open(path) as f:
+            old = f.read().splitlines()
+    if any(map(_reviewed, old)) and len(old) != len(frames):
+        raise SystemExit(f"[FAILED] {path} has reviewed lines for {len(old)} truth lines, "
+                         f"the truth now has {len(frames)}: relabel it by hand")
+    with open(path, "w") as f:
+        f.writelines(old[j] + "\n" if j < len(old) and _reviewed(old[j])
+                     else f"{'-' if a is None else a} proposed\n"
+                     for j, a in enumerate(frames))
 
 
 def truth_in_frame(entry, base, view):

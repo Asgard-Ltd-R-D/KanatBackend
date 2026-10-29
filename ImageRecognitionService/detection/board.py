@@ -138,13 +138,15 @@ EDGE_BLUR = 2.0            # search px; the border erosion below covers its reac
 REGION_SPANS = 1.5         # PROVISIONAL
 ECC_SCALE = 0.5            # PROVISIONAL: half resolution
 ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drift
-# ECC's stopping rule (#274). On many frames ECC flips between two near-identical
-# warps every iteration, so 200 / 1e-6 ran to the cap: 145 of 249 CamB Looks
-# (0-10 s) and CamA's 2.7 s spikes. Measured 2026-10-28 at stride 1 against
-# 200 / 1e-6: registration P50 539 -> 15 ms on CamB, P99 2067 -> 57 on CamA;
-# on-sheet placement within 0.55 mm; correlation unchanged to 4 decimals.
-ECC_MAX_ITERATIONS = 20
-ECC_EPS = 1e-3
+
+# ECC's stopping rule for tracking (#274). On many frames ECC flips between two
+# near-identical warps every iteration, so the old 200 / 1e-6 ran to the cap:
+# CamB's slow mode and CamA's 2.7 s spikes. Measured 2026-10-29 at stride 1
+# against 200 / 1e-6, docs/latency_wip.md "ECC's stopping rule": registration
+# P50 646 -> 24 ms on CamB, P99 2950 -> 85 on CamA; correlation within 4e-4;
+# the regression bench passes. Not swept.
+ECC_MAX_ITERATIONS = 20    # PROVISIONAL
+ECC_EPS = 1e-3             # PROVISIONAL
 
 # A re-anchor (#80) is seeded from every Target in view and keeps the best fit,
 # and only above this. The Targets share one artwork, so a neighbour's seed can

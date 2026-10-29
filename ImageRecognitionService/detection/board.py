@@ -138,6 +138,13 @@ EDGE_BLUR = 2.0            # search px; the border erosion below covers its reac
 REGION_SPANS = 1.5         # PROVISIONAL
 ECC_SCALE = 0.5            # PROVISIONAL: half resolution
 ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drift
+# ECC's stopping rule (#274). On many frames ECC flips between two near-identical
+# warps every iteration, so 200 / 1e-6 ran to the cap: 145 of 249 CamB Looks
+# (0-10 s) and CamA's 2.7 s spikes. Measured 2026-10-28 at stride 1 against
+# 200 / 1e-6: registration P50 539 -> 15 ms on CamB, P99 2067 -> 57 on CamA;
+# on-sheet placement within 0.55 mm; correlation unchanged to 4 decimals.
+ECC_MAX_ITERATIONS = 20
+ECC_EPS = 1e-3
 
 # A re-anchor (#80) is seeded from every Target in view and keeps the best fit,
 # and only above this. The Targets share one artwork, so a neighbour's seed can
@@ -369,7 +376,7 @@ def ecc_warp(ref, cur, motion, init, mask=None):
                                                       interpolation=how)
     rows = 3 if motion == cv2.MOTION_HOMOGRAPHY else 2
     seed = (D @ init @ np.linalg.inv(D))[:rows].astype(np.float32)
-    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, ECC_MAX_ITERATIONS, ECC_EPS)
     correlation, w = cv2.findTransformECC(small(ref), small(cur), seed, motion, criteria,
                                           None if mask is None else small(mask, cv2.INTER_NEAREST), 5)
     w = w if rows == 3 else np.vstack([w, [0, 0, 1]])

@@ -47,6 +47,12 @@ def test_the_file_holds_one_line_per_truth_line_that_regression_reads(tmp_path):
     assert regression.arrival_frames(tmp_path) == [412, None, 77]
 
 
+def test_a_flash_in_the_last_frames_is_not_the_hole():
+    d = _series(at=120)
+    d[-3:] = 50.0   # the window ends on a flash: no full second after it
+    assert arrival.propose(d) == 120
+
+
 def test_a_rerun_keeps_reviewed_lines(tmp_path):
     from tools import regression
     (tmp_path / regression.ARRIVAL_NAME).write_text(

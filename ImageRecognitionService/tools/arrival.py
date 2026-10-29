@@ -49,7 +49,8 @@ def propose(d, step=STEP, hold=HOLD):
 
     The rise at a frame is how far the median of the next `step` frames
     exceeds the median of the `step` before; a passing flash moves neither
-    median. The step is the first rise at least half the largest, at its peak:
+    median. Only frames with a full `step` after them are judged: a flash in
+    the last few frames would otherwise be the whole later median. The step is the first rise at least half the largest, at its peak:
     the hole forms before anything later changes it more (`_102250` truth #3
     formed at frame 41, and changed more at ~230). The arrival is the first
     frame within a step of it past the midpoint of the two medians that stays
@@ -57,7 +58,7 @@ def propose(d, step=STEP, hold=HOLD):
     d = np.asarray(d, np.float64)
     n = len(d)
     rise = np.array([np.median(d[f:f + step]) - np.median(d[max(0, f - step):f])
-                     for f in range(hold, n - hold)])
+                     for f in range(hold, n - step + 1)])
     first = int(np.argmax(rise >= rise.max() / 2))
     at = hold + first + int(np.argmax(rise[first:first + step]))
     mid = (np.median(d[max(0, at - step):at]) + np.median(d[at:at + step])) / 2

@@ -141,7 +141,7 @@ ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drif
 
 # ECC's stopping rule for tracking (#274). On many frames ECC flips between two
 # near-identical warps every iteration, so the old 200 / 1e-6 ran to the cap:
-# CamB's slow mode and CamA's 2.7 s spikes. Measured 2026-10-29 at stride 1
+# CamB's slow mode and CamA's 3 s spikes. Measured 2026-10-29 at stride 1
 # against 200 / 1e-6, docs/latency_wip.md "ECC's stopping rule": registration
 # P50 646 -> 24 ms on CamB, P99 2950 -> 85 on CamA; correlation within 4e-4;
 # the regression bench passes. Not swept.

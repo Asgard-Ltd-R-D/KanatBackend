@@ -335,7 +335,7 @@ def test_track_view_reads_the_board_move_on_the_board_not_the_gravel(monkeypatch
     1 px: this scene's five blobs leave ECC ~0.5 px of play."""
     region = np.zeros((360, 480), np.uint8)
     region[110:250, 150:330] = 255   # inside the Board, clear of the gravel blurred over its edge
-    anchor = board.Anchor(board._gray(_gravel_and_board((0, 0))), region, np.eye(3, dtype=np.float32))
+    anchor = board.Anchor(board.gray(_gravel_and_board((0, 0))), region, np.eye(3, dtype=np.float32))
     last = np.float32([[1, 0, 60], [0, 1, 40], [0, 0, 1]])
     reference = board.BoardView(last, board._as_matrix(1.0), (300, 300), [], anchor)
 
@@ -432,6 +432,28 @@ def test_a_bullet_hole_on_no_target_is_still_a_miss_on_a_tracked_view(monkeypatc
     """#33 keeps Misses Misses: the baseline's polygons are not widened."""
     baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
     assert _tracked(monkeypatch, baseline).assign((300, 300)) is None
+
+
+def test_the_crop_box_is_the_box_round_both_masks_empty_ones_left_out():
+    """`ecc_warp`'s box, from the two masks' boxes instead of their OR (#276)."""
+    a, b, empty = (np.zeros((50, 60), np.uint8) for _ in range(3))
+    a[5:20, 30:40], b[25:45, 10:15] = 255, 255
+    rect = cv2.boundingRect
+    for m in (b, empty):
+        assert board._union(rect(a), rect(m)) == rect(a | m)
+    assert board._union(rect(empty), rect(empty)) == rect(empty)
+
+
+def test_a_frame_is_greyed_once_while_it_is_one_of_the_last_two():
+    """`gray`'s memo (#276): the frame tracked now is the next Look's `previous`."""
+    f1, f2, f3 = (np.full((4, 4, 3), v, np.uint8) for v in (10, 20, 30))
+    g1 = board.gray(f1)
+    board.gray(f2)
+    assert board.gray(f1) is g1
+    board.gray(f3)
+    board.gray(f2)
+    again = board.gray(f1)
+    assert again is not g1 and np.array_equal(again, g1)
 
 
 # --- the Target Sheets (ADR-0011) --------------------------------------------

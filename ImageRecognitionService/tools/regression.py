@@ -130,10 +130,12 @@ def score(entry, stride, device, shift, timing=None):
     false_positives = [{"found": i + 1, "x": float(x), "y": float(y),
                         "first_seen": r["times"][i], "reported": r["reported"][i]}
                        for i, (x, y) in enumerate(r["found"]) if i not in claimed]
-    # Before the change filter: what persisted, less what truth claims.
-    pairs, _ = evaluate.match(r["truth"], r["persisted"], evaluate.MATCH_TOLERANCE_TPL)
+    # Before the change filter: what persisted, less what truth claims, scored
+    # as the run is (on-sheet truth first).
+    before = evaluate.score(r["truth"], r["persisted"], evaluate.MATCH_TOLERANCE_TPL,
+                            r["off_sheet"])
     return {"truth": truth, "false_positives": false_positives,
-            "fp_before_change_filter": len(r["persisted"]) - len(pairs),
+            "fp_before_change_filter": before["fp"],
             "unit": r["unit"], "mm_per_tpl_px": r["mm_per_tpl_px"], "device": r["device"]}
 
 

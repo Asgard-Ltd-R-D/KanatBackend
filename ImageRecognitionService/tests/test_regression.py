@@ -135,3 +135,20 @@ def test_a_recording_the_reference_never_ran_is_not_ruled_on():
     new = _result(STEADY)
     new["recordings"]["late"] = new["recordings"]["rec"]
     assert _kinds(REF, new) == ([("not comparable", "-", False, True)], False)
+
+
+def test_the_pre_filter_fp_count_matches_on_sheet_truth_first(monkeypatch, tmp_path):
+    """On-sheet truth at 0, off-sheet at 60, tolerance 40; persisted at 30 and
+    -35. Matching all truth at once pairs both (-35 to 0, 30 to 60). On-sheet
+    first, 0 takes 30, the nearer, and -35 is out of 60's reach: one false
+    positive, as `evaluate.score` counts it."""
+    from tools import evaluate, position_error
+    entry = {"file": "rec.mkv", "window": [0, 1]}
+    monkeypatch.setattr(position_error, "truth_dir", lambda e: str(tmp_path))
+    monkeypatch.setattr(evaluate, "score_recording", lambda *a, **k: {
+        "entry": entry, "pairs": [], "rows": [], "out_of_scope_pairs": [],
+        "truth": np.float32([[0, 0], [60, 0]]), "off_sheet": [1],
+        "found": np.zeros((0, 2), np.float32), "times": [], "reported": [], "fps": 25.0,
+        "persisted": np.float32([[30, 0], [-35, 0]]),
+        "unit": "mm", "mm_per_tpl_px": 0.1763, "device": "cpu"})
+    assert regression.score(entry, 1, "cpu", 0)["fp_before_change_filter"] == 1

@@ -567,6 +567,12 @@ Bullet Holes and no setup.
 
 ## The canvas runs to the Board's edge (#46)
 
+**Superseded by ADR-0011 (#275).** Detection now runs only on each Target
+Sheet plus 5 mm, one canvas per sheet in one batched detector call.
+`find_board_edges`, the grown canvas, its bands and `merge_band_detections`
+are gone, and so are the Bullet Holes they were built to find off the sheets
+(`_102450` #3 and #4). What follows is the record of what #46 measured.
+
 **`board.find_board_edges` finds where the Board the Targets are on ends**,
 at the ground or at the seam with the next Board of the stand, and
 `canvas_layout` grows the canvas past `BOARD_MARGIN` to it. The baseline

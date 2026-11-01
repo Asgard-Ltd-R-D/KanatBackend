@@ -14,11 +14,11 @@ floor in front of them: two centres within the match radius (`MATCH_TPL_PX`, in
 Board px) are one Bullet Hole whatever their boxes say. The pipeline first
 shipped with the floor alone, and on CamB_20260915_102250 it reported one torn
 mark twice: the floor came to 2.96 Board px against a mark 13.4 px across. That
-is why the box arms came back. Three other places ask whether two detections are
+is why the box arms came back. Two other places ask whether two detections are
 one mark, and each uses the floor alone, never a threshold of its own:
-`baseline_marks` folds the baseline frames, `strip_pre_existing` drops what was
-already on the Board, and `merge_band_detections` drops a band's second sighting
-of a mark on the margin canvas's edge (#46). The box arms are kept out of the
+`baseline_marks` folds the baseline frames, and `strip_pre_existing` drops what was
+already on the Board. A third, #46's `merge_band_detections`, went with its bands
+when detection moved to the Target Sheets (ADR-0011, #275). The box arms are kept out of the
 first two on purpose. In the baseline they would fold two distinct pre-existing
 marks into one, and in suppression they swallowed a real new Bullet Hole next to
 a pre-existing one, taking CamB recall from 100% to 75%. `merge_displaced_tracks`

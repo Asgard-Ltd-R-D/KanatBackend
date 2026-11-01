@@ -253,7 +253,7 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
           f"{repeats} tile(s) repeating its Capture Setup; "
           f"{unusable} without a usable Board, {failed} failed to register"
           + ("" if written or repeats or unusable + failed == looked
-             else " — no ground in the canvas the runtime would show"))
+             else " — no ground in the rectified Board canvas"))
     return written
 
 

@@ -294,7 +294,7 @@ def print_result(result):
         for d, s in r["shifts"].items():
             count = lambda o: sum(t["outcome"] == o for t in s["truth"])
             print(f"   {d:>2} px  TP {count('TP')}  FP {len(s['false_positives'])}  "
-                  f"FN {count('FN')}  out of scope {count('out of scope')}  "
+                  f"FN {count('FN')}  off-sheet, out of scope {count('out of scope')}  "
                   f"FP before the change filter {s['fp_before_change_filter']}  "
                   f"(device {s['device']})")
         print(f"   {'truth':>6} {'outcome':<12} {'dX':>6} {'dY':>6} {'radial':>6} "

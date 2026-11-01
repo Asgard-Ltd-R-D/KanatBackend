@@ -1116,7 +1116,11 @@ class Registration:
         at 0.29 or less; still clips at 0.917 or more.
 
         ponytail: a gross fit converging at or above the floor passes unchecked;
-        #92 measured none. Check every Nth frame too if one turns up.
+        #92 measured none. Since #276 that includes a frame with no Target in
+        view (glare on the green, a Target covered) whose Board texture still
+        correlates: `track_view` no longer looks for one. Below the floor such
+        a frame is gross (`silhouette_disagreement` is infinite). Check every
+        Nth frame too if one turns up.
         """
         self._converged += 1
         if correlation >= board.REANCHOR_MIN_CORRELATION:

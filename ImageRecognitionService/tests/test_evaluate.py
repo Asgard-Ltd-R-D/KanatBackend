@@ -10,7 +10,7 @@ from detection import new_bullet_holes as nbh
 from tools import manifest
 from tools.evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_FIELD,
                       RAW_NAMES, SOURCE_NAME, UNKNOWN, Move, first_moved_index,
-                      attribute, in_the_baseline, load_labels, match, off_canvas,
+                      attribute, in_the_baseline, load_labels, match, off_sheet,
                       open_moved, parse_move, placement_note, position_errors,
                       pre_existing_labels, refuse_move, register_photograph, score,
                       score_recording)
@@ -535,12 +535,23 @@ def test_registration_survives_the_largest_target_being_cropped_out():
     assert np.abs(board.apply(H, far) - board.apply(true, far)).max() < 5
 
 
-def test_a_label_off_the_rectified_board_is_named():
+def test_a_label_beyond_every_sheet_is_named():
     view = board.BoardView(H=np.eye(3, dtype=np.float32),
                            tpl_to_board=board._as_matrix(0.5, (10, 10)),
-                           canvas_size=(500, 400), targets=[])
+                           canvas_size=(500, 400), targets=[], sheets=[(10, 10, 400, 400)])
     truth = np.float32([[100, 100], [-40, 100], [100, 790], [100, 770]])
-    assert off_canvas(truth, view) == [1, 2]
+    assert off_sheet(truth, view) == [1, 2]
+
+
+def test_off_sheet_truth_is_neither_found_nor_missed_and_its_claim_is_no_fp():
+    """ADR-0011: truth #2 is out of scope; the detection it claims is not a
+    false positive, and #3 out of scope and unfound is not a miss."""
+    truth = np.float32([[0, 0], [100, 0], [200, 0]])
+    found = np.float32([[1, 0], [101, 0], [500, 0]])
+    got = score(truth, found, 10.0, out_of_scope=[1, 2])
+    assert (got["tp"], got["fp"], got["fn"]) == (1, 1, 0)
+    assert [j for _, j, _ in got["pairs"]] == [0]
+    assert [(i, j) for i, j, _ in got["out_of_scope_pairs"]] == [(1, 1)]
 
 
 def test_derived_truth_names_its_pre_existing_marks(tmp_path):
@@ -569,20 +580,18 @@ def test_truth_not_derived_has_no_pre_existing_marks(tmp_path):
     assert pre_existing_labels(str(labels)) is None
 
 
-def test_off_canvas_pre_existing_marks_stay_a_placement_doubt():
-    """_103223: two pre-existing marks below the canvas no baseline can hold.
-    A wrong placement could have thrown them there, so the on-canvas match
-    alone is not a clean placement (#41)."""
+def test_off_sheet_pre_existing_marks_are_said_and_left_unchecked():
+    """No baseline holds a mark off every sheet (ADR-0011)."""
     note = placement_note(np.float32([[0, 0]]), np.float32([[3, 4]]),
-                          40.0, 0.2, off_canvas_count=2)
+                          40.0, 0.2, off_sheet_count=2)
     assert "1 of 1" in note
-    assert "[WARN] 2 more pre-existing mark(s) land off the canvas" in note
+    assert "2 more pre-existing mark(s) land off every sheet" in note
 
 
-def test_placement_is_unverified_when_every_pre_existing_mark_is_off_canvas():
+def test_placement_is_unverified_when_every_pre_existing_mark_is_off_sheet():
     """Nothing left to check against is not "0 of 0 land within" — say so."""
     note = placement_note(np.zeros((0, 2), np.float32), np.float32([[3, 4]]),
-                          40.0, 0.2, off_canvas_count=2)
+                          40.0, 0.2, off_sheet_count=2)
     assert "placement unverified" in note
     assert "2 pre-existing mark(s)" in note
 

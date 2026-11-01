@@ -96,12 +96,11 @@ def timing_summary(path):
     return out
 
 
-def score(entry, stride, device, shift, timing=None, truth_filter=None):
+def score(entry, stride, device, shift, timing=None):
     """One run of `entry` at canvas shift `shift`, per Bullet Hole.
 
-    `truth_filter(entry, truth)` takes the truth in template px and says which
-    to score; the rest, and the detections they claim, are out of scope:
-    neither found, missed nor false (#268's Target Sheets)."""
+    Truth beyond every Target Sheet's bound, and the detections it claims, are
+    out of scope: neither found, missed nor false (ADR-0011)."""
     folder = position_error.truth_dir(entry)
     start, end = entry["window"]
     r = evaluate.score_recording(os.path.join(position_error.VIDEO_DIR, entry["file"]),
@@ -110,15 +109,13 @@ def score(entry, stride, device, shift, timing=None, truth_filter=None):
     if r["entry"] != entry:
         raise SystemExit(f"[REFUSED] {entry['file']} does not hold the bytes the manifest "
                          f"lists under that name")
-    keep = (np.ones(len(r["truth"]), bool) if truth_filter is None
-            else np.asarray(truth_filter(entry, r["truth"]), bool))
     arrivals = arrival_frames(folder)
     owner = {j: i for i, j, _ in r["pairs"]}
     errors = {j - 1: (dx, dy, radial) for _, j, _, dx, dy, radial in r["rows"]}
     truth = []
     for j in range(len(r["truth"])):
         i = owner.get(j)
-        t = {"truth": j + 1, "outcome": "out of scope" if not keep[j] else
+        t = {"truth": j + 1, "outcome": "out of scope" if j in r["off_sheet"] else
              "FN" if i is None else "TP", "found": None if i is None else i + 1,
              "dx": None, "dy": None, "radial": None, "first_seen": None,
              "reported": None, "hit_to_report": None,
@@ -129,7 +126,7 @@ def score(entry, stride, device, shift, timing=None, truth_filter=None):
             if t["arrival"] is not None:
                 t["hit_to_report"] = t["reported"] - t["arrival"] / r["fps"]
         truth.append(t)
-    claimed = set(owner.values())
+    claimed = set(owner.values()) | {i for i, _, _ in r["out_of_scope_pairs"]}
     false_positives = [{"found": i + 1, "x": float(x), "y": float(y),
                         "first_seen": r["times"][i], "reported": r["reported"][i]}
                        for i, (x, y) in enumerate(r["found"]) if i not in claimed]
@@ -140,7 +137,7 @@ def score(entry, stride, device, shift, timing=None, truth_filter=None):
             "unit": r["unit"], "mm_per_tpl_px": r["mm_per_tpl_px"], "device": r["device"]}
 
 
-def run(entries, stride, device, shifts, out, truth_filter=None):
+def run(entries, stride, device, shifts, out):
     """Score `entries` at every shift and write the result to `out`, after
     each recording, so hours of runs survive a crash in the last."""
     result = {"footage": "REGRESSION", "commit": manifest.git_commit(),
@@ -158,8 +155,7 @@ def run(entries, stride, device, shifts, out, truth_filter=None):
             print(f"\n===== {name}, canvas shift {d} px =====")
             with tempfile.TemporaryDirectory() as tmp:
                 timing = os.path.join(tmp, "timing.csv") if d == 0 else None
-                recording["shifts"][str(d)] = score(entry, stride, device, d, timing,
-                                                    truth_filter)
+                recording["shifts"][str(d)] = score(entry, stride, device, d, timing)
                 if timing:
                     recording["timing"] = timing_summary(timing)
         result["recordings"][name] = recording

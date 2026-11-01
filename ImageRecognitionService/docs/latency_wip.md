@@ -161,7 +161,8 @@ fall on the same frames on both devices and in the probe: 13.20, 13.32, 20.80, 2
 5, 8, 195, 209, 211, 296 from `--start`). Those six Looks are CamA's whole Look Time P99. Without them,
 Look Time is P50 296 / P99 466 / max 481 on CPU and 201 / 372 / 391 on MPS. In the probe, 99.6% of each spike's
 time is inside `findTransformECC`. Why the solve takes about 25× longer on these frames is **not established**.
-This is the pre-spec probe's 2.7 s registration P99 (#128), now located but not explained.
+This is the pre-spec probe's 2.7 s registration P99 (#128).
+**Answered 2026-10-29 (#274):** ECC's 200-iteration cap; see "ECC's stopping rule" below.
 
 **CamB's two modes.** Registration on CamB is bimodal, frame by frame. 29% of Looks register in under
 100 ms, 61% take 600–700 ms, about 3% exceed 700 and 7% fall between. Every frame lands in the same mode
@@ -169,6 +170,7 @@ on all the CamB runs, CPU and MPS. With the cut at 300 ms, one frame sits on it,
 inside both modes. The slow mode puts CamB's Look Time P50 (706 / 736) well above its mean (507 / 534).
 Why a frame lands in one mode or the other is **not established**. The MPS run's maximum, a 1.03 s
 registration at 36.52 s (frame 913), took 667 ms at that frame on CPU. Its cause is not established either.
+**Answered 2026-10-29 (#274):** the slow mode is ECC running to its 200-iteration cap; see "ECC's stopping rule" below.
 
 **Two CamB CPU runs set aside.** The Mac idle-slept through the first two CPU runs of CamB, which
 macOS's power log records at 11:08:20–11:12:16 and 11:42:45–11:47:50. The Look clock (`time.perf_counter`)
@@ -178,6 +180,60 @@ registration 4.65 s at frame 689 and 4.24 s at frame 56. The CPU figures above c
 with no sleep logged, 6.5 s outside its Looks and a worst registration of 911 ms. The two set-aside runs agree
 with it up to P99: Look Time P50 703.0 and 702.4 against 706.1, P99 825.1 and 784.8 against 794.3. All three
 report the same Bullet Holes.
+
+## ECC's stopping rule (#274), measured 2026-10-29
+
+**The slow Looks were ECC running to its iteration cap.** `board.ecc_warp` stopped
+`cv2.findTransformECC` at 200 iterations or eps 1e-6. On many frames ECC flips between two nearly identical
+warps on every iteration, so the correlation never settles within 1e-6 and the solve runs all 200
+(#268's probe, 2026-10-28: 145 of 249 CamB Looks over 0–10 s, and 11 CamA Looks, 11 of its 12 over 1 s).
+That is both CamB's slow mode and CamA's spikes. Why ECC oscillates on those frames is still not established.
+#274 stops it at 20 iterations or eps 1e-3 (`ECC_MAX_ITERATIONS`, `ECC_EPS`), and nothing else changes.
+The baseline frame's own fit (`board.register`) keeps 200 / 1e-6. `tools/registration_reach.py` fits through `ecc_warp` too, so its figures move with it.
+
+Same host, libraries, weights and conditions as "Setup", under `caffeinate -i`, one run at a time. `main`
+at `c01016d` against the branch, the same four runs as above, with every `ecc_warp` correlation recorded:
+
+| Registration, ms | P50 | P95 | P99 | max |
+|---|---:|---:|---:|---:|
+| CamB `_102250` 0–46 s CPU, before → after | 646.2 → 24.0 | 673.0 → 27.6 | 700.1 → 83.2 | 769.1 → 91.5 |
+| CamB MPS | 648.2 → 23.9 | 677.3 → 27.4 | 709.6 → 83.3 | 871.0 → 99.1 |
+| CamA `_141546` 13–25 s CPU | 141.2 → 70.3 | 293.1 → 75.9 | 2950.0 → 84.7 | 3107.0 → 94.2 |
+| CamA MPS | 151.2 → 70.1 | 312.3 → 74.5 | 2992.0 → 84.8 | 3203.3 → 103.2 |
+
+n is 1,145 Looks on CamB and 295 on CamA. Over all of CamB's 0–46 s the slow mode is most Looks, so its
+P50 before is 646, not the 539 of #268's first 10 s. After, neither recording has a second mode or a spike.
+
+| ECC correlation, every `ecc_warp` fit, identical on CPU and MPS | P50 before → after | minimum before → after |
+|---|---:|---:|
+| CamB (n 1,149) | 0.98622 → 0.98616 | 0.96184 → 0.96224 |
+| CamA (n 299) | 0.97809 → 0.97812 | 0.96392 → 0.96383 |
+
+Both move by under 1e-3, so `REANCHOR_MIN_CORRELATION` keeps its meaning. On both devices, both recordings
+report the same Bullet Holes at the same times as before. The only output differences are a few frames in each
+hole's detection count, and in the residual line's match count.
+
+**The regression bench passes #268's rule** (`tools.regression`, stride 1, every canvas shift, default
+device), `4fcf30f` against `main` at `c01016d`: 0 failing, 0 noise, on all six truth recordings. Every
+recording keeps its true positives, misses and false positives, and its false positives before the change
+filter. The 15 matched Bullet Holes moved at most 0.06 mm (median 0.01), and none changed its report time.
+All six are regression recordings (ADR-0010), so this shows the change broke nothing there, not that it
+generalises. Look Time at 0 px:
+
+| Recording | Look Time P50 before → after | P99 before → after |
+|---|---:|---:|
+| CamA `_141546` | 328 → 255 | 3040 → 268 |
+| CamB `_101450` | 621 → 197 | 673 → 205 |
+| CamB `_101550` | 254 → 85 | 664 → 446 |
+| CamB `_102250` | 703 → 79 | 740 → 138 |
+| CamB `_102450` | 727 → 79 | 752 → 181 |
+| CamB `_103223` | 727 → 95 | 743 → 101 |
+
+**`tools/board_move.py`: 31 of 32 pass** (`ee5e35c`, both strides, `runs/board_move/274-ecc`), against 28 of 32
+in the last full run (#171, `449d611`). No case that passed there fails here, and both Two Ranges checks pass at both strides.
+The one failure is the same as before: `mid-141546 turn2` at stride 1 drops truth #6, with the same rows.
+The three new passes (`mid-141546` 16x8 and 40x20 at stride 17, 80x40 at stride 1) are not attributed to #274:
+the reference run predates `main`'s changes since #171, and `main` itself was not re-run.
 
 ## The stride
 

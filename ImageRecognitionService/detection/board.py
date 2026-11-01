@@ -139,6 +139,15 @@ REGION_SPANS = 1.5         # PROVISIONAL
 ECC_SCALE = 0.5            # PROVISIONAL: half resolution
 ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drift
 
+# ECC's stopping rule for tracking (#274). On many frames ECC flips between two
+# near-identical warps every iteration, so the old 200 / 1e-6 ran to the cap:
+# CamB's slow mode and CamA's 3 s spikes. Measured 2026-10-29 at stride 1
+# against 200 / 1e-6, docs/latency_wip.md "ECC's stopping rule": registration
+# P50 646 -> 24 ms on CamB, P99 2950 -> 85 on CamA; correlation within 4e-4;
+# the regression bench passes. Not swept.
+ECC_MAX_ITERATIONS = 20    # PROVISIONAL
+ECC_EPS = 1e-3             # PROVISIONAL
+
 # A re-anchor (#80) is seeded from every Target in view and keeps the best fit,
 # and only above this. The Targets share one artwork, so a neighbour's seed can
 # converge one Target over. Measured 2026-10-05 seeding every contour against
@@ -369,7 +378,7 @@ def ecc_warp(ref, cur, motion, init, mask=None):
                                                       interpolation=how)
     rows = 3 if motion == cv2.MOTION_HOMOGRAPHY else 2
     seed = (D @ init @ np.linalg.inv(D))[:rows].astype(np.float32)
-    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, ECC_MAX_ITERATIONS, ECC_EPS)
     correlation, w = cv2.findTransformECC(small(ref), small(cur), seed, motion, criteria,
                                           None if mask is None else small(mask, cv2.INTER_NEAREST), 5)
     w = w if rows == 3 else np.vstack([w, [0, 0, 1]])

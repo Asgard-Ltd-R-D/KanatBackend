@@ -567,11 +567,12 @@ def track_view(frame, reference, seed=None, previous=None):
     re-anchors start failing, the anchor itself needs refreshing, chained to
     this one.
 
-    Returns `(None, None)` when no Target is visible, and raises `cv2.error` when
-    registration fails to converge — both mean "no evidence from this frame".
+    No Target need be visible: a fit with none in view converges low, and
+    `silhouette_disagreement` then calls it grossly wrong (#276).
+
+    Returns `(BoardView, ECC correlation)`. Raises `cv2.error` when
+    registration fails to converge: "no evidence from this frame".
     """
-    if not find_targets(frame)[0]:
-        return None, None
     a = reference.anchor
     W = (reference.H if seed is None else seed) @ np.linalg.inv(a.H)
     if seed is None and previous is not None:
@@ -643,11 +644,13 @@ def silhouette_disagreement(frame, template_mask, view):
     where a neighbour is largest reads ~one Target spacing and is lost; none was
     on #110's six clips. Match the contour to the baseline's Target if one is.
 
-    None when no Target is visible or the silhouette fit fails: no verdict.
+    Infinite when no Target is visible: a fit with nothing to fit is wrong
+    (`track_view` does not look for one). None when the silhouette fit
+    fails: no verdict.
     """
     contours, frame_mask = find_targets(frame)
     if not contours:
-        return None
+        return math.inf
     try:
         own_H, _ = register(template_mask, frame_mask, contours[0])
     except cv2.error:

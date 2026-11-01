@@ -1,6 +1,7 @@
 """Checks for Board geometry. No model, no video, no torch."""
 
 import json
+import math
 
 import cv2
 import numpy as np
@@ -288,8 +289,6 @@ def test_the_mask_follows_the_board_into_the_frame():
 
 def test_track_view_registers_onto_the_baseline_frame_and_chains(monkeypatch):
     """H = W @ H0 against the baseline frame; a tracked view seeds the next."""
-    target = _square(100, 100, 50)
-    monkeypatch.setattr(board, "find_targets", lambda frame: ([target], None))
     H0 = np.float32([[1, 0, 20], [0, 1, 10], [0, 0, 1]])
     anchor = board.Anchor(_scene() / 255, np.full((240, 320), 255, np.uint8), H0)
     reference = board.BoardView(H0, board._as_matrix(1.0), (300, 300), [], anchor)
@@ -305,7 +304,6 @@ def test_track_view_follows_a_board_move_past_ecc_s_reach_from_the_last_fit(monk
     """#171: a 40, 20 px Board Move since the frame the last fit was registered on.
     Started from that fit, ECC does not converge on this scene; started from it
     plus the shift phase correlation reads between the two frames, it lands."""
-    monkeypatch.setattr(board, "find_targets", lambda frame: ([_square(100, 100, 50)], None))
     H0 = np.float32([[1, 0, 20], [0, 1, 10], [0, 0, 1]])
     anchor = board.Anchor(_scene() / 255, np.full((240, 320), 255, np.uint8), H0)
     reference = board.BoardView(H0, board._as_matrix(1.0), (300, 300), [], anchor)
@@ -335,7 +333,6 @@ def test_track_view_reads_the_board_move_on_the_board_not_the_gravel(monkeypatch
     The whole frame, or the region left where the baseline frame had it, is
     mostly gravel that stays put, and reads no move: ECC does not converge.
     1 px: this scene's five blobs leave ECC ~0.5 px of play."""
-    monkeypatch.setattr(board, "find_targets", lambda frame: ([_square(100, 100, 50)], None))
     region = np.zeros((360, 480), np.uint8)
     region[110:250, 150:330] = 255   # inside the Board, clear of the gravel blurred over its edge
     anchor = board.Anchor(board._gray(_gravel_and_board((0, 0))), region, np.eye(3, dtype=np.float32))
@@ -401,10 +398,9 @@ def test_re_anchoring_with_no_target_in_view_finds_nothing(monkeypatch):
     assert board.reanchor_view(None, None, _view([])) == (None, None)
 
 
-def _tracked(monkeypatch, reference, seen):
-    """`reference` tracked onto a frame whose hue threshold finds `seen`.
-    Sets `reference.anchor` to an identity registration."""
-    monkeypatch.setattr(board, "find_targets", lambda frame: (seen, None))
+def _tracked(monkeypatch, reference):
+    """`reference` tracked onto a frame, whichever Targets it shows: tracking
+    does not look (#276). Sets `reference.anchor` to an identity registration."""
     monkeypatch.setattr(board, "ecc_warp", lambda *a: (np.eye(3, dtype=np.float32), 1.0))
     reference.anchor = board.Anchor(None, None, reference.H)
     return board.track_view(np.zeros((10, 10, 3), np.uint8), reference)[0]
@@ -413,21 +409,21 @@ def _tracked(monkeypatch, reference, seen):
 def test_a_bullet_hole_on_a_target_the_frame_lost_is_still_on_that_target(monkeypatch):
     """#33: a shadow hiding Target 2 from the last frame is not a Miss."""
     baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
-    tracked = _tracked(monkeypatch, baseline, [_square(0, 0, 100)])
+    tracked = _tracked(monkeypatch, baseline)
     assert tracked.assign((550, 550)) == 1
 
 
 def test_target_numbers_are_the_baselines_when_target_1_drops_out(monkeypatch):
     """#33: losing Target 1 does not renumber Target 2 as Target 1."""
     baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
-    tracked = _tracked(monkeypatch, baseline, [_square(500, 500, 90)])
+    tracked = _tracked(monkeypatch, baseline)
     assert tracked.assign((550, 550)) == 1 and tracked.assign((50, 50)) == 0
 
 
 def test_target_numbers_are_the_baselines_when_two_swap_area_order(monkeypatch):
     """#33: drift that makes Target 2 look the larger does not renumber them."""
     baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
-    tracked = _tracked(monkeypatch, baseline, [_square(500, 500, 110), _square(0, 0, 100)])
+    tracked = _tracked(monkeypatch, baseline)
     assert tracked.assign((50, 50)) == 0 and tracked.assign((550, 550)) == 1
     assert tracked.ring_centre(1) == pytest.approx(baseline.ring_centre(1))
 
@@ -435,12 +431,7 @@ def test_target_numbers_are_the_baselines_when_two_swap_area_order(monkeypatch):
 def test_a_bullet_hole_on_no_target_is_still_a_miss_on_a_tracked_view(monkeypatch):
     """#33 keeps Misses Misses: the baseline's polygons are not widened."""
     baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
-    assert _tracked(monkeypatch, baseline, [_square(0, 0, 100)]).assign((300, 300)) is None
-
-
-def test_a_frame_with_no_target_visible_is_still_lost(monkeypatch):
-    """The frame's own contours still gate it: none seen, no evidence from it."""
-    assert _tracked(monkeypatch, _view([_square(0, 0, 100)]), []) is None
+    assert _tracked(monkeypatch, baseline).assign((300, 300)) is None
 
 
 # --- the Target Sheets (ADR-0011) --------------------------------------------
@@ -524,11 +515,16 @@ def test_silhouette_disagreement_is_the_reference_target_centres_offset(monkeypa
 
 
 def test_silhouette_disagreement_is_unknown_without_a_silhouette_fit(monkeypatch):
-    """A fit that does not converge, or no Target to fit, is no verdict."""
+    """A fit that does not converge is no verdict."""
     monkeypatch.setattr(board, "find_targets", lambda frame: ([_square(0, 0, 40)], None))
     def fails(*args):
         raise cv2.error("did not converge")
     monkeypatch.setattr(board, "register", fails)
     assert board.silhouette_disagreement(None, None, _view([_square(0, 0, 40)])) is None
+
+
+def test_a_fit_on_a_frame_with_no_target_visible_is_grossly_wrong(monkeypatch):
+    """`track_view` no longer looks for a Target (#276): with none in view,
+    the check calls the fit wrong, so the Look is Lost."""
     monkeypatch.setattr(board, "find_targets", lambda frame: ([], None))
-    assert board.silhouette_disagreement(None, None, _view([_square(0, 0, 40)])) is None
+    assert board.silhouette_disagreement(None, None, _view([_square(0, 0, 40)])) == math.inf

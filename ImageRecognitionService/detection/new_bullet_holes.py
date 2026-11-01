@@ -418,8 +418,8 @@ def _corroborated(point, changed_mask, radius):
 
 
 def change_evidence(points, view, baseline, current, radius):
-    """`_corroborated` for each Board-space point, on the change mask of the
-    sheet canvas its sheet's bound puts it on, in that canvas's px (ADR-0011).
+    """`_corroborated` for each Board-space point, on `board.changed_regions` of
+    the sheet canvas its sheet's bound puts it on, in that canvas's px (ADR-0011).
     `baseline` and `current` are the sheet canvases, in `view.crops` order;
     each mask is built only if a point needs it. Every point is on a sheet:
     `RegisteredFrames.looks` drops the rest."""
@@ -1010,7 +1010,8 @@ def open_board_space(video, start, template_mask, ref_time=None, opener=None,
     through here, so none of them can build it from a different frame. The
     negatives miner's per-frame build is no Run's. It needs no model and
     prints nothing; the caller closes the source. A `canvas_shift` of d
-    Board px translates both canvases (`board.shifted`, #272).
+    Board px moves Board space under the fixed sheet canvases
+    (`board.shifted`, #272).
     """
     source, base = (opener or _open_source)(video, start, ref_time)
     view, correlation = board.build_view(base, template_mask)

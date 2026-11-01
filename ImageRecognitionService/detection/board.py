@@ -330,7 +330,7 @@ def net_scale(board_scale, template_span_px, frame_span_px, imgsz, canvas_long_s
 
 
 def board_scale_for(template_span_px, frame_span_px, wanted=TARGET_NET_SCALE):
-    """Board-space scale that puts a full-canvas inference at `wanted` net scale.
+    """Board-space scale that puts the detector's canvases at `wanted` net scale.
 
     Paired with `imgsz == the canvas's longest side`, so ultralytics' resize is
     ~1.0 and the warp alone carries the net scale.
@@ -400,7 +400,8 @@ class BoardView:
         return apply(self.H @ np.linalg.inv(self.tpl_to_board), points)
 
     def rectify(self, frame):
-        """The Board viewed square-on, at the scale detection wants."""
+        """The Board viewed square-on, at Board scale: `--out`'s canvas. The
+        detector is shown `sheet_canvases`, cut from the same grid."""
         return cv2.warpPerspective(frame, self._frame_to_board(), self.canvas_size)
 
     def sheet_canvases(self, frame):
@@ -684,7 +685,8 @@ def residuals(frame, template_mask, view):
 
 
 def changed_regions(baseline_canvas, current_canvas, sigma=ABSDIFF_SIGMA):
-    """Mask of what differs between two rectified Boards.
+    """Mask of what differs between two rectified images: a sheet canvas at
+    the baseline frame and the same one now (ADR-0011).
 
     **Evidence only.** Change detection is deliberately not the gate: measured on
     real footage it covers at best 4 of 5 known new Bullet Holes at any

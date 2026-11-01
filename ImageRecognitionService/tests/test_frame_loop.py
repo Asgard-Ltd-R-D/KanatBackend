@@ -27,47 +27,32 @@ from detection import new_bullet_holes as nbh
 
 class _FakeView:
     """Board space, minus the geometry. Rectifying is the identity here, and
-    the canvas never grew past the margin canvas."""
+    one sheet canvas covers the whole canvas."""
     canvas_size = (64, 64)
     match_radius = 3.0
-    grew = False
     targets = [None]
     board_scale = 1.0
     tpl_to_board = np.eye(3)
-    inner = types.SimpleNamespace(offset=(0, 0), size=(64, 64))
+    sheets = [(0, 0, 64, 64)]
+    crops = [(0, 0, 64, 64)]
     board_to_template = board.BoardView.board_to_template
+    sheet_of = board.BoardView.sheet_of
 
     def rectify(self, frame):
         return frame
 
-    def exposed_bands(self, context):
-        return []
-
-    def in_inner(self, points):
-        return np.ones(len(points), bool)
+    def sheet_canvases(self, frame):
+        return [frame for _ in self.crops]
 
     def assign(self, pos):
         return None   # every Bullet Hole is a Miss: no Target geometry here
 
 
-class _GrownView(_FakeView):
-    """A canvas grown 16 px below the margin canvas: `rectify` is the grown
-    canvas, `rectify_inner` the margin canvas, marked so the model can tell."""
-    grew = True
-    canvas_size = (64, 80)
-    inner = types.SimpleNamespace(offset=(0, 0), size=(64, 64))
-
-    def rectify(self, frame):
-        return np.full((80, 64, 3), 7, np.uint8)
-
-    def rectify_inner(self, frame):
-        return np.full((64, 64, 3), 1, np.uint8)
-
-    def exposed_bands(self, context):
-        return [nbh.board.Band((0, 64 - context, 64, 80), (0, 64, 64, 80))]
-
-    def in_inner(self, points):
-        return np.asarray(points)[:, 1] <= 64
+class _TwoSheetView(_FakeView):
+    """Two sheets side by side, each on a 64 px canvas, the second 100 Board px
+    right of the first; each bound covers the left 40 px of its canvas."""
+    sheets = [(0, 0, 40, 64), (100, 0, 140, 64)]
+    crops = [(0, 0, 64, 64), (100, 0, 64, 64)]
 
 
 class _FakeCap:
@@ -197,7 +182,7 @@ def test_detection_asks_for_bullet_holes_only_whatever_their_id():
             asked["classes"] = classes
             return super().predict(image, imgsz, conf, verbose, classes)
 
-    nbh._detect(ThreeClass(), None, 64, 0.02)
+    nbh._detect(ThreeClass(), [None], 64, 0.02)
     assert asked["classes"] == [1]
 
 
@@ -208,47 +193,40 @@ def test_a_model_without_bullet_holes_is_refused():
         names = {0: "target"}
 
     with pytest.raises(SystemExit):
-        nbh._detect(NoHoles(), None, 64, 0.02)
+        nbh._detect(NoHoles(), [None], 64, 0.02)
 
 
 class _RecordingModel(_FakeModel):
-    """Answers per image: a box at (15, 15) on the margin canvas, one at
-    (20, 8) band px (canvas y 40) inside the band's context, and one at
-    (30, 40) band px (canvas y 72, past the margin canvas) in the band."""
+    """Records `(images, imgsz)` per call, and answers each image with a box
+    at (15, 15) and one at (50, 12), past the left 40 px."""
     names = {0: "bullet_hole"}
 
     def __init__(self):
         self.calls = []
 
-    def predict(self, image, imgsz, conf, verbose=False, classes=None):
-        self.calls.append((image.shape[:2], int(image[0, 0, 0]), imgsz))
-        if image[0, 0, 0] == 1:
-            boxes = [[10.0, 10.0, 20.0, 20.0]]
-        else:
-            boxes = [[18.0, 6.0, 22.0, 10.0], [28.0, 38.0, 32.0, 42.0]]
-        return [types.SimpleNamespace(boxes=[types.SimpleNamespace(xyxy=[b]) for b in boxes])]
+    def predict(self, images, imgsz, conf, verbose=False, classes=None):
+        self.calls.append((len(images), imgsz))
+        boxes = [[10.0, 10.0, 20.0, 20.0], [48.0, 10.0, 52.0, 14.0]]
+        return [types.SimpleNamespace(boxes=[types.SimpleNamespace(xyxy=[b]) for b in boxes])
+                for _ in images]
 
 
-def test_a_canvas_that_did_not_grow_is_shown_to_the_detector_once():
-    """No Board past the margin canvas: one inference on the canvas, as before #46."""
+def test_every_sheet_canvas_goes_to_the_detector_in_one_call():
+    """Sheets of one size share one predict call, at the loop's imgsz (ADR-0011)."""
     model = _RecordingModel()
-    loop = _loop(frames=1)
-    loop.model = model
-    looks = list(loop.looks(2))
-    assert len(model.calls) == 2 and all(imgsz == 64 for _, _, imgsz in model.calls)
-    assert looks[0].inner is looks[0].canvas
-
-
-def test_a_grown_canvas_is_searched_as_the_margin_canvas_plus_its_bands():
-    """A on the margin canvas at the loop's imgsz; B on each band at its own;
-    B keeps only what lies past the margin canvas, in grown-canvas px."""
-    model = _RecordingModel()
-    loop = _loop(frames=0, view=_GrownView())
+    loop = _loop(frames=0, view=_TwoSheetView())
     loop.model = model
     look = next(loop.looks(1))
-    assert model.calls == [((64, 64), 1, 64), ((48, 64), 7, 64)]
-    assert look.detections[:, :2].tolist() == [[15.0, 15.0], [30.0, 72.0]]
-    assert look.inner.shape == (64, 64, 3) and look.canvas.shape == (80, 64, 3)
+    assert model.calls == [(2, 64)] and len(look.canvases) == 2
+
+
+def test_detections_are_moved_into_board_px_and_dropped_beyond_every_sheet():
+    """Each canvas's detections land at its origin in Board px; one past every
+    sheet's bound never reaches Persistence (ADR-0011)."""
+    loop = _loop(frames=0, view=_TwoSheetView())
+    loop.model = _RecordingModel()
+    look = next(loop.looks(1))
+    assert look.detections[:, :2].tolist() == [[15.0, 15.0], [115.0, 15.0]]
 
 
 def _openable(monkeypatch):
@@ -261,9 +239,6 @@ def _openable(monkeypatch):
     monkeypatch.setattr(nbh.board, "contour_span", lambda contour: 100.0)
     monkeypatch.setattr(nbh.board, "net_scale", lambda *args: 1.0)
     monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask: (_FakeView(), 0.95))
-    monkeypatch.setattr(nbh.board, "uncovered_view",
-                        lambda view, size: (0.0, dict.fromkeys(
-                            ("left", "right", "above", "below"), 0.0)))
 
 
 def test_opening_reports_how_long_building_board_space_took(monkeypatch, caplog):
@@ -424,8 +399,6 @@ def test_the_pipeline_hands_persistence_the_frames_it_lost(monkeypatch, caplog):
     8 do not register."""
     monkeypatch.setattr(nbh.board, "track_view", lambda frame, last, previous=None: (
         (None, None) if frame[0, 0, 0] in (7, 8) else (_FakeView(), 0.95)))
-    monkeypatch.setattr(nbh.board, "uncovered_view", lambda view, size: (
-        0.0, dict.fromkeys(("left", "right", "above", "below"), 0.0)))
     view = _FakeView()
     # `when` is never called: nothing here re-anchors.
     base = np.zeros((8, 8, 3), np.uint8)
@@ -473,7 +446,7 @@ class _SeenOn(_FakeModel):
         self.on = on
 
     def predict(self, image, imgsz, conf, verbose=False, classes=None):
-        return super().predict(image, imgsz, conf) if self.on(int(image[0, 0, 0])) \
+        return super().predict(image, imgsz, conf) if self.on(int(image[0][0, 0, 0])) \
             else [types.SimpleNamespace(boxes=[])]
 
 
@@ -524,7 +497,7 @@ class _Marks(_FakeModel):
         self.marks = marks
 
     def predict(self, image, imgsz, conf, verbose=False, classes=None):
-        index = int(image[0, 0, 0])
+        index = int(image[0][0, 0, 0])
         return [types.SimpleNamespace(boxes=[
             types.SimpleNamespace(xyxy=[[x - 5.0, y - 5.0, x + 5.0, y + 5.0]])
             for x, y, on in self.marks if on(index)])]
@@ -690,7 +663,7 @@ class _Watching(_FakeModel):
         self.on, self.stop_at, self.signum = on, stop_at, signum
 
     def predict(self, image, imgsz, conf, verbose=False, classes=None):
-        index = int(image[0, 0, 0])
+        index = int(image[0][0, 0, 0])
         print(f"[LOOK] {index}")
         if index >= self.stop_at:
             os.kill(os.getpid(), self.signum)
@@ -729,7 +702,7 @@ class _Marking(_FakeModel):
         self.past = threading.Event()
 
     def predict(self, image, imgsz, conf, verbose=False, classes=None):
-        index = int(image[0, 0, 0])
+        index = int(image[0][0, 0, 0])
         if index >= 80:
             self.past.set()
         boxes = [[35.0, 35.0, 45.0, 45.0]] + ([[10.0, 10.0, 20.0, 20.0]] if index >= 6 else [])
@@ -1386,19 +1359,17 @@ def test_a_lost_look_has_a_row_with_no_detector_calls(tmp_path):
     assert all(rows[i]["registered"] == "1" for i in (5, 6, 8, 9))
 
 
-def test_a_grown_canvas_times_each_detector_call(tmp_path):
-    """The margin canvas and its band are two calls a Look, each timed, and
-    Inference Time is their sum (#46)."""
-    view = _GrownView()
+def test_two_sheets_are_one_timed_detector_call(tmp_path):
+    """Both sheet canvases are one call a Look, and Inference Time is it."""
+    view = _TwoSheetView()
     registration = types.SimpleNamespace(last=view, register=lambda frame, index: view,
                                          report=lambda: None, reanchors=0)
     loop = _loop(view=view, registration=registration)
     loop.model = _RecordingModel()
     rows = _timed(tmp_path, loop)
-    assert rows and all(len(_calls(r)) == 2 for r in rows)
+    assert rows and all(len(_calls(r)) == 1 for r in rows)
     for r in rows:
         assert float(r["inference_ms"]) == pytest.approx(sum(_calls(r)), abs=2e-3)
-        assert float(r["inference_ms"]) <= float(r["look_ms"])
 
 
 def test_the_timing_summary_is_labelled_wip_and_names_where_it_ran(tmp_path, capsys):

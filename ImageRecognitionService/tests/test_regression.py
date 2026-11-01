@@ -73,14 +73,13 @@ def test_a_failure_the_control_shows_is_noise():
 def test_the_canvas_shift_moves_the_canvas_not_the_positions():
     tpl_to_board = board._as_matrix(0.2, (-10.0, -20.0))
     view = board.BoardView(np.eye(3), tpl_to_board, (300, 200),
-                           [np.float32([[[50, 60]]])], edges={"above": 5.0})
+                           [np.float32([[[50, 60]]])])
     moved = board.shifted(view, 8)
     assert np.allclose(moved.template_to_board([[100, 100]]),
                        view.template_to_board([[100, 100]]) - 8)
     assert np.allclose(moved.board_to_template(moved.template_to_board([[100, 100]])),
                        [[100, 100]])
     assert moved.targets[0].tolist() == [[[42, 52]]]
-    assert moved.edges["above"] == -3.0
     assert moved.canvas_size == view.canvas_size
 
 

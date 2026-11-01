@@ -777,8 +777,13 @@ class Stream:
                 # The first grab past `watching` to wait for its frame is at
                 # the live edge: the backlog is read, and the frame went out
                 # now, so its timestamp says how late they all run (#291).
+                # Only a frame its timestamp timed: an RTSP session's first
+                # waits on the handshake, and is timed when read.
+                # ponytail: one waiting grab; grab decodes too, so a decode
+                # past half a frame interval reads as the edge early, erring
+                # toward after (backlog grabs took 11 ms at most, #291).
                 if (self.watching is not None and self.caught_up is None
-                        and waited >= 0.5 / LIVE_FPS):
+                        and step and step > 0 and waited >= 0.5 / LIVE_FPS):
                     self.caught_up, self._skew = now - self.watching, at - now
                 if not self._down and placed > index + 1:
                     # Counted before the decode: the frame after a gap may not
@@ -815,7 +820,7 @@ class Stream:
                     # frame waits for the loop to take it.
                     while self._held is not None and not (self._dropping or self.stopped):
                         self._ready.wait(0.1)
-                    if self._held is not None:
+                    if self._held is not None and self._dropping:   # not a stop in the baseline
                         self.late += 1
                         self._late_at.append(self._held[2])
                     self._held = (index, frame, at, decoded)
@@ -965,6 +970,7 @@ class Stream:
 
     @property
     def late_after(self):
+        """Due frames dropped late that went out after `watching` (#291)."""
         return self.late - self.late_before
 
     @property

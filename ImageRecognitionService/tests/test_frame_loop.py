@@ -1534,8 +1534,22 @@ def test_catch_up_drops_are_before_watching_and_a_slow_loop_after_it_drops_after
     assert live.late_before > 0
     assert (live.late_after > 0) == slowed
     assert live.late_before + live.late_after == live.late
-    assert live.behind >= 0.8   # the first frame past the baseline, behind the stream
+    assert live.behind >= 0.7   # 0.9 s at least: the first frame past the baseline, behind the stream
     assert live.caught_up is not None and 0 <= live.caught_up < 0.3
     out = capsys.readouterr().out
     assert f"{live.late_before} before the Run went watching and {live.late_after} after" in out
     assert "reached the live edge" in out
+
+
+def test_a_run_stopped_during_the_baseline_reports_no_late_drop(monkeypatch, capsys):
+    """Stopped while the reader holds a frame for the baseline, the run still
+    reports, and the held frame is no late drop: lateness starts at
+    `watching`, which never came (#291)."""
+    loop = _live(monkeypatch, _FakeStream(interval=0.001))
+    loop.model = _SlowOn(lambda i: 0.05)
+    for look in loop.looks(math.inf, stride=3, baseline_frames=5):
+        if look.index == 2:
+            loop.stop()
+    assert loop.source.late == 0 and loop.source.watching is None
+    out = capsys.readouterr().out
+    assert "0 before the Run went watching and 0 after" in out

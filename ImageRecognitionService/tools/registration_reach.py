@@ -270,8 +270,11 @@ if __name__ == "__main__":
     if a.cut_marks:
         view.anchor = cut_marks(view.anchor, marks)
     if a.registration == "runtime":
-        track = lambda frame, last, last_frame: board.track_view(frame, last,
-                                                                 previous=last_frame)[0]
+        # No Target in view is no view, as before #276: `track_view` no longer
+        # checks, and this tool skips the runtime's silhouette check.
+        track = lambda frame, last, last_frame: (
+            board.track_view(frame, last, previous=last_frame)[0]
+            if board.find_targets(frame)[0] else None)
     elif a.registration == "silhouette":
         track = _silhouette(template_mask)
     else:

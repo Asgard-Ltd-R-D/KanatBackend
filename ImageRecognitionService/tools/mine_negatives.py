@@ -210,8 +210,10 @@ def mine(video, sha, entry, out, writer, template_mask, kept, step_s=STEP_S):
         try:
             if reference is None:
                 view, correlation = board.build_view(frame, template_mask)
-            else:
+            elif board.find_targets(frame)[0]:
                 view, correlation = board.track_view(frame, last)
+            else:
+                view = None   # no Target in view, as before #276: nothing to seed from
         except cv2.error:
             failed += sampled   # registration did not converge; counted, not folded in
             continue

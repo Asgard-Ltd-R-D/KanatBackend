@@ -241,12 +241,13 @@ def ecc_warp(ref, cur, motion, init, mask=None):
         # ponytail: carried by the seed, not the converged W; refit once if seeds jump
         moved = cv2.warpPerspective(mask, init.astype(np.float32), mask.shape[::-1],
                                     flags=cv2.INTER_NEAREST)
-        x, y, w, h = cv2.boundingRect(mask | moved)
+        x, y, w, h = _union(_box(mask), cv2.boundingRect(moved))
         mask = moved
         x0, y0 = max(0, x - ECC_CROP_MARGIN), max(0, y - ECC_CROP_MARGIN)
         x1 = min(ref.shape[1], x + w + ECC_CROP_MARGIN)
         y1 = min(ref.shape[0], y + h + ECC_CROP_MARGIN)
-        ref, cur, mask = (im[y0:y1, x0:x1] for im in (ref, cur, mask))
+        box = (x0, y0, x1, y1)
+        cur, mask = (im[y0:y1, x0:x1] for im in (cur, mask))
         T[:2, 2] = x0, y0
     D = np.diag([ECC_SCALE, ECC_SCALE, 1.0]).astype(np.float32) @ np.linalg.inv(T)
     small = lambda im, how=cv2.INTER_AREA: cv2.resize(im, None, fx=ECC_SCALE, fy=ECC_SCALE,
@@ -254,16 +255,48 @@ def ecc_warp(ref, cur, motion, init, mask=None):
     rows = 3 if motion == cv2.MOTION_HOMOGRAPHY else 2
     seed = (D @ init @ np.linalg.inv(D))[:rows].astype(np.float32)
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, ECC_MAX_ITERATIONS, ECC_EPS)
-    correlation, w = cv2.findTransformECC(small(ref), small(cur), seed, motion, criteria,
+    small_ref = small(ref) if mask is None else _small_crop(ref, box)
+    correlation, w = cv2.findTransformECC(small_ref, small(cur), seed, motion, criteria,
                                           None if mask is None else small(mask, cv2.INTER_NEAREST), 5)
     w = w if rows == 3 else np.vstack([w, [0, 0, 1]])
     return (np.linalg.inv(D) @ w @ D).astype(np.float32), correlation
 
 
+# The last `_small_crop`, `(ref, box, small)`: `ref` is the baseline frame on
+# every Look, and its crop box repeats from one Look to the next.
+_last_small = (None, None, None)
+
+
+def _small_crop(ref, box):
+    """`ref` cropped to `box`, `(x0, y0, x1, y1)`, at `ECC_SCALE` as
+    `ecc_warp` resizes it, reused while both repeat. A read and a write of
+    one tuple, so a Run on another thread can only make it compute again."""
+    global _last_small
+    last_ref, last_box, last = _last_small
+    if last_ref is ref and last_box == box:
+        return last
+    x0, y0, x1, y1 = box
+    out = cv2.resize(ref[y0:y1, x0:x1], None, fx=ECC_SCALE, fy=ECC_SCALE,
+                     interpolation=cv2.INTER_AREA)
+    _last_small = ref, box, out
+    return out
+
+
+def _union(*rects):
+    """`cv2.boundingRect` of the masks these are the boxes of, OR-ed: the box
+    round the non-empty ones, `(0, 0, 0, 0)` when none is."""
+    rects = [r for r in rects if r[2] and r[3]]
+    if not rects:
+        return 0, 0, 0, 0
+    x, y = min(r[0] for r in rects), min(r[1] for r in rects)
+    return (x, y, max(r[0] + r[2] for r in rects) - x,
+            max(r[1] + r[3] for r in rects) - y)
+
+
 def board_shift(previous, frame, W, region):
     """The translation, frame px as a 3x3, that takes the Board in `previous`
-    onto the Board in `frame` (#171). Read by phase correlation at `ECC_SCALE`,
-    with a Hanning window, over the bounding box of `region` (baseline frame
+    onto the Board in `frame` (#171), both greyscale (`gray`). Read by phase
+    correlation at `ECC_SCALE`, with a Hanning window, over the bounding box of `region` (baseline frame
     coords) as `W` carries it into `previous`.
 
     That box and nothing round it: when only the Board moves, the gravel and
@@ -277,7 +310,7 @@ def board_shift(previous, frame, W, region):
     moved = cv2.warpPerspective(region, W.astype(np.float32), region.shape[::-1],
                                 flags=cv2.INTER_NEAREST)
     x, y, w, h = cv2.boundingRect(moved)
-    small = lambda im: cv2.resize(_gray(im[y:y + h, x:x + w]), None, fx=ECC_SCALE, fy=ECC_SCALE,
+    small = lambda im: cv2.resize(im[y:y + h, x:x + w], None, fx=ECC_SCALE, fy=ECC_SCALE,
                                   interpolation=cv2.INTER_AREA)
     before, after = small(previous), small(frame)
     (dx, dy), _ = cv2.phaseCorrelate(before, after,
@@ -296,8 +329,40 @@ def texture_region(H, frame_size, template_span):
     return region
 
 
-def _gray(frame):
+def _remembered(size):
+    """Remember a function of one array for the last `size` arrays it was
+    called with, by identity (#276): an image a Look has already converted
+    is converted once. An array changed in place after would read stale;
+    none is. One read and one write of a tuple per call, so a Run on another
+    thread can only make it compute again."""
+    def wrap(fn):
+        memo = ()
+
+        @functools.wraps(fn)
+        def call(arg):
+            nonlocal memo
+            seen = memo
+            for a, out in seen:
+                if a is arg:
+                    return out
+            out = fn(arg)
+            memo = ((arg, out),) + seen[:size - 1]
+            return out
+        return call
+    return wrap
+
+
+@_remembered(2)
+def gray(frame):
+    """A BGR frame as greyscale, 0-1 float32: what registration on Board
+    texture (`track_view`) reads. Remembered for two frames, so a frame
+    tracked now and handed back as the next Look's `previous`, or tracked
+    from each seed in `reanchor_view`, is greyed once."""
     return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
+
+
+# The ECC region's box: the same mask every Look
+_box = _remembered(1)(cv2.boundingRect)
 
 
 class Anchor(NamedTuple):
@@ -467,7 +532,7 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     targets = [(apply(_as_matrix(1.0, (-lo[0], -lo[1])), p)
                 .reshape(-1, 1, 2).astype(np.float32)) for p in placed]
     sheets = sheet_bounds(targets, tpl_to_board)
-    anchor = Anchor(_gray(frame), texture_region(H, frame.shape[1::-1], tpl_span), H)
+    anchor = Anchor(gray(frame), texture_region(H, frame.shape[1::-1], tpl_span), H)
     return (BoardView(H, tpl_to_board, size, targets, anchor, sheets, sheet_crops(sheets)),
             correlation)
 
@@ -567,16 +632,17 @@ def track_view(frame, reference, seed=None, previous=None):
     re-anchors start failing, the anchor itself needs refreshing, chained to
     this one.
 
-    Returns `(None, None)` when no Target is visible, and raises `cv2.error` when
-    registration fails to converge — both mean "no evidence from this frame".
+    No Target need be visible: a fit with none in view converges low, and
+    `silhouette_disagreement` then calls it grossly wrong (#276).
+
+    Returns `(BoardView, ECC correlation)`. Raises `cv2.error` when
+    registration fails to converge: "no evidence from this frame".
     """
-    if not find_targets(frame)[0]:
-        return None, None
     a = reference.anchor
     W = (reference.H if seed is None else seed) @ np.linalg.inv(a.H)
     if seed is None and previous is not None:
-        W = board_shift(previous, frame, W, a.region) @ W
-    W, correlation = ecc_warp(a.gray, _gray(frame), cv2.MOTION_HOMOGRAPHY, W, a.region)
+        W = board_shift(gray(previous), gray(frame), W, a.region) @ W
+    W, correlation = ecc_warp(a.gray, gray(frame), cv2.MOTION_HOMOGRAPHY, W, a.region)
     return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
                      reference.targets, a, reference.sheets, reference.crops), correlation
 
@@ -643,11 +709,13 @@ def silhouette_disagreement(frame, template_mask, view):
     where a neighbour is largest reads ~one Target spacing and is lost; none was
     on #110's six clips. Match the contour to the baseline's Target if one is.
 
-    None when no Target is visible or the silhouette fit fails: no verdict.
+    Infinite when no Target is visible: a fit with nothing to fit is wrong
+    (`track_view` does not look for one). None when the silhouette fit
+    fails: no verdict.
     """
     contours, frame_mask = find_targets(frame)
     if not contours:
-        return None
+        return math.inf
     try:
         own_H, _ = register(template_mask, frame_mask, contours[0])
     except cv2.error:
@@ -684,6 +752,16 @@ def residuals(frame, template_mask, view):
     return out
 
 
+def _canvas_gray(canvas):
+    return cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+
+# A Run's baseline sheet canvases, the same arrays every Look.
+# ponytail: room for two Runs of two sheets; more thrash (recompute, never
+# wrong). Key it per Run if that many ever run at once.
+_baseline_gray = _remembered(4)(_canvas_gray)
+
+
 def changed_regions(baseline_canvas, current_canvas, sigma=ABSDIFF_SIGMA):
     """Mask of what differs between two rectified images: a sheet canvas at
     the baseline frame and the same one now (ADR-0011).
@@ -694,14 +772,14 @@ def changed_regions(baseline_canvas, current_canvas, sigma=ABSDIFF_SIGMA):
     before the model is consulted. A detection that also changed is more likely
     real; one that did not is not thereby rejected.
     """
-    a = cv2.cvtColor(baseline_canvas, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    b = cv2.cvtColor(current_canvas, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    valid = (a > 0) & (b > 0)
+    base, b = _baseline_gray(baseline_canvas), _canvas_gray(current_canvas)
+    valid = (base > 0) & (b > 0)
     if valid.sum() < 100:
-        return np.zeros(a.shape, np.uint8)
-    for img in (a, b):
-        img -= img[valid].mean()
-        img /= max(float(img[valid].std()), 1e-6)
+        return np.zeros(b.shape, np.uint8)
+    a = base - base[valid].mean()   # `base` is remembered: not changed in place
+    a /= max(float(a[valid].std()), 1e-6)
+    b -= b[valid].mean()
+    b /= max(float(b[valid].std()), 1e-6)
     diff = np.abs(a - b)
     diff[~valid] = 0
     mask = (diff > sigma).astype(np.uint8) * 255

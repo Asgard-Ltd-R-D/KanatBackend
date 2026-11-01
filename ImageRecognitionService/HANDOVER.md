@@ -448,6 +448,11 @@ wrong on `_150248`) the frame is lost and feeds the re-anchor. From 3.1 up to
 that bound it is only counted, in one `[WARN]` whose
 denominator is the fits checked. A gross fit converging at 0.9 or above would
 pass unchecked; none was measured (`ponytail:` in `_grossly_wrong`).
+Since #276 `track_view` no longer refuses a frame whose hue threshold finds no
+Target (~3.4 ms a Look); this check takes that frame below the floor, where
+`silhouette_disagreement` reads infinite and it is lost. At 0.9 or above it now
+registers: accepted, with no such frame on the six truth recordings, whose
+output is unchanged at stride 1 and 17.
 
 Rejecting frames exposed a second fault. On `_150248` 0–17.72s two pan frames
 survived: frame 19 (corr 0.807, disagreement 6.5, moderate by design) and

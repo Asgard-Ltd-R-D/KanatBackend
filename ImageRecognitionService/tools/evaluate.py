@@ -245,21 +245,28 @@ def match(truth, found, tolerance):
 
 def score(truth, found, tolerance=MATCH_TOLERANCE_TPL, out_of_scope=()):
     """TP, FP and FN of `found` against `truth`, both template px. Truth whose
-    index is in `out_of_scope` is matched like any, so the detection it
-    claims is no false positive, but it is neither found nor missed: its
-    pairs are `out_of_scope_pairs`, not `pairs` (ADR-0011)."""
-    matched, missed = match(truth, found, tolerance)
-    pairs = [p for p in matched if p[1] not in out_of_scope]
-    missed = [j for j in missed if j not in out_of_scope]
+    index is in `out_of_scope` is neither found nor missed (ADR-0011). It is
+    matched after the in-scope truth, against the detections that are left, so
+    it cannot take a detection from in-scope truth; the detection it does claim
+    is no false positive. Its pairs are `out_of_scope_pairs`, not `pairs`."""
+    def subset(labels, dets):
+        got, gone = match(truth[labels].reshape(-1, 2), found[dets].reshape(-1, 2), tolerance)
+        return [(dets[i], labels[j], d) for i, j, d in got], [labels[j] for j in gone]
+
+    labels = [j for j in range(len(truth)) if j not in out_of_scope]
+    pairs, missed = subset(labels, list(range(len(found))))
+    claimed = {i for i, _, _ in pairs}
+    oos_pairs, _ = subset([j for j in range(len(truth)) if j in out_of_scope],
+                          [i for i in range(len(found)) if i not in claimed])
     tp = len(pairs)
-    fp = len(found) - len(matched)
+    fp = len(found) - tp - len(oos_pairs)
     fn = len(missed)
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
     f1 = 2 * tp / (2 * tp + fp + fn) if tp else 0.0
     return {"tp": tp, "fp": fp, "fn": fn, "precision": precision,
             "recall": recall, "f1": f1, "pairs": pairs, "missed": missed,
-            "out_of_scope_pairs": [p for p in matched if p[1] in out_of_scope]}
+            "out_of_scope_pairs": sorted(oos_pairs)}
 
 
 def position_errors(truth, found, pairs, mm_per_tpl_px):

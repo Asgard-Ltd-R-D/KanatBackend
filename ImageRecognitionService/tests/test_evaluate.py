@@ -554,6 +554,17 @@ def test_off_sheet_truth_is_neither_found_nor_missed_and_its_claim_is_no_fp():
     assert [(i, j) for i, j, _ in got["out_of_scope_pairs"]] == [(1, 1)]
 
 
+def test_off_sheet_truth_cannot_take_a_detection_from_on_sheet_truth():
+    """The one detection is in reach of on-sheet #1 and, nearer, off-sheet #2.
+    In-scope truth is matched first, so #1 is found, not missed."""
+    truth = np.float32([[0, 0], [8, 0]])
+    found = np.float32([[6, 0]])
+    got = score(truth, found, 10.0, out_of_scope=[1])
+    assert (got["tp"], got["fp"], got["fn"]) == (1, 0, 0)
+    assert [(i, j) for i, j, _ in got["pairs"]] == [(0, 0)]
+    assert got["out_of_scope_pairs"] == []
+
+
 def test_derived_truth_names_its_pre_existing_marks(tmp_path):
     """The after export's lines the derivation recorded as pre-existing — not
     the export minus the derived file. Here the new label was corrected, so

@@ -1477,11 +1477,15 @@ class RegisteredFrames:
 
     def _detect_sheets(self, view, canvases):
         """Every sheet canvas in one detector call, its detections moved into
-        Board px, less those beyond every sheet's bound (ADR-0011)."""
-        found = [f + np.float32([x, y, 0, 0])
-                 for f, (x, y, _, _) in zip(self._call_detector(canvases, self.imgsz), view.crops)]
-        boxes = np.vstack(found) if found else np.zeros((0, 4), np.float32)
-        return boxes[view.sheet_of(boxes[:, :2]) >= 0]
+        Board px. Each canvas keeps only what lies in its own sheet's bound
+        (`sheet_of`), so a Detection beyond every bound is dropped (ADR-0011),
+        and a mark two overlapping canvases both see counts once."""
+        kept = []
+        for k, (f, (x, y, _, _)) in enumerate(
+                zip(self._call_detector(canvases, self.imgsz), view.crops)):
+            f = f + np.float32([x, y, 0, 0])
+            kept.append(f[view.sheet_of(f[:, :2]) == k])
+        return np.vstack(kept) if kept else np.zeros((0, 4), np.float32)
 
 
 class Run(NamedTuple):

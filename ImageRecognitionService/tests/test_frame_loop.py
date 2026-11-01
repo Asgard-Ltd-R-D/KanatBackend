@@ -220,6 +220,21 @@ def test_every_sheet_canvas_goes_to_the_detector_in_one_call():
     assert model.calls == [(2, 64)] and len(look.canvases) == 2
 
 
+class _OverlappingView(_FakeView):
+    """Two canvases over one stretch of Board: both hold Board (15, 15), and
+    the first sheet's bound holds it."""
+    sheets = [(0, 0, 40, 64), (30, 0, 70, 64)]
+    crops = [(0, 0, 64, 64), (0, 0, 64, 64)]
+
+
+def test_a_mark_two_canvases_see_is_one_detection_from_its_own_sheet():
+    """A Look holding a mark twice would count it twice towards persistence."""
+    loop = _loop(frames=0, view=_OverlappingView())
+    loop.model = _RecordingModel()
+    look = next(loop.looks(1))
+    assert look.detections[:, :2].tolist() == [[15.0, 15.0], [50.0, 12.0]]
+
+
 def test_detections_are_moved_into_board_px_and_dropped_beyond_every_sheet():
     """Each canvas's detections land at its origin in Board px; one past every
     sheet's bound never reaches Persistence (ADR-0011)."""

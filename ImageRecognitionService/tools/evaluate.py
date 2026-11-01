@@ -187,13 +187,12 @@ def truth_in_template(image_path, label_path, frame, view):
     return board.apply(to_template, normalised), to_template, correlation, damaged
 
 
-def off_canvas(truth, view):
-    """Indices of template positions outside the rectified Board the detector
-    is shown — positions no run can find, whatever the reason."""
-    width, height = view.canvas_size
-    placed = view.template_to_board(truth)
-    return [i for i, (x, y) in enumerate(placed)
-            if not (0 <= x < width and 0 <= y < height)]
+def off_sheet(truth, view):
+    """Indices of template positions beyond every Target Sheet's bound, where
+    no run looks: off-sheet, out of scope (ADR-0011)."""
+    if not len(truth):
+        return []
+    return [int(i) for i in np.flatnonzero(view.sheet_of(view.template_to_board(truth)) < 0)]
 
 
 def match(truth, found, tolerance):
@@ -244,16 +243,30 @@ def match(truth, found, tolerance):
     return pairs, missed
 
 
-def score(truth, found, tolerance=MATCH_TOLERANCE_TPL):
-    pairs, missed = match(truth, found, tolerance)
+def score(truth, found, tolerance=MATCH_TOLERANCE_TPL, out_of_scope=()):
+    """TP, FP and FN of `found` against `truth`, both template px. Truth whose
+    index is in `out_of_scope` is neither found nor missed (ADR-0011). It is
+    matched after the in-scope truth, against the detections that are left, so
+    it cannot take a detection from in-scope truth; the detection it does claim
+    is no false positive. Its pairs are `out_of_scope_pairs`, not `pairs`."""
+    def subset(labels, dets):
+        got, gone = match(truth[labels].reshape(-1, 2), found[dets].reshape(-1, 2), tolerance)
+        return [(dets[i], labels[j], d) for i, j, d in got], [labels[j] for j in gone]
+
+    labels = [j for j in range(len(truth)) if j not in out_of_scope]
+    pairs, missed = subset(labels, list(range(len(found))))
+    claimed = {i for i, _, _ in pairs}
+    oos_pairs, _ = subset([j for j in range(len(truth)) if j in out_of_scope],
+                          [i for i in range(len(found)) if i not in claimed])
     tp = len(pairs)
-    fp = len(found) - tp
+    fp = len(found) - tp - len(oos_pairs)
     fn = len(missed)
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
     f1 = 2 * tp / (2 * tp + fp + fn) if tp else 0.0
     return {"tp": tp, "fp": fp, "fn": fn, "precision": precision,
-            "recall": recall, "f1": f1, "pairs": pairs, "missed": missed}
+            "recall": recall, "f1": f1, "pairs": pairs, "missed": missed,
+            "out_of_scope_pairs": sorted(oos_pairs)}
 
 
 def position_errors(truth, found, pairs, mm_per_tpl_px):
@@ -785,12 +798,11 @@ def load_truth(image_path, label_path, frame, view):
               f"so up to {unpaired} of these labels were already on the Board "
               f"before the recording. The run cannot find those, and recall is "
               f"understated by that much. See {SOURCE_NAME}.")
-    outside = off_canvas(truth, view)
+    outside = off_sheet(truth, view)
     if outside:
-        print(f"[WARN] {', '.join(f'truth #{j + 1}' for j in outside)} land(s) "
-              f"outside the rectified Board the detector is shown: the placement "
-              f"is wrong, or the Board runs past the canvas (#41). Scored all the "
-              f"same, and no run can find them.")
+        print(f"[TRUTH] off-sheet, out of scope: "
+              f"{', '.join(f'truth #{j + 1}' for j in outside)}, beyond every Target "
+              f"Sheet's bound, where no run looks. Left out of scoring (ADR-0011).")
     pre = pre_existing_labels(labels)
     if pre is not None:
         pre = board.apply(to_template, pre)
@@ -798,7 +810,7 @@ def load_truth(image_path, label_path, frame, view):
 
 
 def placement_note(pre_existing_truth, baseline_tpl, tolerance, mm_per_tpl_px,
-                   off_canvas_count=0):
+                   off_sheet_count=0):
     """How far the photograph's pre-existing marks land from the baseline's.
 
     They are the same Bullet Holes, so the distance is the truth placement's
@@ -807,17 +819,15 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance, mm_per_tpl_px,
     one that throws them 58 000 px out. The baseline is the detector's output,
     so an unpaired mark is a misplaced label or a mark the baseline missed.
 
-    `off_canvas_count` counts pre-existing marks left out because they land
-    off the rectified Board, where no baseline can hold them (#41). They stay
-    a doubt: the Board running past the canvas and a wrong placement throwing
-    them there look the same from here, and only the placement under test
-    puts them off the canvas at all.
+    `off_sheet_count` counts pre-existing marks left out because they land
+    beyond every Target Sheet's bound, where no baseline holds them
+    (ADR-0011). A wrong placement could also throw them there.
     """
     if not len(pre_existing_truth):
-        return (f"[WARN] placement unverified: all {off_canvas_count} "
-                f"pre-existing mark(s) are off the canvas, so nothing is left "
+        return (f"[WARN] placement unverified: all {off_sheet_count} "
+                f"pre-existing mark(s) are off every sheet, so nothing is left "
                 f"to check it against — and a wrong placement is one way to put "
-                f"them there (#41). A wrong placement would change this score "
+                f"them there (ADR-0011). A wrong placement would change this score "
                 f"silently.")
     pairs, missed = match(pre_existing_truth, baseline_tpl, tolerance)
     note = (f"[PLACEMENT] {len(pairs)} of {len(pre_existing_truth)} "
@@ -829,11 +839,9 @@ def placement_note(pre_existing_truth, baseline_tpl, tolerance, mm_per_tpl_px,
         if mm_per_tpl_px is not None:
             note += f" ({d[0] * mm_per_tpl_px:.1f}-{d[-1] * mm_per_tpl_px:.1f} mm)"
         note += ": that is the placement's error"
-    if off_canvas_count:
-        note += (f"\n[WARN] {off_canvas_count} more pre-existing mark(s) land off "
-                 f"the canvas, where no baseline can hold them: the Board runs "
-                 f"past the canvas (#41), or the placement threw them there. "
-                 f"Not checked; scores below carry that doubt.")
+    if off_sheet_count:
+        note += (f"\n[INFO] {off_sheet_count} more pre-existing mark(s) land off "
+                 f"every sheet, where no baseline holds them (ADR-0011). Not checked.")
     if missed:
         note += (f"\n[WARN] {len(missed)} pre-existing mark(s) land on nothing "
                  f"the baseline holds: the truth placement is off, or the "
@@ -989,7 +997,9 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     `canvas_shift` Board px (`board.shifted`):
 
     - `truth` and `found`: template px, by truth # and found # less one;
-    - `pairs`: `score`'s, 0-based;
+    - `pairs`: `score`'s, 0-based, on-sheet truth only;
+    - `off_sheet`: truth # less one beyond every sheet's bound, out of scope,
+      and `out_of_scope_pairs`, the detections those claim (ADR-0011);
     - `reported`: per found #, the seconds into the Recording its Look judged
       it at;
     - `persisted`: template px of every Bullet Hole before the change filter;
@@ -1050,10 +1060,10 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     # what tells a displaced one of those from a detector false positive.
     pre_existing = view.board_to_template(np.asarray(run.baseline, np.float32)[:, :2])
     if pre_labels is not None and len(pre_labels):
-        outside = off_canvas(pre_labels, view)
+        outside = off_sheet(pre_labels, view)
         placement = placement_note(np.delete(pre_labels, outside, axis=0),
                                    pre_existing, tolerance, mm_per_tpl_px,
-                                   off_canvas_count=len(outside))
+                                   off_sheet_count=len(outside))
     else:
         placement = ("[WARN] placement unverified: the truth names no "
                      "pre-existing mark to check it against, and the "
@@ -1061,7 +1071,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
                      "placement would change this score silently.")
     print(placement)
 
-    result = score(truth, found, tolerance)
+    out_of_scope = off_sheet(truth, view)
+    result = score(truth, found, tolerance, out_of_scope)
     footage = manifest.footage(entry)
     print("\n" + manifest.footage_line(footage, os.path.basename(video)))
     print(f"[SCORE] TP {result['tp']}  FP {result['fp']}  FN {result['fn']}   "
@@ -1071,6 +1082,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
         print(f"   found #{i + 1} -> truth #{j + 1}   {d:5.0f} template px")
     if result["missed"]:
         print(f"   missed: {', '.join(f'truth #{j + 1}' for j in result['missed'])}")
+    if out_of_scope:
+        print(f"   off-sheet, out of scope: {', '.join(f'truth #{j + 1}' for j in out_of_scope)}")
     in_baseline = in_the_baseline(truth, result["missed"], pre_existing, tolerance)
     for j, k, d in in_baseline:
         print(f"   truth #{j + 1} in the baseline at --start, P{k + 1}   {d:5.0f} template px")
@@ -1096,7 +1109,8 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
               f"dY {dy:+6.1f}  radial {radial:5.1f} {unit}")
 
     # Under the headline, never in it.
-    attribution = attribute(found, result["pairs"], pre_existing, tolerance)
+    attribution = attribute(found, result["pairs"] + result["out_of_scope_pairs"],
+                            pre_existing, tolerance)
     if attribution:
         counted = {c: sum(1 for _, cause, _ in attribution if cause == c)
                    for c in CAUSES}
@@ -1127,6 +1141,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
             "in_baseline": [(j + 1, k + 1) for j, k, _ in in_baseline],
             "lost": run.lost, "reanchors": run.reanchors,
             "truth": truth, "found": found, "pairs": result["pairs"],
+            "off_sheet": out_of_scope, "out_of_scope_pairs": result["out_of_scope_pairs"],
             "reported": [start + h["judged_frame"] / fps for h in run.holes],
             "persisted": view.board_to_template(
                 np.array([h["pos"] for h in run.persisted], np.float32).reshape(-1, 2)),

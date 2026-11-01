@@ -235,130 +235,6 @@ def test_same_bullet_hole_measures_differently_against_different_targets():
     assert np.linalg.norm(on_first[0] - on_second[0]) > 50  # mm
 
 
-# --- what the camera sees that the canvas does not (#41) --------------------
-
-def test_camera_view_beyond_the_canvas_is_measured_in_board_px():
-    """A 300x100 view over a 100x100 canvas: two thirds of it unsearched,
-    all of it to the right, 200 Board px — two Target spans — out."""
-    view = board.BoardView(H=np.eye(3, dtype=np.float32),
-                           tpl_to_board=board._as_matrix(1.0),
-                           canvas_size=(100, 100),
-                           targets=[_square(0, 0, 100)])
-    outside, reach = board.uncovered_view(view, frame_size=(300, 100))
-    assert outside == pytest.approx(2 / 3, abs=1e-3)
-    assert reach == pytest.approx({"left": 0, "right": 200, "above": 0, "below": 0})
-    assert board.target_span(view) == 100
-
-
-def test_canvas_covering_the_whole_view_leaves_nothing_uncovered():
-    """CamA's canvas runs past its frame top and bottom; that is not a gap."""
-    view = board.BoardView(H=np.eye(3, dtype=np.float32),
-                           tpl_to_board=board._as_matrix(1.0, (0, 50)),
-                           canvas_size=(100, 200),
-                           targets=[_square(0, 50, 100)])
-    outside, reach = board.uncovered_view(view, frame_size=(100, 100))
-    assert outside == pytest.approx(0, abs=1e-3)
-    assert set(reach.values()) == {0}
-
-
-def test_a_one_pixel_strip_off_the_canvas_is_still_reported():
-    """A 101x100 view over a 100x100 canvas: a real strip, however thin, is a
-    Bullet Hole no run can find, so it is not rounded away."""
-    view = board.BoardView(H=np.eye(3, dtype=np.float32),
-                           tpl_to_board=board._as_matrix(1.0),
-                           canvas_size=(100, 100),
-                           targets=[_square(0, 0, 100)])
-    outside, reach = board.uncovered_view(view, frame_size=(101, 100))
-    assert outside == pytest.approx(1 / 101, abs=1e-4)
-    assert reach == pytest.approx({"left": 0, "right": 1, "above": 0, "below": 0})
-
-
-def test_uncovered_fraction_is_of_the_frame_not_of_the_board_plane():
-    """A tilted view: the far rows fill most of the Board-space footprint, so
-    the fraction must be counted in frame pixels, not Board-space area."""
-    H = np.array([[1, 0, 0], [0, 1, 0], [0, 0.005, 1]], np.float32)
-    view = board.BoardView(H=H, tpl_to_board=board._as_matrix(1.0),
-                           canvas_size=(60, 60), targets=[_square(0, 0, 60)])
-    outside, _ = board.uncovered_view(view, frame_size=(100, 100))
-    ys, xs = np.mgrid[0:100, 0:100] + 0.5
-    placed = view.frame_to_board(np.stack([xs.ravel(), ys.ravel()], axis=1))
-    counted = np.mean((placed[:, 0] >= 60) | (placed[:, 1] >= 60))
-    assert outside == pytest.approx(counted, abs=0.01)
-
-
-def test_once_the_boards_edge_is_known_only_the_board_counts():
-    """A 300x100 view over a 100x100 canvas, the Board ending 50 px past it
-    on the right: the view beyond the edge is ground, not unsearched Board.
-    A side with no edge found still counts the camera's view (#46)."""
-    view = board.BoardView(H=np.eye(3, dtype=np.float32),
-                           tpl_to_board=board._as_matrix(1.0, (0, 50)),
-                           canvas_size=(100, 100), targets=[_square(0, 50, 100)],
-                           edges={"left": None, "right": 150.0, "above": None,
-                                  "below": None})
-    outside, reach = board.uncovered_view(view, frame_size=(300, 200))
-    # the view to x=150 is Board (150x200 frame px), the canvas holds 100x50 of it
-    assert outside == pytest.approx((150 * 200 - 100 * 50) / (300 * 200), abs=1e-3)
-    assert reach == pytest.approx({"left": 0, "right": 50, "above": 0, "below": 150})
-
-
-def test_a_view_clipped_to_its_own_bounds_still_counts_the_canvas():
-    """CamA_20260914_141546 from 5 s: clipping this footprint to its bounding
-    box leaves vertices 4e-5 px apart, which OpenCV then intersects with the
-    canvas into junk: the whole view read as off it, or less than none (#257)."""
-    corners = np.float32([[0, 0], [1920, 0], [1920, 1080], [0, 1080]])
-    footprint = np.float32([[-368.613, 223.564], [1551.381, 223.715],
-                            [1531.728, 1192.679], [-395.958, 1209.592]])
-    # float32, as ECC returns it, which is what puts the vertices 4e-5 apart
-    H = cv2.getPerspectiveTransform(footprint, corners).astype(np.float32)
-    view = board.BoardView(H=H, tpl_to_board=board._as_matrix(1.0),
-                           canvas_size=(1267, 1602), targets=[])
-    outside, reach = board.uncovered_view(view, frame_size=(1920, 1080))
-    assert outside == pytest.approx(0.341, abs=0.005)  # 0.3408 clipped in float64
-    assert reach == pytest.approx({"left": 395.958, "right": 284.381,
-                                   "above": 0, "below": 0}, abs=1e-2)
-
-
-def test_a_view_sharing_the_canvas_corner_still_counts_the_canvas():
-    """A footprint square to the Board, its top-left corner inside the canvas:
-    the box it is clipped to shares two of its edges, which OpenCV intersects
-    into nothing (#257)."""
-    corners = np.float32([[0, 0], [1920, 0], [1920, 1080], [0, 1080]])
-    footprint = np.float32([[577.47265625, 1036.118896484375],
-                            [3855.398681640625, 1036.118896484375],
-                            [3821.77880859375, 2666.677001953125],
-                            [577.47265625, 2700.296630859375]])
-    H = cv2.getPerspectiveTransform(footprint, corners).astype(np.float32)
-    view = board.BoardView(H=H, tpl_to_board=board._as_matrix(1.0),
-                           canvas_size=(1848, 2397), targets=[])
-    outside, _ = board.uncovered_view(view, frame_size=(1920, 1080))
-    assert outside == pytest.approx(0.685, abs=0.005)
-
-
-def test_a_seen_polygon_with_a_repeated_vertex_clips_whole():
-    """The searched area survives a `seen` that repeats a vertex (#257)."""
-    seen = np.float32([[-10, -10], [-10, -10], [50, -10], [50, 50], [-10, 50]])
-    clipped = board._clip_to_box(seen, 0, 0, 100, 100)
-    assert cv2.contourArea(clipped) == pytest.approx(50 * 50)
-
-
-def test_a_view_wholly_off_the_canvas_is_all_uncovered():
-    """OpenCV returns junk vertices, not None, for an empty intersection."""
-    view = board.BoardView(H=np.eye(3, dtype=np.float32),
-                           tpl_to_board=board._as_matrix(1.0, (200, 0)),
-                           canvas_size=(100, 100), targets=[_square(200, 0, 100)])
-    outside, reach = board.uncovered_view(view, frame_size=(100, 100))
-    assert outside == pytest.approx(1.0)
-    assert reach == pytest.approx({"left": 0, "right": 200, "above": 0, "below": 0})
-
-
-def test_view_past_the_board_planes_horizon_is_not_measured():
-    """A frame corner behind the plane flips the footprint; no fraction then."""
-    H = np.array([[1, 0, 0], [0, 1, 0], [0, -0.02, 1]], np.float32)  # y=50 at infinity
-    view = board.BoardView(H=np.linalg.inv(H), tpl_to_board=board._as_matrix(1.0),
-                           canvas_size=(100, 100), targets=[_square(0, 0, 100)])
-    assert board.uncovered_view(view, frame_size=(100, 100)) is None
-
-
 # --- registration after the baseline frame (#50) ---------------------------
 
 def _scene(shift=(0.0, 0.0), size=(320, 240)):
@@ -489,6 +365,7 @@ def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypa
     assert view.anchor is anchor and view.targets is reference.targets
     assert view.tpl_to_board is reference.tpl_to_board
     assert view.canvas_size == reference.canvas_size
+    assert view.sheets == reference.sheets and view.crops == reference.crops
 
 
 def _seeded_fits(monkeypatch, correlations):
@@ -566,135 +443,70 @@ def test_a_frame_with_no_target_visible_is_still_lost(monkeypatch):
     assert _tracked(monkeypatch, _view([_square(0, 0, 100)]), []) is None
 
 
-# --- the Board's edge (#46) ------------------------------------------------
+# --- the Target Sheets (ADR-0011) --------------------------------------------
 
-SPAN = 1000.0   # template px a Target span, in these scenes
-
-
-def _board_scene(edges, frame_size=(800, 600)):
-    """A frame 100 px a Target span, ring at (400, 300): textured ground, a
-    white Board ending `edges` = (left, right, above, below) spans from the ring,
-    the Target print's white border on it and a green Target on that. Returns (frame, H)."""
-    rng = np.random.default_rng(1)
-    w, h = frame_size
-    grey = cv2.GaussianBlur(rng.uniform(40, 140, (h, w)).astype(np.float32), (0, 0), 1.5)
-    frame = cv2.cvtColor(grey.astype(np.uint8), cv2.COLOR_GRAY2BGR)
-    box = lambda l, r, a, b: ((400 - int(l * 100), 300 - int(a * 100)),
-                              (400 + int(r * 100), 300 + int(b * 100)))
-    cv2.rectangle(frame, *box(*edges), (215, 215, 215), -1)
-    cv2.rectangle(frame, *box(.45, .45, .45, .45), (240, 240, 240), -1)  # the print's border
-    cv2.rectangle(frame, *box(.35, .35, .35, .35), (60, 160, 40), -1)    # the Target
-    H = board._as_matrix(0.1, np.array([400, 300]) - 0.1 * board.RING_CENTRE_TPL)
-    return cv2.GaussianBlur(frame, (0, 0), 1), H
+def test_the_sheet_bound_is_the_configured_sheet_grown_by_5_mm(tmp_path):
+    path = tmp_path / "print_scale.json"
+    entry = {"mm_per_tpl_px": 0.2, "source": "s", "sheet_tpl_px": [-10, 0, 100, 50]}
+    path.write_text(json.dumps({"a": entry, "b": entry}))
+    assert board.sheet_bound_tpl(str(path)) == pytest.approx((-35, -25, 125, 75))
 
 
-def test_the_board_ends_at_its_first_straight_edge_past_the_targets_print():
-    frame, H = _board_scene((1.2, 0.9, 0.8, 1.3))
-    edges = board.find_board_edges(frame, H, SPAN)
-    ring = board.RING_CENTRE_TPL
-    assert edges["left"] == pytest.approx(ring[0] - 1.2 * SPAN, abs=15)
-    assert edges["right"] == pytest.approx(ring[0] + 0.9 * SPAN, abs=15)
-    assert edges["above"] == pytest.approx(ring[1] - 0.8 * SPAN, abs=15)
-    assert edges["below"] == pytest.approx(ring[1] + 1.3 * SPAN, abs=15)
+def test_setups_on_different_sheets_are_refused(tmp_path):
+    """A stream has no Capture Setup to pick a sheet by (ADR-0011)."""
+    path = tmp_path / "print_scale.json"
+    a = {"mm_per_tpl_px": 0.2, "source": "s", "sheet_tpl_px": [-10, 0, 100, 50]}
+    path.write_text(json.dumps({"a": a, "b": {**a, "sheet_tpl_px": [-10, 0, 100, 60]}}))
+    with pytest.raises(ValueError, match="2 different sheets"):
+        board.sheet_bound_tpl(str(path))
 
 
-def test_a_board_running_out_of_view_has_no_edge_that_side():
-    """The frame's own border is not the Board's edge."""
-    frame, H = _board_scene((1.2, 0.9, 0.8, 2.5), frame_size=(800, 420))
-    assert board.find_board_edges(frame, H, SPAN)["below"] is None
+def test_each_target_s_sheet_is_the_reference_s_moved_by_its_centroid():
+    """The reference Target, `targets[0]`, through Board space; another the
+    same, moved by where its centroid sits against the reference's (#271)."""
+    targets = [_square(10, 20, 40), _square(110, 25, 40)]
+    sheets = board.sheet_bounds(targets, board._as_matrix(0.5, (3, 4)),
+                                bound_tpl=(-20, -10, 120, 100))
+    assert sheets[0] == pytest.approx((-7, -1, 63, 54))
+    assert sheets[1] == pytest.approx((93, 4, 163, 59))
 
 
-def test_a_board_past_the_search_has_no_edge_that_side():
-    frame, H = _board_scene((1.2, 0.9, 0.8, 2.5), frame_size=(800, 600))
-    assert board.find_board_edges(frame, H, SPAN)["below"] is None
+def test_sheet_canvases_are_one_size_in_multiples_of_32_and_hold_bound_and_context():
+    sheets = [(10.4, 20.6, 110.9, 70.2), (200.4, 20.6, 300.9, 70.2)]
+    crops = board.sheet_crops(sheets, context=8)
+    assert [c[2:] for c in crops] == [(128, 96)] * 2
+    for (x0, y0, x1, y1), (x, y, w, h) in zip(sheets, crops):
+        assert x <= x0 - 8 and y <= y0 - 8 and x + w >= x1 + 8 - 1 and y + h >= y1 + 8 - 1
 
 
-def test_the_canvas_grows_to_the_board_edge_within_registration_and_never_shrinks():
-    """Past the margin canvas to the Board's edge, cut at `REGION_SPANS` of
-    the ring where registration holds; an edge inside the margin, or none,
-    leaves the margin canvas as it was."""
-    targets = np.float32([[0, 0], [100, 100]])          # ring at (50, 50), span 100
-    edges = {"left": -80.0, "right": 120.0, "above": None,
-             "below": 50 + 2 * board.REGION_SPANS * 100}   # past the cut
-    lo, hi = board.canvas_bounds(targets, edges, ring=(50, 50), span=100)
-    margin = board.BOARD_MARGIN * 100
-    assert lo == pytest.approx([-80, -margin])
-    assert hi == pytest.approx([100 + margin, 50 + board.REGION_SPANS * 100])
-
-
-# --- dual inference: the margin canvas inside the grown one (#46) ------------
-
-def _margin_formula(targets):
-    """The margin canvas, written as `build_view` wrote it before #46."""
-    margin = board.BOARD_MARGIN * board.spread(targets)
-    lo = targets.min(axis=0) - margin
-    return lo, tuple(int(v) for v in np.ceil(targets.max(axis=0) - lo + margin))
-
-
-def test_with_no_board_edge_the_canvas_is_the_margin_canvas_exactly():
-    targets = np.float32([[3.3, 7.7], [140.2, 96.1]])
-    layout = board.canvas_layout(targets, dict.fromkeys(board.SIDES), ring=(70, 50), span=137)
-    lo, size = _margin_formula(targets)
-    assert np.array_equal(layout.lo, lo) and layout.size == size
-    assert np.array_equal(layout.inner_lo, lo) and layout.inner_size == size
-    assert layout.offset == (0, 0)
-
-
-def test_growth_up_and_left_is_whole_pixels_so_the_margin_canvas_keeps_its_grid():
-    """The margin canvas sits at an integer offset inside the grown one, and
-    keeps its exact origin and size; the grown one covers the edges."""
-    targets = np.float32([[0, 0], [100, 100]])          # margin canvas -50..150
-    edges = {"left": -60.3, "right": None, "above": -55.0, "below": 190.0}
-    layout = board.canvas_layout(targets, edges, ring=(50, 50), span=100)
-    lo, size = _margin_formula(targets)
-    assert np.array_equal(layout.inner_lo, lo) and layout.inner_size == size
-    assert layout.offset == (11, 5)
-    assert np.allclose(layout.lo, lo - (11, 5))
-    assert layout.lo[0] <= -60.3 and layout.lo[1] <= -55.0
-    assert layout.lo[1] + layout.size[1] >= 190.0
-    assert layout.size[0] == 11 + size[0]                # nothing grew on the right
-
-
-def _dual_view(offset, inner_size, canvas_size):
-    inner_T = board._as_matrix(1.0, (-float(offset[0]), -float(offset[1])))
-    return board.BoardView(np.eye(3, dtype=np.float32), board._as_matrix(1.0), canvas_size, [],
-                           inner=board.Inner(inner_T, inner_size, offset))
-
-
-def test_exposed_bands_are_the_growth_plus_their_context():
-    view = _dual_view((11, 5), (100, 80), (130, 100))     # margin canvas x 11-111, y 5-85
-    assert [b.crop for b in view.exposed_bands(32)] == [(0, 0, 130, 37),     # above
-                                                        (0, 53, 130, 100),   # below
-                                                        (0, 0, 43, 100),     # left
-                                                        (79, 0, 130, 100)]   # right
-
-
-def test_the_bands_own_the_board_past_the_margin_canvas_once_each():
-    """A mark in a corner is in two crops, but reported by one band only."""
-    view = _dual_view((11, 5), (100, 80), (130, 100))
-    owned = np.zeros((100, 130), int)
-    for band in view.exposed_bands(32):
-        x0, y0, x1, y1 = band.owns
-        owned[y0:y1, x0:x1] += 1
-    inner = np.zeros_like(owned, bool); inner[5:85, 11:111] = True
-    assert (owned[~inner] == 1).all() and (owned[inner] == 0).all()
-
-
-def test_a_canvas_that_did_not_grow_has_no_bands():
-    assert _dual_view((0, 0), (100, 80), (100, 80)).exposed_bands(32) == []
-
-
-def test_the_inner_rectification_is_the_margin_canvas_warp_itself():
-    """A sees exactly what main saw: the margin canvas's own matrix and size,
-    not a crop of the grown canvas."""
+def test_a_sheet_canvas_is_the_board_canvas_s_own_pixels():
+    """Warped straight from the frame, a sheet canvas is what `rectify` puts
+    there, on one Board grid, to the warp's sub-pixel rounding."""
     rng = np.random.default_rng(2)
     frame = (rng.random((120, 160, 3)) * 255).astype(np.uint8)
     H = np.float32([[1.1, 0.02, 3], [-0.01, 0.95, 4], [1e-4, 0, 1]])
-    inner_T = board._as_matrix(0.8, (-2.3, -1.7))
     view = board.BoardView(H, board._as_matrix(0.8, (8.7, 3.3)), (150, 110), [],
-                           inner=board.Inner(inner_T, (120, 90), (11, 5)))
-    alone = board.BoardView(H, inner_T, (120, 90), [])
-    assert np.array_equal(view.rectify_inner(frame), alone.rectify(frame))
+                           sheets=[(0, 0, 1, 1)] * 2, crops=[(11, 5, 64, 32), (40, 60, 64, 32)])
+    whole = view.rectify(frame)
+    for canvas, (x, y, w, h) in zip(view.sheet_canvases(frame), view.crops):
+        diff = np.abs(canvas.astype(int) - whole[y:y + h, x:x + w])
+        assert diff.max() <= 8 and (diff > 0).mean() < 0.01
+
+
+def test_a_point_is_on_the_first_sheet_whose_bound_holds_it():
+    view = board.BoardView(np.eye(3), board._as_matrix(1.0), (100, 100), [],
+                           sheets=[(0, 0, 10, 10), (5, 0, 20, 10)])
+    got = view.sheet_of([[0, 0], [7, 5], [20, 10], [20.1, 5], [-1, 5]])
+    assert got.tolist() == [0, 0, 1, -1, -1]
+
+
+def test_the_canvas_shift_moves_the_sheets_not_their_canvases():
+    """The control moves the Board on fixed canvases (#272): moving both
+    would show the detector the same pixels."""
+    view = board.BoardView(np.eye(3), board._as_matrix(1.0), (100, 100), [_square(0, 0, 4)],
+                           sheets=[(10, 10, 50, 50)], crops=[(0, 0, 64, 64)])
+    moved = board.shifted(view, 8)
+    assert moved.sheets == [(2, 2, 42, 42)] and moved.crops == view.crops
 
 
 # --- gross-failure check on a converged fit (#110) ---------------------------

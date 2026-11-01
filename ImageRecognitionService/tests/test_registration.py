@@ -11,14 +11,12 @@ N = nbh.REANCHOR_AFTER_LOST
 GROSS = nbh.GROSS_DISAGREEMENT_PX
 
 
-def _registration(monkeypatch, registers, below=lambda i: 0.0,
+def _registration(monkeypatch, registers,
                   reanchors=lambda i: False, correlation=lambda i: 0.9,
                   disagreement=lambda i: 0.0):
     """Registration onto a Board space whose view is frame 0's; `registers(index)`
     says which frames register when tracked, `reanchors(index)` which when
-    re-anchored (#80), and `below(index)` how far that frame's view runs past
-    the canvas bottom, in Board px against a 100 px Target span — None for an
-    unmeasurable view, 0 the baseline's. A fit converges at
+    re-anchored (#80). A fit converges at
     `correlation(index)`, and an independent silhouette fit disagrees with it
     by `disagreement(index)` Board px (#110).
 
@@ -47,12 +45,6 @@ def _registration(monkeypatch, registers, below=lambda i: 0.0,
         checked.append(view.index)
         return disagreement(view.index)
     monkeypatch.setattr(nbh.board, "silhouette_disagreement", silhouette)
-    edges = dict.fromkeys(("left", "right", "above"), 0.0)
-    def uncovered(view, size):
-        reach = below(view.index)
-        return None if reach is None else (0.0, {**edges, "below": reach})
-    monkeypatch.setattr(nbh.board, "uncovered_view", uncovered)
-    monkeypatch.setattr(nbh.board, "target_span", lambda view: 100.0)
     monkeypatch.setattr(nbh.board, "track_view", fit("track", registers))
     monkeypatch.setattr(nbh.board, "reanchor_view", fit("reanchor", reanchors))
     space = types.SimpleNamespace(index=0)
@@ -222,45 +214,3 @@ def test_a_check_with_no_verdict_keeps_the_frame(monkeypatch, capsys):
     assert None not in _register(reg, 3)
     reg.report()
     assert "0 of 3 converged fit(s) checked" in capsys.readouterr().out
-
-
-# --- how far the view runs off the canvas (#41) ------------------------------
-
-
-def test_a_view_moving_further_off_the_canvas_is_reported_once(monkeypatch, capsys):
-    """The baseline's view is only the first: a camera that later swings past
-    the canvas uncovers Board no run searches (#41)."""
-    reg = _registration(monkeypatch, lambda i: True,
-                        below=lambda i: [0.0, 0.0, 40.0, 20.0, 0.0][i])
-    _register(reg, 4)
-    reg.report()
-    out = capsys.readouterr().out
-    assert out.count("further off the canvas than the baseline did") == 1
-    assert "0.40 below" in out
-
-
-def test_a_view_that_stays_within_the_baseline_says_nothing(monkeypatch, capsys):
-    reg = _registration(monkeypatch, lambda i: True)
-    _register(reg, 3)
-    reg.report()
-    assert "[WARN]" not in capsys.readouterr().out
-
-
-def test_any_growth_past_rounding_is_reported(monkeypatch, capsys):
-    """A pixel more than the baseline showed is Board no run searched, however
-    it prints; only the sub-pixel rounding floor is let through."""
-    reg = _registration(monkeypatch, lambda i: True,
-                        below=lambda i: [30.0, 31.0, 30.0][i])
-    _register(reg, 2)
-    reg.report()
-    assert "further off the canvas than the baseline did" in capsys.readouterr().out
-
-
-def test_a_later_view_that_cannot_be_measured_is_reported(monkeypatch, capsys):
-    """The baseline measured fine, so its line said nothing is unknown; a later
-    frame past the Board plane's horizon still has to say so."""
-    reg = _registration(monkeypatch, lambda i: True,
-                        below=lambda i: [0.0, None, 0.0, 0.0][i])
-    _register(reg, 3)
-    reg.report()
-    assert "[WARN] 1 registered frame(s)' view did not map" in capsys.readouterr().out

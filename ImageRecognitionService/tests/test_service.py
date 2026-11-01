@@ -360,7 +360,7 @@ class _ShotBeforeEnd:
         self.seen, self.go, self.first, self.looks = threading.Event(), threading.Event(), None, []
 
     def predict(self, image, imgsz, conf, verbose=False, classes=None):
-        index = int(image[0, 0, 0])
+        index = int(image[0][0, 0, 0])
         self.looks.append(index)
         if index >= 100 and self.first is None:
             self.first = index

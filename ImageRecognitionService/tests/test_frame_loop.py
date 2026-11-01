@@ -1488,3 +1488,68 @@ def test_a_run_without_timing_writes_and_prints_none(monkeypatch, tmp_path, caps
     nbh.process(_loop(), 10.4)
     assert "[TIMING]" not in capsys.readouterr().out
     assert os.listdir(tmp_path) == []
+
+
+class _Behind(_FakeStream):
+    """`_FakeStream` as a live stream that keeps going while nobody reads it:
+    frame k is out `k * interval` after frame 0, which went out `buffered`
+    seconds before it was made, as FFmpeg buffers at open (#85). A reader
+    behind reads the backlog at once; at the live edge a grab waits."""
+    def __init__(self, interval, buffered=0.0, **kwargs):
+        super().__init__(interval=interval, **kwargs)
+        self.t0 = time.time() - buffered
+
+    def grab(self):
+        if self.n is not None and self.at >= self.n:
+            return False
+        self.at += 1
+        time.sleep(max(0.0, self.t0 + self.at * self.interval - time.time()))
+        return True
+
+
+class _SlowOn(_FakeModel):
+    """`_FakeModel`, taking `seconds(index)` to look at frame `index`."""
+    def __init__(self, seconds):
+        self.seconds = seconds
+
+    def predict(self, image, *args, **kwargs):
+        time.sleep(self.seconds(int(image[0][0, 0, 0])))
+        return super().predict(image, *args, **kwargs)
+
+
+@pytest.mark.parametrize("slowed", [False, True])
+def test_catch_up_drops_are_before_watching_and_a_slow_loop_after_it_drops_after(
+        monkeypatch, capsys, slowed):
+    """FFmpeg's buffering at open and slow baseline Looks leave the reader
+    0.9 s behind the stream: the due frames it drops catching up went out
+    before the Run went `watching`, and count as before it, though the
+    stream's timestamps, timed from frame 0's read, put some after (#291).
+    Caught up, it drops nothing until the loop slows past the baseline:
+    those drops are after."""
+    monkeypatch.setattr(nbh, "LIVE_FPS", 100)   # real time at 10 ms a frame
+    loop = _live(monkeypatch, _Behind(n=200, interval=0.01, buffered=0.5))
+    loop.model = _SlowOn(lambda i: 0.1 if i < 5 else 0.05 if slowed and 150 <= i < 170 else 0.001)
+    list(loop.looks(math.inf, stride=3, baseline_frames=5))
+    live = loop.source
+    assert live.late_before > 0
+    assert (live.late_after > 0) == slowed
+    assert live.late_before + live.late_after == live.late
+    assert live.behind >= 0.7   # 0.9 s at least: the first frame past the baseline, behind the stream
+    assert live.caught_up is not None and 0 <= live.caught_up < 0.3
+    out = capsys.readouterr().out
+    assert f"{live.late_before} before the Run went watching and {live.late_after} after" in out
+    assert "reached the live edge" in out
+
+
+def test_a_run_stopped_during_the_baseline_reports_no_late_drop(monkeypatch, capsys):
+    """Stopped while the reader holds a frame for the baseline, the run still
+    reports, and the held frame is no late drop: lateness starts at
+    `watching`, which never came (#291)."""
+    loop = _live(monkeypatch, _FakeStream(interval=0.001))
+    loop.model = _SlowOn(lambda i: 0.05)
+    for look in loop.looks(math.inf, stride=3, baseline_frames=5):
+        if look.index == 2:
+            loop.stop()
+    assert loop.source.late == 0 and loop.source.watching is None
+    out = capsys.readouterr().out
+    assert "0 before the Run went watching and 0 after" in out

@@ -638,6 +638,24 @@ class Stream:
     baseline is consecutive frames however slow its looks, and lateness and
     catching up start once it is built.
 
+    Late drops are split at that moment, `watching`, the wall clock the loop
+    first asked past the baseline, which is when the Run goes `watching` (#291).
+    The reader is then behind the stream by FFmpeg's buffering at open and
+    whatever the baseline's Looks held it back, and reads the backlog with
+    grabs that return at once. `caught_up` is how long after `watching` the
+    first grab that waited for its frame was, at least half a frame interval:
+    the live edge, None if never reached. That frame went out as it was
+    grabbed, so its time says how late the stream's timestamps run, ~1.2 s
+    from frame 0's read (#85), and every frame's time is corrected by it.
+    `late_before` counts the due frames dropped that went out before
+    `watching`, the catch-up, which shows the Board before shots count;
+    `late_after` those after it, the loop too slow for the stride. `behind`
+    is how far behind the stream the first frame past the baseline was when
+    the loop took it: a shot at "Detection ready" waits that out, and Frame
+    Wait, which excludes being behind the stream, does not show it. Never at
+    the live edge, all three go by the uncorrected timestamps, erring toward
+    after.
+
     `read` hands back the frame held as a `Frame` with its Frame Wait (#130),
     about a Look Time at most since a newer frame replaces it. Not so the
     first past the baseline, or two: decoded while the reader still blocked
@@ -685,6 +703,13 @@ class Stream:
         self.times = {0: arrived}
         self.received, self.first, self.latest = 1, arrived, arrived
         self.late, self.stopped = 0, False
+        # `watching`, the wall clock the loop first asked past the baseline;
+        # the stream times of the due frames dropped late, and of the first
+        # past the baseline with when the loop took it; and, once a grab past
+        # `watching` waited for its frame, how long after `watching` that was
+        # and how late the stream's timestamps run, in seconds (#291).
+        self.watching, self._late_at, self._first = None, [], None
+        self.caught_up, self._skew = None, 0.0
         self.drops, self._down = [], False   # (seconds, frames missed) each
         self.unseen = []   # due frames a drop or an upstream gap missed, in order
         self.upstream, self.untimed = [], 0   # (frames lost, due) each gap (#117)
@@ -744,11 +769,22 @@ class Stream:
                 # (measured over HTTP, #84): a stall all the same, so a drop
                 # measured from the frame before it, whose time it would hide.
                 if (not self.cap.grab()
-                        or time.monotonic() - began >= STREAM_TIMEOUT_MS / 1000):
+                        or (waited := time.monotonic() - began) >= STREAM_TIMEOUT_MS / 1000):
                     self._reconnect()
                     continue
                 now = time.time()
                 placed, at, step, span = self._place(index, now)
+                # The first grab past `watching` to wait for its frame is at
+                # the live edge: the backlog is read, and the frame went out
+                # now, so its timestamp says how late they all run (#291).
+                # Only a frame its timestamp timed: an RTSP session's first
+                # waits on the handshake, and is timed when read.
+                # ponytail: one waiting grab; grab decodes too, so a decode
+                # past half a frame interval reads as the edge early, erring
+                # toward after (backlog grabs took 11 ms at most, #291).
+                if (self.watching is not None and self.caught_up is None
+                        and step and step > 0 and waited >= 0.5 / LIVE_FPS):
+                    self.caught_up, self._skew = now - self.watching, at - now
                 if not self._down and placed > index + 1:
                     # Counted before the decode: the frame after a gap may not
                     # decode, and the drop that starts there must not take the
@@ -784,8 +820,9 @@ class Stream:
                     # frame waits for the loop to take it.
                     while self._held is not None and not (self._dropping or self.stopped):
                         self._ready.wait(0.1)
-                    if self._held is not None:
+                    if self._held is not None and self._dropping:   # not a stop in the baseline
                         self.late += 1
+                        self._late_at.append(self._held[2])
                     self._held = (index, frame, at, decoded)
                     self._ready.notify()
         finally:
@@ -910,6 +947,8 @@ class Stream:
             # Frame 0 was the baseline's first; asked for one past its last,
             # the baseline is built and lateness starts.
             self._dropping = self._taken >= self._baseline_frames - 1
+            if self._dropping and self.watching is None:
+                self.watching = time.time()
             # Timed, so a stop is seen while no frame comes.
             while self._held is None and not (self._ended or self.stopped):
                 self._ready.wait(0.1)
@@ -917,9 +956,30 @@ class Stream:
                 return None
             (self.index, frame, self.times[self.index], decoded), self._held = self._held, None
             wait = time.perf_counter() - decoded
+            if self._first is None and self._dropping:
+                self._first = (self.times[self.index], time.time())
             self._taken += 1
             self._ready.notify()   # the reader may be waiting for its turn
             return Frame(self.index, frame, wait)
+
+    @property
+    def late_before(self):
+        """Due frames dropped late that went out before the Run went
+        `watching`: the catch-up through the backlog (#291)."""
+        return sum(at - self._skew < self.watching for at in self._late_at)
+
+    @property
+    def late_after(self):
+        """Due frames dropped late that went out after `watching` (#291)."""
+        return self.late - self.late_before
+
+    @property
+    def behind(self):
+        """How far behind the stream the first frame past the baseline was
+        when the loop took it, None if none was (#291)."""
+        if self._first is not None:
+            at, taken = self._first
+            return taken - (at - self._skew)
 
     @property
     def passed(self):
@@ -977,7 +1037,16 @@ class Stream:
         # Frame 0 is looked at too, read by `open` rather than taken here.
         print(f"[LIVE] {self._taken + 1} frame(s) looked at; {self.late} due frame(s) "
               f"dropped: the loop was too late for them, and they are gaps for "
-              f"persistence (#83)")
+              f"persistence (#83): {self.late_before} before the Run went watching and "
+              f"{self.late_after} after (#291)")
+        if self._first is not None:
+            caught = (f"reached the live edge {self.caught_up:.2f} s after the Run went "
+                      f"watching, and the stream's timestamps run {self._skew:.2f} s late"
+                      if self.caught_up is not None else
+                      "never reached the live edge, so drops are split and the lag measured "
+                      "by the stream's timestamps, which run ~1.2 s late (#85)")
+            print(f"[LIVE] the first frame past the baseline was {self.behind:.2f} s behind "
+                  f"the stream when the loop took it; the reader {caught} (#291)")
         drops, still = len(self.drops), ""
         if self._down:
             drops, down = drops + 1, down + time.time() - self.latest

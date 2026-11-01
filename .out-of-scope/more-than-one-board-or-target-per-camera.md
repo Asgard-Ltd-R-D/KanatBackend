@@ -1,9 +1,14 @@
 # More than one Board, or more than one Target, in a camera's view
 
-Kanat registers and detects for one Board per camera with one Target on it.
-Nothing is built to make a view of two Boards register correctly, or to keep
-two Targets on one Board apart. This includes the cost of #110's silhouette
-check where such views trigger it.
+Kanat is tuned for one Board per camera with one Target on it. Nothing is
+built to make a view of two Boards register correctly, or to split Targets
+that touch, which `board.find_targets` merges into one. Nor is anything built
+to make #110's silhouette check cheap where such views trigger it.
+
+Targets that stand apart on one Board are not part of this exception. They
+keep the support they have: each is found, gets its own Target Sheet and
+`target_index`, and has its own Group in the WebApp (`WebApp/CONTEXT.md`). A
+break in that path is a regression.
 
 ## Why this is out of scope
 
@@ -13,7 +18,9 @@ for scoring, but nothing is tuned for them and they do not set
 `LIVE_STRIDE`:
 
 - **Two Boards:** CamB `camb-20260915-wide-two-boards` (`_101450`, `_101550`).
-- **Two Targets on one Board:** CamA `cama-20260914`.
+- **Two Targets on one Board:** CamA `cama-20260914`. It is out of scope
+  only for setting the stride and for the check's cost. Its per-Target scoring
+  stays supported.
 
 Measured 2026-11-01 on `main` at 600c1bd, for #277 and #288, on such views:
 
@@ -40,13 +47,15 @@ registration there was 24-81 ms.
 - **A gross fit on a one-Target view.** It still runs the check, which costs
   about 0.7 s on CamB (#118's record) and drops the due frames behind it.
   None has been seen on in-scope footage.
-- **Any score on the out-of-scope recordings.** They are scored as before.
-  Their misplacements are known, and a change in their results is not read as
-  a regression in a supported layout.
+- **The misplacements above on the out-of-scope recordings.** They are scored
+  as before. A change caused by merged Targets or by the one homography across
+  two Boards is not read as a regression. A change in how separate Targets are
+  told apart, or in their Groups, is.
 
 ## When to reopen
 
-- **A Range puts two Boards in one camera's view, or two Targets on a Board.**
+- **A Range puts two Boards in one camera's view, or touching Targets on a
+  Board.**
 - **A one-Target live run logs Lost Looks from the silhouette check** often
   enough to drop due frames late at `LIVE_STRIDE`.
 

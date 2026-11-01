@@ -255,7 +255,7 @@ def ecc_warp(ref, cur, motion, init, mask=None):
     rows = 3 if motion == cv2.MOTION_HOMOGRAPHY else 2
     seed = (D @ init @ np.linalg.inv(D))[:rows].astype(np.float32)
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, ECC_MAX_ITERATIONS, ECC_EPS)
-    small_ref = small(ref) if mask is None else _small_crop(ref, box, small)
+    small_ref = small(ref) if mask is None else _small_crop(ref, box)
     correlation, w = cv2.findTransformECC(small_ref, small(cur), seed, motion, criteria,
                                           None if mask is None else small(mask, cv2.INTER_NEAREST), 5)
     w = w if rows == 3 else np.vstack([w, [0, 0, 1]])
@@ -267,16 +267,17 @@ def ecc_warp(ref, cur, motion, init, mask=None):
 _last_small = (None, None, None)
 
 
-def _small_crop(ref, box, small):
-    """`small` of `ref` cropped to `box`, `(x0, y0, x1, y1)`, reused while
-    both repeat. A read and a write of one tuple, so a Run on another thread
-    can only make it compute again."""
+def _small_crop(ref, box):
+    """`ref` cropped to `box`, `(x0, y0, x1, y1)`, at `ECC_SCALE` as
+    `ecc_warp` resizes it, reused while both repeat. A read and a write of
+    one tuple, so a Run on another thread can only make it compute again."""
     global _last_small
     last_ref, last_box, last = _last_small
     if last_ref is ref and last_box == box:
         return last
     x0, y0, x1, y1 = box
-    out = small(ref[y0:y1, x0:x1])
+    out = cv2.resize(ref[y0:y1, x0:x1], None, fx=ECC_SCALE, fy=ECC_SCALE,
+                     interpolation=cv2.INTER_AREA)
     _last_small = ref, box, out
     return out
 
@@ -294,8 +295,8 @@ def _union(*rects):
 
 def board_shift(previous, frame, W, region):
     """The translation, frame px as a 3x3, that takes the Board in `previous`
-    onto the Board in `frame` (#171), both greyscale (`gray`). Read by phase correlation at `ECC_SCALE`,
-    with a Hanning window, over the bounding box of `region` (baseline frame
+    onto the Board in `frame` (#171), both greyscale (`gray`). Read by phase
+    correlation at `ECC_SCALE`, with a Hanning window, over the bounding box of `region` (baseline frame
     coords) as `W` carries it into `previous`.
 
     That box and nothing round it: when only the Board moves, the gravel and
@@ -755,8 +756,9 @@ def _canvas_gray(canvas):
     return cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
 
-# A Run's baseline sheet canvases, the same arrays every Look: room for two
-# Runs of two sheets
+# A Run's baseline sheet canvases, the same arrays every Look.
+# ponytail: room for two Runs of two sheets; more thrash (recompute, never
+# wrong). Key it per Run if that many ever run at once.
 _baseline_gray = _remembered(4)(_canvas_gray)
 
 

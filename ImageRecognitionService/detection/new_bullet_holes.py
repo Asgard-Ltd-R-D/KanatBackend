@@ -83,7 +83,7 @@ PERSIST_FRAMES = 50   # PROVISIONAL length, but FIXED by design: measured to the
 DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 
 # Consecutive lost frames before the loop re-acquires the Board on its own
-# (#80): 1 s at 25 fps and stride 1, ~17 s at LIVE_STRIDE (ADR-0007, #84).
+# (#80): 1 s at 25 fps and stride 1, ~4 s at LIVE_STRIDE (ADR-0007, #84, #277).
 # Counted in frames the loop attempted. A failed attempt
 # is itself a lost frame, so attempts fall every this many frames while the
 # Board stays lost. Set from the SOW wording, not from footage.
@@ -1584,12 +1584,13 @@ class Run(NamedTuple):
     persisted: list = ()
 
 
-# The stride a live 25 fps stream is looked at with (ADR-0007, #82): the
-# slowest per-frame time on record on the development Mac, 646 ms on CamB,
-# times 25, rounded up. Measured to lose no true Bullet Hole on the spent truth
-# recordings. A count of frames, so it holds only at 25 fps; on another live
-# host, re-derive it from the time per look measured there.
-LIVE_STRIDE = 17           # PROVISIONAL
+# The stride a live 25 fps stream is looked at with (ADR-0007, #82, #277): the
+# slowest in-scope Look Time P99 on the development Mac, 94 ms on CamB
+# _102250, with ~28% spare: 4 frames, 160 ms. Measured to lose no true Bullet
+# Hole and add no false positive against stride 1 on the regression set. A
+# count of frames, so it holds only at 25 fps; on another live host, re-derive
+# it from the Look Time measured there.
+LIVE_STRIDE = 4            # PROVISIONAL
 
 # The frame rate a stream is taken to run at (#83): the AXIS Q6315-LE is set to
 # a constant 25 fps (#85), the rate PERSIST_FRAMES, BASELINE_FRAMES and

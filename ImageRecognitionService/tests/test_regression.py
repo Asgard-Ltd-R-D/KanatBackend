@@ -118,6 +118,13 @@ def test_a_stride_table_rules_across_strides_and_nothing_else():
     assert [f["kind"] for f in other[0]] == ["not comparable"]
 
 
+def test_a_stride_table_needs_stride_1_as_its_reference():
+    """Reversed, a hole the stride lost would read as gained: not ruled on."""
+    ref = _result(_shift([_tp(1), _fn(2)]), stride=4)
+    findings, passed = regression.compare(ref, _result(STEADY), across_strides=True)
+    assert [f["kind"] for f in findings] == ["not comparable"] and not passed
+
+
 def test_results_on_other_bytes_or_truth_are_not_ruled_on():
     for new in (_result(STEADY, sha256="w"), _result(STEADY, truth_sha256="u"),
                 _result(STEADY, sha256=None)):

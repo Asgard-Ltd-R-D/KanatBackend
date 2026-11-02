@@ -109,7 +109,7 @@ cd ImageRecognitionService
 .venv/bin/python -m detection.new_bullet_holes rtsp://<mtx-host>:8554/<alias> --mm-per-px <scale>
 ```
 
-- **Stride.** `LIVE_STRIDE` (17) unless `--stride` gives another.
+- **Stride.** `LIVE_STRIDE` (4) unless `--stride` gives another.
 - **Print scale.** A stream has no Capture Setup on record, so the print scale comes from `--mm-per-px` only. Measure it for the printed Target in use (`docs/ring_measurement.md`). Without it, positions stay in Board px.
 - **Stopping.** Ctrl-C or SIGTERM ends the run and prints the report.
 

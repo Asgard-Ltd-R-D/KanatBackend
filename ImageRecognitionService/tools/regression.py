@@ -9,6 +9,7 @@ result. `compare` reads two and rules on them:
     caffeinate -i python -m tools.regression run --out main.json   # hours: 4 shifts x 6 at stride 1
     python -m tools.regression run --out quick.json --shifts 0 --only CamB_20260915_102250
     python -m tools.regression compare main.json branch.json
+    python -m tools.regression compare stride1.json stride4.json --across-strides
 
 The rule, per Bullet Hole of the new result against the reference, at 0 px:
 no truth Bullet Hole the reference finds is lost; no false positive is
@@ -19,7 +20,8 @@ moved or over the limit) flips under the control: it is grid noise,
 reported, and does not fail. A position failure flips only where a shifted
 run found the hole and shows it: a shifted miss has no position to show.
 Recordings run on other bytes or truth (both hashed into the result), or at
-another window, stride or device, are not ruled on. Only the reference's
+another window, stride or device, are not ruled on, save stride under
+`--across-strides`: a stride table against stride 1 (#277). Only the reference's
 shifted runs are read, but `run` makes them by default all the same: today's result is the next
 change's reference.
 
@@ -183,9 +185,10 @@ def _points(fps):
     return np.array([(f["x"], f["y"]) for f in fps], np.float64).reshape(-1, 2)
 
 
-def compare(ref, new):
+def compare(ref, new, strides=False):
     """The new result against the reference, by #268's rule: `(findings,
-    passed)`. A finding is a dict: `recording`, `kind`, `hole`, `detail`,
+    passed)`. `strides` rules across strides: a stride table, the reference
+    at stride 1 (ADR-0007, #277). A finding is a dict: `recording`, `kind`, `hole`, `detail`,
     `noise` (it flips under the reference's shifted runs) and `fails`."""
     findings = []
 
@@ -219,7 +222,8 @@ def compare(ref, new):
             continue
         # Another window, stride, device or print scale is another experiment,
         # not a change.
-        was_run, now_run = (f"stride {x['stride']}, {y['window'][0]:g}-{y['window'][1]:g} s, "
+        was_run, now_run = (("" if strides else f"stride {x['stride']}, ")
+                            + f"{y['window'][0]:g}-{y['window'][1]:g} s, "
                             f"device {y['shifts']['0']['device']}, "
                             f"{y['shifts']['0'].get('mm_per_tpl_px')} mm per template px"
                             for x, y in ((ref, r), (new, n)))
@@ -352,6 +356,8 @@ if __name__ == "__main__":
     c = sub.add_parser("compare", help="rule on a new result against a reference")
     c.add_argument("reference")
     c.add_argument("new")
+    c.add_argument("--across-strides", action="store_true",
+                   help="rule across strides: a stride table against stride 1 (#277)")
     a = p.parse_args()
 
     if a.mode == "run":
@@ -365,6 +371,6 @@ if __name__ == "__main__":
         run(entries, a.stride or 1, a.device, a.shifts, a.out)
     else:
         ref, new = map(_load, (a.reference, a.new))
-        findings, passed = compare(ref, new)
+        findings, passed = compare(ref, new, a.across_strides)
         print_compare(ref, new, findings, passed)
         sys.exit(0 if passed else 1)

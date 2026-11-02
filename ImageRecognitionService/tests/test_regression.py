@@ -109,6 +109,15 @@ def test_results_from_other_settings_are_not_ruled_on():
         assert _kinds(REF, new) == ([("not comparable", "-", False, True)], False)
 
 
+def test_a_stride_table_rules_across_strides_and_nothing_else():
+    """#277: stride is the experiment, so `strides=True` lifts only that."""
+    assert regression.compare(REF, _result(STEADY, stride=4), strides=True) == ([], True)
+    lost = _result(_shift([_tp(1), _fn(2)]), stride=4)
+    assert not regression.compare(REF, lost, strides=True)[1]
+    other = regression.compare(REF, _result(STEADY, stride=4, window=(13, 20)), strides=True)
+    assert [f["kind"] for f in other[0]] == ["not comparable"]
+
+
 def test_results_on_other_bytes_or_truth_are_not_ruled_on():
     for new in (_result(STEADY, sha256="w"), _result(STEADY, truth_sha256="u"),
                 _result(STEADY, sha256=None)):

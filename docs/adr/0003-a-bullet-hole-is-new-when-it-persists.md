@@ -125,6 +125,32 @@ tidy-up, and it changes recording results. The thresholds in this ADR and
 measured with the end-of-run check, and the Sealed recordings cannot be run
 again to re-measure them ([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)).*
 
+*Amended 2026-11-02 (#299; measured, not adopted): both checks accept
+Change Evidence that arrives after a Candidate's window, and on a recording
+from any Detection near its final position, its own or not. That is how
+marks already on the Board pass once #259 lets them persist. The baseline
+missed them because the detector's score on anything stationary, a mark, a
+ring edge or plain paper, wanders for the whole run. A rule was measured
+that replaces both checks: a persisted Candidate is corroborated when at
+least 50% of its own Detections in its first window are, the same 50% as
+Persistence, and it is reported early only once both verdicts are fixed.
+On regression footage only ([ADR-0010](0010-every-recording-may-be-opened.md)),
+at stride 4 and stride 1, the lowest truth hole was at 62% and 64%, and the
+false positives #299 found were at most 43% (stride 4, one 0.48 s burst)
+and 0%. It lost no truth hole, removed every false positive of that kind,
+and added no latency at the median and 800 ms at most, on the 62% hole. It
+is not adopted: #259's other added reports are 67–100% corroborated, so no
+share that keeps every truth hole removes them. #300 attributed them
+(2026-11-05): registration since fixed, a light patch since gone, a bird
+resting on the sheet, and real holes on a recording thought empty.
+Re-measured on the sheet canvases
+([ADR-0011](0011-detection-is-limited-to-the-target-sheets.md)), every
+on-sheet truth hole on `CamA_20260914_141546` shows Change Evidence on
+96–100% of its Looks. The on-sheet hole the run misses is missed by the
+detector, not by change detection. The 13–17 s measurement above, of one
+hole change detection could not see, stands as history: it was made on the
+whole Board, before the sheet canvases.*
+
 ## The thresholds were wrong, and only ground truth showed it
 
 The first values — a 70% persistence bar and a 40 template-px match radius — were

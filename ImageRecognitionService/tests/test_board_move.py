@@ -59,8 +59,9 @@ def test_a_false_positive_the_control_lacks_fails_whatever_attribution_calls_it(
 
 
 RANGE_1 = _score(rows=[(1, 3, 0.2, 0.1)], times=[12.0])
-RANGE_2 = _score(rows=[(1, 2, 0.5, -0.5), (3, 4, 1.0, 1.0), (4, 1, 0.0, 0.3)],
-                 times=[27.0, 30.0, 33.0, 40.0], in_baseline=[(3, 3)],
+# Truth #1 is off-sheet, out of scope (ADR-0011), so no Range reports it.
+RANGE_2 = _score(rows=[(1, 2, 0.5, -0.5), (3, 4, 1.0, 1.0)],
+                 times=[27.0, 30.0, 33.0], in_baseline=[(3, 3)],
                  false_positives=[(2, (100.0, 200.0), DISPLACEMENT, 12.0)])
 
 
@@ -73,8 +74,16 @@ def test_an_earlier_ranges_bullet_hole_reported_as_new_fails():
     range_2 = dict(RANGE_2, rows=RANGE_2["rows"] + [(5, 3, 0.2, 0.1)],
                    times=RANGE_2["times"] + [45.0], in_baseline=[])
     failed = [what for what, passed in two_ranges(RANGE_1, range_2) if not passed]
-    assert failed == ["Range 2 reports truth #2, #4 and #1, and no other",
+    assert failed == ["Range 2 reports truth #2 and #4, and no other",
                       "Range 2 names truth #3 in the baseline at --start, on a P entry"]
+
+
+def test_range_2_reporting_the_off_sheet_truth_fails():
+    """Truth #1 lies beyond every Target Sheet's bound, where no run looks (ADR-0011)."""
+    range_2 = dict(RANGE_2, rows=RANGE_2["rows"] + [(4, 1, 0.0, 0.3)],
+                   times=RANGE_2["times"] + [40.0])
+    failed = [what for what, passed in two_ranges(RANGE_1, range_2) if not passed]
+    assert failed == ["Range 2 reports truth #2 and #4, and no other"]
 
 
 def test_a_bullet_hole_reported_before_it_was_fired_fails():

@@ -98,7 +98,9 @@ def compare(control, case):
 def two_ranges(range_1, range_2):
     """#162's checks on `_102250` cut at 20 s into two Ranges, as `(what,
     passed)`: Range 1 finds the Hit fired before the cut; Range 2 finds the
-    three fired after it and names the first as on the Board at its `--start`.
+    two on-sheet Hits fired after it and names the first as on the Board at
+    its `--start`. The third, truth #1, lies beyond every Target Sheet's
+    bound, out of scope (ADR-0011, #275), so neither Range may report it.
 
     Each Range must find exactly its own truths. The truth is the final
     Board's, so a detection in Range 1 where a later Hit will land scores as a
@@ -113,8 +115,8 @@ def two_ranges(range_1, range_2):
         return {j for _, j, *_ in score["rows"]}
 
     return [("Range 1 reports truth #3, and no other", truths(range_1) == {3}),
-            ("Range 2 reports truth #2, #4 and #1, and no other",
-             truths(range_2) == {1, 2, 4}),
+            ("Range 2 reports truth #2 and #4, and no other",
+             truths(range_2) == {2, 4}),
             ("Range 2 names truth #3 in the baseline at --start, on a P entry",
              3 in {j for j, _ in range_2["in_baseline"]})]
 

@@ -67,6 +67,21 @@ as before (the 2026-10-11 amendment below). The reason is Hit-to-report
 latency. At a stride of about 5, a clean Hit's verdict is fixed about 0.8 s
 after its first Detection, about 1.2 s before its window ends.*
 
+*Amended 2026-11-02 (proposed on #259, pending approval): a Candidate that
+was judged and did not persist, rejected or unconfirmable, stops gathering
+Detections. The next Detection at its place opens a new Candidate, with a
+window of its own, judged by the same 50% and the same floor. A persisted
+Candidate keeps gathering, as before. A window that ended before a Look is
+judged before that Look's Detections are matched, so past a stride's gap the
+first Look of the next Candidate is not taken by one about to be rejected.
+Before this, every later sighting folded into the dead Candidate and no
+Candidate ever opened there again. On `CamA_20260914_141546` from 5 s,
+truth #1's Candidate was seen on 18 of its 50 frames and rejected, and the
+detector then saw it on 93% of the later Looks without reporting it. The
+cost is that more Candidates reach Change Evidence, so precision rests more
+on it. Early verdicts (2026-10-28) only ever persist early: a Candidate is
+rejected, and so closed, only once its window has passed.*
+
 ## Why change detection is evidence, not the gate
 
 The obvious cheaper design runs `cv2.absdiff` against the baseline and hands

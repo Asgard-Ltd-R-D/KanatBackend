@@ -518,6 +518,16 @@ def test_the_first_look_past_a_window_that_did_not_persist_opens_the_next_candid
     assert [h["first_frame"] for h in got] == [30]
 
 
+def test_a_window_judged_ahead_of_a_look_is_judged_at_that_look():
+    """Looks every 5 frames, every frame due: seen at 10, 15 and 20, not 25,
+    so at 25 the 4 due frames still to come could undo it. [10, 30) has ended
+    by the Look at 30, which judges it before folding: it is reported at that
+    Look, not at 29, a frame never looked at."""
+    got = _persisted(_looked(range(10, 70, 5), {10, 15, 20}),
+                     n_frames=70, match_px=MATCH, window=20)
+    assert [h["judged_frame"] for h in got] == [30]
+
+
 def test_a_persisted_candidate_still_absorbs_its_place_s_later_detections():
     """Persisted over [10, 30), then unseen, then seen again from 40: the
     later sightings fold into the reported Bullet Hole, not a second one."""

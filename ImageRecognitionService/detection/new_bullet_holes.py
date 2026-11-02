@@ -1312,7 +1312,7 @@ class Persistence:
         A window that ended before this Look is judged before its Detections
         fold: past a stride's gap or a stream's, one about to be rejected
         would otherwise take the first Look of the next Candidate (#259)."""
-        persisted = self._judge_due(index)
+        persisted = self._judge_due(index, look=index)
         if pts is None:
             self.lost.append(index)
         else:
@@ -1356,7 +1356,7 @@ class Persistence:
         """Where a persisted Candidate is now, (cx, cy[, w, h])."""
         return self._persisted[id(hole)][1][0]
 
-    def _judge_due(self, processed):
+    def _judge_due(self, processed, look=None):
         """Judge every open Candidate, `processed` frames having passed. Each
         is rechecked every Look while open, but none is open past its window,
         so that is a handful."""
@@ -1383,7 +1383,7 @@ class Persistence:
             else:
                 # The Look that judged it: when a run reports it, before the
                 # Change Evidence check (#272).
-                hole["judged_frame"] = processed - 1
+                hole["judged_frame"] = processed - 1 if look is None else look
                 self._persisted[id(hole)] = (hole, candidate)
                 persisted.append(hole)
         self._open = still_open

@@ -174,7 +174,7 @@ every recording keeps its true positives, misses and false positives. Stride
 of the flicker this ADR's consequences predict as the Looks a window fall. Stride
 5 also raises CamA's FP before the change filter from 12 to 20, and adds one on
 three CamB recordings. Hit-to-report, from each truth hole's arrival
-frame (#273): 1.96 s at stride 1 on every clean CamB hole, 2.04–2.20 s at
+frame (#273): 1.96 s at stride 1 on every clean CamB hole, 2.08–2.20 s at
 stride 4.
 
 **The live replay at stride 4** (`docs/latency_wip.md`'s procedure: H.264
@@ -201,9 +201,14 @@ interval. A camera's stream does not end, so this is reported and not counted
 gives:** the first frame past the baseline is 1.2–1.4 s behind the stream, and
 the reader is at the live edge 0.07–0.10 s after the Run goes `watching`.
 
+**Live, `_103223`'s Look Time P99 was 97 ms**, above the bench's 94.6 ms that
+set the stride. At 97 ms, stride 4 still leaves 39% spare. The table and the
+replays ran on CPU only. MPS was not measured, and on CamB the CPU sets most of
+Look Time (`docs/latency_wip.md`).
+
 Every run of a recording reports the same Bullet Holes: 4 on `_102250`, 1 on
 `_102450` and 1 on `_103223`. The exception is one `_102450` run, which also
-reported a Miss at 69% persistence. Positions differ between runs by up to 2.3 mm,
+reported a Miss at 69% persistence. Positions differ between runs by up to 2.2 mm,
 as each run looks at different frames. The replays were not compared with
 file runs of the copies.
 

@@ -1585,8 +1585,8 @@ class Run(NamedTuple):
 
 
 # The stride a live 25 fps stream is looked at with (ADR-0007, #82, #277): the
-# slowest in-scope Look Time P99 on the development Mac, 94 ms on CamB
-# _102250, with ~28% spare: 4 frames, 160 ms. Measured to lose no true Bullet
+# slowest in-scope Look Time P99 on the development Mac, 94.6 ms on CamB
+# _102250: the smallest stride keeping ADR-0007's ~28% spare, 160 ms (41%). Measured to lose no true Bullet
 # Hole and add no false positive against stride 1 on the regression set. A
 # count of frames, so it holds only at 25 fps; on another live host, re-derive
 # it from the Look Time measured there.

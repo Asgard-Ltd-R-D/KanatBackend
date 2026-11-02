@@ -6,7 +6,7 @@ control, per truth number. Every run's full printed output is kept beside the
 table in `--out`, one file a run, named by case, move and stride:
 
     caffeinate -i python -m tools.board_move        # everything: hours at stride 1
-    python -m tools.board_move --case range-2 --move 80x40 --stride 17   # minutes
+    python -m tools.board_move --case range-2 --move 80x40 --stride 4    # minutes
 
 A case passes when it has no false positive its control lacks and loses no true
 positive its control found. Distance-based attribution cannot recognise a

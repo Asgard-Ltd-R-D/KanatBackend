@@ -5,7 +5,7 @@ Capture Setup its manifest entry gives, then reports the matched
 pairs' Position Error over all of them (#123, #126). The headline is at
 `LIVE_STRIDE` (ADR-0007), stride 1 beside it:
 
-    python -m tools.position_error --stride 17
+    python -m tools.position_error --stride 4
     python -m tools.position_error --stride 1
 
 The recordings are read from data/videos under their manifest file names, and

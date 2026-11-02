@@ -6,6 +6,13 @@ not vary the stride with load, and does not retune persistence for the sparser
 sampling. [ADR-0003](0003-a-bullet-hole-is-new-when-it-persists.md)'s window
 stays 50 frames at 50%; it now holds about 3 looks instead of 50.
 
+*Amended 2026-11-02 (#277): the stride is 4, not 17. ECC's stopping rule
+(#274), the Target Sheet canvases (#275) and the per-Look cleanups (#276) cut
+Look Time to a tenth, and the stride is re-derived by this ADR's own rule
+below, in "Re-derived: stride 4". The decision is unchanged: a fixed stride,
+persistence over the samples. The window now holds about 12 Looks. "The stride:
+17" and the stride-17 consequences are kept as the record they were.*
+
 ## Why sample at all
 
 The frame loop costs 0.3–0.65 s a look on the development Mac, against a frame
@@ -118,6 +125,100 @@ behaviour this measurement did not cover.
 
 On a different live host, re-derive the stride from the time per look measured
 there, using the same differencing.
+
+## Re-derived: stride 4 (#277, 2026-11-02)
+
+**The rule is the same: the slowest setup's Look Time P99 × 25, with about
+28% spare.** Only in-scope footage decides it: one Board and one Target per
+camera (#288, `.out-of-scope/more-than-one-board-or-target-per-camera.md`).
+That is the close CamB recordings `_102250`, `_102450` and `_103223`. CamA
+shows two Targets on one Board, and the wide CamB `_101450`/`_101550` two
+Boards, so they do not set the stride. **Once in-scope footage from a
+CamA-style camera exists, re-derive the stride from it.**
+
+Look Time at stride 1, CPU, from the regression bench below (`main` 6e18728,
+development M1 Pro):
+
+| Recording | In scope | Look Time P50 | P99 | max |
+|---|---|---:|---:|---:|
+| CamB `_102250` 0–46 s | yes | 35.5 | **94.6** | 95.9 |
+| CamB `_102450` 0–47.76 s | yes | 35.0 | 39.9 | 41.4 |
+| CamB `_103223` 0–51.88 s | yes | 36.3 | 47.5 | 78.1 |
+| CamA `_141546` 13–25 s | no: two Targets | 163.9 | 487.8 | 729.6 |
+| CamB `_101450` 0–45 s | no: two Boards | 48.6 | 57.7 | 128.1 |
+| CamB `_101550` 0–48.28 s | no: two Boards | 75.0 | 471.7 | 641.1 |
+
+`_102250`'s 94.6 ms decides. ⌈0.0946 × 25⌉ = 3 would leave 21% spare (120 ms);
+**4 gives a 160 ms interval and 41% spare**, the smallest stride that keeps
+the ~28%. CamA's P99 would give 13–17, and #268 would gain nothing.
+
+**The stride table**, on #268's regression bench (`tools.regression`, all six
+truth recordings over their manifest windows, CPU). Stride 1 ran with the
+8/16/32 px canvas-shift control. Strides 3, 4 and 5 were ruled against it by
+#268's rule, with `compare --across-strides`: no truth Bullet Hole stride 1
+finds is lost, no false positive is added, and no matched Position Error moves
+over 1 mm or reaches 5 mm. "Lost" is against stride 1, as above.
+
+| Stride | Looks a window | TP / FP / FN at 0 px, all six | FP before the change filter, CamA | Rule against stride 1 |
+|---:|---:|---|---:|---|
+| 1 | 50 | 10 / 1 / 2 | 12 | the reference |
+| 3 | ~17 | 10 / 1 / 2 | 13 | **PASS**: 0 failing, 0 noise |
+| **4** | **~12** | **10 / 1 / 2** | **10** | **PASS**: 0 failing, 0 noise |
+| 5 | 10 | 10 / 2 / 2 | 20 | **FAIL**: `_101550` adds a false positive at template (750, 674) |
+
+The 6 truth Bullet Holes off every Target Sheet are out of scope at every stride
+(ADR-0011). The one false positive at every stride is `_102250`'s, and the two
+misses are CamA's truth #4 (above) and `_101550`'s truth #1. At strides 3 and 4
+every recording keeps its true positives, misses and false positives. Stride
+5's added false positive is on out-of-scope footage, but it is the first sign
+of the flicker this ADR's consequences predict as the Looks a window fall. Stride
+5 also raises CamA's FP before the change filter from 12 to 20, and adds one on
+three CamB recordings. Hit-to-report, from each truth hole's arrival
+frame (#273): 1.96 s at stride 1 on every clean CamB hole, 2.08–2.20 s at
+stride 4.
+
+**The live replay at stride 4** (`docs/latency_wip.md`'s procedure: H.264
+copies of the three in-scope recordings published through VideoService's
+MediaMTX v1.21.1, ffmpeg 9.0.2, CPU, eight runs). Late drops are split at
+the Run going `watching` (#291). The catch-up before it is out of scope
+(`.out-of-scope/catch-up-drops-before-detection-ready.md`):
+
+| Recording | Runs | Late drops before / after `watching` | Look Time P99 | Frame Wait P99 / max | Behind the stream at the first frame past the baseline | Live edge after `watching` |
+|---|---:|---|---:|---|---:|---:|
+| `_102250` | 3 | 6–7 / 0, 1, 1 | 46–50 ms | 0.8–33.1 / 69–70 ms | 1.23–1.36 s | 0.08–0.09 s |
+| `_102450` | 3 | 6 / 1, 1, 1 | 45–47 ms | 0.5–1.9 / 68–70 ms | 1.18–1.24 s | 0.08–0.10 s |
+| `_103223` | 2 | 7 / 0, 0 | 97 ms | 0.1–0.4 / 69–70 ms | 1.29–1.32 s | 0.07–0.08 s |
+
+**Every late drop after `watching` is the replay ending, not the loop
+falling behind.** In each, the dropped frame is the second-to-last due frame of
+the file (1120 of 1124 on `_102250`, 1188 of 1192 on `_102450`). A probe timing
+every grab showed the last ~9 frames arriving within ~15 ms (gaps of 4, 0, 0, 0,
+4 ms, against 40 ms before), as the publisher ends. Two due frames in one burst
+replace one another. The Looks around them took ~40 ms against the 160 ms
+interval. A camera's stream does not end, so this is reported and not counted
+(decided 2026-11-02). Apart from it, no due frame was dropped late after
+`watching`, and Frame Wait P99 stayed under one Look Time. **The catch-up #291
+gives:** the first frame past the baseline is 1.2–1.4 s behind the stream, and
+the reader is at the live edge 0.07–0.10 s after the Run goes `watching`.
+
+**Live, `_103223`'s Look Time P99 was 97 ms**, above the bench's 94.6 ms that
+set the stride. At 97 ms, stride 4 still leaves 39% spare. The table and the
+replays ran on CPU only. MPS was not measured, and on CamB the CPU sets most of
+Look Time (`docs/latency_wip.md`).
+
+Every run of a recording reports the same Bullet Holes: 4 on `_102250`, 1 on
+`_102450` and 1 on `_103223`. The exception is one `_102450` run, which also
+reported a Miss at 69% persistence. Positions differ between runs by up to 2.2 mm,
+as each run looks at different frames. The replays were not compared with
+file runs of the copies.
+
+**`REANCHOR_AFTER_LOST` (25 looked-at frames) is now about 4 s** at stride 4,
+against about 17 s at 17 and 1 s at stride 1. It is unchanged and still
+provisional (#80, #84).
+
+**Nothing here is validated either.** It is the same footage the thresholds
+were tuned on (ADR-0010: regression, not unseen). It shows that stride 4 does
+not visibly break them there.
 
 ## The frame rate is load-bearing
 

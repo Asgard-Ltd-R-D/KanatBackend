@@ -230,7 +230,9 @@ _PATCH_K = 0.5
 _PATCH_HALF = np.array([600.0, 200.0])          # template px round the ring
 _PATCH_ORIGIN = RING_CENTRE_TPL - _PATCH_HALF
 _DISK_RAYS = np.radians(np.arange(0, 360, 10))
-_DISK_MIN_RAYS = 30
+_DISK_MIN_RAYS = 24       # of 36: a third may be a Bullet Hole or an occluder
+_DISK_RAY_TOL = 6.0       # template px; clean disks' rays sit within ~5.6 (ellipse, noise)
+_DISK_ITERATIONS = 20
 _DIGIT_XS = np.arange(-560, 560, 1.0)            # template px along the row
 _DIGIT_ZONE = (np.abs(_DIGIT_XS) > 140) & (np.abs(_DIGIT_XS) < 520)  # digits only
 _DIGIT_BAND = np.arange(-16, 17, 2.0)            # template px across it
@@ -261,13 +263,18 @@ def _sample(g, x, y):
 
 
 def disk_centre(g):
-    """The white disk's own centre on a `_patch`, template px: each ray's
-    half-level edge, the centre moved by their mean until opposite rays
-    balance. None when too few rays find an edge."""
+    """The white disk's own centre on a `_patch`, template px, or None when
+    the disk is no evidence (#302).
+
+    Each ray's half-level edge; a circle fitted to them, rays more than
+    `_DISK_RAY_TOL` off it dropped (a Bullet Hole on the edge, something in
+    front of the disk), refitted; repeated from the new centre until it
+    moves under 0.05 px. None when fewer than `_DISK_MIN_RAYS` rays are kept
+    or it does not settle in `_DISK_ITERATIONS`."""
     g = cv2.GaussianBlur(g, (0, 0), 1)
     rs = np.arange(60, 170, 0.5)
     c = RING_CENTRE_TPL.copy()
-    for _ in range(3):
+    for _ in range(_DISK_ITERATIONS):
         profiles = _sample(g, c[0] + np.outer(np.cos(_DISK_RAYS), rs),
                            c[1] + np.outer(np.sin(_DISK_RAYS), rs))
         radii, angles = [], []
@@ -282,8 +289,19 @@ def disk_centre(g):
         if len(radii) < _DISK_MIN_RAYS:
             return None
         r, a = np.array(radii), np.array(angles)
-        c = c + [np.mean(r * np.cos(a)), np.mean(r * np.sin(a))]
-    return c
+        # r = R + dx cos a + dy sin a, to first order in the centre's error
+        X = np.column_stack([np.ones_like(a), np.cos(a), np.sin(a)])
+        keep = np.ones(len(r), bool)
+        for _ in range(3):
+            fit = np.linalg.lstsq(X[keep], r[keep], rcond=None)[0]
+            keep = np.abs(r - X @ fit) <= _DISK_RAY_TOL
+        if keep.sum() < _DISK_MIN_RAYS:
+            return None
+        fit = np.linalg.lstsq(X[keep], r[keep], rcond=None)[0]
+        c = c + fit[1:]
+        if np.hypot(*fit[1:]) < 0.05:
+            return c
+    return None
 
 
 def _digit_profile(g, c, blur=0.0):
@@ -323,8 +341,9 @@ def _artwork():
 def interior_fit(frame, H):
     """`(A, correlation)`: the template -> template similarity about the ring
     that `H @ A` corrects the silhouette fit `H` by (#302), and the digit
-    row's correlation. A is None when the disk is not found or the
-    correlation is below `INTERIOR_MIN_CORRELATION`: keep `H`.
+    row's correlation. A is None, keep `H`, when the disk is
+    no evidence (`disk_centre`) or the correlation is below
+    `INTERIOR_MIN_CORRELATION`.
 
     A puts the artwork's disk centre on the frame's and scales by the digit
     row, both axes alike: the row reads the horizontal scale only.

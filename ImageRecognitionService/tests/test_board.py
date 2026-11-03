@@ -614,3 +614,28 @@ def test_a_low_digit_row_correlation_keeps_the_silhouette_fit(monkeypatch):
 
     assert board.interior_fit(frame, silhouette)[0] is None
     assert board.build_view(frame, template_mask)[0].H == pytest.approx(silhouette)
+
+
+def _synthetic_board():
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    h, w = template.shape[:2]
+    P = np.float32([[0.5, 0.01, 300], [-0.01, 0.5, 200], [0, 0, 1]])
+    frame = cv2.warpPerspective(template, P, (w + 600, h + 400), borderValue=(128, 128, 128))
+    contours, frame_mask = board.find_targets(frame)
+    silhouette, _ = board.register(template_mask, frame_mask, contours[0], None, cv2.MOTION_AFFINE)
+    return frame, template_mask, P, silhouette
+
+
+def test_a_bullet_hole_on_the_disk_edge_does_not_move_the_ring():
+    """#302, `_103223`: a hole on the white disk's edge bit 2.65 mm off its
+    centre while every ray voted. The rays it spoils are dropped."""
+    frame, template_mask, P, _ = _synthetic_board()
+    edge = board.RING_CENTRE_TPL + board.RING_DIAMETER_TPL / 2 * np.array([np.cos(4.2), np.sin(4.2)])
+    cv2.circle(frame, tuple(int(v) for v in board.apply(P, [edge])[0]), 12, (40, 40, 40), -1)
+
+    view, _ = board.build_view(frame, template_mask)
+
+    ring = board.apply(view.H, [board.RING_CENTRE_TPL])[0]
+    assert np.linalg.norm(ring - board.apply(P, [board.RING_CENTRE_TPL])[0]) < 0.25   # frame px
+

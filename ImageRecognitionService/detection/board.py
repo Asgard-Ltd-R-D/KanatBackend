@@ -40,13 +40,6 @@ RING_CENTRE_TPL = np.array([695.4, 639.2])  # white 10-ring centre, template px
 # taller than wide (221.1 x 224.6). 227 until #70, which was 1-3 px outside it.
 RING_DIAMETER_TPL = 223.0
 
-# Ring centre relative to the silhouette's centroid. Every Target on a Board is
-# the same artwork, but only the reference Target is registered against the
-# template; this offset places the ring centre on the others from their own
-# outline, without a second registration. Assumes Targets are not rotated
-# relative to one another — consistent with the single-plane Board.
-RING_OFFSET_TPL = RING_CENTRE_TPL - np.array([696.8, 648.9])
-
 # Outer radius of each scoring ring, template px. The 10-ring ends at the white
 # disk's edge. Each ring after it ends at the centre of the white line, the
 # median over 720 rays from the ring centre (`tools/ring_landmarks.py`, #70).
@@ -223,6 +216,155 @@ def register(template_mask, frame_mask, reference_contour, init=None,
         _blurred(template_mask), _blurred(frame_mask),
         (init if rows == 3 else init[:2] / init[2, 2]).astype(np.float32), motion, criteria, None, 5)
     return (H if rows == 3 else np.vstack([H, [0, 0, 1]]).astype(np.float32)), correlation
+
+
+# --- Board space on the printed interior (#302) ------------------------------
+# The silhouette's edge is not the artwork's on either camera (#297): CamA's
+# GREEN_HI cuts the blue-shifted rim (+3.3%), CamB's green spills into the
+# paper (-2 to -3.5%, centre 1.5-3 mm off). Two edge-free readings correct it:
+# the white disk's own centre, where opposite rays balance, and the scale that
+# maps the artwork's digit row (6 7 8 9 | 9 8 7 6) onto the frame's, read
+# centre to centre. Both on a template-space patch round the ring at
+# `_PATCH_K` px per template px.
+_PATCH_K = 0.5
+_PATCH_HALF = np.array([600.0, 200.0])          # template px round the ring
+_PATCH_ORIGIN = RING_CENTRE_TPL - _PATCH_HALF
+_DISK_RAYS = np.radians(np.arange(0, 360, 10))
+_DISK_MIN_RAYS = 24       # of 36: a third may be a Bullet Hole or an occluder
+_DISK_RAY_TOL = 6.0       # template px; clean disks' rays sit within ~5.6 (ellipse, noise)
+_DISK_ITERATIONS = 20
+_DIGIT_XS = np.arange(-560, 560, 1.0)            # template px along the row
+_DIGIT_ZONE = (np.abs(_DIGIT_XS) > 140) & (np.abs(_DIGIT_XS) < 520)  # digits only
+_DIGIT_BAND = np.arange(-16, 17, 2.0)            # template px across it
+_DIGIT_SCALES = np.arange(0.80, 1.15, 0.0025)
+_DIGIT_SHIFTS = np.arange(-24, 24.5, 1.0)
+# Below this correlation on either half of the digit row the plain
+# silhouette fit stands (#302). The five truth baselines read 0.68-0.93 a half;
+# a half covered by an occluder 0.00-0.52, where the other half alone fits
+# scales 2-4% wrong. Set between the two, not swept.
+INTERIOR_MIN_CORRELATION = 0.6   # PROVISIONAL
+
+
+def _patch(image, H):
+    """`image` (the frame H maps the template onto; the template for an
+    identity H) on the template-space patch round the ring, greyscale float."""
+    k = _PATCH_K
+    P = np.array([[k, 0, -_PATCH_ORIGIN[0] * k], [0, k, -_PATCH_ORIGIN[1] * k], [0, 0, 1]])
+    size = tuple(int(v) for v in 2 * _PATCH_HALF * k)
+    flags = cv2.INTER_AREA if H is None else cv2.INTER_CUBIC
+    M = P if H is None else P @ np.linalg.inv(H)
+    out = cv2.warpPerspective(image, M, size, flags=flags, borderValue=(255, 255, 255))
+    return cv2.cvtColor(out, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+
+def _sample(g, x, y):
+    """`g` (a `_patch`) at template-px points."""
+    to = lambda v, o: ((v - o) * _PATCH_K).astype(np.float32)
+    return cv2.remap(g, to(x, _PATCH_ORIGIN[0]), to(y, _PATCH_ORIGIN[1]), cv2.INTER_LINEAR)
+
+
+def disk_centre(g):
+    """The white disk's own centre on a `_patch`, template px, or None when
+    the disk is no evidence (#302).
+
+    Each ray's half-level edge; a circle fitted to them, rays more than
+    `_DISK_RAY_TOL` off it dropped (a Bullet Hole on the edge, something in
+    front of the disk), refitted; repeated from the new centre until it
+    moves under 0.05 px. None when fewer than `_DISK_MIN_RAYS` rays are kept
+    or it does not settle in `_DISK_ITERATIONS`."""
+    g = cv2.GaussianBlur(g, (0, 0), 1)
+    rs = np.arange(60, 170, 0.5)
+    c = RING_CENTRE_TPL.copy()
+    for _ in range(_DISK_ITERATIONS):
+        profiles = _sample(g, c[0] + np.outer(np.cos(_DISK_RAYS), rs),
+                           c[1] + np.outer(np.sin(_DISK_RAYS), rs))
+        radii, angles = [], []
+        for p, a in zip(profiles, _DISK_RAYS):
+            half = (np.percentile(p[:60], 75) + np.median(p[-40:])) / 2
+            below = np.flatnonzero(p < half)
+            if not len(below) or below[0] == 0:
+                continue
+            i = below[0]
+            radii.append(rs[i - 1] + (p[i - 1] - half) / (p[i - 1] - p[i]) * 0.5)
+            angles.append(a)
+        if len(radii) < _DISK_MIN_RAYS:
+            return None
+        r, a = np.array(radii), np.array(angles)
+        # r = R + dx cos a + dy sin a, to first order in the centre's error
+        X = np.column_stack([np.ones_like(a), np.cos(a), np.sin(a)])
+        keep = np.ones(len(r), bool)
+        for _ in range(3):
+            fit = np.linalg.lstsq(X[keep], r[keep], rcond=None)[0]
+            keep = np.abs(r - X @ fit) <= _DISK_RAY_TOL
+        if keep.sum() < _DISK_MIN_RAYS:
+            return None
+        fit = np.linalg.lstsq(X[keep], r[keep], rcond=None)[0]
+        c = c + fit[1:]
+        if np.hypot(*fit[1:]) < 0.05:
+            return c
+    return None
+
+
+def _digit_profile(g, c, blur=0.0):
+    """High-passed luma along the digit row through `c`, one sample per
+    template px, averaged across `_DIGIT_BAND`, blurred by `blur` template px."""
+    p = _sample(g, np.tile(c[0] + _DIGIT_XS, (len(_DIGIT_BAND), 1)),
+                np.repeat(c[1] + _DIGIT_BAND, len(_DIGIT_XS)).reshape(len(_DIGIT_BAND), -1))
+    p = p.mean(axis=0)[None]
+    if blur:
+        p = cv2.GaussianBlur(p, (0, 0), blur)
+    return (p - cv2.GaussianBlur(p, (0, 0), 40))[0]
+
+
+def digit_scale(frame_profile, template_profile):
+    """`(scale, correlation)`: the scale s about the row's centre, with the
+    best shift, under which the frame's profile at s x reads the template's
+    at x, by grid search. The correlation is the weaker half's at that fit
+    (6 7 8 9 left, 9 8 7 6 right): a half hidden behind something reads
+    0.0-0.52, and the other half alone can fit a wrong scale (#302)."""
+    def corr(q, a):
+        q, a = q - q.mean(axis=-1, keepdims=True), a - a.mean()
+        return (q @ a) / np.maximum(np.linalg.norm(q, axis=-1) * np.linalg.norm(a), 1e-9)
+    xs, a = _DIGIT_XS[_DIGIT_ZONE], template_profile[_DIGIT_ZONE]
+    best = -2.0, 1.0, 0.0
+    for s in _DIGIT_SCALES:
+        r = corr(np.interp(s * xs + _DIGIT_SHIFTS[:, None], _DIGIT_XS, frame_profile), a)
+        if r.max() > best[0]:
+            best = float(r.max()), float(s), float(_DIGIT_SHIFTS[r.argmax()])
+    _, s, dx = best
+    q = np.interp(s * xs + dx, _DIGIT_XS, frame_profile)
+    return s, float(min(corr(q[side], a[side]) for side in (xs < 0, xs > 0)))
+
+
+@functools.cache
+def _artwork():
+    """The artwork's `_patch` and its disk centre."""
+    g = _patch(cv2.imread(DEFAULT_TEMPLATE), None)
+    return g, disk_centre(g)
+
+
+def interior_fit(frame, H):
+    """`(A, correlation)`: the template -> template similarity about the ring
+    that `H @ A` corrects the silhouette fit `H` by (#302), and the digit
+    row's weaker half's correlation. A is None, keep `H`, when the disk is
+    no evidence (`disk_centre`) or that correlation is below
+    `INTERIOR_MIN_CORRELATION`.
+
+    A puts the artwork's disk centre on the frame's and scales by the digit
+    row, both axes alike: the row reads the horizontal scale only.
+    ponytail: one isotropic scale; read a vertical ruler too if dY ever
+    carries a scale error dX does not."""
+    g = _patch(frame, H)
+    c = disk_centre(g)
+    if c is None:
+        return None, None
+    art, art_c = _artwork()
+    frame_px = math.sqrt(abs(np.linalg.det(H[:2, :2])))   # frame px per template px, affine H
+    s, correlation = digit_scale(_digit_profile(g, c), _digit_profile(art, art_c, 1.0 / frame_px))
+    if correlation < INTERIOR_MIN_CORRELATION:
+        return None, correlation
+    A = np.array([[s, 0, c[0] - s * art_c[0]], [0, s, c[1] - s * art_c[1]], [0, 0, 1]])
+    return A, correlation
 
 
 def ecc_warp(ref, cur, motion, init, mask=None):
@@ -438,15 +580,21 @@ class BoardView:
         which is only correct for the Target the homography was fitted to.
         Measuring a Bullet Hole on Target 2 against Target 1's centre is a
         silent, large error, so callers pass the Target the Bullet Hole is on.
+
+        Target 1's is its registered ring; every other's is that moved by
+        its centroid's offset from Target 1's, as `sheet_bounds` places the
+        sheets. The silhouettes share the artwork and its edge bias, so the
+        offset cancels it; the silhouette's centroid itself does not (#302:
+        2-5.5 mm off the disk on CamB). Assumes Targets are not rotated
+        relative to one another, as the single-plane Board does.
         """
+        ring = self.template_to_board([RING_CENTRE_TPL])[0]
         if target_index is None or not self.targets:
-            return self.template_to_board([RING_CENTRE_TPL])[0]
-        moments = cv2.moments(self.targets[target_index])
-        if moments["m00"] == 0:
-            return self.template_to_board([RING_CENTRE_TPL])[0]
-        centroid = np.array([moments["m10"] / moments["m00"],
-                             moments["m01"] / moments["m00"]], np.float32)
-        return centroid + RING_OFFSET_TPL.astype(np.float32) * self.board_scale
+            return ring
+        polygons = self.targets[0], self.targets[target_index]
+        if not all(cv2.moments(t)["m00"] for t in polygons):
+            return ring
+        return ring + (_centroid(polygons[1]) - _centroid(polygons[0])).astype(np.float32)
 
     @property
     def match_radius(self):
@@ -518,6 +666,10 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
         return None, None
     # #296: affine, as the silhouette does not constrain a perspective term (#295).
     H, correlation = register(template_mask, frame_mask, contours[0], init_H, cv2.MOTION_AFFINE)
+    # #302: scale and centre from the printed interior, not the silhouette's edge.
+    A, _ = interior_fit(frame, H)
+    if A is not None:
+        H = (H @ A).astype(np.float32)
 
     if board_scale is None:
         board_scale = board_scale_for(contour_span(template_contour(template_mask)),

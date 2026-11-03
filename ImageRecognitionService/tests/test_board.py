@@ -222,9 +222,9 @@ def test_each_target_has_its_own_ring_centre():
     view = _view([_square(0, 0, 100), _square(500, 500, 100)])
     first, second = view.ring_centre(0), view.ring_centre(1)
     assert np.linalg.norm(second - first) > 400
-    # each sits near its own Target's centroid, offset by the artwork constant
-    assert first == pytest.approx(np.float32([50, 50]) + board.RING_OFFSET_TPL, abs=1.0)
-    assert second == pytest.approx(np.float32([550, 550]) + board.RING_OFFSET_TPL, abs=1.0)
+    # Target 1's is the registered ring, the other's moved by the centroids' offset (#302)
+    assert first == pytest.approx(board.RING_CENTRE_TPL, abs=1e-3)
+    assert second == pytest.approx(board.RING_CENTRE_TPL + 500, abs=1e-3)
 
 
 def test_same_bullet_hole_measures_differently_against_different_targets():
@@ -564,3 +564,87 @@ def test_the_baseline_fit_is_affine_even_on_a_perspective_view():
     view, correlation = board.build_view(frame, template_mask)
     assert correlation > 0.9
     assert view.H[2] == pytest.approx([0, 0, 1])
+
+
+@pytest.mark.parametrize("grow", [-4, 3])
+def test_board_space_is_fitted_on_the_interior_not_the_silhouette_edge(grow):
+    """#302: a silhouette grown (CamB's spill) or shrunk (CamA's gate) by a
+    few frame px pulls the silhouette fit's scale; the disk centre and the
+    digit row put the ring and the 6-ring's reach back where the artwork is."""
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    h, w = template.shape[:2]
+    P = np.float32([[0.5, 0.01, 300], [-0.01, 0.5, 200], [0, 0, 1]])
+    frame = cv2.warpPerspective(template, P, (w + 600, h + 400), borderValue=(128, 128, 128))
+    contours, _ = board.find_targets(frame)
+    fill = np.zeros(frame.shape[:2], np.uint8)
+    cv2.drawContours(fill, contours[:1], -1, 255, -1)
+    kernel = np.ones((2 * abs(grow) + 1,) * 2, np.uint8)
+    if grow > 0:   # green spills onto the paper round the silhouette
+        band = cv2.dilate(fill, kernel) & ~fill
+        frame[band > 0] = np.median(frame[fill > 0], axis=0)
+    else:          # the rim's hue falls past GREEN_HI, its luma kept
+        band = fill & ~cv2.erode(fill, kernel)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        hsv[..., 0][band > 0] = board.GREEN_HI[0] + 5
+        frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    contours, frame_mask = board.find_targets(frame)
+    points = board.RING_CENTRE_TPL + np.array([[0, 0], [-528, 0], [528, 0], [0, 528]])
+    silhouette, _ = board.register(template_mask, frame_mask, contours[0], None, cv2.MOTION_AFFINE)
+
+    view, _ = board.build_view(frame, template_mask)
+
+    def error(H):   # frame px from where the artwork's points are
+        return np.linalg.norm(board.apply(H, points) - board.apply(P, points), axis=1).max()
+    assert error(silhouette) > 2.0
+    assert error(view.H) < 0.75
+
+
+def test_a_low_digit_row_correlation_keeps_the_silhouette_fit(monkeypatch):
+    """#302: below `INTERIOR_MIN_CORRELATION` the digit scale is no evidence."""
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    h, w = template.shape[:2]
+    frame = cv2.warpPerspective(template, np.float32([[0.5, 0, 300], [0, 0.5, 200], [0, 0, 1]]),
+                                (w + 600, h + 400), borderValue=(128, 128, 128))
+    monkeypatch.setattr(board, "digit_scale", lambda frame_profile, template_profile:
+                        (0.9, board.INTERIOR_MIN_CORRELATION - 0.01))
+    contours, frame_mask = board.find_targets(frame)
+    silhouette, _ = board.register(template_mask, frame_mask, contours[0], None, cv2.MOTION_AFFINE)
+
+    assert board.interior_fit(frame, silhouette)[0] is None
+    assert board.build_view(frame, template_mask)[0].H == pytest.approx(silhouette)
+
+
+def _synthetic_board():
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    h, w = template.shape[:2]
+    P = np.float32([[0.5, 0.01, 300], [-0.01, 0.5, 200], [0, 0, 1]])
+    frame = cv2.warpPerspective(template, P, (w + 600, h + 400), borderValue=(128, 128, 128))
+    contours, frame_mask = board.find_targets(frame)
+    silhouette, _ = board.register(template_mask, frame_mask, contours[0], None, cv2.MOTION_AFFINE)
+    return frame, template_mask, P, silhouette
+
+
+def test_a_bullet_hole_on_the_disk_edge_does_not_move_the_ring():
+    """#302, `_103223`: a hole on the white disk's edge bit 2.65 mm off its
+    centre while every ray voted. The rays it spoils are dropped."""
+    frame, template_mask, P, _ = _synthetic_board()
+    edge = board.RING_CENTRE_TPL + board.RING_DIAMETER_TPL / 2 * np.array([np.cos(4.2), np.sin(4.2)])
+    cv2.circle(frame, tuple(int(v) for v in board.apply(P, [edge])[0]), 12, (40, 40, 40), -1)
+
+    view, _ = board.build_view(frame, template_mask)
+
+    ring = board.apply(view.H, [board.RING_CENTRE_TPL])[0]
+    assert np.linalg.norm(ring - board.apply(P, [board.RING_CENTRE_TPL])[0]) < 0.25   # frame px
+
+
+def test_half_a_digit_row_out_of_view_keeps_the_silhouette_fit():
+    """#302: the other half alone fits scales 2-4% wrong on real frames."""
+    frame, template_mask, P, silhouette = _synthetic_board()
+    c = board.RING_CENTRE_TPL
+    half = c + np.array([[140, -40], [560, -40], [560, 40], [140, 40]])
+    cv2.fillConvexPoly(frame, board.apply(P, half).astype(np.int32), (90, 110, 100))
+
+    assert board.interior_fit(frame, silhouette)[0] is None

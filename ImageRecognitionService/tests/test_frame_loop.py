@@ -781,6 +781,35 @@ def test_a_live_bullet_hole_is_printed_once_as_soon_as_its_verdict_is_fixed(
     assert [h["first_frame"] for h in run.holes] == [first]   # the report's is the one announced
 
 
+class _Finishing(_Watching):
+    """`_Watching`, asking its loop to `finish` at the second look that sees
+    the mark, its Candidate open, as an end asked for just after a shot does
+    (#228)."""
+    seen = 0
+
+    def predict(self, image, imgsz, conf, verbose=False, classes=None):
+        self.seen += self.on(int(image[0][0, 0, 0]))
+        if self.seen == 2:
+            self.loop.finish()
+        return super().predict(image, imgsz, conf)
+
+
+def test_a_finishing_run_looks_on_for_change_evidence_inside_the_window(monkeypatch, capsys):
+    """Persisted early, uncorroborated until frame 40, still inside its
+    window: the finishing Run looks on until then, so the mark is printed as
+    it was when it persisted only at the window's end (#228, ADR-0003)."""
+    loop = _live(monkeypatch, _FakeStream(interval=0.002))
+    loop.model = _Finishing(lambda i: i >= 6, stop_at=400)
+    loop.model.loop = loop
+    monkeypatch.setattr(nbh.board, "changed_regions",
+                        lambda a, b: np.full((64, 64), int(b[0, 0, 0]) >= 40, bool))
+    with nbh._stopped_by_signals(loop):
+        run = nbh.process(loop, None, stride=5)
+    lines, looked = _lines_after_looks(capsys.readouterr().out)
+    assert len(run.holes) == 1 and sum(l.startswith("[NEW]") for l in lines) == 1
+    assert looked[-1] < 6 + nbh.PERSIST_FRAMES
+
+
 def test_the_end_of_a_live_run_reports_what_was_announced_and_nothing_else(
         monkeypatch, capsys):
     """The report lists exactly the Bullet Holes announced: one it dropped

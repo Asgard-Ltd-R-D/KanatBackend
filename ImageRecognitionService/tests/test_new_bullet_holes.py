@@ -337,6 +337,13 @@ def test_a_marginal_candidate_persists_only_at_its_windows_last_look():
     assert _judged_at(persistence, _looked(range(10, 50, 5), {10, 25})) == [25]
 
 
+def test_a_candidate_on_three_of_five_persists_only_once_the_third_is_in():
+    """Stride 4, window [12, 32): Looks 12-28. Seen at 12, 20 and 28, 60%:
+    two of five are never enough, so nothing is certain before 28."""
+    persistence = Persistence(MATCH, window=20, stride=4)
+    assert _judged_at(persistence, _looked(range(12, 48, 4), {12, 20, 28})) == [28]
+
+
 def test_without_the_stride_every_frame_counts_as_due_and_end_judges():
     """Not told the stride, `Persistence` takes frames 26-29 as due Looks
     still to come, so it errs late: nothing is certain at the last Look, 25,
@@ -362,7 +369,8 @@ def test_rejection_still_waits_for_the_window_and_unjudged_counts_the_open():
     flicker, clean = np.float32([[100, 100]]), np.float32([[300, 300]])
     open_after = {}
     for index in range(10, 40):
-        pts = np.concatenate([flicker[:index == 10], clean[:index >= 12]])
+        pts = np.concatenate([flicker if index == 10 else flicker[:0],
+                              clean if index >= 12 else clean[:0]])
         if persistence.add(index, pts):
             assert index == 21
         open_after[index] = persistence.unjudged
@@ -373,8 +381,8 @@ def test_rejection_still_waits_for_the_window_and_unjudged_counts_the_open():
 
 def _end_of_window_verdict(outcomes, persist=0.5):
     """Today's rule, written out on its own: `outcomes` is the window's due
-    frames, each seen, empty, lost, unseen or dropped (a late drop, #84,
-    counting for nothing)."""
+    frames, each seen, empty, lost, unseen or late_drop (#84, counting for
+    nothing)."""
     span = sum(o in ("seen", "empty") for o in outcomes)
     tried = span + sum(o in ("lost", "unseen") for o in outcomes)
     hits = outcomes.count("seen")
@@ -386,22 +394,24 @@ def test_the_early_verdict_is_the_end_of_window_verdict():
     strides: what persists early is what the window's end persists, it is
     never reported twice, and `unjudged` is 1 exactly until it is decided."""
     rng = np.random.default_rng(278)
-    kinds = ("seen", "empty", "lost", "unseen", "dropped")
+    kinds = ("seen", "empty", "lost", "unseen", "late_drop")
     early = 0
     for _ in range(3000):
         stride, window = int(rng.integers(1, 8)), int(rng.integers(5, 51))
+        baseline_frames = int(rng.integers(0, 6))
         first = stride * int(rng.integers(2, 6))
         due = [i for i in range(first, first + window) if i % stride == 0]
         outcomes = ["seen"] + list(rng.choice(kinds, len(due) - 1,
                                               p=rng.dirichlet(np.ones(5))))
         unseen = []
-        persistence = Persistence(MATCH, window=window, unseen=unseen, stride=stride)
+        persistence = Persistence(MATCH, window=window, unseen=unseen, stride=stride,
+                                  baseline_frames=baseline_frames)
         reported = []
         for index, outcome in zip(due, outcomes):
             if outcome == "unseen":
                 unseen.append(index)   # the stream extends it before the next Look
                 continue
-            if outcome == "dropped":
+            if outcome == "late_drop":
                 continue
             pts = (None if outcome == "lost" else
                    _looked([index], {index} if outcome == "seen" else set())[0][1])

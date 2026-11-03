@@ -565,3 +565,52 @@ def test_the_baseline_fit_is_affine_even_on_a_perspective_view():
     assert correlation > 0.9
     assert view.H[2] == pytest.approx([0, 0, 1])
 
+
+@pytest.mark.parametrize("grow", [-4, 3])
+def test_board_space_is_fitted_on_the_interior_not_the_silhouette_edge(grow):
+    """#302: a silhouette grown (CamB's spill) or shrunk (CamA's gate) by a
+    few frame px pulls the silhouette fit's scale; the disk centre and the
+    digit row put the ring and the 6-ring's reach back where the artwork is."""
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    h, w = template.shape[:2]
+    P = np.float32([[0.5, 0.01, 300], [-0.01, 0.5, 200], [0, 0, 1]])
+    frame = cv2.warpPerspective(template, P, (w + 600, h + 400), borderValue=(128, 128, 128))
+    contours, _ = board.find_targets(frame)
+    fill = np.zeros(frame.shape[:2], np.uint8)
+    cv2.drawContours(fill, contours[:1], -1, 255, -1)
+    kernel = np.ones((2 * abs(grow) + 1,) * 2, np.uint8)
+    if grow > 0:   # green spills onto the paper round the silhouette
+        band = cv2.dilate(fill, kernel) & ~fill
+        frame[band > 0] = np.median(frame[fill > 0], axis=0)
+    else:          # the rim's hue falls past GREEN_HI, its luma kept
+        band = fill & ~cv2.erode(fill, kernel)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        hsv[..., 0][band > 0] = board.GREEN_HI[0] + 5
+        frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    contours, frame_mask = board.find_targets(frame)
+    points = board.RING_CENTRE_TPL + np.array([[0, 0], [-528, 0], [528, 0], [0, 528]])
+    silhouette, _ = board.register(template_mask, frame_mask, contours[0], None, cv2.MOTION_AFFINE)
+
+    view, _ = board.build_view(frame, template_mask)
+
+    def error(H):   # frame px from where the artwork's points are
+        return np.linalg.norm(board.apply(H, points) - board.apply(P, points), axis=1).max()
+    assert error(silhouette) > 2.0
+    assert error(view.H) < 0.75
+
+
+def test_a_low_digit_row_correlation_keeps_the_silhouette_fit(monkeypatch):
+    """#302: below `INTERIOR_MIN_CORRELATION` the digit scale is no evidence."""
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    h, w = template.shape[:2]
+    frame = cv2.warpPerspective(template, np.float32([[0.5, 0, 300], [0, 0.5, 200], [0, 0, 1]]),
+                                (w + 600, h + 400), borderValue=(128, 128, 128))
+    monkeypatch.setattr(board, "digit_scale", lambda frame_profile, template_profile:
+                        (0.9, board.INTERIOR_MIN_CORRELATION - 0.01))
+    contours, frame_mask = board.find_targets(frame)
+    silhouette, _ = board.register(template_mask, frame_mask, contours[0], None, cv2.MOTION_AFFINE)
+
+    assert board.interior_fit(frame, silhouette)[0] is None
+    assert board.build_view(frame, template_mask)[0].H == pytest.approx(silhouette)

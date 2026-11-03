@@ -46,15 +46,37 @@ but #1 85 → 92% (#2 unchanged at 85%). CamA #5 at stride 1 sits on the 50% thr
 under it. At stride 4, the live stride (ADR-0007), it is found on both sides.
 CamA #2 and #3 are detected and in scope at both strides.
 
-No run, on either side, re-anchors: the move cases are tracked without a lost
-frame. Re-anchoring is covered by the unit tests alone, and its seed
-(`reanchor_view`'s silhouette fit) stays a homography.
+No footage run, on either side, re-anchors: the move cases are tracked
+without a lost frame. So
+`test_a_jumped_board_re_anchors_into_the_affine_baseline_board_space` drives
+one through `Registration`, with nothing stubbed between it and the image: an
+affine Board space from the artwork seen in perspective, a Lost Look with no
+Board, then the Board jumped out of tracking's reach. Jumps of 150, 90 /
+300, −120 / −250, 200 px re-anchor on both sides at correlation 1.000, and
+put the ring and the sheet's corners within 0.07 px of the baseline view plus
+the jump (0.00 on main). The re-anchor seed stays a homography.
 
 `_101550` stays unusable: its correlation is 0.62 (0.64 on main), and the
 10-ring cannot be read on either fit.
 
 The printed 10-ring still reads 194–210 template px on CamB against CamA's
 231. The CamB scale bias is not the perspective term, and #297 owns it.
+
+## Known regressions and limits
+
+- **CamA #5 at stride 1** is missed (52% persistence on main, under 50% here).
+  Found at stride 4.
+- **`_101450` #1** moves 1.7 mm, the regression bench's one FAIL, and its
+  radial error grows 1.1 → 1.4 mm.
+- **An affine H0 cannot hold real perspective.** Tracking registers each frame
+  to the baseline frame (H = W · H0), so whatever H0 gets wrong stays wrong.
+  In the re-anchor test, the synthetic view has a real perspective, R/L 0.877,
+  within the range CamB's spurious term reached. There the affine baseline
+  places the ring 3.5 frame px off and the sheet's corners up to 17.8 px off,
+  where the homography's baseline was within 0.4. #295 found CamB's term
+  spurious: the affine fit draws the paper square. A camera that does view the
+  Board obliquely would need the homography back, or a fit that the
+  silhouette constrains.
 
 ## Considered
 

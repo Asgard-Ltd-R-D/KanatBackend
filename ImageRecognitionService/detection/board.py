@@ -314,9 +314,9 @@ def digit_scale(frame_profile, template_profile):
 
 
 @functools.cache
-def _artwork(path=DEFAULT_TEMPLATE):
+def _artwork():
     """The artwork's `_patch` and its disk centre."""
-    g = _patch(cv2.imread(path), None)
+    g = _patch(cv2.imread(DEFAULT_TEMPLATE), None)
     return g, disk_centre(g)
 
 
@@ -335,9 +335,7 @@ def interior_fit(frame, H):
     if c is None:
         return None, None
     art, art_c = _artwork()
-    p = apply(H, [RING_CENTRE_TPL, RING_CENTRE_TPL + [1, 0], RING_CENTRE_TPL + [0, 1]])
-    u, v = p[1] - p[0], p[2] - p[0]
-    frame_px = math.sqrt(abs(u[0] * v[1] - u[1] * v[0]))   # frame px per template px
+    frame_px = math.sqrt(abs(np.linalg.det(H[:2, :2])))   # frame px per template px, affine H
     s, correlation = digit_scale(_digit_profile(g, c), _digit_profile(art, art_c, 1.0 / frame_px))
     if correlation < INTERIOR_MIN_CORRELATION:
         return None, correlation
@@ -569,11 +567,10 @@ class BoardView:
         ring = self.template_to_board([RING_CENTRE_TPL])[0]
         if target_index is None or not self.targets:
             return ring
-        moments = [cv2.moments(self.targets[i]) for i in (0, target_index)]
-        if not all(m["m00"] for m in moments):
+        polygons = self.targets[0], self.targets[target_index]
+        if not all(cv2.moments(t)["m00"] for t in polygons):
             return ring
-        ref, own = (np.array([m["m10"], m["m01"]], np.float32) / m["m00"] for m in moments)
-        return ring + own - ref
+        return ring + (_centroid(polygons[1]) - _centroid(polygons[0])).astype(np.float32)
 
     @property
     def match_radius(self):

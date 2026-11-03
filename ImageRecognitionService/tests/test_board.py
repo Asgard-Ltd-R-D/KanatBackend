@@ -550,3 +550,17 @@ def test_a_fit_on_a_frame_with_no_target_visible_is_grossly_wrong(monkeypatch):
     the check calls the fit wrong, so the Look is Lost."""
     monkeypatch.setattr(board, "find_targets", lambda frame: ([], None))
     assert board.silhouette_disagreement(None, None, _view([_square(0, 0, 40)])) == math.inf
+
+
+def test_the_baseline_fit_is_affine_even_on_a_perspective_view():
+    """#296: the silhouette does not constrain a perspective term (#295), so
+    `build_view` fits the baseline as an affine: no perspective row."""
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    h, w = template.shape[:2]
+    P = np.float32([[0.5, 0.02, 300], [0.01, 0.5, 200], [4e-5, 0, 1]])
+    frame = cv2.warpPerspective(template, P, (w + 600, h + 400), borderValue=(128, 128, 128))
+
+    view, correlation = board.build_view(frame, template_mask)
+    assert correlation > 0.9
+    assert view.H[2] == pytest.approx([0, 0, 1])

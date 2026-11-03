@@ -1508,6 +1508,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `BAND_CONTEXT_PX` | 32 | `detection/new_bullet_holes.py` | Margin-canvas px each exposed-Board band carries for context; one stride-32 cell, not swept (#46) |
 | `GREEN_LO` / `GREEN_HI` | — | `detection/board.py` | One artwork, one lighting condition |
 | `MIN_TARGET_AREA_PX` | 5000 | `detection/board.py` | May reject distant Targets |
+| `INTERIOR_MIN_CORRELATION` | 0.5 | `detection/board.py` | Below it the baseline keeps the silhouette fit's scale and centre (#302). #297 read 0.69–0.91 on the five truth baselines, all within 1.5% of the print; not swept |
 
 `MATCH_TOLERANCE_TPL` (40 px, `evaluate.py`) is provisional too — it is the
 *scoring* tolerance, not a pipeline threshold. Matches land at 2–11 template
@@ -1516,7 +1517,7 @@ pair, whose one false positive is 255 px out — supported there, weakly, becaus
 lands near 40. Encouraging, and not validation across a dataset.
 
 Measured artwork landmarks — `RING_CENTRE_TPL`, `RING_DIAMETER_TPL`,
-`RING_OFFSET_TPL`, `RING_RADII_TPL` — are *not* tunables. They are readings off
+`RING_RADII_TPL` — are *not* tunables. They are readings off
 `data/targets/kanat_silhouette_a4.png` and only change if the artwork does.
 `tools/ring_landmarks.py` re-reads the diameter and ring radii, and a test holds
 the constants to it. #70 corrected both: the old ones had moved every scoring

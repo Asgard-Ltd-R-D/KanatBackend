@@ -238,10 +238,11 @@ _DIGIT_ZONE = (np.abs(_DIGIT_XS) > 140) & (np.abs(_DIGIT_XS) < 520)  # digits on
 _DIGIT_BAND = np.arange(-16, 17, 2.0)            # template px across it
 _DIGIT_SCALES = np.arange(0.80, 1.15, 0.0025)
 _DIGIT_SHIFTS = np.arange(-24, 24.5, 1.0)
-# Below this digit-row correlation the plain silhouette fit stands. #297 read
-# CamA 0.905, CamB 0.83-0.85, 0.76 on `_103223` and 0.69 on `_101450`, all
-# within 1.5% of the print. Not swept.
-INTERIOR_MIN_CORRELATION = 0.5   # PROVISIONAL
+# Below this correlation on either half of the digit row the plain
+# silhouette fit stands (#302). The five truth baselines read 0.68-0.93 a half;
+# a half covered by an occluder 0.00-0.52, where the other half alone fits
+# scales 2-4% wrong. Set between the two, not swept.
+INTERIOR_MIN_CORRELATION = 0.6   # PROVISIONAL
 
 
 def _patch(image, H):
@@ -318,17 +319,21 @@ def _digit_profile(g, c, blur=0.0):
 def digit_scale(frame_profile, template_profile):
     """`(scale, correlation)`: the scale s about the row's centre, with the
     best shift, under which the frame's profile at s x reads the template's
-    at x, by grid search."""
-    a = template_profile[_DIGIT_ZONE]
-    a = (a - a.mean()) / np.linalg.norm(a - a.mean())
-    best = -2.0, 1.0
+    at x, by grid search. The correlation is the weaker half's at that fit
+    (6 7 8 9 left, 9 8 7 6 right): a half hidden behind something reads
+    0.0-0.52, and the other half alone can fit a wrong scale (#302)."""
+    def corr(q, a):
+        q, a = q - q.mean(axis=-1, keepdims=True), a - a.mean()
+        return (q @ a) / np.maximum(np.linalg.norm(q, axis=-1) * np.linalg.norm(a), 1e-9)
+    xs, a = _DIGIT_XS[_DIGIT_ZONE], template_profile[_DIGIT_ZONE]
+    best = -2.0, 1.0, 0.0
     for s in _DIGIT_SCALES:
-        q = np.interp(s * _DIGIT_XS[_DIGIT_ZONE] + _DIGIT_SHIFTS[:, None], _DIGIT_XS, frame_profile)
-        q = q - q.mean(axis=1, keepdims=True)
-        r = (q @ a) / np.maximum(np.linalg.norm(q, axis=1), 1e-9)
+        r = corr(np.interp(s * xs + _DIGIT_SHIFTS[:, None], _DIGIT_XS, frame_profile), a)
         if r.max() > best[0]:
-            best = float(r.max()), float(s)
-    return best[1], best[0]
+            best = float(r.max()), float(s), float(_DIGIT_SHIFTS[r.argmax()])
+    _, s, dx = best
+    q = np.interp(s * xs + dx, _DIGIT_XS, frame_profile)
+    return s, float(min(corr(q[side], a[side]) for side in (xs < 0, xs > 0)))
 
 
 @functools.cache
@@ -341,8 +346,8 @@ def _artwork():
 def interior_fit(frame, H):
     """`(A, correlation)`: the template -> template similarity about the ring
     that `H @ A` corrects the silhouette fit `H` by (#302), and the digit
-    row's correlation. A is None, keep `H`, when the disk is
-    no evidence (`disk_centre`) or the correlation is below
+    row's weaker half's correlation. A is None, keep `H`, when the disk is
+    no evidence (`disk_centre`) or that correlation is below
     `INTERIOR_MIN_CORRELATION`.
 
     A puts the artwork's disk centre on the frame's and scales by the digit

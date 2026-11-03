@@ -639,3 +639,12 @@ def test_a_bullet_hole_on_the_disk_edge_does_not_move_the_ring():
     ring = board.apply(view.H, [board.RING_CENTRE_TPL])[0]
     assert np.linalg.norm(ring - board.apply(P, [board.RING_CENTRE_TPL])[0]) < 0.25   # frame px
 
+
+def test_half_a_digit_row_out_of_view_keeps_the_silhouette_fit():
+    """#302: the other half alone fits scales 2-4% wrong on real frames."""
+    frame, template_mask, P, silhouette = _synthetic_board()
+    c = board.RING_CENTRE_TPL
+    half = c + np.array([[140, -40], [560, -40], [560, 40], [140, 40]])
+    cv2.fillConvexPoly(frame, board.apply(P, half).astype(np.int32), (90, 110, 100))
+
+    assert board.interior_fit(frame, silhouette)[0] is None

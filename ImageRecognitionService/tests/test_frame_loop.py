@@ -765,17 +765,18 @@ def _lines_after_looks(out):
     return lines, [int(l.split()[1]) for l in lines if l.startswith("[LOOK]")]
 
 
-def test_a_live_bullet_hole_is_printed_once_as_soon_as_its_window_elapses(
+def test_a_live_bullet_hole_is_printed_once_as_soon_as_its_verdict_is_fixed(
         monkeypatch, capsys):
-    """Printed at the first look past its persistence window, with the wall
-    clock it was first seen at, and never again (#83)."""
+    """Seen on every look, it is printed before its persistence window ends
+    (ADR-0003, amended 2026-10-28), with the wall clock it was first seen at,
+    and never again (#83)."""
     run = _live_run(monkeypatch, _Watching(lambda i: i >= 6, stop_at=120))
     lines, looked = _lines_after_looks(capsys.readouterr().out)
     first = next(i for i in looked if i >= 6)
-    elapsed = next(i for i in looked if i + 1 >= first + nbh.PERSIST_FRAMES)
     new = [n for n, line in enumerate(lines) if line.startswith("[NEW]")]
     assert len(new) == 1
-    assert lines[new[0] - 1] == f"[LOOK] {elapsed}"
+    printed_at = int(lines[new[0] - 1].split()[1])
+    assert first < printed_at and printed_at + 1 < first + nbh.PERSIST_FRAMES
     assert re.search(r"t=\d\d:\d\d:\d\d\.\d\d  MISS", lines[new[0]])
     assert [h["first_frame"] for h in run.holes] == [first]   # the report's is the one announced
 

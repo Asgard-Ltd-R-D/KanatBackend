@@ -221,7 +221,7 @@ def register(template_mask, frame_mask, reference_contour, init=None,
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
     correlation, H = cv2.findTransformECC(
         _blurred(template_mask), _blurred(frame_mask),
-        (init / init[2, 2])[:rows].astype(np.float32), motion, criteria, None, 5)
+        (init if rows == 3 else init[:2] / init[2, 2]).astype(np.float32), motion, criteria, None, 5)
     return (H if rows == 3 else np.vstack([H, [0, 0, 1]]).astype(np.float32)), correlation
 
 

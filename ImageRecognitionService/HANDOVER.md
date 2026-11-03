@@ -287,6 +287,8 @@ instead leaves a fixed edge that pulls W towards no motion. ECC reads that mask
 in the current frame's coordinates, so the region is carried there by the
 seed. Left in the baseline's, the background the Board slid off votes: on a
 40 px synthetic shift that cost 0.5 px and correlation 0.66 against 1.0.
+H0 itself is an affine since #296 (ADR-0012): the silhouette carried a spurious
+perspective term on CamB.
 
 **What the runtime sees.** `registration_reach.py` now measures `board.track_view`
 itself (`--registration runtime`), and keeps the old chain as `silhouette`.

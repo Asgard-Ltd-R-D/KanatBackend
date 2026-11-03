@@ -4,6 +4,7 @@ registered one by one, as the loop does past the baseline."""
 import types
 
 import numpy as np
+import pytest
 
 from detection import new_bullet_holes as nbh
 
@@ -214,3 +215,32 @@ def test_a_check_with_no_verdict_keeps_the_frame(monkeypatch, capsys):
     assert None not in _register(reg, 3)
     reg.report()
     assert "0 of 3 converged fit(s) checked" in capsys.readouterr().out
+
+
+def test_a_jumped_board_re_anchors_into_the_affine_baseline_board_space(monkeypatch):
+    """#296: no stub between the Registration and the image. The Board, seen in
+    perspective, builds an affine Board space; a Look with no Board is Lost; the
+    next, the Board jumped 150, 90 px, out of tracking's reach, re-anchors into
+    the same Board space, on the Board where it now is."""
+    import cv2
+    monkeypatch.setattr(nbh, "REANCHOR_AFTER_LOST", 1)
+    template = cv2.imread(nbh.board.DEFAULT_TEMPLATE)
+    _, template_mask = nbh.board.find_targets(template, min_area=1)
+    h, w = template.shape[:2]
+    P = np.float64([[0.5, 0.02, 300], [0.01, 0.5, 200], [4e-5, 0, 1]])
+    size = (w + 600, h + 400)
+    look = lambda M: cv2.warpPerspective(template, M, size, borderValue=(128, 128, 128))
+    base = look(P)
+    view, _ = nbh.board.build_view(base, template_mask)
+    reg = nbh.Registration(view, base, template_mask, when=str)
+
+    assert reg.register(np.full_like(base, 128), 1) is None          # Lost
+    jump = np.float64([[1, 0, 150], [0, 1, 90], [0, 0, 1]])
+    moved = reg.register(look(jump @ P), 2)
+
+    assert (reg.reanchors, reg._reanchored) == (1, 1)
+    assert moved.tpl_to_board is view.tpl_to_board and moved.targets is view.targets
+    # The ring and the calibrated sheet's corners (#271), template px.
+    points = [nbh.board.RING_CENTRE_TPL, (-145, -9), (1548, -9), (1548, 1180), (-145, 1180)]
+    where = nbh.board.apply(view.H, points) + [150, 90]
+    assert nbh.board.apply(moved.H, points) == pytest.approx(where, abs=0.5)

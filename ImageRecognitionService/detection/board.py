@@ -11,7 +11,8 @@ right frame of reference:
   millimetres once the print scale is known — see `to_millimetres`.
 
 **One homography for the whole Board**, with Targets located inside it: the
-baseline frame's is fitted to the reference Target's silhouette, and every later
+baseline frame's is fitted to the reference Target's silhouette as an affine
+(ADR-0012: the silhouette does not constrain perspective), and every later
 frame is registered to the baseline frame on the Board's own texture (#50). This
 assumes the Board is a single plane. The sheets are stapled separately and
 visibly curl, so the assumption is known to be imperfect; `residuals` exists to
@@ -201,8 +202,10 @@ def box_seed(source_contour, reference_contour):
     return cv2.getPerspectiveTransform(corners(source_contour), corners(reference_contour))
 
 
-def register(template_mask, frame_mask, reference_contour, init=None):
-    """Homography mapping template coordinates onto the frame.
+def register(template_mask, frame_mask, reference_contour, init=None,
+             motion=cv2.MOTION_HOMOGRAPHY):
+    """Homography mapping template coordinates onto the frame; with
+    `motion=cv2.MOTION_AFFINE` its perspective row is fixed at (0, 0, 1).
 
     Bounding-box correspondence for an initial guess, then ECC refinement on the
     blurred masks. Feature matching (SIFT/ORB) is not used and does not work
@@ -214,11 +217,12 @@ def register(template_mask, frame_mask, reference_contour, init=None):
     """
     if init is None:
         init = box_seed(template_contour(template_mask), reference_contour)
+    rows = 3 if motion == cv2.MOTION_HOMOGRAPHY else 2
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
     correlation, H = cv2.findTransformECC(
         _blurred(template_mask), _blurred(frame_mask),
-        init.astype(np.float32), cv2.MOTION_HOMOGRAPHY, criteria, None, 5)
-    return H, correlation
+        (init if rows == 3 else init[:2] / init[2, 2]).astype(np.float32), motion, criteria, None, 5)
+    return (H if rows == 3 else np.vstack([H, [0, 0, 1]]).astype(np.float32)), correlation
 
 
 def ecc_warp(ref, cur, motion, init, mask=None):
@@ -512,7 +516,8 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     contours, frame_mask = find_targets(frame)
     if not contours:
         return None, None
-    H, correlation = register(template_mask, frame_mask, contours[0], init_H)
+    # #296: affine, as the silhouette does not constrain a perspective term (#295).
+    H, correlation = register(template_mask, frame_mask, contours[0], init_H, cv2.MOTION_AFFINE)
 
     if board_scale is None:
         board_scale = board_scale_for(contour_span(template_contour(template_mask)),

@@ -222,9 +222,9 @@ def test_each_target_has_its_own_ring_centre():
     view = _view([_square(0, 0, 100), _square(500, 500, 100)])
     first, second = view.ring_centre(0), view.ring_centre(1)
     assert np.linalg.norm(second - first) > 400
-    # each sits near its own Target's centroid, offset by the artwork constant
-    assert first == pytest.approx(np.float32([50, 50]) + board.RING_OFFSET_TPL, abs=1.0)
-    assert second == pytest.approx(np.float32([550, 550]) + board.RING_OFFSET_TPL, abs=1.0)
+    # Target 1's is the registered ring, the other's moved by the centroids' offset (#302)
+    assert first == pytest.approx(board.RING_CENTRE_TPL, abs=1e-3)
+    assert second == pytest.approx(board.RING_CENTRE_TPL + 500, abs=1e-3)
 
 
 def test_same_bullet_hole_measures_differently_against_different_targets():
@@ -564,3 +564,4 @@ def test_the_baseline_fit_is_affine_even_on_a_perspective_view():
     view, correlation = board.build_view(frame, template_mask)
     assert correlation > 0.9
     assert view.H[2] == pytest.approx([0, 0, 1])
+

@@ -40,13 +40,6 @@ RING_CENTRE_TPL = np.array([695.4, 639.2])  # white 10-ring centre, template px
 # taller than wide (221.1 x 224.6). 227 until #70, which was 1-3 px outside it.
 RING_DIAMETER_TPL = 223.0
 
-# Ring centre relative to the silhouette's centroid. Every Target on a Board is
-# the same artwork, but only the reference Target is registered against the
-# template; this offset places the ring centre on the others from their own
-# outline, without a second registration. Assumes Targets are not rotated
-# relative to one another — consistent with the single-plane Board.
-RING_OFFSET_TPL = RING_CENTRE_TPL - np.array([696.8, 648.9])
-
 # Outer radius of each scoring ring, template px. The 10-ring ends at the white
 # disk's edge. Each ring after it ends at the centre of the white line, the
 # median over 720 rays from the ring centre (`tools/ring_landmarks.py`, #70).
@@ -438,15 +431,22 @@ class BoardView:
         which is only correct for the Target the homography was fitted to.
         Measuring a Bullet Hole on Target 2 against Target 1's centre is a
         silent, large error, so callers pass the Target the Bullet Hole is on.
+
+        Target 1's is its registered ring; every other's is that moved by
+        its centroid's offset from Target 1's, as `sheet_bounds` places the
+        sheets. The silhouettes share the artwork and its edge bias, so the
+        offset cancels it; the silhouette's centroid itself does not (#302:
+        2-5.5 mm off the disk on CamB). Assumes Targets are not rotated
+        relative to one another, as the single-plane Board does.
         """
+        ring = self.template_to_board([RING_CENTRE_TPL])[0]
         if target_index is None or not self.targets:
-            return self.template_to_board([RING_CENTRE_TPL])[0]
-        moments = cv2.moments(self.targets[target_index])
-        if moments["m00"] == 0:
-            return self.template_to_board([RING_CENTRE_TPL])[0]
-        centroid = np.array([moments["m10"] / moments["m00"],
-                             moments["m01"] / moments["m00"]], np.float32)
-        return centroid + RING_OFFSET_TPL.astype(np.float32) * self.board_scale
+            return ring
+        moments = [cv2.moments(self.targets[i]) for i in (0, target_index)]
+        if not all(m["m00"] for m in moments):
+            return ring
+        ref, own = (np.array([m["m10"], m["m01"]], np.float32) / m["m00"] for m in moments)
+        return ring + own - ref
 
     @property
     def match_radius(self):

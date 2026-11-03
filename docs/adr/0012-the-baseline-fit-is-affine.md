@@ -66,6 +66,9 @@ The printed 10-ring still reads 194–210 template px on CamB against CamA's
 
 - **CamA #5 at stride 1** is missed (52% persistence on main, under 50% here).
   Found at stride 4.
+- **CamA #1 and #5 are reported 0.32 s later at stride 4** (#1 2.08 → 2.40 s,
+  #5 6.04 → 6.36 s; #1 +0.08 s at stride 1), from the same persistence shift.
+  CamB's hit-to-report is unchanged.
 - **`_101450` #1** moves 1.7 mm, the regression bench's one FAIL, and its
   radial error grows 1.1 → 1.4 mm.
 - **An affine H0 cannot hold real perspective.** Tracking registers each frame

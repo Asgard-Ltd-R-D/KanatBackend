@@ -11,7 +11,8 @@ right frame of reference:
   millimetres once the print scale is known — see `to_millimetres`.
 
 **One homography for the whole Board**, with Targets located inside it: the
-baseline frame's is fitted to the reference Target's silhouette, and every later
+baseline frame's is fitted to the reference Target's silhouette as an affine
+(ADR-0012: the silhouette does not constrain perspective), and every later
 frame is registered to the baseline frame on the Board's own texture (#50). This
 assumes the Board is a single plane. The sheets are stapled separately and
 visibly curl, so the assumption is known to be imperfect; `residuals` exists to

@@ -315,40 +315,43 @@ def main():
     session = _api("POST", "/sessions", {"name": f"#279 {os.path.basename(a.out)}"},
                    base=a.backend_url)["id"]
     stop, delivered, discarded = threading.Event(), {}, {}
-    threading.Thread(target=_subscribe, args=(a.backend_url, session, delivered, stop),
-                     daemon=True).start()
-    threading.Thread(target=_discards, args=(stop, discarded), daemon=True).start()
+    pacer = tee = None
+    try:   # from here on, a failure still ends the Session and the replay
+        threading.Thread(target=_subscribe, args=(a.backend_url, session, delivered, stop),
+                         daemon=True).start()
+        threading.Thread(target=_discards, args=(stop, discarded), daemon=True).start()
 
-    # Warmed before the replay starts (see the module's doc)
-    model = nbh.load_model(nbh.DEFAULT_MODEL)
-    for _ in range(3):
-        nbh._detect(model, [np.zeros((640, 640, 3), np.uint8)], 640, nbh.DEFAULT_CONFIDENCE, a.device)
+        # Warmed before the replay starts (see the module's doc)
+        model = nbh.load_model(nbh.DEFAULT_MODEL)
+        for _ in range(3):
+            nbh._detect(model, [np.zeros((640, 640, 3), np.uint8)], 640, nbh.DEFAULT_CONFIDENCE, a.device)
 
-    sent_path = os.path.join(a.out, "sent.csv")
-    pacer = subprocess.Popen([sys.executable, "-c", "import sys; from tools.end_to_end import _pace; "
-                              "_pace(sys.argv[1], *map(float, sys.argv[2:4]), *sys.argv[4:])",
-                              a.video, str(a.start), str(a.end), a.rtsp, sent_path])
-    while not _api("GET", f"/paths/get/{MTX_PATH}").get("ready"):
-        time.sleep(0.1)
+        sent_path = os.path.join(a.out, "sent.csv")
+        pacer = subprocess.Popen([sys.executable, "-c", "import sys; from tools.end_to_end import _pace; "
+                                  "_pace(sys.argv[1], *map(float, sys.argv[2:4]), *sys.argv[4:])",
+                                  a.video, str(a.start), str(a.end), a.rtsp, sent_path])
+        while not _api("GET", f"/paths/get/{MTX_PATH}").get("ready"):
+            if pacer.poll() is not None:
+                raise RuntimeError(f"the replay exited (code {pacer.returncode}) before MediaMTX had it")
+            time.sleep(0.1)
 
-    taken = []
+        taken = []
 
-    class Traced(nbh.Stream):
-        def read(self):
-            frame = super().read()
-            if frame is not None:
-                taken.append(Taken(frame.index, read_stamp(frame.image), time.time(), frame.wait))
-            return frame
+        class Traced(nbh.Stream):
+            def read(self):
+                frame = super().read()
+                if frame is not None:
+                    taken.append(Taken(frame.index, read_stamp(frame.image), time.time(), frame.wait))
+                return frame
 
-    def opener(video, start, ref_time):
-        source, frame = Traced.open(video, start, ref_time)
-        taken.append(Taken(0, read_stamp(frame), time.time(), 0.0))
-        return source, frame
+        def opener(video, start, ref_time):
+            source, frame = Traced.open(video, start, ref_time)
+            taken.append(Taken(0, read_stamp(frame), time.time(), 0.0))
+            return source, frame
 
-    confirmed = []   # (first frame, wall clock, first_seen_at key)
+        confirmed = []   # (first frame, wall clock, first_seen_at key)
 
-    tee = _Tee()
-    try:
+        tee = _Tee()
         with webapp.WebAppPublisher(session, a.backend_url) as publisher:
             def publish(value):
                 confirmed.append((value.first_frame, time.time(),
@@ -363,11 +366,15 @@ def main():
             source = loop.source
         time.sleep(2)   # the last SSE events
     finally:
-        tee.close()
+        if tee:
+            tee.close()
         stop.set()
+        if pacer and pacer.poll() is None:   # a failure: the replay is still publishing
+            pacer.terminate()   # its ffmpeg sees its stdin close and exits
+        if pacer:
+            pacer.wait()
         # One active Session at a time: the next run needs this one ended
         _api("PATCH", f"/sessions/{session}", {"status": "completed"}, base=a.backend_url)
-    pacer.wait()
 
     with open(sent_path) as f:
         sent = {int(r["frame"]): float(r["sent"]) for r in csv.DictReader(f)}

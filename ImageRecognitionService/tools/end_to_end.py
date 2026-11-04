@@ -248,7 +248,9 @@ def _subscribe(backend, session_id, delivered, stop, subscribed):
                 event = json.loads(line[5:])
                 if event.get("type") == "bullet_created":
                     b = event["bullet"]
-                    delivered[_key(b["first_seen_at"], b["position_x"], b["position_y"])] = time.time()
+                    # The first: a retried POST's event is the same Bullet Hole again
+                    delivered.setdefault(_key(b["first_seen_at"], b["position_x"], b["position_y"]),
+                                         time.time())
 
 
 def _key(at, x, y):

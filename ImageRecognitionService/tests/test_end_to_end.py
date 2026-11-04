@@ -59,3 +59,17 @@ def test_two_holes_first_seen_on_one_frame_keep_their_own_post_and_sse_times():
     delivered = [e2e._key("2026-11-04T10:00:00.523000Z", 100.4, 200.6),   # position_x/_y
                  e2e._key("2026-11-04T10:00:00.523000Z", 160.0, 200.0)]
     assert published == logged == delivered and published[0] != published[1]
+
+
+def test_a_retried_posts_second_sse_event_keeps_the_first_delivery_time(monkeypatch):
+    import contextlib
+    import json
+    import threading
+    bullet = {"first_seen_at": "2026-11-04T10:00:00.523000Z", "position_x": 100.4, "position_y": 200.6}
+    line = b"data: " + json.dumps({"type": "bullet_created", "bullet": bullet}).encode() + b"\n"
+    monkeypatch.setattr(e2e, "urlopen", lambda *a, **k: contextlib.nullcontext([line, line]))
+    clock = iter([1.0, 2.0])
+    monkeypatch.setattr(e2e.time, "time", lambda: next(clock))
+    delivered = {}
+    e2e._subscribe("http://backend", "session", delivered, threading.Event(), threading.Event())
+    assert delivered == {e2e._key(bullet["first_seen_at"], 100.4, 200.6): 1.0}

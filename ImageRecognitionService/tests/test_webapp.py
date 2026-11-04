@@ -84,6 +84,7 @@ def test_a_5xx_or_a_network_error_is_retried_with_the_same_key(monkeypatch, capl
     assert ("INFO", f"Bullet Hole first seen {AT} posted: HTTP 201", 3) in logged
     posted = next(r for r in caplog.records if getattr(r, "status", None) == 201)
     assert (posted.session_id, posted.target_index) == ("session", _value().target)
+    assert posted.position == {"x": _value().template_xy[0], "y": _value().template_xy[1]}
 
 
 def test_a_4xx_is_dropped_without_a_retry(monkeypatch, caplog):

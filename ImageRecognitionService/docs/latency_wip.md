@@ -388,6 +388,194 @@ differences are reported here, not tuned away.
   Target 1's Group, live MPI is −10.2/−2.1 mm, CEP 39.2 mm and Extreme Spread 114.2 mm. The file run gives −9.8/−2.1,
   38.7 and 113.5.
 
+## End to end on a MediaMTX replay (#279), measured 2026-11-04: PROVISIONAL (Mac)
+
+**For SOW 2.3.4. Every figure here is provisional, from the development Mac.** The system will run on a CUDA
+machine whose specification is not known yet. These are not production figures, and nothing is compared with a bar.
+
+**Setup.** The branch `feature/279-end-to-end`, #279's commits on `main` at `cea6288`. Host
+`Ronens-MacBook-Pro.local`, Apple M1 Pro, macOS 27.2, on mains power, under `caffeinate -i`, one run at a time,
+no sleep in `pmset -g log`. Python 3.14.8, `opencv-python` 4.10.0.84 (its bundled FFmpeg decodes), ultralytics
+8.4.126, torch 2.13.0, numpy 2.5.2, weights `kanat_yolo26n_v1`, the detector on MPS. Stride 4 (`LIVE_STRIDE`),
+early verdicts on (#278). MediaMTX v1.21.1 from `VideoService/` with `mediamtx.yml` unchanged. The WebApp backend runs
+locally on a scratch Postgres. The publisher is ffmpeg 9.0.2 with libx264.
+
+**How it is measured: `tools/end_to_end.py`.** One command replays a recording into MediaMTX and watches it live as
+the Detection Service would. It posts into a WebApp Session it creates and listens on that Session's SSE stream, as the
+frontend does:
+
+```bash
+caffeinate -i .venv/bin/python -m tools.end_to_end data/videos/CamB_20260915_102250.mkv \
+    --start 0 --end 46 --mm-per-px 0.1763 --device mps --out runs/279/<name>
+# the reader before #279: OpenCV's default options, FFmpeg's choice of decoder threads
+    ... --capture-options 'rtsp_transport;tcp' --decoder-threads 0
+```
+
+- **The replay.** The tool paces the recording itself, at 25 fps. Before encoding, it stamps each frame's number
+  into a 16-bit strip at the top right and burns in the wall clock the frame is sent at, so a human can read it off
+  the WebApp's player. ffmpeg encodes the frame as the camera is set (H.264 Main, GOP 25, no B-frames, 8 Mbit/s,
+  `-preset medium -tune zerolatency`) and publishes it. A frame's *sent* time is when it was handed to the encoder,
+  so encoding is inside "sent to decoded", as a camera's encoder would be. The send interval was 40.0 ms at P50 and
+  45 ms at most.
+- **The reader** is the pipeline's own, through the Run's `opener` seam. It reads the stamp on every frame taken, so
+  each frame's sent time is known exactly, not inferred from the stream's timestamps. No stamp failed to read and
+  none disagreed with its index, except in the UDP run (below).
+- **Two Bullet Holes first seen on one frame** (CamB frame 740 in V1, V4 and F, frame 692 in B) were joined to their
+  POST and SSE times by first_seen_at alone, until 6f5312b. The earlier one was credited with the later one's times,
+  so its "posted" and "delivered" read high by under 19 ms, the time from Confirmed to the later delivery. That is one
+  sample in each of those runs; it moves no conclusion here.
+- **The model is loaded and warmed before the replay starts.** A Detection Service's model is warm after its first
+  Run. A cold first call on MPS takes seconds. Inside the baseline it held the reader 6 s behind, MediaMTX discarded
+  2,559 RTP packets, and 81 frames were lost upstream (#117), in the first trial run. **A Detection Service's first
+  Run after it starts pays this today.**
+- **The stamp does not change what is found.** A file run of a stamped copy of `_102250`, at stride 4 from 1.0 s,
+  reports the same Bullet Holes as the unstamped H.264 copy: the Miss at 1.64 s and the two Hits at 29.00 and 30.60 s.
+
+**Stages.** Per frame: *sent to decoded* (the stamp's send time to the reader having it decoded), Frame Wait and Look
+Time. Per Bullet Hole:
+- *Persistence* runs from its first-seen Look's end to its being Confirmed and published.
+- *Posted* runs from Confirmed to the POST being answered.
+- *Delivered by SSE* runs from Confirmed to the SSE event's arrival. The backend publishes the event before it answers
+  the POST, so the frontend can hear of a Bullet Hole first.
+- *Hit to delivered* runs from the send time of the truth arrival frame (`board.arrival.txt`, #273) to the SSE event.
+  Each reported hole is paired with the latest arrival at or before its first-seen frame. That pairing is by time,
+  not by position. The tool does not compute this row: it was paired from its `frames.csv`, `holes.csv` and `sent.csv` by a
+  scratch script, not committed.
+
+### The end-to-end table
+
+Two runs pooled per row: CamB `_102250` 0–46 s (the replay joins at frame 25), and CamA `_141546` 12–30 s (it joins at
+13.0 s). The reader is *before* #279 or as *adopted* by it (below). n, then P50 / P95 / max in ms.
+
+| Stage | CamB before | CamB adopted | CamA before | CamA adopted |
+|---|---|---|---|---|
+| sent to decoded | 540: 338 / 343 / 1732 | 556: **64 / 71** / 708 | 176: 336 / 348 / 3393 | 199: **59 / 72** / 760 |
+| Frame Wait | 540: 0 / 0 / 94 | 556: 0 / 0 / 71 | 176: 0 / 8 / 235 | 199: 0 / 14 / 216 |
+| Look Time | 540: 51 / 56 / 150 | 556: 52 / 59 / 128 | 176: 133 / 153 / 214 | 199: 130 / 159 / 295 |
+| Persistence | 7: 960 / 964 / 964 | 7: 960 / 1012 / 1035 | 7: 1419 / 1822 / 1908 | 6: 960 / 1563 / 1599 |
+| posted | 7: 8 / 19 / 19 | 7: 18 / 28 / 31 | 7: 8 / 12 / 14 | 6: 8 / 12 / 13 |
+| delivered by SSE | 7: 8 / 18 / 18 | 7: 17 / 27 / 30 | 7: 7 / 11 / 13 | 6: 7 / 12 / 13 |
+| first-seen frame sent to delivered | 7: 1359 / 1370 / 1370 | 7: **1095 / 1160** / 1187 | 7: 1901 / 2311 / 2402 | 6: **1159 / 1768** / 1806 |
+| **Hit to delivered** | 7: 1370 / 2473 / 2474 | 7: **1095 / 1160 / 1187** | 7: 1995 / 2395 / 2435 | 6: **1273 / 1844 / 1880** |
+
+What the table shows:
+- **The reader's lag was the largest term after Persistence, and most of it was decoding.** Before #279, every frame
+  reached the loop ~335 ms after it was sent. FFmpeg's H.264 decoder runs frame-threaded across the Mac's 10 cores,
+  and frame threading holds back about one frame per extra thread. On one thread it is ~60 ms, and that includes the
+  encoder, the RTSP hops and MediaMTX. Their split is not measured.
+- **The maximum is the first frame past the baseline.** By default FFmpeg buffers ~2 s of stream while it opens, so
+  the Board is built from an old frame and the reader starts that far behind (#85, #291). The short probe adopted below
+  cuts the lag at "Detection ready" from 1.68–1.73 s to 0.66–0.71 s on CamB.
+- **Persistence is the early verdict** (#278): a clean Bullet Hole is reported ~960 ms after its first-seen Look. A
+  marginal one waits out more of its 2 s window, which is CamA's tail. Frame Wait stays near zero: at stride 4, a
+  Look (52 ms on CamB, 130 ms on CamA) fits inside the 160 ms stride interval.
+- **Posting and SSE take tens of ms.** That is a local backend on the same host; the network is not in it.
+- **Hit to delivered:** 1.10 s at P50 on CamB and 1.27 s on CamA with the adopted reader, against 1.37 and 2.00 s
+  before. Before, CamB's tail is the early Miss, first seen ~1 s late because of the catch-up drops after the baseline.
+  CamA's whole "before" row is later because the reader joined ~1.7 s behind and dropped frames catching up. One of its
+  runs also lost 36 frames upstream (below).
+
+### Each low-delay option, one at a time
+
+CamB `_102250` 0–46 s, one run each, on `main`'s reader (`cea6288`). Each option was given through the tool,
+`--capture-options` or `--decoder-threads`:
+- *Sent to decoded* is P50 / P95 over the Looks past the baseline.
+- *Behind* is how far behind the stream the first frame past the baseline was, by its stamp.
+- *[LIVE]* is the run's own `behind` and its "timestamps run K s late" (#291).
+
+| Option | sent to decoded | behind | [LIVE] behind / K | frames lost upstream | late drops | decoder errors | MediaMTX discards | Bullet Holes |
+|---|---|---|---|---|---|---|---|---|
+| A. none: OpenCV's `rtsp_transport;tcp`, auto threads | 339 / 345 | 1.80 s | 1.56 / 0.86 | 0 | 9 | 0 | 0 | Miss 2.44, 29.00, 30.60 |
+| B. `rtsp_transport;tcp\|fflags;nobuffer` | 339 / 344 | 1.03 s | 0.79 / 0.00 | 0, but joins 2 s later | 4 | 0 | 0 | **the Miss lost**; 29.00, 30.60 ×2 |
+| C. `rtsp_transport;tcp\|flags;low_delay` | 340 / 344 | 1.63 s | 1.38 / 0.85 | 0 | 8 | 1 | 0 | Miss 1.64, 29.00, 30.60 |
+| D. `rtsp_transport;udp` | 339 / 345 | 1.74 s | 0.81 / 0.17 | **24** | 5 | 3, and 3 stamps misread | 0 | Miss, 29.00, 30.60 |
+| E. one decoder thread | **65 / 72** | 1.78 s | 0.58 / 0.04 | 0 | 6 | 0 | 0 | Miss 1.64, 29.00, 30.60 |
+| F. `rtsp_transport;tcp\|analyzeduration;100000\|probesize;32768` | 339 / 344 | **0.76 s** | 0.50 / 0.01 | 0 | 3 | 1 | 0 | Miss 1.64, 29.00, 30.60 ×2 |
+| G. E and F together | **65 / 74** | **0.50 s** | 0.50 / 0.01 | 0 | 1 | 0 | 0 | Miss 1.64, 29.00, 30.60 |
+
+Bullet Holes are given by their first-seen time in the recording. *Decoder errors* counts FFmpeg's error lines on stderr, not frames: one corrupt frame can log several.
+- **B is rejected.** `fflags;nobuffer` throws away the frames buffered while the stream opens. The reader then starts
+  at frame 75, not 25, and the Miss arriving at frame 41 is never reported. It moves neither the steady lag nor anything
+  else.
+- **C changes nothing.** `flags;low_delay` is a decoder flag, and OpenCV passes these options to the demuxer.
+- **D is rejected.** UDP lost 24 frames and decoded some corrupt. live_camera.md already chose TCP for this reason.
+- **Setting only `fflags;nobuffer` silently switches the reader to UDP.** Any options set replace OpenCV's default
+  `rtsp_transport;tcp`, and MediaMTX's session list confirmed UDP. So every option above names TCP.
+- **E removes the steady lag, and F removes the lag at open. G has both, and is adopted.**
+- **[LIVE]'s own gauge (#291) is not reliable once decoding is single-threaded.** It takes the first grab that waits
+  20 ms or more for its frame as the live edge. A grab decodes, and a single-threaded decode of a backlog frame can
+  pass 20 ms, so the edge is found early: E's K is 0.04 s while its first frame was 1.78 s behind by its stamp. With
+  F's short probe, frame 0 is read near the live edge, and the gauge's error is ~0.1 s (adopted runs: [LIVE] behind
+  0.57 s against 0.66–0.71 s by the stamp, and K −0.08 to −0.13 s). The code already notes this ceiling (`Stream._read`).
+- An earlier pass of these seven runs loaded the model after the replay had started. The reader then joined at frame
+  50–75, and the Miss was absorbed into the baseline or before it. Those runs are discarded; the table above is the rerun.
+
+### Adopted: one decoder thread and a short probe (provisional, Mac)
+
+`_open_stream` now opens a stream with `CAP_PROP_N_THREADS` 1 (`STREAM_DECODER_THREADS`). It also sets
+`STREAM_CAPTURE_OPTIONS` (`rtsp_transport;tcp|analyzeduration;100000|probesize;32768`) only while the stream opens, and
+not if `OPENCV_FFMPEG_CAPTURE_OPTIONS` is already set, which then wins. A Recording is opened by `Recording.open`, which
+never reads either, so the regression bench reads files exactly as before.
+
+The adoption rule: the option must cut reader lag without losing frames or Bullet Holes.
+- **Reader lag:** cut, as the tables show. 1 decoder thread also keeps pace with 1080p25 on the Mac: the reader reached
+  the live edge every run and lost nothing.
+- **Frames:** none lost upstream in any adopted run. *Before*, one of the two CamA runs lost 36 frames (1,174 RTP
+  packets discarded by MediaMTX), while the baseline held the reader 3.4 s behind (#117).
+- **Decoded pixels:** unchanged. Decoding the stamped CamA copy with 1 thread and with FFmpeg's default gives
+  identical frames, all 450 by hash. The probe options change only how long the stream takes to open.
+- **Bullet Holes live:** nothing the *before* reader finds is lost systematically:
+  - **CamB:** both adopted runs report the Miss at 1.64 s, as the file run does. The *before* runs report it at 2.76 s.
+    The pair at 30.60 s (truth arrivals 765 and 779, 6 mm apart) comes out as one Bullet Hole or two, in either reader
+    (2 of 4 runs split it, one of each).
+  - **CamA:** a stamped copy's file run at stride 4 reports 14.76, 15.88, 16.52 (persistence 54%) and 17.16 s. Both
+    adopted runs report 14.76, 15.88 and 17.16 s. The *before* runs report 17.00, 17.16 and 17.48 s, after losing 14.76
+    and 15.88 inside the 36 lost frames, and then 15.08, 16.04, 16.52 and 17.16 s. The 54% hole at 16.52 s is found by
+    one *before* run and by no adopted run. But V7 (adopted) and V8 (before) looked at exactly the same due frames in
+    its window, and decoding is pixel-identical. So the difference is in the frames each replay sent: each run burns
+    its own wall clock into the frames, and x264 encodes each run a little differently. A marginal hole is decided by
+    that, not by the reader.
+    **Confirmed 2026-11-04, after review.** Two checks:
+    - *Offline, no reader:* seven encodes of the stamped CamA copy, each with its own burned clock as a live replay
+      has. File runs at stride 4 from 1.0 s find the 54% hole in 5 of 7. Two encodes with the *same* clock gave
+      different bytes too (libx264 here is not deterministic), and moved the hole's first sighting by 0.16 s.
+    - *Live, identical bytes:* one of those encodes, published with `ffmpeg -re -c copy`, three runs per reader,
+      alternating. Both readers joined at copy frame 25 and lost nothing upstream. The adopted reader reported 2.76,
+      3.88, 4.52 and 5.16 s every time, exactly as the file run of that encode. The reader before reported the 54%
+      hole every time too, and its first hole at 3.08 s instead of 2.76, after 10 catch-up drops against 4.
+    So the reader loses nothing here: the hole comes and goes with the replay's encode.
+- **Regression bench:** it cannot test the reader. It reads recordings, and neither setting reaches them. Run all the
+  same, it checks only that nothing else moved. `tools.regression run --stride 4 --shifts 0` at `8f3969e`, against
+  `runs/280/n.s4.json` (`7f17626`, stride 4): **PASS, 0 failing, 0 noise**, with every recording's false positives before
+  the change filter unchanged (CamA 9, CamB 0).
+- **The live evidence is two runs per recording,** plus the identical-bytes check on CamA above, which settles the
+  marginal hole.
+
+### The camera's settings
+
+Not changed (live_camera.md). Whether they would matter, from the table:
+- **Encoder latency** sits inside the ~60 ms "sent to decoded" here, with x264's zero-latency tuning. A camera
+  encoder slower by tens of ms would show there. That is small next to Persistence (~960 ms), but it is not measured on
+  the AXIS.
+- **GOP** sets only how long a joining reader waits for its first keyframe, at most 1 s at GOP 25. It is once per
+  (re)connect, before the baseline.
+- **Zipstream** does not touch latency here. Whether it costs small Bullet Holes is the open question in live_camera.md.
+
+### Deferred to the deployment machine
+
+None of these blocks closing #279:
+- Rerun the end-to-end table there, through its own MediaMTX and backend, on CUDA, with the AXIS camera rather than
+  the x264 replay if possible: `tools/end_to_end.py` measures the replay; for the camera, read the burned-in clock
+  of the AXIS's own overlay against the WebApp player.
+- Recheck the adopted reader there: reader lag, frames lost upstream and decoder errors. Check that one decoder
+  thread keeps up with 1080p25 on its CPU while the pipeline runs, and that the short probe still opens the
+  camera's stream (MediaMTX's SDP carries the H.264 parameters, so it did here). Without that, set
+  `STREAM_DECODER_THREADS` or `OPENCV_FFMPEG_CAPTURE_OPTIONS` there.
+- Warm the detector before a Detection Service's first Run, or confirm a cold first call is short on CUDA. On MPS it
+  costs the first Run frames.
+- Fix #291's live-edge gauge for single-threaded decoding (above), if [LIVE]'s figures are to be quoted there.
+- Final acceptance of production latency (SOW 2.3.4).
+
 ## Re-measuring on another host
 
 1. Check out the commit and build `.venv` from `requirements.txt` on Python 3.14. That file pins only
@@ -437,6 +625,6 @@ differences are reported here, not tuned away.
 
 ## Not here
 
-- **End-to-end latency** (SOW 2.3.4): FFmpeg's buffering, the reader's lag, MediaMTX, the network and the camera.
+- **End-to-end latency on the deployment host** (SOW 2.3.4). The Mac's replay is measured in "End to end on a MediaMTX replay (#279)" above; the network and the camera are not.
 - **Any optimisation**, any changed threshold, or MPS as the default device (#128, out of scope). The
   default device is unchanged.

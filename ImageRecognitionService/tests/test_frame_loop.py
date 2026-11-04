@@ -1040,8 +1040,35 @@ def test_a_stream_is_opened_with_a_bounded_read_timeout(monkeypatch):
     (url, api, params), = opened
     assert url == "rtsp://mtx:8554/cam" and api == nbh.cv2.CAP_FFMPEG
     timeouts = dict(zip(params[::2], params[1::2]))
-    assert timeouts == {nbh.cv2.CAP_PROP_OPEN_TIMEOUT_MSEC: nbh.STREAM_TIMEOUT_MS,
-                        nbh.cv2.CAP_PROP_READ_TIMEOUT_MSEC: nbh.STREAM_TIMEOUT_MS}
+    assert {k: v for k, v in timeouts.items() if k != nbh.cv2.CAP_PROP_N_THREADS} == {
+        nbh.cv2.CAP_PROP_OPEN_TIMEOUT_MSEC: nbh.STREAM_TIMEOUT_MS,
+        nbh.cv2.CAP_PROP_READ_TIMEOUT_MSEC: nbh.STREAM_TIMEOUT_MS}
+
+
+def test_a_stream_is_decoded_on_one_thread_with_a_short_probe(monkeypatch):
+    """One decoder thread, since frame threading holds a frame back per
+    thread (339 → 65 ms behind the stream, #279); FFmpeg's options set only
+    while the stream opens, so a Recording opened after is read as before."""
+    monkeypatch.delenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", raising=False)
+    seen = []
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda *args: seen.append(
+        (args, nbh.os.environ.get("OPENCV_FFMPEG_CAPTURE_OPTIONS"))))
+    nbh._open_stream("rtsp://mtx:8554/cam")
+    ((_, _, params), options), = seen
+    assert dict(zip(params[::2], params[1::2]))[nbh.cv2.CAP_PROP_N_THREADS] == nbh.STREAM_DECODER_THREADS == 1
+    assert options == nbh.STREAM_CAPTURE_OPTIONS
+    assert "rtsp_transport;tcp" in options   # set, the options replace OpenCV's TCP default
+    assert "OPENCV_FFMPEG_CAPTURE_OPTIONS" not in nbh.os.environ
+
+
+def test_capture_options_the_environment_sets_win(monkeypatch):
+    monkeypatch.setenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+    seen = []
+    monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda *args: seen.append(
+        nbh.os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]))
+    nbh._open_stream("rtsp://mtx:8554/cam")
+    assert seen == ["rtsp_transport;tcp"]
+    assert nbh.os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == "rtsp_transport;tcp"
 
 
 # --- indexing by the stream's timestamps (#117) --------------------------------

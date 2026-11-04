@@ -1333,7 +1333,9 @@ class Persistence:
         persisted, still_open = [], []
         for candidate in self._open:
             window_end = candidate[2] + self.window
-            remaining = sum(map(self._due, range(processed, window_end)))
+            # Gaps the stream already reported are tried, not still to come.
+            remaining = (sum(map(self._due, range(processed, window_end)))
+                         - _count_in(self.unseen, processed, window_end))
             hole = _judge(candidate, self.looked_at, self.lost, self.persist, self.window,
                           self.unseen, remaining)
             if hole is None:

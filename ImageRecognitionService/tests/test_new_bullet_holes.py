@@ -379,6 +379,18 @@ def test_rejection_still_waits_for_the_window_and_unjudged_counts_the_open():
     assert [h["first_frame"] for h in persistence.end(40)] == [12]
 
 
+def test_a_known_gap_ahead_is_not_also_counted_as_a_look_to_come():
+    """Seen 10-19 of window [10, 30), and the stream reports 20-29 unseen
+    before the Look at 19 is judged: 10 of 20 tried, decided at 19. Counted
+    as Looks to come as well, they kept it open past its last Look."""
+    unseen = []
+    persistence = Persistence(MATCH, window=20, unseen=unseen)
+    looks = _looked(range(10, 20), set(range(10, 20)))
+    assert _judged_at(persistence, looks[:-1]) == []
+    unseen += range(20, 30)
+    assert _judged_at(persistence, looks[-1:]) == [19]
+
+
 def _end_of_window_verdict(outcomes, persist=0.5):
     """Today's rule, written out on its own: `outcomes` is the window's due
     frames, each seen, empty, lost, unseen or late_drop (#84, counting for

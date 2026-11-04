@@ -420,10 +420,10 @@ caffeinate -i .venv/bin/python -m tools.end_to_end data/videos/CamB_20260915_102
 - **The reader** is the pipeline's own, through the Run's `opener` seam. It reads the stamp on every frame taken, so
   each frame's sent time is known exactly, not inferred from the stream's timestamps. No stamp failed to read and
   none disagreed with its index, except in the UDP run (below).
-- **Two Bullet Holes first seen on one frame** (CamB frame 740, every CamB run) were joined to their POST and SSE
-  times by first_seen_at alone, until 6f5312b. The earlier one was credited with the later one's times, so its
-  "posted" and "delivered" read high by under 19 ms, the time from Confirmed to the later delivery. That is one sample
-  per CamB run; it moves no conclusion here.
+- **Two Bullet Holes first seen on one frame** (CamB frame 740 in V1, V4 and F, frame 692 in B) were joined to their
+  POST and SSE times by first_seen_at alone, until 6f5312b. The earlier one was credited with the later one's times,
+  so its "posted" and "delivered" read high by under 19 ms, the time from Confirmed to the later delivery. That is one
+  sample in each of those runs; it moves no conclusion here.
 - **The model is loaded and warmed before the replay starts.** A Detection Service's model is warm after its first
   Run. A cold first call on MPS takes seconds. Inside the baseline it held the reader 6 s behind, MediaMTX discarded
   2,559 RTP packets, and 81 frames were lost upstream (#117), in the first trial run. **A Detection Service's first

@@ -187,3 +187,9 @@ def test_score_runs_the_checkpoint_it_is_given(monkeypatch, tmp_path):
     monkeypatch.setattr(evaluate, "score_recording", fake)
     regression.score(entry, 1, "cpu", 0, model="m/best.pt")
     assert seen["model"] == "m/best.pt"
+
+
+def test_another_checkpoint_is_ruled_on_and_named():
+    new = _result(STEADY)
+    new["model"] = "m/best.pt"
+    assert _kinds(REF, new) == ([("model", "-", False, False)], True)

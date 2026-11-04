@@ -10,6 +10,7 @@ result. `compare` reads two and rules on them:
     python -m tools.regression run --out quick.json --shifts 0 --only CamB_20260915_102250
     python -m tools.regression compare main.json branch.json
     python -m tools.regression compare stride1.json stride4.json --across-strides
+    python -m tools.regression run --stride 4 --out m.json --model trained_models/kanat_yolo26m_v1/weights/best.pt
 
 The rule, per Bullet Hole of the new result against the reference, at 0 px:
 no truth Bullet Hole the reference finds is lost; no false positive is
@@ -20,7 +21,8 @@ moved or over the limit) flips under the control: it is grid noise,
 reported, and does not fail. A position failure flips only where a shifted
 run found the hole and shows it: a shifted miss has no position to show.
 Recordings run on other bytes or truth (both hashed into the result), or at
-another window, stride or device, are not ruled on. The exception is
+another window, stride or device, are not ruled on. Another checkpoint is
+ruled on like any other change (#280), and compare says so. The exception is
 stride under `--across-strides`, for a stride table whose reference is at
 stride 1 (#277). Only the reference's
 shifted runs are read, but `run` makes them by default all the same: today's result is the next
@@ -161,7 +163,7 @@ def run(entries, stride, device, shifts, out, model=nbh.DEFAULT_MODEL):
             print(f"\n===== {name}, canvas shift {d} px =====")
             with tempfile.TemporaryDirectory() as tmp:
                 timing = os.path.join(tmp, "timing.csv") if d == 0 else None
-                recording["shifts"][str(d)] = score(entry, stride, device, d, timing, model)
+                recording["shifts"][str(d)] = score(entry, stride, device, d, timing, model=model)
                 if timing:
                     recording["timing"] = timing_summary(timing)
         result["recordings"][name] = recording
@@ -203,6 +205,8 @@ def compare(ref, new, across_strides=False):
                          "detail": detail, "noise": noise,
                          "fails": kind in FAILS and not noise})
 
+    if ref.get("model") != new.get("model"):
+        note("-", "model", "-", f"{new.get('model')} against {ref.get('model')}: ruled on as a change")
     for name in new["recordings"].keys() - ref["recordings"].keys():
         note(name, "not comparable", "-", "in the new result, not in the reference")
     for name, r in ref["recordings"].items():
@@ -298,7 +302,7 @@ def _cell(v, fmt):
 
 def print_result(result):
     print(f"\n\n[REGRESSION] bench at {result['commit']}, stride {result['stride']}, "
-          f"device {result['device'] or 'default'}, model {result.get('model')}, "
+          f"device {result['device'] or 'default'}, model {result.get('model', 'unrecorded')}, "
           f"shifts {result['shifts']} px, on "
           f"{result['host']} ({result['platform']})")
     print(_footage(result))
@@ -326,7 +330,7 @@ def print_result(result):
 
 def print_compare(ref, new, findings, passed):
     print(f"[REGRESSION] {new['commit']} against the reference {ref['commit']}, "
-          f"model {new.get('model')} against {ref.get('model')}, "
+          f"model {new.get('model', 'unrecorded')} against {ref.get('model', 'unrecorded')}, "
           f"stride {new['stride']} against {ref['stride']}, on {new['host']}")
     print(_footage(new))
     if len(ref["shifts"]) < 2:
@@ -378,7 +382,7 @@ if __name__ == "__main__":
             entries = [e for e in entries if os.path.splitext(e["file"])[0] in a.only]
             if len(entries) != len(a.only):
                 p.error(f"--only names a recording with no truth folder: {a.only}")
-        run(entries, a.stride or 1, a.device, a.shifts, a.out, a.model)
+        run(entries, a.stride or 1, a.device, a.shifts, a.out, model=a.model)
     else:
         ref, new = map(_load, (a.reference, a.new))
         findings, passed = compare(ref, new, a.across_strides)

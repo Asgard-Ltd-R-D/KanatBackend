@@ -22,7 +22,8 @@ reported, and does not fail. A position failure flips only where a shifted
 run found the hole and shows it: a shifted miss has no position to show.
 Recordings run on other bytes or truth (both hashed into the result), or at
 another window, stride or device, are not ruled on. Another checkpoint is
-ruled on like any other change (#280), and compare says so. The exception is
+ruled on like any other change (#280), and compare says so: a checkpoint
+is named by its path and the sha256 of its bytes. The exception is
 stride under `--across-strides`, for a stride table whose reference is at
 stride 1 (#277). Only the reference's
 shifted runs are read, but `run` makes them by default all the same: today's result is the next
@@ -151,6 +152,8 @@ def run(entries, stride, device, shifts, out, model=nbh.DEFAULT_MODEL):
               "host": platform.node(), "platform": platform.platform(),
               "device": device, "stride": stride, "shifts": list(shifts),
               "model": os.path.relpath(model, nbh.BASE_DIR),
+              # The weights are git-ignored: the path alone does not name them.
+              "model_sha256": manifest.content_hash(model),
               "recordings": {}}
     for entry in entries:
         name = os.path.splitext(entry["file"])[0]
@@ -205,8 +208,10 @@ def compare(ref, new, across_strides=False):
                          "detail": detail, "noise": noise,
                          "fails": kind in FAILS and not noise})
 
-    if ref.get("model") != new.get("model"):
-        note("-", "model", "-", f"{new.get('model')} against {ref.get('model')}: ruled on as a change")
+    checkpoint = lambda r: (r.get("model"), r.get("model_sha256"))
+    if checkpoint(ref) != checkpoint(new):
+        note("-", "model", "-", f"{new.get('model')} ({str(new.get('model_sha256'))[:12]}) against "
+             f"{ref.get('model')} ({str(ref.get('model_sha256'))[:12]}): ruled on as a change")
     for name in new["recordings"].keys() - ref["recordings"].keys():
         note(name, "not comparable", "-", "in the new result, not in the reference")
     for name, r in ref["recordings"].items():

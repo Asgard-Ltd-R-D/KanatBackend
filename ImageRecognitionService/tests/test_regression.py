@@ -193,3 +193,10 @@ def test_another_checkpoint_is_ruled_on_and_named():
     new = _result(STEADY)
     new["model"] = "m/best.pt"
     assert _kinds(REF, new) == ([("model", "-", False, False)], True)
+
+
+def test_a_retrained_checkpoint_at_the_same_path_is_named():
+    ref, new = _result(STEADY), _result(STEADY)
+    ref.update(model="n/best.pt", model_sha256="a")
+    new.update(model="n/best.pt", model_sha256="b")
+    assert _kinds(ref, new) == ([("model", "-", False, False)], True)

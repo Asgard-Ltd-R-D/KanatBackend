@@ -48,3 +48,14 @@ def test_frame_0_unread_is_placed_by_the_first_stamp_that_reads():
     s = e2e.stages(sent, frames, {4: 10.0}, [])
     assert s["stamp mismatches"] == 1
     assert np.allclose(s["sent to decoded"], [100.9 - 100.16])
+
+
+def test_two_holes_first_seen_on_one_frame_keep_their_own_post_and_sse_times():
+    from datetime import datetime, timezone
+    at = datetime(2026, 11, 4, 10, 0, 0, 523987, tzinfo=timezone.utc)
+    published = [e2e._key(at, 100.4, 200.6), e2e._key(at, 160.0, 200.0)]   # template_xy
+    logged = [e2e._key("2026-11-04T10:00:00.523Z", *{"x": 100.4, "y": 200.6}.values()),
+              e2e._key("2026-11-04T10:00:00.523Z", *{"x": 160.0, "y": 200.0}.values())]
+    delivered = [e2e._key("2026-11-04T10:00:00.523000Z", 100.4, 200.6),   # position_x/_y
+                 e2e._key("2026-11-04T10:00:00.523000Z", 160.0, 200.0)]
+    assert published == logged == delivered and published[0] != published[1]

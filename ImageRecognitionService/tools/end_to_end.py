@@ -236,7 +236,7 @@ def _discards(stop, out):
 
 
 def _subscribe(backend, session_id, delivered, stop):
-    """The frontend's SSE stream, each bullet_created noted by first_seen_at."""
+    """The frontend's SSE stream, each bullet_created noted by its `_key`."""
     with urlopen(f"{backend}/sessions/{session_id}/live", timeout=60) as stream:
         for line in stream:
             if stop.is_set():
@@ -244,19 +244,22 @@ def _subscribe(backend, session_id, delivered, stop):
             if line.startswith(b"data:") and b"bullet_created" in line:   # not a ping
                 event = json.loads(line[5:])
                 if event.get("type") == "bullet_created":
-                    delivered[_key(event["bullet"]["first_seen_at"])] = time.time()
+                    b = event["bullet"]
+                    delivered[_key(b["first_seen_at"], b["position_x"], b["position_y"])] = time.time()
 
 
-def _key(at):
-    """A first_seen_at, a datetime or as the backend or the publisher writes
-    it, as the wire carries it: UTC, truncated to the ms."""
+def _key(at, x, y):
+    """One Bullet Hole, as the publisher, its log and the SSE event all carry it:
+    first_seen_at (a datetime or as written: UTC, truncated to the ms) and its
+    position rounded to the px, since two Bullet Holes first seen on one frame
+    share the time but lie a match radius apart (webapp._payload's key)."""
     if isinstance(at, str):
         at = datetime.fromisoformat(at.replace("Z", "+00:00"))
-    return at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+    return at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3], round(x), round(y)
 
 
 class _Posted(logging.Handler):
-    """The publisher's log: when each POST was answered, by first_seen_at."""
+    """The publisher's log: when each POST was answered, by `_key`."""
 
     def __init__(self):
         super().__init__()
@@ -264,7 +267,7 @@ class _Posted(logging.Handler):
 
     def emit(self, record):
         if getattr(record, "status", 0) in (200, 201):
-            self.at[_key(record.first_seen_at)] = record.created
+            self.at[_key(record.first_seen_at, *record.position.values())] = record.created
 
 
 def _row(name, values, unit=1000):
@@ -287,7 +290,7 @@ def main():
                    help="the replay's end, s: allow a persistence window past the last Hit")
     p.add_argument("--mm-per-px", type=float)
     p.add_argument("--device")
-    p.add_argument("--stride", type=int)
+    nbh.add_stride_flag(p)
     p.add_argument("--capture-options", help="OPENCV_FFMPEG_CAPTURE_OPTIONS, in place of the pipeline's")
     p.add_argument("--decoder-threads", type=int,
                    help="the stream reader's decoder threads (CAP_PROP_N_THREADS), in place "
@@ -348,7 +351,8 @@ def main():
     try:
         with webapp.WebAppPublisher(session, a.backend_url) as publisher:
             def publish(value):
-                confirmed.append((value.first_frame, time.time(), _key(value.first_seen_at)))
+                confirmed.append((value.first_frame, time.time(),
+                                  _key(value.first_seen_at, *value.template_xy)))
                 publisher.publish(value)
 
             loop = nbh.RegisteredFrames.open(a.rtsp, None, model, device=a.device, opener=opener)
@@ -382,7 +386,7 @@ def main():
                             text=True).stdout.strip()
     print(f"\n[E2E] PROVISIONAL, {platform.node()} ({platform.platform()}), {commit}, "
           f"detector on {a.device or 'default'}, OPENCV_FFMPEG_CAPTURE_OPTIONS="
-          f"{a.capture_options or nbh.STREAM_CAPTURE_OPTIONS!r}, decoder threads "
+          f"{os.environ.get('OPENCV_FFMPEG_CAPTURE_OPTIONS', nbh.STREAM_CAPTURE_OPTIONS)!r}, decoder threads "
           f"{nbh.STREAM_DECODER_THREADS}")
     print("| Stage, ms | n | P50 | P95 | max |\n|---|---:|---:|---:|---:|")
     for name in STAGES:

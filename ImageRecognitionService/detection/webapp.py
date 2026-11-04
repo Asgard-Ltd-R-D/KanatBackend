@@ -78,7 +78,7 @@ class WebAppPublisher:
         payload = _payload(value, self._session_id)
         data = json.dumps(payload).encode()
         fields = {"session_id": self._session_id, "first_seen_at": payload["first_seen_at"],
-                  "target_index": payload["target_index"]}
+                  "target_index": payload["target_index"], "position": payload["position"]}
         attempts = len(RETRY_DELAYS_S) + 1
         for attempt in range(1, attempts + 1):
             if self._stop.is_set():

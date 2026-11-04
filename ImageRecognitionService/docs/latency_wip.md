@@ -531,12 +531,21 @@ The adoption rule: the option must cut reader lag without losing frames or Bulle
     its window, and decoding is pixel-identical. So the difference is in the frames each replay sent: each run burns
     its own wall clock into the frames, and x264 encodes each run a little differently. A marginal hole is decided by
     that, not by the reader.
+    **Confirmed 2026-11-04, after review.** Two checks:
+    - *Offline, no reader:* seven encodes of the stamped CamA copy, each with its own burned clock as a live replay
+      has. File runs at stride 4 from 1.0 s find the 54% hole in 5 of 7. Two encodes with the *same* clock gave
+      different bytes too (libx264 here is not deterministic), and moved the hole's first sighting by 0.16 s.
+    - *Live, identical bytes:* one of those encodes, published with `ffmpeg -re -c copy`, three runs per reader,
+      alternating. Both readers joined at copy frame 25 and lost nothing upstream. The adopted reader reported 2.76,
+      3.88, 4.52 and 5.16 s every time, exactly as the file run of that encode. The reader before reported the 54%
+      hole every time too, and its first hole at 3.08 s instead of 2.76, after 10 catch-up drops against 4.
+    So the reader loses nothing here: the hole comes and goes with the replay's encode.
 - **Regression bench:** it cannot test the reader. It reads recordings, and neither setting reaches them. Run all the
   same, it checks only that nothing else moved. `tools.regression run --stride 4 --shifts 0` at `8f3969e`, against
   `runs/280/n.s4.json` (`7f17626`, stride 4): **PASS, 0 failing, 0 noise**, with every recording's false positives before
   the change filter unchanged (CamA 9, CamB 0).
-- **The live evidence is two runs per recording.** That is enough to show the lag cut and nothing lost upstream. It is
-  not enough to rule a marginal hole in or out, and the pixel-identical decode is what carries that argument.
+- **The live evidence is two runs per recording,** plus the identical-bytes check on CamA above, which settles the
+  marginal hole.
 
 ### The camera's settings
 

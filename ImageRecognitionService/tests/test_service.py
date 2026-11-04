@@ -413,20 +413,23 @@ def test_a_bullet_hole_first_seen_while_the_run_is_ending_is_never_posted(shot_b
 
 def test_an_end_returns_within_one_persistence_window_of_stream(shot_before_end):
     """The Run looks on to the look that judges the last Candidate open when
-    the end came, and no further: none first seen while ending holds it."""
+    the end came, and no further: none first seen while ending holds it.
+    Seen on every look, that one's verdict is fixed before its window ends
+    (ADR-0003, amended 2026-10-28)."""
     _end_just_after_a_shot(shot_before_end)
     model = shot_before_end.model
-    past = [i for i in model.looks if i + 1 >= model.first + nbh.PERSIST_FRAMES]
-    assert past == [model.looks[-1]]
+    assert len(shot_before_end.posted) == 1
+    assert model.looks[-1] + 1 < model.first + nbh.PERSIST_FRAMES
 
 
 def test_an_end_whose_stream_stops_giving_frames_returns_by_its_timeout(
         monkeypatch, shot_before_end):
     """The Stream runs out with the Candidate still open, and never comes
-    back: the Run stops past ENDING_TIMEOUT_S, its Candidate unconfirmable."""
+    back: the Run stops past ENDING_TIMEOUT_S, its Candidate unconfirmable.
+    It runs out 10 frames past the shot, too few Looks to fix its verdict."""
     monkeypatch.setattr(service, "ENDING_TIMEOUT_S", 0.3)
     shot_before_end.opener = lambda url, start, ref_time: (
-        nbh.Stream(_FakeStream(n=150, interval=0.002), time.time(), lambda: _FakeStream(n=0)),
+        nbh.Stream(_FakeStream(n=110, interval=0.002), time.time(), lambda: _FakeStream(n=0)),
         np.zeros((8, 8, 3), np.int64))
     assert _ends(_end_just_after_a_shot(shot_before_end)) == [ENDED]
     assert shot_before_end.posted == [] and _status(shot_before_end) is None

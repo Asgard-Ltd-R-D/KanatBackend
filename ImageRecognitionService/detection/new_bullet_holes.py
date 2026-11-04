@@ -324,17 +324,23 @@ def _fold(candidates, idx, pts, match_px, opening=True):
 
 
 def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES,
-           unseen=()):
-    """The persisted Candidate a candidate whose window has elapsed is, or
-    None. `looked_at`, `lost` and `unseen` are sorted frame indices, as
-    `Persistence` keeps them.
+           unseen=(), remaining=0):
+    """The persisted Candidate a candidate is, or None. `looked_at`, `lost`
+    and `unseen` are sorted frame indices, as `Persistence` keeps them.
     Counted by bisection, so judging does not slow as a run's history grows
-    (#83)."""
+    (#83).
+
+    `remaining` is how many due Looks of its window are still to come, 0 once
+    it has elapsed. With some to come it persists only if it would whatever
+    they bring (ADR-0003, amended 2026-10-28): the 50% holding were each to
+    register and see nothing, and the floor were each Lost. None then means
+    undecided, not rejected. Each worst case is the other's best, so the two
+    are checked apart."""
     pos, sightings, first = candidate
     span = _count_in(looked_at, first, first + window)
     tried = (span + _count_in(lost, first, first + window)
              + _count_in(unseen, first, first + window))
-    if span <= 0 or span < persist * tried:
+    if span <= 0 or span < persist * (tried + remaining):
         # Too few looks survived registration to call anything persistent:
         # 100% of one frame among lost ones is not persistence.
         # Unconfirmable, not rejected, as above. Measured on
@@ -356,16 +362,19 @@ def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES,
     # `test_camb_split_is_not_merged_by_the_gate_alone`. Persistence asks how
     # many frames saw the mark, position asks where it is.
     seen = sorted(set(sightings))
-    ratio = sum(1 for i in seen if first <= i < first + window) / span
-    if ratio < persist:
+    hits = sum(1 for i in seen if first <= i < first + window)
+    if hits / (span + remaining) < persist:
         return None
+    ratio = hits / span
     return {"pos": pos[:2], "box": pos, "first_frame": first,
             "seen": seen, "persistence": ratio}
 
 
 def _count_in(sorted_indices, lo, hi):
-    """How many of `sorted_indices` fall in [lo, hi)."""
-    return bisect.bisect_left(sorted_indices, hi) - bisect.bisect_left(sorted_indices, lo)
+    """How many of `sorted_indices` fall in [lo, hi); none if hi <= lo, as
+    once a stream jumps past a window's end."""
+    return max(0, bisect.bisect_left(sorted_indices, hi)
+               - bisect.bisect_left(sorted_indices, lo))
 
 
 def _detect(model, images, imgsz, conf, device=None):
@@ -1242,12 +1251,17 @@ class Persistence:
     empty on a recording. A frame that was neither looked at nor due, a
     stride's gap (#81), counts for nothing, floor included.
 
-    A Candidate is judged once its window has passed, never before. Shortening
-    the window instead would find a Candidate persisted on 7 of the 10 frames
-    that happened to remain: exactly the clip-length dependence the fixed
-    window exists to remove. A Candidate's verdict counts only what falls
-    inside its window, all known once the window has passed, so judging at
-    that Look gives the verdict judging at the end of the run would.
+    A Candidate is judged at each Look until its verdict is fixed: it
+    persists as soon as no due Look left in its window could undo that
+    (ADR-0003, amended 2026-10-28), and is rejected only once its window has
+    passed. Shortening the window instead would find a Candidate persisted
+    on 7 of the 10 frames that happened to remain: exactly the clip-length
+    dependence the fixed window exists to remove. Due Looks are the frames
+    `_looked_at` under the run's `stride` and `baseline_frames`; the
+    default, every frame, only ever errs late. An early verdict is the one
+    the window's end gives, so `end` drops a Candidate that persisted early
+    but whose window never passed: on a recording it is unconfirmable, as
+    before. Live, what was announced stays announced (ADR-0004).
 
     Change Evidence is not checked here: when it is differs by mode, on
     purpose (ADR-0003, amended 2026-10-11).
@@ -1255,12 +1269,14 @@ class Persistence:
     Kept free of cv2 and the model so the logic is testable on plain arrays.
     """
 
-    def __init__(self, match_px, persist=PERSIST, window=PERSIST_FRAMES, unseen=()):
+    def __init__(self, match_px, persist=PERSIST, window=PERSIST_FRAMES, unseen=(),
+                 stride=1, baseline_frames=0):
         self.match_px, self.persist, self.window = match_px, persist, window
         self.unseen = unseen
+        self._due = lambda i: _looked_at(i, stride, baseline_frames)
         self.looked_at, self.lost = [], []   # frame indices, in order
         self._candidates = []
-        self._judged = 0   # candidates are made in frame order, so the judged are a prefix
+        self._open = []   # candidates not yet judged, in frame order
         self._persisted = {}   # id(hole) -> (hole, its candidate)
 
     def add(self, index, pts, opening=True):
@@ -1273,44 +1289,74 @@ class Persistence:
             self.lost.append(index)
         else:
             self.looked_at.append(index)
+            made = len(self._candidates)
             _fold(self._candidates, index, pts, self.match_px, opening)
+            self._open += self._candidates[made:]
         return self._judge_due(index + 1)
 
     @property
     def unjudged(self):
         """How many Candidates are still open: inside their window, unjudged."""
-        return len(self._candidates) - self._judged
+        return len(self._open)
 
-    def end(self, processed):
+    def end(self, processed, live=False):
         """Judge whatever became due after the last Look, `processed` frames
         having passed: a stride can pass frames past its last Look. Returns
         every persisted Candidate in first-Detection order, refreshed in place
-        to its final position and sightings. A Candidate still inside its
-        window stays unconfirmable, not rejected."""
+        to its final position and sightings, and to its persistence once its
+        window has passed. A Candidate still inside its window stays
+        unconfirmable, not rejected: on a recording even one that persisted
+        early, which `live` keeps, a Range having no clip end to wait for
+        (ADR-0003, Consequences)."""
         self._judge_due(processed)
-        for hole, (pos, sightings, _) in self._persisted.values():
+        done = []
+        for hole, candidate in self._persisted.values():
+            pos, sightings, first = candidate
             hole.update(pos=pos[:2], box=pos, seen=sorted(set(sightings)))
-        return sorted((hole for hole, _ in self._persisted.values()),
-                      key=lambda h: h["first_frame"])
+            if first + self.window <= processed:
+                # The early verdict is the window's end's: only its figure moves.
+                final = _judge(candidate, self.looked_at, self.lost, self.persist,
+                               self.window, self.unseen)
+                assert final is not None, "an early verdict the window's end reversed"
+                hole["persistence"] = final["persistence"]
+            elif not live:
+                continue
+            done.append(hole)
+        return sorted(done, key=lambda h: h["first_frame"])
 
     def position(self, hole):
         """Where a persisted Candidate is now, (cx, cy[, w, h])."""
         return self._persisted[id(hole)][1][0]
 
     def _judge_due(self, processed):
-        persisted = []
-        while (self._judged < len(self._candidates)
-               and self._candidates[self._judged][2] + self.window <= processed):
-            candidate = self._candidates[self._judged]
-            self._judged += 1
+        """Judge every open Candidate, `processed` frames having passed. Each
+        is rechecked every Look while open, but none is open past its window,
+        so that is a handful."""
+        persisted, still_open = [], []
+        # The stream extends `unseen` from its own thread, so one snapshot for
+        # both counts: read twice, a gap landing between was tried and still
+        # to come at once. Only from the earliest open window, which bounds it.
+        # Extends only append later frames, so the bisect holds for the slice.
+        unseen = self.unseen
+        if self._open:
+            unseen = unseen[bisect.bisect_left(unseen, self._open[0][2]):]
+        for candidate in self._open:
+            window_end = candidate[2] + self.window
+            # Gaps the stream already reported are tried, not still to come.
+            remaining = (sum(map(self._due, range(processed, window_end)))
+                         - _count_in(unseen, processed, window_end))
             hole = _judge(candidate, self.looked_at, self.lost, self.persist, self.window,
-                          self.unseen)
-            if hole is not None:
+                          unseen, remaining)
+            if hole is None:
+                if window_end > processed:
+                    still_open.append(candidate)   # undecided; past its window, rejected
+            else:
                 # The Look that judged it: when a run reports it, before the
                 # Change Evidence check (#272).
                 hole["judged_frame"] = processed - 1
                 self._persisted[id(hole)] = (hole, candidate)
                 persisted.append(hole)
+        self._open = still_open
         return persisted
 
 
@@ -1738,7 +1784,8 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
     # Range ever runs for days.
     corroboration, residuals_per_frame = [], []
     timed = [] if timing else None   # a row a Look, kept only when asked for (#129)
-    persistence = Persistence(match_px, unseen=loop.source.unseen)
+    persistence = Persistence(match_px, unseen=loop.source.unseen, stride=stride,
+                              baseline_frames=baseline_frames)
     announce = (_Announcer(loop, persistence, corroboration, require_change_evidence,
                            mm_per_tpl_px, publish) if loop.live else None)
     for look in looks:
@@ -1766,7 +1813,7 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
             timed.append(_timing_row(look, loop.clock))
         if announce:
             announce(persisted_now, corroborating)
-        if finishing and not persistence.unjudged:
+        if finishing and not persistence.unjudged and not (announce and announce.holding):
             loop.stop()   # every Candidate judged, as at any Look (ADR-0003, #228)
 
     processed = loop.processed
@@ -1795,7 +1842,7 @@ def process(loop, end, out_video=None, mm_per_tpl_px=None,
 
     # Refreshed in place, announced ones too. Live it judges nothing new, the last
     # `add` having passed `processed` frames: the count is announced plus waiting.
-    persisted = persistence.end(processed)
+    persisted = persistence.end(processed, live=loop.live)
     if announce:
         # What was announced, no more and no less (ADR-0004).
         new = sorted(announce.announced, key=lambda h: h["first_frame"])
@@ -1948,6 +1995,16 @@ class _Announcer:
         self.require, self.mm_per_tpl_px = require_change_evidence, mm_per_tpl_px
         self.publish = publish
         self.waiting, self.announced = [], []
+
+    @property
+    def holding(self):
+        """Is a Candidate waiting for Change Evidence whose window has not
+        passed? A Run that finishes (#228) looks on for it: one persisted
+        early would otherwise get fewer Looks to be corroborated on than the
+        window's end gave it before (ADR-0003, amended 2026-10-28)."""
+        looked = self.loop.looked
+        return any(h["first_frame"] + self.persistence.window > looked + 1
+                   for h in self.waiting)
 
     def __call__(self, persisted, corroborating):
         match_px = self.persistence.match_px

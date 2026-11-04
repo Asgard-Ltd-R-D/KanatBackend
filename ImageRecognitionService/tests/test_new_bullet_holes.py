@@ -316,37 +316,176 @@ def test_every_frame_is_recorded_once_however_many_boxes_it_held():
     assert got[0]["persistence"] == 1.0
 
 
-def test_a_candidate_persists_at_the_first_look_past_its_window():
-    """Looks every 5 frames: the window [10, 30) has passed by the Look at 30,
-    so that Look's `add` returns the Candidate, and no `add` before it does."""
-    persistence = Persistence(MATCH, window=20)
+def _judged_at(persistence, looks):
+    """The Looks of `looks`, (index, Detections), whose `add` returned a Candidate."""
+    return [index for index, pts in looks if persistence.add(index, pts)]
+
+
+def test_a_clean_candidate_persists_before_its_window_ends():
+    """Stride 5, window [10, 30): Looks 10, 15, 20, 25. Seen at 10 and 15,
+    it has 2 of 4 whatever 20 and 25 bring, so it persists at 15 (ADR-0003,
+    amended 2026-10-28)."""
+    persistence = Persistence(MATCH, window=20, stride=5)
     looks = _looked(range(10, 50, 5), set(range(10, 50, 5)))
-    returned = {index: persistence.add(index, pts) for index, pts in looks}
-    assert [index for index, got in returned.items() if got] == [30]
-    assert returned[30][0]["first_frame"] == 10
+    assert _judged_at(persistence, looks) == [15]
 
 
-def test_a_candidate_due_only_after_the_last_look_is_judged_by_end():
-    """A stride's last Look is at 25, but it passed frames up to 29 without
-    looking: the window [10, 30) has passed only then, so `end` judges it."""
+def test_a_marginal_candidate_persists_only_at_its_windows_last_look():
+    """Seen at 10 and 25 of 10, 15, 20, 25: 50%, and not certain of it until
+    25, the window's last due Look."""
+    persistence = Persistence(MATCH, window=20, stride=5)
+    assert _judged_at(persistence, _looked(range(10, 50, 5), {10, 25})) == [25]
+
+
+def test_a_candidate_on_three_of_five_persists_only_once_the_third_is_in():
+    """Stride 4, window [12, 32): Looks 12-28. Seen at 12, 20 and 28, 60%:
+    two of five are never enough, so nothing is certain before 28."""
+    persistence = Persistence(MATCH, window=20, stride=4)
+    assert _judged_at(persistence, _looked(range(12, 48, 4), {12, 20, 28})) == [28]
+
+
+def test_without_the_stride_every_frame_counts_as_due_and_end_judges():
+    """Not told the stride, `Persistence` takes frames 26-29 as due Looks
+    still to come, so it errs late: nothing is certain at the last Look, 25,
+    and `end` judges it once they have passed."""
     persistence = Persistence(MATCH, window=20)
-    assert not any(persistence.add(index, pts)
-                   for index, pts in _looked(range(10, 30, 5), set(range(10, 30, 5))))
+    assert _judged_at(persistence, _looked(range(10, 30, 5), {10, 25})) == []
     assert [h["first_frame"] for h in persistence.end(30)] == [10]
 
 
+def test_an_early_verdict_whose_window_never_passes_is_not_reported():
+    """Persisted at 39 on 10 of 20, but the clip ends at 40: on a recording
+    it is unconfirmable as before, so `end` leaves it out."""
+    persistence = Persistence(MATCH, window=20)
+    assert _judged_at(persistence, _looked(range(30, 40), set(range(30, 40)))) == [39]
+    assert persistence.end(40) == []
+
+
+def test_rejection_still_waits_for_the_window_and_unjudged_counts_the_open():
+    """A flicker opened at 10 and a clean mark at 12: the clean one persists
+    at 21 and leaves the other open, out of order, until its window has
+    passed at 29. Rejected then, never before."""
+    persistence = Persistence(MATCH, window=20)
+    flicker, clean = np.float32([[100, 100]]), np.float32([[300, 300]])
+    open_after = {}
+    for index in range(10, 40):
+        pts = np.concatenate([flicker if index == 10 else flicker[:0],
+                              clean if index >= 12 else clean[:0]])
+        if persistence.add(index, pts):
+            assert index == 21
+        open_after[index] = persistence.unjudged
+    assert open_after[10] == 1 and open_after[20] == 2 and open_after[21] == 1
+    assert open_after[28] == 1 and open_after[29] == 0
+    assert [h["first_frame"] for h in persistence.end(40)] == [12]
+
+
+def test_a_known_gap_ahead_is_not_also_counted_as_a_look_to_come():
+    """Seen 10-19 of window [10, 30), and the stream reports 20-29 unseen
+    before the Look at 19 is judged: 10 of 20 tried, decided at 19. Counted
+    as Looks to come as well, they kept it open past its last Look."""
+    unseen = []
+    persistence = Persistence(MATCH, window=20, unseen=unseen)
+    looks = _looked(range(10, 20), set(range(10, 20)))
+    assert _judged_at(persistence, looks[:-1]) == []
+    unseen += range(20, 30)
+    assert _judged_at(persistence, looks[-1:]) == [19]
+
+
+class _GapWhileJudging(list):
+    """`unseen` that the stream extends with 20-29 at its first read, as its
+    thread can while a Look is judged."""
+    armed = False
+
+    def __getitem__(self, i):
+        if self.armed:
+            self.armed = False
+            self.extend(range(20, 30))
+        return super().__getitem__(i)
+
+
+def test_a_gap_reported_while_judging_is_counted_once():
+    """The test above with the gap landing mid-judgement: both counts see it
+    or neither does, so it is still decided at 19, not left open."""
+    unseen = _GapWhileJudging([5])
+    persistence = Persistence(MATCH, window=20, unseen=unseen)
+    looks = _looked(range(10, 20), set(range(10, 20)))
+    assert _judged_at(persistence, looks[:-1]) == []
+    unseen.armed = True
+    assert _judged_at(persistence, looks[-1:]) == [19]
+
+
+def test_a_stream_jump_past_the_window_charges_nothing_beyond_it():
+    """Window [10, 30), Looked at 10-20 and seen 10-15, then the stream
+    reports 21-39 unseen and resumes at 40: 6 of 11 Looks, so it persists at
+    40. The gap past 30 once counted as Looks still to come and rejected it."""
+    unseen = []
+    persistence = Persistence(MATCH, window=20, unseen=unseen)
+    assert _judged_at(persistence, _looked(range(10, 21), set(range(10, 16)))) == []
+    unseen += range(21, 40)
+    assert _judged_at(persistence, _looked([40], set())) == [40]
+
+
+def _end_of_window_verdict(outcomes, persist=0.5):
+    """Today's rule, written out on its own: `outcomes` is the window's due
+    frames, each seen, empty, lost, unseen or late_drop (#84, counting for
+    nothing)."""
+    span = sum(o in ("seen", "empty") for o in outcomes)
+    tried = span + sum(o in ("lost", "unseen") for o in outcomes)
+    hits = outcomes.count("seen")
+    return span > 0 and span >= persist * tried and hits / span >= persist
+
+
+def test_the_early_verdict_is_the_end_of_window_verdict():
+    """Over generated windows of Lost Looks, stream gaps, late drops and
+    strides: what persists early is what the window's end persists, it is
+    never reported twice, and `unjudged` is 1 exactly until it is decided."""
+    rng = np.random.default_rng(278)
+    kinds = ("seen", "empty", "lost", "unseen", "late_drop")
+    early = 0
+    for _ in range(3000):
+        stride, window = int(rng.integers(1, 8)), int(rng.integers(5, 51))
+        baseline_frames = int(rng.integers(0, 6))
+        first = stride * int(rng.integers(2, 6))
+        due = [i for i in range(first, first + window) if i % stride == 0]
+        outcomes = ["seen"] + list(rng.choice(kinds, len(due) - 1,
+                                              p=rng.dirichlet(np.ones(5))))
+        unseen = []
+        persistence = Persistence(MATCH, window=window, unseen=unseen, stride=stride,
+                                  baseline_frames=baseline_frames)
+        reported = []
+        for index, outcome in zip(due, outcomes):
+            if outcome == "unseen":
+                unseen.append(index)   # the stream extends it before the next Look
+                continue
+            if outcome == "late_drop":
+                continue
+            pts = (None if outcome == "lost" else
+                   _looked([index], {index} if outcome == "seen" else set())[0][1])
+            got = persistence.add(index, pts)
+            reported += got
+            assert persistence.unjudged == (not reported and index + 1 < first + window)
+        # A Look past the window judges what the last due ones left open.
+        reported += persistence.add(first + window + stride * 3, np.zeros((0, 2), np.float32))
+        final = persistence.end(first + window + stride * 4)
+        expected = _end_of_window_verdict(outcomes)
+        assert len(reported) == expected and len(final) == expected
+        assert persistence.unjudged == 0
+        early += bool(reported) and reported[0]["judged_frame"] < due[-1]
+    assert early > 100   # the rule did report early, not only at the end
+
+
 def test_end_gives_the_final_position_and_sightings_not_those_at_judgement():
-    """Judged at the Look at 29, then seen 2 px over for 10 more Looks: `end`
+    """Judged at the Look at 19, then seen 2 px over for 20 more Looks: `end`
     and `position` give where the running mean ended, and every sighting."""
     persistence = Persistence(MATCH, window=20)
     judged = []
     for index in range(10, 40):
-        x = 100.0 if index < 30 else 102.0
+        x = 100.0 if index < 20 else 102.0
         judged += persistence.add(index, np.array([[x, 100.0]], np.float32))
     (at_judgement,) = judged
     pos, seen = at_judgement["pos"].copy(), list(at_judgement["seen"])
     (final,) = persistence.end(40)
-    assert seen == list(range(10, 30)) and final["seen"] == list(range(10, 40))
+    assert seen == list(range(10, 20)) and final["seen"] == list(range(10, 40))
     assert pos[0] == 100.0 and final["pos"][0] > 100.0
     assert np.array_equal(persistence.position(final)[:2], final["pos"])
 

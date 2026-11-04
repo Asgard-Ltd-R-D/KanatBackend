@@ -481,10 +481,22 @@ def _open_stream(url):
     URL they cannot open, credentials and all (#83). Opening and each read are
     bounded by `STREAM_TIMEOUT_MS`, so a connection that stays open but stops
     delivering frames fails a read, a drop to recover from, instead of
-    blocking for FFmpeg's default 30 s (#84)."""
-    return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
-                            [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
-                             cv2.CAP_PROP_READ_TIMEOUT_MSEC, STREAM_TIMEOUT_MS])
+    blocking for FFmpeg's default 30 s (#84). Decoded on one thread, with
+    `STREAM_CAPTURE_OPTIONS` set while it opens unless the environment sets
+    its own (#279)."""
+    preset = "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ
+    if not preset:
+        # ponytail: process-wide while it opens; a Recording opened on another
+        # thread meanwhile would get it too. A Run reads one source.
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = STREAM_CAPTURE_OPTIONS
+    try:
+        return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
+                                [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
+                                 cv2.CAP_PROP_READ_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
+                                 cv2.CAP_PROP_N_THREADS, STREAM_DECODER_THREADS])
+    finally:
+        if not preset:
+            del os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
 
 
 def _same_file(path, others):
@@ -1651,6 +1663,18 @@ LIVE_FPS = 25
 # need not close the RTSP session. Five keyframe intervals (GOP 25 at 25 fps,
 # #85), with network slack; not tuned on a live stream.
 STREAM_TIMEOUT_MS = 5000   # PROVISIONAL
+
+# FFmpeg's options for opening a stream (#279), set as OpenCV reads them. Set,
+# they replace OpenCV's own default, `rtsp_transport;tcp`, so TCP is named
+# (live_camera.md: a lost UDP packet corrupts frames). A short probe at open:
+# by default FFmpeg buffers ~2 s of stream to learn what the SDP already says,
+# and the reader starts that far behind. Measured on the Mac on a MediaMTX
+# replay (docs/latency_wip.md): the first frame past the baseline 1.80 → 0.50 s
+# behind, nothing lost. `fflags;nobuffer` and `flags;low_delay` were measured
+# and not adopted. The stream is also decoded on one thread: FFmpeg's frame
+# threading holds back about a frame per thread, 339 → 65 ms behind.
+STREAM_CAPTURE_OPTIONS = "rtsp_transport;tcp|analyzeduration;100000|probesize;32768"   # PROVISIONAL
+STREAM_DECODER_THREADS = 1   # PROVISIONAL: one core keeps up with 1080p25 on the Mac
 
 # The wait before each reopen of a dropped stream, for as long as the run goes
 # on (#84). An attempt that opens a silent stream, or cannot reach the host,

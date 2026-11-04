@@ -1047,7 +1047,7 @@ def test_a_stream_is_opened_with_a_bounded_read_timeout(monkeypatch):
 
 def test_a_stream_is_decoded_on_one_thread_with_a_short_probe(monkeypatch):
     """One decoder thread, since frame threading holds a frame back per
-    thread (331 → 56 ms behind the stream, #279); FFmpeg's options set only
+    thread (339 → 65 ms behind the stream, #279); FFmpeg's options set only
     while the stream opens, so a Recording opened after is read as before."""
     monkeypatch.delenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", raising=False)
     seen = []

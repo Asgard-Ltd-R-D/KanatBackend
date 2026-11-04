@@ -487,7 +487,9 @@ def _open_stream(url):
     preset = "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ
     if not preset:
         # ponytail: process-wide while it opens; a Recording opened on another
-        # thread meanwhile would get it too. A Run reads one source.
+        # thread meanwhile would get it too, and a reconnect on the reader's
+        # thread sets it again. A Run reads one source, and the Detection
+        # Service runs one Run at a time; concurrent Runs need a lock here.
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = STREAM_CAPTURE_OPTIONS
     try:
         return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
@@ -496,7 +498,7 @@ def _open_stream(url):
                                  cv2.CAP_PROP_N_THREADS, STREAM_DECODER_THREADS])
     finally:
         if not preset:
-            del os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
+            os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
 
 
 def _same_file(path, others):

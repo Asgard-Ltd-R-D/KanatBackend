@@ -63,7 +63,7 @@ MARGIN = 8               # px from the frame's top and right edges
 CLOCK_H = 40             # px under the strip for the wall clock
 DECODE_ERROR = re.compile(rb"error while decoding|concealing|corrupt", re.I)
 MTX_API = "http://127.0.0.1:9997/v3"
-MTX_PATH = "e2e"   # the MediaMTX path the replay is published on
+MTX_RTSP = "rtsp://127.0.0.1:8554"
 STAGES = ("sent to decoded", "Frame Wait", "Look Time", "Persistence", "posted",
           "delivered by SSE", "first-seen frame sent to delivered")
 
@@ -224,12 +224,12 @@ class _Tee:
         self._thread.join(2)
 
 
-def _discards(stop, out):
+def _discards(path, stop, out):
     """Poll MediaMTX for this path's readers: their RTP packets discarded."""
     while not stop.wait(0.5):
         try:
             for s in _api("GET", "/rtspsessions/list")["items"]:
-                if s["path"] == MTX_PATH and s["state"] == "read":
+                if s["path"] == path and s["state"] == "read":
                     out[s["id"]] = s["outboundRTPPacketsDiscarded"]
         except Exception:
             pass   # MediaMTX busy: the next poll
@@ -296,7 +296,6 @@ def main():
                    help="the stream reader's decoder threads (CAP_PROP_N_THREADS), in place "
                         "of the pipeline's 1; 0 is FFmpeg's choice")
     p.add_argument("--backend-url", default="http://localhost:8000")
-    p.add_argument("--rtsp", default=f"rtsp://127.0.0.1:8554/{MTX_PATH}")
     p.add_argument("--out", required=True, help="a directory for the CSVs")
     a = p.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -308,10 +307,11 @@ def main():
     posted = _Posted()
     logging.getLogger("detection.post").addHandler(posted)
 
-    try:
-        _api("POST", f"/config/paths/add/{MTX_PATH}", {"source": "publisher"})
-    except Exception:
-        pass   # added by an earlier run
+    # A path of this run's own, deleted after it: no stale replay or other
+    # publisher can be the stream the reader measures
+    path = f"e2e-{os.urandom(4).hex()}"
+    rtsp = f"{MTX_RTSP}/{path}"
+    _api("POST", f"/config/paths/add/{path}", {"source": "publisher"})
     session = _api("POST", "/sessions", {"name": f"#279 {os.path.basename(a.out)}"},
                    base=a.backend_url)["id"]
     stop, delivered, discarded = threading.Event(), {}, {}
@@ -319,21 +319,18 @@ def main():
     try:   # from here on, a failure still ends the Session and the replay
         threading.Thread(target=_subscribe, args=(a.backend_url, session, delivered, stop),
                          daemon=True).start()
-        threading.Thread(target=_discards, args=(stop, discarded), daemon=True).start()
+        threading.Thread(target=_discards, args=(path, stop, discarded), daemon=True).start()
 
         # Warmed before the replay starts (see the module's doc)
         model = nbh.load_model(nbh.DEFAULT_MODEL)
         for _ in range(3):
             nbh._detect(model, [np.zeros((640, 640, 3), np.uint8)], 640, nbh.DEFAULT_CONFIDENCE, a.device)
 
-        # A path already ready is another publisher's, a stale replay's: the reader would measure it
-        if _api("GET", f"/paths/get/{MTX_PATH}").get("ready"):
-            raise RuntimeError(f"MediaMTX path {MTX_PATH} already has a publisher: stop it first")
         sent_path = os.path.join(a.out, "sent.csv")
         pacer = subprocess.Popen([sys.executable, "-c", "import sys; from tools.end_to_end import _pace; "
                                   "_pace(sys.argv[1], *map(float, sys.argv[2:4]), *sys.argv[4:])",
-                                  a.video, str(a.start), str(a.end), a.rtsp, sent_path])
-        while not _api("GET", f"/paths/get/{MTX_PATH}").get("ready"):
+                                  a.video, str(a.start), str(a.end), rtsp, sent_path])
+        while not _api("GET", f"/paths/get/{path}").get("ready"):
             if pacer.poll() is not None:
                 raise RuntimeError(f"the replay exited (code {pacer.returncode}) before MediaMTX had it")
             time.sleep(0.1)
@@ -361,7 +358,7 @@ def main():
                                   _key(value.first_seen_at, *value.template_xy)))
                 publisher.publish(value)
 
-            loop = nbh.RegisteredFrames.open(a.rtsp, None, model, device=a.device, opener=opener)
+            loop = nbh.RegisteredFrames.open(rtsp, None, model, device=a.device, opener=opener)
             threading.Thread(target=lambda: (pacer.wait(), loop.stop()), daemon=True).start()
             timing = os.path.join(a.out, "timing.csv")
             nbh.process(loop, None, mm_per_tpl_px=a.mm_per_px, stride=a.stride,
@@ -378,6 +375,7 @@ def main():
             pacer.wait()
         # One active Session at a time: the next run needs this one ended
         _api("PATCH", f"/sessions/{session}", {"status": "completed"}, base=a.backend_url)
+        _api("DELETE", f"/config/paths/delete/{path}")
 
     with open(sent_path) as f:
         sent = {int(r["frame"]): float(r["sent"]) for r in csv.DictReader(f)}

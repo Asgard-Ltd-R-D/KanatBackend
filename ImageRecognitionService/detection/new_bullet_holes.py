@@ -371,8 +371,10 @@ def _judge(candidate, looked_at, lost, persist=PERSIST, window=PERSIST_FRAMES,
 
 
 def _count_in(sorted_indices, lo, hi):
-    """How many of `sorted_indices` fall in [lo, hi)."""
-    return bisect.bisect_left(sorted_indices, hi) - bisect.bisect_left(sorted_indices, lo)
+    """How many of `sorted_indices` fall in [lo, hi); none if hi <= lo, as
+    once a stream jumps past a window's end."""
+    return max(0, bisect.bisect_left(sorted_indices, hi)
+               - bisect.bisect_left(sorted_indices, lo))
 
 
 def _detect(model, images, imgsz, conf, device=None):

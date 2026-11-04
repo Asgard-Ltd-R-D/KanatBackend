@@ -414,6 +414,17 @@ def test_a_gap_reported_while_judging_is_counted_once():
     assert _judged_at(persistence, looks[-1:]) == [19]
 
 
+def test_a_stream_jump_past_the_window_charges_nothing_beyond_it():
+    """Window [10, 30), Looked at 10-20 and seen 10-15, then the stream
+    reports 21-39 unseen and resumes at 40: 6 of 11 Looks, so it persists at
+    40. The gap past 30 once counted as Looks still to come and rejected it."""
+    unseen = []
+    persistence = Persistence(MATCH, window=20, unseen=unseen)
+    assert _judged_at(persistence, _looked(range(10, 21), set(range(10, 16)))) == []
+    unseen += range(21, 40)
+    assert _judged_at(persistence, _looked([40], set())) == [40]
+
+
 def _end_of_window_verdict(outcomes, persist=0.5):
     """Today's rule, written out on its own: `outcomes` is the window's due
     frames, each seen, empty, lost, unseen or late_drop (#84, counting for

@@ -391,6 +391,29 @@ def test_a_known_gap_ahead_is_not_also_counted_as_a_look_to_come():
     assert _judged_at(persistence, looks[-1:]) == [19]
 
 
+class _GapWhileJudging(list):
+    """`unseen` that the stream extends with 20-29 at its first read, as its
+    thread can while a Look is judged."""
+    armed = False
+
+    def __getitem__(self, i):
+        if self.armed:
+            self.armed = False
+            self.extend(range(20, 30))
+        return super().__getitem__(i)
+
+
+def test_a_gap_reported_while_judging_is_counted_once():
+    """The test above with the gap landing mid-judgement: both counts see it
+    or neither does, so it is still decided at 19, not left open."""
+    unseen = _GapWhileJudging([5])
+    persistence = Persistence(MATCH, window=20, unseen=unseen)
+    looks = _looked(range(10, 20), set(range(10, 20)))
+    assert _judged_at(persistence, looks[:-1]) == []
+    unseen.armed = True
+    assert _judged_at(persistence, looks[-1:]) == [19]
+
+
 def _end_of_window_verdict(outcomes, persist=0.5):
     """Today's rule, written out on its own: `outcomes` is the window's due
     frames, each seen, empty, lost, unseen or late_drop (#84, counting for

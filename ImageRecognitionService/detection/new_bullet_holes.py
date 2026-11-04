@@ -1331,13 +1331,20 @@ class Persistence:
         is rechecked every Look while open, but none is open past its window,
         so that is a handful."""
         persisted, still_open = [], []
+        # The stream extends `unseen` from its own thread, so one snapshot for
+        # both counts: read twice, a gap landing between was tried and still
+        # to come at once. Only from the earliest open window, which bounds it.
+        # Extends only append later frames, so the bisect holds for the slice.
+        unseen = self.unseen
+        if self._open:
+            unseen = unseen[bisect.bisect_left(unseen, self._open[0][2]):]
         for candidate in self._open:
             window_end = candidate[2] + self.window
             # Gaps the stream already reported are tried, not still to come.
             remaining = (sum(map(self._due, range(processed, window_end)))
-                         - _count_in(self.unseen, processed, window_end))
+                         - _count_in(unseen, processed, window_end))
             hole = _judge(candidate, self.looked_at, self.lost, self.persist, self.window,
-                          self.unseen, remaining)
+                          unseen, remaining)
             if hole is None:
                 if window_end > processed:
                     still_open.append(candidate)   # undecided; past its window, rejected

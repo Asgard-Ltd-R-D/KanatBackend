@@ -168,3 +168,22 @@ def test_the_pre_filter_fp_count_matches_on_sheet_truth_first(monkeypatch, tmp_p
         "persisted": np.float32([[30, 0], [-35, 0]]),
         "unit": "mm", "mm_per_tpl_px": 0.1763, "device": "cpu"})
     assert regression.score(entry, 1, "cpu", 0)["fp_before_change_filter"] == 1
+
+
+def test_score_runs_the_checkpoint_it_is_given(monkeypatch, tmp_path):
+    """#280 benches two checkpoints on one bench: `score` hands its model on."""
+    from tools import evaluate, position_error
+    entry = {"file": "rec.mkv", "window": [0, 1]}
+    seen = {}
+    monkeypatch.setattr(position_error, "truth_dir", lambda e: str(tmp_path))
+
+    def fake(*a, **k):
+        seen["model"] = k.get("model")
+        return {"entry": entry, "pairs": [], "rows": [], "out_of_scope_pairs": [],
+                "truth": np.zeros((0, 2), np.float32), "off_sheet": [],
+                "found": np.zeros((0, 2), np.float32), "times": [], "reported": [],
+                "fps": 25.0, "persisted": np.zeros((0, 2), np.float32),
+                "unit": "mm", "mm_per_tpl_px": 0.1763, "device": "cpu"}
+    monkeypatch.setattr(evaluate, "score_recording", fake)
+    regression.score(entry, 1, "cpu", 0, model="m/best.pt")
+    assert seen["model"] == "m/best.pt"

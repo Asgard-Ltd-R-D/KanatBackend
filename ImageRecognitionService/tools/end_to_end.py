@@ -326,6 +326,9 @@ def main():
         for _ in range(3):
             nbh._detect(model, [np.zeros((640, 640, 3), np.uint8)], 640, nbh.DEFAULT_CONFIDENCE, a.device)
 
+        # A path already ready is another publisher's, a stale replay's: the reader would measure it
+        if _api("GET", f"/paths/get/{MTX_PATH}").get("ready"):
+            raise RuntimeError(f"MediaMTX path {MTX_PATH} already has a publisher: stop it first")
         sent_path = os.path.join(a.out, "sent.csv")
         pacer = subprocess.Popen([sys.executable, "-c", "import sys; from tools.end_to_end import _pace; "
                                   "_pace(sys.argv[1], *map(float, sys.argv[2:4]), *sys.argv[4:])",

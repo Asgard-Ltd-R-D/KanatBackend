@@ -112,6 +112,7 @@ cd ImageRecognitionService
 - **Stride.** `LIVE_STRIDE` (4) unless `--stride` gives another.
 - **Print scale.** A stream has no Capture Setup on record, so the print scale comes from `--mm-per-px` only. Measure it for the printed Target in use (`docs/ring_measurement.md`). Without it, positions stay in Board px.
 - **Stopping.** Ctrl-C or SIGTERM ends the run and prints the report.
+- **The reader.** A stream is decoded on one thread and opened with a short probe (`STREAM_CAPTURE_OPTIONS`, #279): frame threading held every frame ~275 ms, and FFmpeg's default probe started the reader ~1.3 s behind. `OPENCV_FFMPEG_CAPTURE_OPTIONS` in the environment replaces the options. Name `rtsp_transport;tcp` in it, or the reader falls back to UDP. Measured in `latency_wip.md`.
 
 Each drop is logged when it starts, and again when the stream is back with that drop's duration (`[LIVE] stream back at … after X s without a frame`). Those lines are the per-drop durations #78 asks for. Frames lost upstream are logged when found, by the stream's timestamps (`[LIVE] N frame(s) lost upstream, X s of stream before …`, #117). Before the Bullet Hole report, four or five `[LIVE]` lines give the totals:
 

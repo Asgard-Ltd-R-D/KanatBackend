@@ -235,9 +235,12 @@ def _discards(path, stop, out):
             pass   # MediaMTX busy: the next poll
 
 
-def _subscribe(backend, session_id, delivered, stop):
-    """The frontend's SSE stream, each bullet_created noted by its `_key`."""
+def _subscribe(backend, session_id, delivered, stop, subscribed):
+    """The frontend's SSE stream, each bullet_created noted by its `_key`.
+    `subscribed` is set once the response starts: the backend subscribes
+    before it (routers/live.py), so no event published after is missed."""
     with urlopen(f"{backend}/sessions/{session_id}/live", timeout=60) as stream:
+        subscribed.set()
         for line in stream:
             if stop.is_set():
                 return
@@ -311,14 +314,18 @@ def main():
     # publisher can be the stream the reader measures
     path = f"e2e-{os.urandom(4).hex()}"
     rtsp = f"{MTX_RTSP}/{path}"
-    _api("POST", f"/config/paths/add/{path}", {"source": "publisher"})
     session = _api("POST", "/sessions", {"name": f"#279 {os.path.basename(a.out)}"},
                    base=a.backend_url)["id"]
-    stop, delivered, discarded = threading.Event(), {}, {}
+    stop, subscribed, delivered, discarded = threading.Event(), threading.Event(), {}, {}
     pacer = tee = None
-    try:   # from here on, a failure still ends the Session and the replay
-        threading.Thread(target=_subscribe, args=(a.backend_url, session, delivered, stop),
-                         daemon=True).start()
+    added = False
+    try:   # from here on, a failure still ends the Session, the replay and the path
+        _api("POST", f"/config/paths/add/{path}", {"source": "publisher"})
+        added = True
+        threading.Thread(target=_subscribe, daemon=True,
+                         args=(a.backend_url, session, delivered, stop, subscribed)).start()
+        if not subscribed.wait(10):   # else a Bullet Hole could be posted before it, unseen
+            raise RuntimeError("the Session's SSE stream did not open in 10 s")
         threading.Thread(target=_discards, args=(path, stop, discarded), daemon=True).start()
 
         # Warmed before the replay starts (see the module's doc)
@@ -374,8 +381,11 @@ def main():
         if pacer:
             pacer.wait()
         # One active Session at a time: the next run needs this one ended
-        _api("PATCH", f"/sessions/{session}", {"status": "completed"}, base=a.backend_url)
-        _api("DELETE", f"/config/paths/delete/{path}")
+        try:
+            _api("PATCH", f"/sessions/{session}", {"status": "completed"}, base=a.backend_url)
+        finally:
+            if added:
+                _api("DELETE", f"/config/paths/delete/{path}")
 
     with open(sent_path) as f:
         sent = {int(r["frame"]): float(r["sent"]) for r in csv.DictReader(f)}

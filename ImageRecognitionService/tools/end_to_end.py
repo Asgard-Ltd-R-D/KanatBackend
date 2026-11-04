@@ -63,7 +63,9 @@ MARGIN = 8               # px from the frame's top and right edges
 CLOCK_H = 40             # px under the strip for the wall clock
 DECODE_ERROR = re.compile(rb"error while decoding|concealing|corrupt", re.I)
 MTX_API = "http://127.0.0.1:9997/v3"
-PATH = "e2e"
+MTX_PATH = "e2e"   # the MediaMTX path the replay is published on
+STAGES = ("sent to decoded", "Frame Wait", "Look Time", "Persistence", "posted",
+          "delivered by SSE", "first-seen frame sent to delivered")
 
 
 def _cells(width):
@@ -123,9 +125,9 @@ def stages(sent, frames, looks, holes):
     number is its stamp; one unread, or not frame 0's plus its index, is a
     stamp mismatch, placed by the stamp if read, else by frame 0's plus its
     index."""
-    offset = frames[0].stamp - frames[0].index
-    out = {k: [] for k in ("sent to decoded", "Frame Wait", "Look Time", "Persistence",
-                           "posted", "delivered by SSE", "first-seen frame sent to delivered")}
+    first = next(f for f in frames if f.stamp is not None)   # frame 0's, unless it misread
+    offset = first.stamp - first.index
+    out = {k: [] for k in STAGES}
     out["stamp mismatches"] = 0
     done = {}   # index -> (sent, Look end)
     for f in frames:
@@ -227,7 +229,7 @@ def _discards(stop, out):
     while not stop.wait(0.5):
         try:
             for s in _api("GET", "/rtspsessions/list")["items"]:
-                if s["path"] == PATH and s["state"] == "read":
+                if s["path"] == MTX_PATH and s["state"] == "read":
                     out[s["id"]] = s["outboundRTPPacketsDiscarded"]
         except Exception:
             pass   # MediaMTX busy: the next poll
@@ -291,7 +293,7 @@ def main():
                    help="the stream reader's decoder threads (CAP_PROP_N_THREADS), in place "
                         "of the pipeline's 1; 0 is FFmpeg's choice")
     p.add_argument("--backend-url", default="http://localhost:8000")
-    p.add_argument("--rtsp", default=f"rtsp://127.0.0.1:8554/{PATH}")
+    p.add_argument("--rtsp", default=f"rtsp://127.0.0.1:8554/{MTX_PATH}")
     p.add_argument("--out", required=True, help="a directory for the CSVs")
     a = p.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -304,7 +306,7 @@ def main():
     logging.getLogger("detection.post").addHandler(posted)
 
     try:
-        _api("POST", f"/config/paths/add/{PATH}", {"source": "publisher"})
+        _api("POST", f"/config/paths/add/{MTX_PATH}", {"source": "publisher"})
     except Exception:
         pass   # added by an earlier run
     session = _api("POST", "/sessions", {"name": f"#279 {os.path.basename(a.out)}"},
@@ -323,7 +325,7 @@ def main():
     pacer = subprocess.Popen([sys.executable, "-c", "import sys; from tools.end_to_end import _pace; "
                               "_pace(sys.argv[1], *map(float, sys.argv[2:4]), *sys.argv[4:])",
                               a.video, str(a.start), str(a.end), a.rtsp, sent_path])
-    while not _api("GET", f"/paths/get/{PATH}").get("ready"):
+    while not _api("GET", f"/paths/get/{MTX_PATH}").get("ready"):
         time.sleep(0.1)
 
     taken = []
@@ -383,8 +385,7 @@ def main():
           f"{a.capture_options or nbh.STREAM_CAPTURE_OPTIONS!r}, decoder threads "
           f"{nbh.STREAM_DECODER_THREADS}")
     print("| Stage, ms | n | P50 | P95 | max |\n|---|---:|---:|---:|---:|")
-    for name in ("sent to decoded", "Frame Wait", "Look Time", "Persistence", "posted",
-                 "delivered by SSE", "first-seen frame sent to delivered"):
+    for name in STAGES:
         print(_row(name, s[name]))
     first = s["sent to decoded"][0] if s["sent to decoded"] else float("nan")
     lost = sum(n for n, _ in source.upstream)

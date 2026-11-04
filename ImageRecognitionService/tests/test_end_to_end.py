@@ -40,3 +40,11 @@ def test_a_frame_whose_stamp_disagrees_with_its_index_is_counted_and_placed_by_i
     s = e2e.stages(sent, frames, {4: 10.0}, [])
     assert s["stamp mismatches"] == 1
     assert np.allclose(s["sent to decoded"], [100.9 - 100.12])
+
+
+def test_frame_0_unread_is_placed_by_the_first_stamp_that_reads():
+    sent = {10: 100.0, 14: 100.16}
+    frames = [e2e.Taken(0, None, 100.5, 0.0), e2e.Taken(4, 14, 100.9, 0.0)]
+    s = e2e.stages(sent, frames, {4: 10.0}, [])
+    assert s["stamp mismatches"] == 1
+    assert np.allclose(s["sent to decoded"], [100.9 - 100.16])

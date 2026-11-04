@@ -303,6 +303,11 @@ def main():
     p.add_argument("--backend-url", default="http://localhost:8000")
     p.add_argument("--out", required=True, help="a directory for the CSVs")
     a = p.parse_args()
+    cap = cv2.VideoCapture(a.video)
+    frames = int((a.end - a.start) * cap.get(cv2.CAP_PROP_FPS))   # as `_pace` counts them
+    cap.release()
+    if frames > 1 << STAMP_BITS:   # the stamp would wrap and join frames to the wrong sent time
+        p.error(f"{frames} frames to replay: at most {1 << STAMP_BITS}, the {STAMP_BITS}-bit stamp's")
     os.makedirs(a.out, exist_ok=True)
     if a.capture_options is not None:
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = a.capture_options

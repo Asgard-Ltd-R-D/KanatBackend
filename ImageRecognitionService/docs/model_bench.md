@@ -513,3 +513,116 @@ Each Bullet Hole, ✓ found and ✗ not found:
 - **Nothing here is attributable to capacity, to the negatives or to batch 1.**
   Every comparison above changes at least two of them at once, on the fitted
   clips. It is recorded because it was trained, not because it answers #30.
+
+## yolo26n against yolo26m on the finished pipeline (#280)
+
+**Measured 2026-11-04 at `7f17626` (n) and `7fe1a97` (m).** The two commits
+differ only in `tools/regression.py`'s compare output, not in what is scored.
+Both runs were REGRESSION footage (ADR-0010): the six truth recordings of
+`config/recordings.json`, each over its manifest window. Results are judged on
+the footage changes are judged on, so a pass is not evidence that the model
+generalises.
+
+**Decision: `DEFAULT_MODEL` stays `kanat_yolo26n_v1`.** m does not dominate n
+under #268's rule. It adds a false positive and finds no hole that n misses at
+0 px.
+
+### Conditions
+
+- **Host:** an M1 Pro MacBook Pro (#268's reference host), device CPU (the
+  default).
+- **Libraries:** ultralytics 8.4.126, OpenCV 4.10.0, torch 2.13.0.
+- **Pipeline:** stride 4 (`LIVE_STRIDE`), conf 0.40, every constant at its
+  value on `main` after #277 and #278.
+- **Canvas shifts:** 0, 8, 16 and 32 px.
+- **Commands:**
+  `python -m tools.regression run --stride 4 --model <checkpoint>`, then
+  `tools.regression compare`, n as the reference.
+- **Probe:** `tools.probe` at conf 0.02, n, m and m + negatives over the same
+  frames.
+- **The training confound:**
+  - m ran 200 epochs at batch 4 on the `asgard` box with ultralytics 8.4.165.
+  - n ran 100 epochs at batch 8 on Kaggle with 8.4.130.
+  - Capacity is not the only thing that differs.
+
+### Pipeline, per Bullet Hole, at 0 px
+
+Off-sheet truth is out of scope (ADR-0011) and is not counted.
+
+| Recording | n TP/FP/FN | m TP/FP/FN | m against n |
+|---|---|---|---|
+| CamA `_141546` 13–25 s | 4/0/1 | 4/0/1 | the same. #4 is missed by both at 0 px; m finds it at 8 px only |
+| CamB `_101450` | 1/0/0 | 1/0/0 | |
+| CamB `_101550` | 0/0/1 | 0/0/1 | both blind to #1 (probe 0.00) |
+| CamB `_102250` | 3/0/0 | 3/0/0 | truth #3's Position Error moves 1.06 mm (dY −1.8 → −0.7), over the 1 mm bound |
+| CamB `_102450` | 1/0/0 | 1/0/0 | |
+| CamB `_103223` | 1/0/0 | **1/1/0** | **m adds a false positive** at template (23, 227), first seen 19.84 s |
+| **Total** | **10/0/2** | **10/1/2** | |
+
+`compare n m` reports **FAIL: 2 failing, 0 noise**: the added false positive
+and the 1.06 mm move.
+
+- **The added false positive is not grid noise.** m reports it at 0, 16 and
+  32 px. n reports it at no shift.
+- **It is first seen at 19.84 s.** That matches when the insect or debris lands
+  (section above).
+- **m gains nothing at 0 px.** It finds CamA #4 only at 8 px.
+- **Under the spec's dominance rule, the move does not decide the result.** The
+  added false positive alone fails it.
+- **Before the change filter:** CamA 9 → 0, `_101450` 0 → 1, `_103223` 0 → 1,
+  and the rest are 0 for both.
+
+### Probe, per Bullet Hole, conf 0.02
+
+The rate is a share of every registered frame from the window's start, so a
+hole that arrives mid-clip reads low by the frames before its arrival.
+
+| Recording | truth | n | m | m + negatives |
+|---|---|:-:|:-:|:-:|
+| CamA | #1 | 0.76 | 0.75 | **0.00** |
+| | #2 | 0.85 | 0.63 | **0.00** |
+| | #3 | 0.64 | 0.71 | **0.00** |
+| | #4 | 0.13 | **0.45** | **0.00** |
+| | #5 | 0.70 | 0.92 | 0.03 |
+| CamB `_101450` | #1 | 0.12 | 0.12 | 0.12 |
+| CamB `_101550` | #1 | 0.00 | 0.00 | 0.00 |
+| CamB `_102250` | #2 / #3 / #4 | 0.37 / 0.94 / 0.33 | 0.37 / 0.96 / 0.33 | 0.37 / 0.96 / 0.33 |
+| CamB `_102450` | #2 | 0.32 | 0.32 | 0.32 |
+| CamB `_103223` | #2 | 0.78 | 0.78 | 0.78 |
+
+- **CamB is saturated.** Every checkpoint sees every on-sheet hole in every
+  frame from its arrival on, except `_101550` #1, which none sees.
+- **On CamA, m sees #4 in about three times as many frames as n.** That is not
+  enough to report it at 0 px at conf 0.40.
+- **m + negatives is still blind on CamA at the sheet canvas,** as it was at
+  imgsz 1632. It is excluded from the comparison.
+
+### Inference Time and Look Time: provisional (Mac CPU)
+
+P50, in ms, from each run at 0 px. These are not deployment figures.
+
+| Recording | n inference | n Look | m inference | m Look |
+|---|--:|--:|--:|--:|
+| CamA `_141546` | 82 | 142 | 306 | 364 |
+| CamB `_101450` | 33 | 50 | 113 | 130 |
+| CamB `_101550` | 55 | 78 | 191 | 214 |
+| CamB `_102250` | 15 | 34 | 45 | 64 |
+| CamB `_102450` | 15 | 33 | 45 | 63 |
+| CamB `_103223` | 16 | 37 | 46 | 68 |
+
+**The stride check (provisional).**
+- Stride 4 at 25 fps is a Look every 160 ms, 12.5 a window of 2 s.
+- **n:** fits on every recording.
+- **m on CamA:** its Look P50 of 364 ms does not fit. Live, it would fall back
+  to about 5 Looks a window, above the floor of about 3.
+- **So this check does not decide the result.** The added false positive does.
+
+### Deferred to the deployment machine (CUDA)
+
+These do not block #280, and they do not reopen the decision unless m is
+retrained.
+
+- Inference Time and Look Time for n and m on CUDA.
+- The stride check on those times.
+- One recording's pipeline scores on CUDA, to confirm they match the Mac's.
+  `_103223` is the candidate, because it carries the false positive m adds.

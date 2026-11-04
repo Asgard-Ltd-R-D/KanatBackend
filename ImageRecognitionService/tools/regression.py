@@ -10,6 +10,7 @@ result. `compare` reads two and rules on them:
     python -m tools.regression run --out quick.json --shifts 0 --only CamB_20260915_102250
     python -m tools.regression compare main.json branch.json
     python -m tools.regression compare stride1.json stride4.json --across-strides
+    python -m tools.regression run --stride 4 --out m.json --model trained_models/kanat_yolo26m_v1/weights/best.pt
 
 The rule, per Bullet Hole of the new result against the reference, at 0 px:
 no truth Bullet Hole the reference finds is lost; no false positive is
@@ -20,7 +21,9 @@ moved or over the limit) flips under the control: it is grid noise,
 reported, and does not fail. A position failure flips only where a shifted
 run found the hole and shows it: a shifted miss has no position to show.
 Recordings run on other bytes or truth (both hashed into the result), or at
-another window, stride or device, are not ruled on. The exception is
+another window, stride or device, are not ruled on. Another checkpoint is
+ruled on like any other change (#280), and compare says so: a checkpoint
+is named by its path and the sha256 of its bytes. The exception is
 stride under `--across-strides`, for a stride table whose reference is at
 stride 1 (#277). Only the reference's
 shifted runs are read, but `run` makes them by default all the same: today's result is the next
@@ -99,7 +102,7 @@ def timing_summary(path):
     return out
 
 
-def score(entry, stride, device, shift, timing=None):
+def score(entry, stride, device, shift, timing=None, model=nbh.DEFAULT_MODEL):
     """One run of `entry` at canvas shift `shift`, per Bullet Hole.
 
     Truth beyond every Target Sheet's bound, and the detections it claims, are
@@ -108,7 +111,7 @@ def score(entry, stride, device, shift, timing=None):
     start, end = entry["window"]
     r = evaluate.score_recording(os.path.join(position_error.VIDEO_DIR, entry["file"]),
                                  start, end, folder, stride=stride, device=device,
-                                 timing=timing, canvas_shift=shift)
+                                 timing=timing, canvas_shift=shift, model=model)
     if r["entry"] != entry:
         raise SystemExit(f"[REFUSED] {entry['file']} does not hold the bytes the manifest "
                          f"lists under that name")
@@ -142,12 +145,15 @@ def score(entry, stride, device, shift, timing=None):
             "unit": r["unit"], "mm_per_tpl_px": r["mm_per_tpl_px"], "device": r["device"]}
 
 
-def run(entries, stride, device, shifts, out):
+def run(entries, stride, device, shifts, out, model=nbh.DEFAULT_MODEL):
     """Score `entries` at every shift and write the result to `out`, after
     each recording, so hours of runs survive a crash in the last."""
     result = {"footage": "REGRESSION", "commit": manifest.git_commit(),
               "host": platform.node(), "platform": platform.platform(),
               "device": device, "stride": stride, "shifts": list(shifts),
+              "model": os.path.relpath(model, nbh.BASE_DIR),
+              # The weights are git-ignored: the path alone does not name them.
+              "model_sha256": manifest.content_hash(model),
               "recordings": {}}
     for entry in entries:
         name = os.path.splitext(entry["file"])[0]
@@ -160,7 +166,7 @@ def run(entries, stride, device, shifts, out):
             print(f"\n===== {name}, canvas shift {d} px =====")
             with tempfile.TemporaryDirectory() as tmp:
                 timing = os.path.join(tmp, "timing.csv") if d == 0 else None
-                recording["shifts"][str(d)] = score(entry, stride, device, d, timing)
+                recording["shifts"][str(d)] = score(entry, stride, device, d, timing, model=model)
                 if timing:
                     recording["timing"] = timing_summary(timing)
         result["recordings"][name] = recording
@@ -202,6 +208,10 @@ def compare(ref, new, across_strides=False):
                          "detail": detail, "noise": noise,
                          "fails": kind in FAILS and not noise})
 
+    checkpoint = lambda r: (r.get("model"), r.get("model_sha256"))
+    if checkpoint(ref) != checkpoint(new):
+        note("-", "model", "-", f"{new.get('model')} ({str(new.get('model_sha256'))[:12]}) against "
+             f"{ref.get('model')} ({str(ref.get('model_sha256'))[:12]}): ruled on as a change")
     for name in new["recordings"].keys() - ref["recordings"].keys():
         note(name, "not comparable", "-", "in the new result, not in the reference")
     for name, r in ref["recordings"].items():
@@ -297,7 +307,8 @@ def _cell(v, fmt):
 
 def print_result(result):
     print(f"\n\n[REGRESSION] bench at {result['commit']}, stride {result['stride']}, "
-          f"device {result['device'] or 'default'}, shifts {result['shifts']} px, on "
+          f"device {result['device'] or 'default'}, model {result.get('model', 'unrecorded')}, "
+          f"shifts {result['shifts']} px, on "
           f"{result['host']} ({result['platform']})")
     print(_footage(result))
     for name, r in result["recordings"].items():
@@ -324,6 +335,7 @@ def print_result(result):
 
 def print_compare(ref, new, findings, passed):
     print(f"[REGRESSION] {new['commit']} against the reference {ref['commit']}, "
+          f"model {new.get('model', 'unrecorded')} against {ref.get('model', 'unrecorded')}, "
           f"stride {new['stride']} against {ref['stride']}, on {new['host']}")
     print(_footage(new))
     if len(ref["shifts"]) < 2:
@@ -356,6 +368,8 @@ if __name__ == "__main__":
     r.add_argument("--shifts", default=",".join(map(str, SHIFTS)),
                    type=lambda s: [int(v) for v in s.split(",")],
                    help="canvas shifts, Board px; 0 must be among them")
+    r.add_argument("--model", default=nbh.DEFAULT_MODEL,
+                   help="the checkpoint; compare rules across checkpoints as on any change (#280)")
     r.add_argument("--only", nargs="+", metavar="NAME",
                    help="these recordings, by file name without extension")
     c = sub.add_parser("compare", help="rule on a new result against a reference")
@@ -373,7 +387,7 @@ if __name__ == "__main__":
             entries = [e for e in entries if os.path.splitext(e["file"])[0] in a.only]
             if len(entries) != len(a.only):
                 p.error(f"--only names a recording with no truth folder: {a.only}")
-        run(entries, a.stride or 1, a.device, a.shifts, a.out)
+        run(entries, a.stride or 1, a.device, a.shifts, a.out, model=a.model)
     else:
         ref, new = map(_load, (a.reference, a.new))
         findings, passed = compare(ref, new, a.across_strides)

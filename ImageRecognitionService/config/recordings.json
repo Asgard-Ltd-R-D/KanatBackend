@@ -25,6 +25,7 @@
     "capture_setup": "cama-20260914",
     "fps": 25.0,
     "window": [0.0, 48.64],
+    "never_trained": true,
     "window_basis": "whole clip: no Bullet Hole is fired in it, so its truth is 0 new (12 marks already on the Board, labelled on its frame at 44.5 s, 2026-11-04). A scored truth recording and the bench's negative: never trained on, so it stays a fair false-positive test (#312). Spent under ADR-0005"
   },
   "ef813508cc6ac14acc189ae5a0bbc3a5ee76a880d59c52b61ae5250506ba3691": {

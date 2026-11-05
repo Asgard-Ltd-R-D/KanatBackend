@@ -7,7 +7,7 @@ safely:
 
 - **Every recording is looked up in the manifest by content hash**, for its
   Capture Setup. One the manifest does not list is mined all the same, with
-  none. A checkpoint trained on a Capture Setup's gravel makes every result on
+  none. One it marks `never_trained` (a bench negative, #312) is refused. A checkpoint trained on a Capture Setup's gravel makes every result on
   that setup regression, never unseen (ADR-0010).
 - **The image is the one the runtime shows the model**: the rectified Board
   canvas at detection scale, cut into `TILE_PX` tiles so training does not
@@ -83,8 +83,13 @@ SOURCE_FIELDS = ["image", "sha256", "file", "capture_setup", "frame",
 
 def source(entries, sha, video):
     """The manifest entry for `sha`, or for a recording it does not list, one
-    naming the file with no Capture Setup (ADR-0010)."""
-    return entries.get(sha) or {"file": os.path.basename(video), "capture_setup": ""}
+    naming the file with no Capture Setup (ADR-0010). An entry marked
+    `never_trained` is refused: it is a bench negative, a fair false-positive
+    test only while no checkpoint trains on its pixels (#312)."""
+    entry = entries.get(sha)
+    if entry and entry.get("never_trained"):
+        raise SystemExit(f"[REFUSED] {video} is never_trained in the manifest (#312)")
+    return entry or {"file": os.path.basename(video), "capture_setup": ""}
 
 
 def ground_mask(canvas):

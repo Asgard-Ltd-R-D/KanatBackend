@@ -466,40 +466,40 @@ class _SeenOn(_FakeModel):
 
 
 def _strided_run(monkeypatch, n_frames, on=lambda i: i >= 6, model=None):
-    """`process` at stride 13 over `n_frames`, with `model` or a `_SeenOn(on)`;
+    """`process` at stride 7 over `n_frames`, with `model` or a `_SeenOn(on)`;
     half a frame on `--end` keeps `frames_until` clear of float truncation."""
     loop = _loop(frames=100)
     loop.model = model or _SeenOn(on)
     monkeypatch.setattr(nbh.board, "changed_regions", lambda a, b: np.zeros((8, 8), bool))
     return nbh.process(loop, 10.0 + (n_frames + 0.5) / 25,
-                       require_change_evidence=False, stride=13)
+                       require_change_evidence=False, stride=7)
 
 
-def test_at_stride_13_a_bullet_hole_from_frame_6_is_new_and_first_seen_on_13(monkeypatch):
-    """Not in the baseline (frames 0-4), first looked at on 13, confirmed once
+def test_at_stride_7_a_bullet_hole_from_frame_6_is_new_and_first_seen_on_7(monkeypatch):
+    """Not in the baseline (frames 0-4), first looked at on 7, confirmed once
     its window has elapsed (#81)."""
-    run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES)
+    run = _strided_run(monkeypatch, 7 + nbh.PERSIST_FRAMES)
     assert len(run.baseline) == 0
-    assert [h["first_frame"] for h in run.holes] == [13]
-    assert run.holes[0]["seen"] == [13, 26, 39, 52]
+    assert [h["first_frame"] for h in run.holes] == [7]
+    assert run.holes[0]["seen"] == [7, 14, 21, 28]
 
 
-def test_at_stride_13_a_bullet_hole_is_withheld_until_its_window_elapses(monkeypatch):
+def test_at_stride_7_a_bullet_hole_is_withheld_until_its_window_elapses(monkeypatch):
     """One frame short of its window, it is unconfirmable, not rejected."""
-    run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES - 1)
+    run = _strided_run(monkeypatch, 7 + nbh.PERSIST_FRAMES - 1)
     assert run.holes == []
 
 
-def test_at_stride_13_a_detection_on_one_sampled_frame_is_dropped(monkeypatch):
-    """Seen on 13 alone of the window's looks at 13, 26, 39, 52: a flicker."""
-    run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES, on=lambda i: i == 13)
+def test_at_stride_7_a_detection_on_one_sampled_frame_is_dropped(monkeypatch):
+    """Seen on 7 alone of the window's looks at 7, 14, 21, 28: a flicker."""
+    run = _strided_run(monkeypatch, 7 + nbh.PERSIST_FRAMES, on=lambda i: i == 7)
     assert run.holes == []
 
 
 def test_the_report_states_the_stride(monkeypatch, capsys):
     """A stride-sampled result is only comparable at the same stride (#81)."""
     _strided_run(monkeypatch, 25)
-    assert "[INFO] stride 13:" in capsys.readouterr().out
+    assert "[INFO] stride 7:" in capsys.readouterr().out
 
 
 # --- the Baseline Marks in the report (#163) ---------------------------------
@@ -521,13 +521,13 @@ class _Marks(_FakeModel):
 def _baseline_and_new(monkeypatch):
     """Two marks there from frame 0, and one first seen on frame 6, past the
     baseline (frames 0-4)."""
-    return _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES, model=_Marks(
+    return _strided_run(monkeypatch, 7 + nbh.PERSIST_FRAMES, model=_Marks(
         (15, 15, lambda i: True), (45, 45, lambda i: True), (30, 50, lambda i: i >= 6)))
 
 
 def test_a_mark_seen_in_the_baseline_looks_is_listed_as_p1_and_is_not_new(
         monkeypatch, capsys):
-    run = _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES, on=lambda i: True)
+    run = _strided_run(monkeypatch, 7 + nbh.PERSIST_FRAMES, on=lambda i: True)
     out = capsys.readouterr().out
     assert run.holes == []
     assert "[INFO] baseline: 1 Baseline Marks over 5 frame(s)" in out
@@ -553,7 +553,7 @@ def test_the_baseline_mark_block_precedes_the_new_bullet_holes(monkeypatch, caps
 
 
 def test_an_empty_baseline_says_so_in_one_line(monkeypatch, capsys):
-    _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES)
+    _strided_run(monkeypatch, 7 + nbh.PERSIST_FRAMES)
     out = capsys.readouterr().out
     assert "[INFO] no Baseline Marks: the detector saw nothing in the baseline Looks" in out
     assert "  P1" not in out and "Baseline Marks (" not in out
@@ -565,7 +565,7 @@ def test_without_a_print_scale_a_baseline_mark_on_a_target_has_no_millimetres(
     monkeypatch.setattr(_FakeView, "assign", lambda self, pos: 0)
     monkeypatch.setattr(_FakeView, "ring_centre", lambda self, target: np.float32([15, 15]),
                         raising=False)
-    _strided_run(monkeypatch, 13 + nbh.PERSIST_FRAMES, on=lambda i: True)
+    _strided_run(monkeypatch, 7 + nbh.PERSIST_FRAMES, on=lambda i: True)
     assert re.search(r"^  P1  Target 1 +scores \d+  \(mm unavailable\)$",
                      capsys.readouterr().out, re.M)
 
@@ -795,14 +795,14 @@ class _Finishing(_Watching):
 
 
 def test_a_finishing_run_looks_on_for_change_evidence_inside_the_window(monkeypatch, capsys):
-    """Persisted early, uncorroborated until frame 40, still inside its
+    """Persisted early, uncorroborated until frame 25, still inside its
     window: the finishing Run looks on until then, so the mark is printed as
     it was when it persisted only at the window's end (#228, ADR-0003)."""
     loop = _live(monkeypatch, _FakeStream(interval=0.002))
     loop.model = _Finishing(lambda i: i >= 6, stop_at=400)
     loop.model.loop = loop
     monkeypatch.setattr(nbh.board, "changed_regions",
-                        lambda a, b: np.full((64, 64), int(b[0, 0, 0]) >= 40, bool))
+                        lambda a, b: np.full((64, 64), int(b[0, 0, 0]) >= 25, bool))
     with nbh._stopped_by_signals(loop):
         run = nbh.process(loop, None, stride=5)
     lines, looked = _lines_after_looks(capsys.readouterr().out)

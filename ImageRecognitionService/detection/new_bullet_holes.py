@@ -61,11 +61,13 @@ log_run = logging.getLogger("detection.run")
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
 
-# Single-class yolo26n, trained on Bullet Holes only. Replaces
-# kanat_model10_v.2.0 (3-class, board/bullet_hole/target), which scored below its
-# own Capture Profile floor on real range footage and so reported nothing.
+# Single-class yolo26m, trained on Bullet Holes only: the production model
+# (#259; docs/model_bench.md). yolo26n, the same but smaller, stays for fast
+# local runs via --model. They replace kanat_model10_v.2.0 (3-class,
+# board/bullet_hole/target), which scored below its own Capture Profile floor
+# on real range footage and so reported nothing.
 BULLET_HOLE_CLASS = "bullet_hole"   # by name: its id differs between checkpoints
-DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26n_v1", "weights", "best.pt")
+DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26m_v1", "weights", "best.pt")
 
 # --- Provisional working values --------------------------------------------
 # Not validated. Hand-set against a single clip, and fixed before the sealed

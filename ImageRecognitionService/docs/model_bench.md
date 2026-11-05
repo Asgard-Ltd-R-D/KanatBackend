@@ -527,6 +527,14 @@ generalises.
 under #268's rule. It adds a false positive and finds no hole that n misses at
 0 px.
 
+*Superseded 2026-11-05 (#259): `DEFAULT_MODEL` is `kanat_yolo26m_v1`, the
+production model by the user's decision. n stays for fast local runs on the
+development Mac (`--model`), and its regressions no longer block a change.
+#259 is what forced the choice: on n it adds 2 false positives on
+`CamA_20260914_141446` (n's phantom Baseline Marks on the green print), and on
+m it passes. The m costs measured above stand, filed with its other known
+issues.*
+
 ### Conditions
 
 - **Host:** an M1 Pro MacBook Pro (#268's reference host), device CPU (the

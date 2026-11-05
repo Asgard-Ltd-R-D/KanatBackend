@@ -28,7 +28,7 @@ safely:
 The manifest's analysis `window` is not used. It bounds what is scored, and a
 negative is scored against nothing: gravel is gravel anywhere in the clip.
 
-    python -m tools.mine_negatives data/videos/CamA_20260914_141446.mkv ... --out data/negatives/
+    python -m tools.mine_negatives data/videos/CamA_20260914_141646.mkv ... --out data/negatives/
 
 A recording whose canvas holds no ground contributes nothing, and says so —
 the CamB close-up is one: its canvas is all Board, so the runtime never shows

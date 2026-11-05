@@ -78,7 +78,7 @@ DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26m_v1", "we
 # survived. The four that 0.70 discarded had persistences of 0.50-0.62 — real
 # Bullet Holes, rejected by a bar set from nothing but intuition.
 PERSIST = 0.50        # PROVISIONAL
-PERSIST_FRAMES = 50   # PROVISIONAL length, but FIXED by design: measured to the end
+PERSIST_FRAMES = 25   # PROVISIONAL length, but FIXED by design: measured to the end
                       # of the clip instead, the same Bullet Hole persists over
                       # 13-17s and fails over 13-25s purely because registration
                       # drifts further over the longer run.

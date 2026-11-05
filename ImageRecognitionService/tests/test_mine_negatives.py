@@ -41,6 +41,14 @@ def test_an_unlisted_recording_is_mined_with_no_capture_setup():
         "file": "new.mkv", "capture_setup": ""}
 
 
+def test_a_never_trained_recording_is_refused():
+    """#312: a bench negative stays fair only if no checkpoint sees its pixels."""
+    import pytest
+    entries = {"e" * 64: {"file": "neg.mkv", "capture_setup": "x", "never_trained": True}}
+    with pytest.raises(SystemExit, match="never_trained"):
+        source(entries, "e" * 64, "data/videos/neg.mkv")
+
+
 def test_ground_is_gravel_and_never_paper_or_padding():
     ground = ground_mask(board_on_gravel())
     assert ground[200:, 300:].all(), "open gravel is ground"

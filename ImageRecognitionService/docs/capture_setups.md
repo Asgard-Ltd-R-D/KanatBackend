@@ -134,6 +134,8 @@ on, and none of it is sealed.
 name, and which `_141646` must share, sitting one minute between them with a
 frame closer to `_141846` than any other pair in this delivery. Spent is the
 negative-mining source.
+`_141446` is the exception: it is the bench's verified negative, scored and
+never trained on, so it stays a fair false-positive test (#312).
 
 ### `camb-20260915-wide-two-boards` — 101450 and 101550
 

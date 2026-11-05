@@ -67,7 +67,7 @@ as before (the 2026-10-11 amendment below). The reason is Hit-to-report
 latency. At a stride of about 5, a clean Hit's verdict is fixed about 0.8 s
 after its first Detection, about 1.2 s before its window ends.*
 
-*Amended 2026-11-02 (proposed on #259, pending approval): a Candidate that
+*Amended 2026-11-02, accepted 2026-11-05 (#259): a Candidate that
 was judged and did not persist, rejected or unconfirmable, stops gathering
 Detections. The next Detection at its place opens a new Candidate, with a
 window of its own, judged by the same 50% and the same floor. A persisted
@@ -80,7 +80,10 @@ truth #1's Candidate was seen on 18 of its 50 frames and rejected, and the
 detector then saw it on 93% of the later Looks without reporting it. The
 cost is that more Candidates reach Change Evidence, so precision rests more
 on it. Early verdicts (2026-10-28) only ever persist early: a Candidate is
-rejected, and so closed, only once its window has passed.*
+rejected, and so closed, only once its window has passed. It was accepted
+on yolo26m, the production model, which passes the regression bench with it.
+On yolo26n, kept for fast local runs, it adds false positives where n holds
+phantom Baseline Marks on the green print of `CamA_20260914_141446`.*
 
 ## Why change detection is evidence, not the gate
 

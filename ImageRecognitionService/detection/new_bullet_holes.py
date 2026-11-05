@@ -61,11 +61,13 @@ log_run = logging.getLogger("detection.run")
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
 
-# Single-class yolo26n, trained on Bullet Holes only. Replaces
-# kanat_model10_v.2.0 (3-class, board/bullet_hole/target), which scored below its
-# own Capture Profile floor on real range footage and so reported nothing.
+# Single-class yolo26m, trained on Bullet Holes only: the production model
+# (#259; docs/model_bench.md). yolo26n, the same but smaller, stays for fast
+# local runs via --model. They replace kanat_model10_v.2.0 (3-class,
+# board/bullet_hole/target), which scored below its own Capture Profile floor
+# on real range footage and so reported nothing.
 BULLET_HOLE_CLASS = "bullet_hole"   # by name: its id differs between checkpoints
-DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26n_v1", "weights", "best.pt")
+DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26m_v1", "weights", "best.pt")
 
 # --- Provisional working values --------------------------------------------
 # Not validated. Hand-set against a single clip, and fixed before the sealed
@@ -304,16 +306,22 @@ def strip_pre_existing(pts, baseline, match_px):
     return pts[distance >= match_px], distance[distance < match_px]
 
 
-def _fold(candidates, idx, pts, match_px, opening=True):
+def _fold(candidates, idx, pts, match_px, opening=True, closed=()):
     """One Look's Detections into the candidates, in place, for `Persistence`.
     A candidate is [pos, seen_frame_idxs, first_idx]. Without `opening`, a
     Detection matching none is dropped rather than opening a candidate.
 
-    ponytail: each Detection is matched against every candidate so far, kept
-    or not, as the whole-run fold always was. That is once a Look, so a very
-    long Range slows its Looks; index candidates spatially if one does."""
+    `closed` holds the ids of candidates judged and not persisted: they gather
+    nothing more, so a Detection at their place opens a new candidate (#259).
+    Folded into the dead one instead, a Bullet Hole seen on 93% of Looks after
+    a weak first window was never reported (#256).
+
+    ponytail: each Detection is scanned against every candidate so far, closed
+    ones included. That is once a Look, so a very long Range slows its Looks;
+    index candidates spatially if one does."""
     for p in np.asarray(pts, np.float32):  # (cx, cy) or (cx, cy, w, h), always 2-D
-        match = next((c for c in candidates if same_bullet_hole(c[0], p, match_px)), None)
+        match = next((c for c in candidates
+                      if id(c) not in closed and same_bullet_hole(c[0], p, match_px)), None)
         if match is None:
             if opening:
                 candidates.append([p.copy(), [idx], idx])
@@ -1276,6 +1284,8 @@ class Persistence:
     the window's end gives, so `end` drops a Candidate that persisted early
     but whose window never passed: on a recording it is unconfirmable, as
     before. Live, what was announced stays announced (ADR-0004).
+    One that did not persist gathers nothing more: a later Detection at its
+    place opens a new Candidate, judged over a window of its own (#259).
 
     Change Evidence is not checked here: when it is differs by mode, on
     purpose (ADR-0003, amended 2026-10-11).
@@ -1292,21 +1302,27 @@ class Persistence:
         self._candidates = []
         self._open = []   # candidates not yet judged, in frame order
         self._persisted = {}   # id(hole) -> (hole, its candidate)
+        self._closed = set()   # ids of candidates judged and not persisted (#259)
 
     def add(self, index, pts, opening=True):
         """One Look: its Detections, or None if it was Lost. Returns the
         Candidates that persisted at it, each with its position and sightings
         as of now. `index + 1` frames have passed, in both modes. Without
         `opening`, as while a live Run ends, a Detection opens no Candidate
-        (#228)."""
+        (#228).
+
+        A window that ended before this Look is judged before its Detections
+        fold: past a stride's gap or a stream's, one about to be rejected
+        would otherwise take the first Look of the next Candidate (#259)."""
+        persisted = self._judge_due(index, look=index)
         if pts is None:
             self.lost.append(index)
         else:
             self.looked_at.append(index)
             made = len(self._candidates)
-            _fold(self._candidates, index, pts, self.match_px, opening)
+            _fold(self._candidates, index, pts, self.match_px, opening, self._closed)
             self._open += self._candidates[made:]
-        return self._judge_due(index + 1)
+        return persisted + self._judge_due(index + 1)
 
     @property
     def unjudged(self):
@@ -1342,7 +1358,7 @@ class Persistence:
         """Where a persisted Candidate is now, (cx, cy[, w, h])."""
         return self._persisted[id(hole)][1][0]
 
-    def _judge_due(self, processed):
+    def _judge_due(self, processed, look=None):
         """Judge every open Candidate, `processed` frames having passed. Each
         is rechecked every Look while open, but none is open past its window,
         so that is a handful."""
@@ -1363,11 +1379,13 @@ class Persistence:
                           unseen, remaining)
             if hole is None:
                 if window_end > processed:
-                    still_open.append(candidate)   # undecided; past its window, rejected
+                    still_open.append(candidate)   # undecided
+                else:
+                    self._closed.add(id(candidate))   # past its window: rejected
             else:
                 # The Look that judged it: when a run reports it, before the
                 # Change Evidence check (#272).
-                hole["judged_frame"] = processed - 1
+                hole["judged_frame"] = processed - 1 if look is None else look
                 self._persisted[id(hole)] = (hole, candidate)
                 persisted.append(hole)
         self._open = still_open

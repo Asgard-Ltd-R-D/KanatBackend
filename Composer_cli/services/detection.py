@@ -21,7 +21,7 @@ START_TIMEOUT_S = 60
 STOP_TIMEOUT_S = 10
 # detection.new_bullet_holes's DEFAULT_MODEL, which the service loads before it
 # answers. trained_models/ is git-ignored, so a fresh checkout lacks it.
-MODEL = Path("trained_models/kanat_yolo26n_v1/weights/best.pt")
+MODEL = Path("trained_models/kanat_yolo26m_v1/weights/best.pt")
 TITLE = "Detection Service"
 # Its command line as `pgrep -f` sees it. On macOS the .venv's python shows as
 # the framework's Python, so only the module names it.

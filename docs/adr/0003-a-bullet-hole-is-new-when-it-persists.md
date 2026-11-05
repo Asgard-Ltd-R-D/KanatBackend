@@ -67,6 +67,24 @@ as before (the 2026-10-11 amendment below). The reason is Hit-to-report
 latency. At a stride of about 5, a clean Hit's verdict is fixed about 0.8 s
 after its first Detection, about 1.2 s before its window ends.*
 
+*Amended 2026-11-02, accepted 2026-11-05 (#259): a Candidate that
+was judged and did not persist, rejected or unconfirmable, stops gathering
+Detections. The next Detection at its place opens a new Candidate, with a
+window of its own, judged by the same 50% and the same floor. A persisted
+Candidate keeps gathering, as before. A window that ended before a Look is
+judged before that Look's Detections are matched, so past a stride's gap the
+first Look of the next Candidate is not taken by one about to be rejected.
+Before this, every later sighting folded into the dead Candidate and no
+Candidate ever opened there again. On `CamA_20260914_141546` from 5 s,
+truth #1's Candidate was seen on 18 of its 50 frames and rejected, and the
+detector then saw it on 93% of the later Looks without reporting it. The
+cost is that more Candidates reach Change Evidence, so precision rests more
+on it. Early verdicts (2026-10-28) only ever persist early: a Candidate is
+rejected, and so closed, only once its window has passed. It was accepted
+on yolo26m, the production model, which passes the regression bench with it.
+On yolo26n, kept for fast local runs, it adds false positives where n holds
+phantom Baseline Marks on the green print of `CamA_20260914_141446`.*
+
 ## Why change detection is evidence, not the gate
 
 The obvious cheaper design runs `cv2.absdiff` against the baseline and hands
@@ -109,6 +127,32 @@ tidy-up, and it changes recording results. The thresholds in this ADR and
 [ADR-0007](0007-live-input-is-sampled-at-a-fixed-stride.md)'s stride table were
 measured with the end-of-run check, and the Sealed recordings cannot be run
 again to re-measure them ([ADR-0005](0005-the-held-out-set-is-whole-capture-setups.md)).*
+
+*Amended 2026-11-02 (#299; measured, not adopted): both checks accept
+Change Evidence that arrives after a Candidate's window, and on a recording
+from any Detection near its final position, its own or not. That is how
+marks already on the Board pass once #259 lets them persist. The baseline
+missed them because the detector's score on anything stationary, a mark, a
+ring edge or plain paper, wanders for the whole run. A rule was measured
+that replaces both checks: a persisted Candidate is corroborated when at
+least 50% of its own Detections in its first window are, the same 50% as
+Persistence, and it is reported early only once both verdicts are fixed.
+On regression footage only ([ADR-0010](0010-every-recording-may-be-opened.md)),
+at stride 4 and stride 1, the lowest truth hole was at 62% and 64%, and the
+false positives #299 found were at most 43% (stride 4, one 0.48 s burst)
+and 0%. It lost no truth hole, removed every false positive of that kind,
+and added no latency at the median and 800 ms at most, on the 62% hole. It
+is not adopted: #259's other added reports are 67–100% corroborated, so no
+share that keeps every truth hole removes them. #300 attributed them
+(2026-11-05): registration since fixed, a light patch since gone, a bird
+resting on the sheet, and real holes on a recording thought empty.
+Re-measured on the sheet canvases
+([ADR-0011](0011-detection-is-limited-to-the-target-sheets.md)), every
+on-sheet truth hole on `CamA_20260914_141546` shows Change Evidence on
+96–100% of its Looks. The on-sheet hole the run misses is missed by the
+detector, not by change detection. The 13–17 s measurement above, of one
+hole change detection could not see, stands as history: it was made on the
+whole Board, before the sheet canvases.*
 
 ## The thresholds were wrong, and only ground truth showed it
 

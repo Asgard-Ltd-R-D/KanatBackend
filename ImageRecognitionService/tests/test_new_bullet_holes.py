@@ -1,7 +1,8 @@
 """Checks for the new-Bullet-Hole tracker. No model, no video, no torch."""
 import numpy as np
 from detection import board
-from detection.new_bullet_holes import (LIVE_STRIDE, PERSIST_FRAMES, Persistence, _overlap_fraction,
+from detection.new_bullet_holes import (LIVE_STRIDE, PERSIST_FRAMES, Persistence,
+                              _overlap_fraction,
                               change_evidence,
                               merge_displaced_tracks, same_bullet_hole)
 
@@ -332,7 +333,7 @@ def test_a_clean_candidate_persists_before_its_window_ends():
 
 def test_a_clean_live_candidate_is_fixed_on_its_4th_look():
     """The production window at LIVE_STRIDE: 25 frames hold 7 Looks, 4
-    needed, so a mark seen on every Look is fixed on the 4th, 12 frames
+    needed, so a Candidate seen on every Look is fixed on the 4th, 12 frames
     (480 ms) after the first (#314, ADR-0003 amended 2026-11-08). Written
     out, not derived: a change to the window, the stride or the 50% bar
     fails here instead of moving latency silently. At 40 frames it is the

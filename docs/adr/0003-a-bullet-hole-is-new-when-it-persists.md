@@ -1,7 +1,8 @@
 # A Bullet Hole is new when it persists
 
 A Bullet Hole is reported when it is absent from the baseline **and** is
-still detected in at least **50% of the 50 frames following its first sighting**,
+still detected in at least **50% of the 50 frames following its first sighting**
+(25 frames since the 2026-11-08 amendment below),
 **and** change detection corroborates it.
 Detection runs across the whole Board and is filtered afterwards; change
 detection does not decide what the model looks at.
@@ -84,6 +85,32 @@ rejected, and so closed, only once its window has passed. It was accepted
 on yolo26m, the production model, which passes the regression bench with it.
 On yolo26n, kept for fast local runs, it adds false positives where n holds
 phantom Baseline Marks on the green print of `CamA_20260914_141446`.*
+
+*Amended 2026-11-08 (#310, #313, #314): the window is 25 frames, not 50.
+Nothing else about Persistence changes: the 50%, the Lost-frame floor,
+early verdicts and closing judged Candidates stay as they are. The window
+is still counted in frames. At `LIVE_STRIDE` 4 it holds 7 Looks, of which
+4 are needed, so a clean Hit's verdict is fixed on its 4th Look, 480 ms
+after its first Detection, not 960 ms. A rejection waits 1 s. The 50 frames
+were sized against gravel and shadow flicker, which the sheet canvases
+([ADR-0011](0011-detection-is-limited-to-the-target-sheets.md)) no longer
+show the detector. Measured on yolo26m, on regression footage only
+([ADR-0010](0010-every-recording-may-be-opened.md)):
+on the bench at stride 4, 25 frames lost no truth hole and added no false
+positive against 50. It gained one truth hole (`CamA_20260914_141546` #4)
+and reported every truth hole 0.48 s sooner, with Position Error unchanged.
+False positives before the change filter were unchanged on every
+recording. At stride 1 and all four shifts, stride 4 still loses nothing
+against stride 1 ([ADR-0007](0007-live-input-is-sampled-at-a-fixed-stride.md)).
+On the five unlabelled CamA recordings, 25 frames added two reports, and
+review by hand classed both as real new Bullet Holes. In a Stream drop
+replay, with the path deleted 0.2 s after truth #4's arrival frame for 5 s,
+25 frames reported the same Bullet Holes as 50, with truth #4 reported after
+the reconnect. A drop of 1 s or more inside a 25-frame window makes that
+Candidate unconfirmable, and #259's reopening recovers it. 40 frames also
+passed the bench and was not needed. #299's Change Evidence share rule
+(the 2026-11-02 amendment below) was measured at 50 frames: if it is ever
+revived, it must be re-measured at the window then in force.*
 
 ## Why change detection is evidence, not the gate
 
@@ -198,9 +225,9 @@ before the sealed run, which evaluates them once and does not re-set them
 
 Nothing can be reported until its verdict can no longer change (the
 2026-10-28 amendment above). A clean Hit's verdict is fixed before its window
-ends, about 0.8 s after its first Detection at a stride of about 5. A marginal
-Candidate, and every rejection, still waits out the whole window, about two
-seconds at 25fps. This is affordable only because the latency budget was
+ends, 480 ms after its first Detection at stride 4 (the 2026-11-08
+amendment). A marginal Candidate, and every rejection, still waits out the
+whole window, 1 s at 25fps. This is affordable only because the latency budget was
 relaxed to 5–10 seconds; even the early case does not fit SOW 2.3.4's 0.5
 seconds, which is recorded as needing renegotiation.
 
@@ -224,7 +251,7 @@ recording's results differ from the end-of-window verdicts, which the
 2026-10-28 amendment keeps identical. Shortening the denominator to the frames
 that happen to remain is what made the verdict depend on clip length in the
 first place, so the window is required to complete instead. Any analysis must
-therefore run at least 50 frames past the last expected Hit.
+therefore run at least `PERSIST_FRAMES` (25) frames past the last expected Hit.
 
 Live, a Range has no clip end to wait for. A Candidate whose verdict was fixed
 early is reported at once and stays reported

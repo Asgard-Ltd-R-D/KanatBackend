@@ -13,6 +13,12 @@ below, in "Re-derived: stride 4". The decision is unchanged: a fixed stride,
 persistence over the samples. The window now holds about 12 Looks. "The stride:
 17" and the stride-17 consequences are kept as the record they were.*
 
+*Amended 2026-11-08 (#314): ADR-0003's window is 25 frames, not 50 (ADR-0003,
+amended 2026-11-08). At stride 4 it holds 7 Looks, of which 4 are needed. The
+decision is unchanged: the window is still counted in frames and was not
+retuned for the stride. At 25 frames, stride 4 still loses nothing against
+stride 1 (#310).*
+
 ## Why sample at all
 
 The frame loop costs 0.3–0.65 s a look on the development Mac, against a frame
@@ -222,7 +228,7 @@ not visibly break them there.
 
 ## The frame rate is load-bearing
 
-The stride is a count of frames, and so are `PERSIST_FRAMES` (50, ~2 s) and
+The stride is a count of frames, and so are `PERSIST_FRAMES` (25, ~1 s, 50 until #314) and
 `BASELINE_FRAMES` (5, ~200 ms). All three are set at 25 fps, and every truth
 recording is 25 fps. The AXIS Q6315-LE is therefore configured to a constant
 25 fps (#85). At 50 or 60 fps every window would halve in duration and the

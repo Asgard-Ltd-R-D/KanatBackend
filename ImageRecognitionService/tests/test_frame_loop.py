@@ -570,16 +570,17 @@ def test_without_a_print_scale_a_baseline_mark_on_a_target_has_no_millimetres(
                      capsys.readouterr().out, re.M)
 
 
-def test_a_stride_leaving_one_look_a_window_is_refused():
-    """At a stride of the persistence window or more, a window holds one look,
-    and any single sighting would confirm at 1/1 (#81 review)."""
+def test_a_stride_letting_one_sighting_persist_is_refused():
+    """At a stride of the persistence window or more a window holds one look
+    (#81 review); at 13-24 of a 25-frame window it holds two (#313 review).
+    Either way a single sighting would confirm, at 1/1 or 1/2."""
     import argparse
     import pytest
+    assert nbh.PERSIST_FRAMES == 25 and nbh.PERSIST == 0.50 and nbh.MAX_STRIDE == 12
     parser = argparse.ArgumentParser()
     nbh.add_stride_flag(parser)
-    assert parser.parse_args(["--stride", str(nbh.PERSIST_FRAMES - 1)]).stride == \
-        nbh.PERSIST_FRAMES - 1
-    for refused in ("0", str(nbh.PERSIST_FRAMES)):
+    assert parser.parse_args(["--stride", "12"]).stride == 12
+    for refused in ("0", "13", "24", str(nbh.PERSIST_FRAMES)):
         with pytest.raises(SystemExit):
             parser.parse_args(["--stride", refused])
 

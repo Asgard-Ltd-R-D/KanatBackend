@@ -1702,18 +1702,24 @@ STREAM_DECODER_THREADS = 1   # PROVISIONAL: one core keeps up with 1080p25 on th
 RECONNECT_EVERY_S = 1.0
 
 
+# The largest stride whose persistence window still filters a single sighting.
+MAX_STRIDE = max(n for n in range(1, PERSIST_FRAMES + 1)
+                 if 1 / -(-PERSIST_FRAMES // n) < PERSIST)
+
+
 def add_stride_flag(parser):
     """The `--stride` flag, identical in every tool that runs `process`."""
     def stride(text):
         n = int(text)
         if n < 1:
             raise argparse.ArgumentTypeError("a stride is 1 frame or more")
-        # From PERSIST_FRAMES on, a window holds one look and any single
-        # sighting persists at 1/1: persistence would filter nothing.
-        if n >= PERSIST_FRAMES:
+        # A window holds ceil(PERSIST_FRAMES / n) looks. When one sighting
+        # among them already reaches PERSIST (1/1, or 1/2 at 0.50), persistence
+        # filters nothing: at 25 frames that is every stride from 13 (#313 review).
+        if 1 / -(-PERSIST_FRAMES // n) >= PERSIST:
             raise argparse.ArgumentTypeError(
-                f"a stride under the {PERSIST_FRAMES}-frame persistence window, so "
-                f"each window holds more than one look")
+                f"a stride of at most {MAX_STRIDE}, so one sighting in a "
+                f"{PERSIST_FRAMES}-frame persistence window stays under {PERSIST:.0%}")
         return n
     parser.add_argument("--stride", type=stride, default=None,
                         help="look at every Nth frame past the baseline; the "
@@ -1721,8 +1727,8 @@ def add_stride_flag(parser):
                              "is still its first --baseline-frames consecutive "
                              "frames. 1, the default on a recording, looks at "
                              f"every frame; on a stream it is {LIVE_STRIDE} "
-                             f"(ADR-0007). It must be under {PERSIST_FRAMES}, the "
-                             "persistence window.")
+                             f"(ADR-0007). At most {MAX_STRIDE}, so the "
+                             "persistence window holds enough looks to filter.")
 
 
 def registration_note(residual, radius, unit="Board px"):

@@ -82,6 +82,12 @@ PERSIST_FRAMES = 25   # PROVISIONAL length, but FIXED by design: measured to the
                       # of the clip instead, the same Bullet Hole persists over
                       # 13-17s and fails over 13-25s purely because registration
                       # drifts further over the longer run.
+                      # 25, was 50 (#310, ADR-0003 amended 2026-11-08): 50 was
+                      # sized against gravel flicker the sheet crop (ADR-0011)
+                      # removed. At LIVE_STRIDE 4 it holds 7 Looks, 4 needed, so
+                      # a clean Hit is fixed 480 ms after its first Detection,
+                      # not 960; on yolo26m it lost no truth hole and added no
+                      # false positive on the bench (#313).
 DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 
 # Consecutive lost frames before the loop re-acquires the Board on its own

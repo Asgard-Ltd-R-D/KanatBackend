@@ -907,7 +907,11 @@ curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "
 # Mark in template px. `registered` is the latest registered Look's frame time and
 # homography, which a Lost Look leaves as it was, and `looked_at` the latest Look's
 # frame time, registered or Lost: both null until watching.
-# Status: {"run": null}, or the Run, its state (starting, watching, ending) and since when.
+# Status: {"run": null, "device": "cuda:0"}, or the Run, its state (starting, watching,
+# ending) and since when. `device` is the one the detector resolved to, warmed on
+# before the control API answers (#319): handed none, cuda:0 when CUDA is visible, else
+# cpu, never mps. The service answers nothing until warmed, and a warm-up that fails is
+# logged and ends it.
 curl -s 127.0.0.1:8010/status
 # End: answered once the Run has ended and its posts are drained, with its
 # `baseline_view`, which names it, and its final `registered` and `looked_at`.

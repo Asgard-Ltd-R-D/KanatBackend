@@ -106,39 +106,39 @@ def test_a_window_mostly_lost_to_registration_confirms_nothing():
     assert lone == sparse == [] and len(edge) == 1
 
 
-STRIDE_13 = range(13, 300, 13)   # #81: every 13th frame looked at, the rest never read
+STRIDE_7 = range(7, 300, 7)   # #81: every 7th frame looked at, the rest never read
 
 
 def test_stride_gaps_are_not_lost_frames():
-    """#81/#82 look at every Nth frame on purpose: ~4 looks a 50-frame window
-    at stride 13. Frames never read are gaps, not registration failures, so
+    """#81/#82 look at every Nth frame on purpose: 4 looks a 25-frame window
+    at stride 7. Frames never read are gaps, not registration failures, so
     the #110 floor does not count them and a persistent Bullet Hole confirms."""
-    got = _persisted(_looked(STRIDE_13, set(STRIDE_13)), n_frames=300,
+    got = _persisted(_looked(STRIDE_7, set(STRIDE_7)), n_frames=300,
                      match_px=MATCH)
     assert len(got) == 1 and got[0]["persistence"] == 1.0
 
 
 def test_stride_still_drops_a_flickering_detection():
-    seen = set(STRIDE_13[::4])            # 1 look in 4
-    assert _persisted(_looked(STRIDE_13, seen), n_frames=300,
+    seen = set(STRIDE_7[::4])            # 1 look in 4
+    assert _persisted(_looked(STRIDE_7, seen), n_frames=300,
                       match_px=MATCH) == []
 
 
 def test_a_lost_sampled_frame_counts_against_the_floor():
-    """At stride 13 a window holds frames 13..52: 4 tries. Three of them lost
+    """At stride 7 a window holds frames 7..31: 4 tries. Three of them lost
     to registration leaves 1 look of 4, under the floor."""
-    looked = [13] + list(range(65, 300, 13))
+    looked = [7] + list(range(35, 300, 7))
     got = _persisted(_looked(looked, set(looked)), n_frames=300,
-                     match_px=MATCH, lost=[26, 39, 52])
-    assert all(h["first_frame"] != 13 for h in got)
+                     match_px=MATCH, lost=[14, 21, 28])
+    assert all(h["first_frame"] != 7 for h in got)
 
 
 def test_the_frame_past_the_window_does_not_count():
-    """The window is [first, first + 50): seen in 25 of frames 0-49 is exactly
+    """A 50-frame window is [first, first + 50): seen in 25 of frames 0-49 is exactly
     PERSIST, and a look at frame 50 must not join the denominator."""
     frames = [(i, np.array([[100, 100]], np.float32) if i < 25 else np.zeros((0, 2), np.float32))
               for i in range(51)]
-    assert len(_persisted(frames, n_frames=51, match_px=MATCH)) == 1
+    assert len(_persisted(frames, n_frames=51, match_px=MATCH, window=50)) == 1
 
 
 def test_nearby_detections_merge_into_one_bullet_hole():

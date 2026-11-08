@@ -106,8 +106,9 @@ On the five unlabelled CamA recordings, 25 frames added two reports, and
 review by hand classed both as real new Bullet Holes. In a Stream drop
 replay, with the path deleted 0.2 s after truth #4's arrival frame for 5 s,
 25 frames reported the same Bullet Holes as 50, with truth #4 reported after
-the reconnect. A drop of 1 s or more inside a 25-frame window makes that
-Candidate unconfirmable, and #259's reopening recovers it. 40 frames also
+the reconnect. A drop covering 4 of a window's 7 due Looks, about 0.5 s,
+makes that Candidate unconfirmable under the Lost-frame floor, and #259's
+reopening recovers it. 40 frames also
 passed the bench and was not needed. #299's Change Evidence share rule
 (the 2026-11-02 amendment below) was measured at 50 frames: if it is ever
 revived, it must be re-measured at the window then in force.*

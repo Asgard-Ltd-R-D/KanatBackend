@@ -43,8 +43,9 @@ START_TIMEOUT_S = 15   # PROVISIONAL
 
 # How long an end lets a watching Run look on, judging the Candidates it has
 # open, before it stops the Run as it stands (#228): one persistence window
-# (PERSIST_FRAMES at LIVE_FPS, 2 s) past the Look in hand, to the stride's
-# Look that judges the last, ~3 s on the development Mac. Past it the Stream
+# (PERSIST_FRAMES at LIVE_FPS, 1 s since #313) past the Look in hand, to the
+# stride's Look that judges the last, ~3 s on the development Mac at the 2 s
+# window it was measured with (#228). Past it the Stream
 # gave no frames to judge them on, and a Candidate still open is unconfirmable.
 ENDING_TIMEOUT_S = 5   # PROVISIONAL
 

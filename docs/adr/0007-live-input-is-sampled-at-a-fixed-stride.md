@@ -4,7 +4,8 @@ Live, the pipeline looks at every 17th frame of a constant 25 fps stream and
 treats the frames between as gaps. It does not try to look at every frame, does
 not vary the stride with load, and does not retune persistence for the sparser
 sampling. [ADR-0003](0003-a-bullet-hole-is-new-when-it-persists.md)'s window
-stays 50 frames at 50%; it now holds about 3 looks instead of 50.
+stays 50 frames at 50% (25 frames since the 2026-11-08 amendment below); it
+now holds about 3 looks instead of 50.
 
 *Amended 2026-11-02 (#277): the stride is 4, not 17. ECC's stopping rule
 (#274), the Target Sheet canvases (#275) and the per-Look cleanups (#276) cut
@@ -12,6 +13,12 @@ Look Time to a tenth, and the stride is re-derived by this ADR's own rule
 below, in "Re-derived: stride 4". The decision is unchanged: a fixed stride,
 persistence over the samples. The window now holds about 12 Looks. "The stride:
 17" and the stride-17 consequences are kept as the record they were.*
+
+*Amended 2026-11-08 (#314): ADR-0003's window is 25 frames, not 50 (its
+2026-11-08 amendment). At stride 4 it holds 7 Looks, of which 4 are needed. The
+decision is unchanged: the window is still counted in frames and was not
+retuned for the stride. At 25 frames, stride 4 still loses nothing against
+stride 1 (#310).*
 
 ## Why sample at all
 
@@ -222,7 +229,7 @@ not visibly break them there.
 
 ## The frame rate is load-bearing
 
-The stride is a count of frames, and so are `PERSIST_FRAMES` (50, ~2 s) and
+The stride is a count of frames, and so are `PERSIST_FRAMES` (25, ~1 s, 50 until #314) and
 `BASELINE_FRAMES` (5, ~200 ms). All three are set at 25 fps, and every truth
 recording is 25 fps. The AXIS Q6315-LE is therefore configured to a constant
 25 fps (#85). At 50 or 60 fps every window would halve in duration and the

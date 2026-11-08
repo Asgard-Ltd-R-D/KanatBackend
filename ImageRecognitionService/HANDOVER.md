@@ -954,7 +954,7 @@ caffeinate -i .venv/bin/python -m tools.regression run --out main.json
 .venv/bin/python -m pytest -q
 ```
 
-`--end` must leave at least `PERSIST_FRAMES` (50) after the last expected Hit. A
+`--end` must leave at least `PERSIST_FRAMES` (25 since #313, was 50) after the last expected Hit. A
 Bullet Hole whose confirmation window runs past the end of the clip is withheld,
 not reported. This is the most common way to manufacture a false negative: on
 CamB an `--end` of 32 hid two Bullet Holes the model had detected at 0.86 and
@@ -1414,7 +1414,8 @@ on CamA and CamB alone.**
 
 **3. SOW 2.3.4 renegotiation in writing.** The pipeline assumes the 5–10 second
 budget. The signed 0.5 s is not met and cannot be with a 50-frame confirmation
-window.
+window, nor with the 25-frame one since #313 (a clean Hit is fixed 480 ms after
+its first Detection).
 
 **4. Ground-truth method for acceptance.** SOW 2.3.2 and 2.3.6 both name it as
 undefined.
@@ -1490,7 +1491,7 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | Constant | Value | Where | Basis |
 |---|---|---|---|
 | `PERSIST` | 0.50 | `detection/new_bullet_holes.py` | Swept against ground truth; 0.70 lost most of the group. Counts distinct FRAMES since 2026-09-17 — see below |
-| `PERSIST_FRAMES` | 50 | `detection/new_bullet_holes.py` | Length provisional; *fixed* window is by design |
+| `PERSIST_FRAMES` | 25 | `detection/new_bullet_holes.py` | Length provisional; *fixed* window is by design. 50 until #313 (ADR-0003, amended 2026-11-08) |
 | `DEFAULT_CONFIDENCE` | 0.40 | `detection/new_bullet_holes.py` | Swept; flat nearby |
 | `BASELINE_FRAMES` | 5 | `detection/new_bullet_holes.py` | Chosen as ~200 ms, not swept. Fixes the 0.04s defect at 5 and at 2; upper bound is the absorption risk, not a measurement |
 | `REQUIRE_CHANGE_EVIDENCE` | True | `detection/new_bullet_holes.py` | Swept; FP 7 → 1 at no measured recall cost |

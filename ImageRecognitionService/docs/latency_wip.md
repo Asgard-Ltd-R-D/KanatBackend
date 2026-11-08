@@ -453,7 +453,7 @@ Two runs pooled per row: CamB `_102250` 0–46 s (the replay joins at frame 25),
 | Frame Wait | 540: 0 / 0 / 94 | 556: 0 / 0 / 71 | 176: 0 / 8 / 235 | 199: 0 / 14 / 216 |
 | Look Time | 540: 51 / 56 / 150 | 556: 52 / 59 / 128 | 176: 133 / 153 / 214 | 199: 130 / 159 / 295 |
 | Persistence | 7: 960 / 964 / 964 | 7: 960 / 1012 / 1035 | 7: 1419 / 1822 / 1908 | 6: 960 / 1563 / 1599 |
-| Persistence at 25 frames (#314), not re-run end to end | | clean Hit 480, read in frames | | clean Hit 480, read in frames |
+| Persistence at 25 frames (#313), not re-run end to end | | clean Hit 480, read in frames | | clean Hit 480, read in frames |
 | posted | 7: 8 / 19 / 19 | 7: 18 / 28 / 31 | 7: 8 / 12 / 14 | 6: 8 / 12 / 13 |
 | delivered by SSE | 7: 8 / 18 / 18 | 7: 17 / 27 / 30 | 7: 7 / 11 / 13 | 6: 7 / 12 / 13 |
 | first-seen frame sent to delivered | 7: 1359 / 1370 / 1370 | 7: **1095 / 1160** / 1187 | 7: 1901 / 2311 / 2402 | 6: **1159 / 1768** / 1806 |
@@ -468,9 +468,9 @@ What the table shows:
   the Board is built from an old frame and the reader starts that far behind (#85, #291). The short probe adopted below
   cuts the lag at "Detection ready" from 1.68–1.73 s to 0.66–0.71 s on CamB.
 - **Persistence is the early verdict** (#278): a clean Bullet Hole is reported ~960 ms after its first-seen Look. A
-  marginal one waits out more of its 2 s window, which is CamA's tail. Since #314 the window is 25 frames, 1 s: a
-  clean Hit is fixed on its 4th Look, 480 ms (12 frames) after the first, and on the regression bench every truth hole
-  was reported 0.48 s sooner (#313). The 25-frame row is that, not a replay; the rows above it were measured at 50. Frame Wait stays near zero: at stride 4, a
+  marginal one waits out more of its 2 s window, which is CamA's tail. Since #313 the window is 25 frames, 1 s: a
+  clean Hit is fixed on its 4th Look, 480 ms (12 frames) after the first, and on the regression bench every truth
+  hole was reported 0.48 s sooner. The 25-frame row is that, not a replay; the rows above it were measured at 50. Frame Wait stays near zero: at stride 4, a
   Look (52 ms on CamB, 130 ms on CamA) fits inside the 160 ms stride interval.
 - **Posting and SSE take tens of ms.** That is a local backend on the same host; the network is not in it.
 - **Hit to delivered:** 1.10 s at P50 on CamB and 1.27 s on CamA with the adopted reader, against 1.37 and 2.00 s
@@ -558,7 +558,7 @@ The adoption rule: the option must cut reader lag without losing frames or Bulle
 
 Not changed (live_camera.md). Whether they would matter, from the table:
 - **Encoder latency** sits inside the ~60 ms "sent to decoded" here, with x264's zero-latency tuning. A camera
-  encoder slower by tens of ms would show there. That is small next to Persistence (~960 ms, 480 since #314), but it is not measured on
+  encoder slower by tens of ms would show there. That is small next to Persistence (~960 ms, 480 since #313), but it is not measured on
   the AXIS.
 - **GOP** sets only how long a joining reader waits for its first keyframe, at most 1 s at GOP 25. It is once per
   (re)connect, before the baseline.

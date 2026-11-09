@@ -36,6 +36,11 @@ FRESH_S = 12
 # Unlike MediaMTX's, an error status counts too: a 404 for no such Run or a
 # 409 for another Session's is the service answering.
 _last_answer: float | None = None
+# The detector's (device, model) as the Detection Service's last status answer
+# named them, for the status indicator: kept from the status reads the backend
+# makes anyway, so showing them asks the service nothing more. Neither changes
+# while the service runs; (None, None) until a status answer names them.
+_detector: tuple[str | None, str | None] = (None, None)
 
 
 class DetectionServiceUnreachable(Exception):
@@ -85,9 +90,21 @@ def _request(method: str, path: str, timeout: float, **kwargs) -> httpx.Response
         res = httpx.request(method, f"{settings.detection_service_url}{path}", timeout=timeout, **kwargs)
     except httpx.HTTPError as e:
         raise DetectionServiceUnreachable(f"{method} {path}: {e}") from e
-    global _last_answer
+    global _last_answer, _detector
     _last_answer = time.monotonic()
+    if path == "/status" and res.is_success:
+        try:
+            body = res.json()
+            _detector = (body.get("device"), body.get("model"))
+        except (ValueError, AttributeError):
+            pass   # not a status answer: status() says so, if it is the one asking
     return res
+
+
+def detector() -> tuple[str | None, str | None]:
+    """The detector's (device, model), e.g. ("cuda:0", "kanat_yolo26m_v1"), as
+    the Detection Service last named them; None for what it has not named."""
+    return _detector
 
 
 def is_reachable() -> bool:

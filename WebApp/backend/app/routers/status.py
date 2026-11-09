@@ -17,4 +17,6 @@ async def system_status():
         run_in_threadpool(mediamtx.is_reachable),
         run_in_threadpool(detection_client.is_reachable),
     )
-    return SystemStatus(video_service=video, detection_service=detection)
+    device, model = detection_client.detector()
+    return SystemStatus(video_service=video, detection_service=detection,
+                        detector_device=device, detector_model=model)

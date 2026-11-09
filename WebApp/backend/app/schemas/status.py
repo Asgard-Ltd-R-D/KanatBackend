@@ -7,3 +7,7 @@ class SystemStatus(BaseModel):
 
     video_service: bool
     detection_service: bool
+    # What the Detection Service's detector runs on and with, as it last named
+    # them; kept after it goes down, so shown only while it is up
+    detector_device: str | None = None
+    detector_model: str | None = None

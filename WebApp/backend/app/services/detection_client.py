@@ -95,7 +95,8 @@ def _request(method: str, path: str, timeout: float, **kwargs) -> httpx.Response
     if path == "/status" and res.is_success:
         try:
             body = res.json()
-            _detector = (body.get("device"), body.get("model"))
+            # Only strings: anything else would fail the backend's own /status on every poll
+            _detector = tuple(v if isinstance(v, str) else None for v in (body.get("device"), body.get("model")))
         except (ValueError, AttributeError):
             pass   # not a status answer: status() says so, if it is the one asking
     return res

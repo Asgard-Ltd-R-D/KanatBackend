@@ -48,6 +48,9 @@ def test_the_status_reports_the_detector_the_last_status_answer_named(monkeypatc
     del answer["model"]
     detection_client.status()
     assert detection_client.detector() == ("cuda:0", None)
+    answer["device"] = {"type": "cuda"}   # not a name: dropped, not passed on to fail the status
+    detection_client.status()
+    assert detection_client.detector() == (None, None)
 
 
 @pytest.mark.parametrize("service", [mediamtx, detection_client], ids=["video", "detection"])

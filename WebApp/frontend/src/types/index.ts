@@ -147,4 +147,7 @@ export interface CameraRecording {
 export interface SystemStatus {
   video_service: boolean
   detection_service: boolean
+  // The Detection Service's detector, as it last named them: e.g. "cuda:0", "kanat_yolo26m_v1"
+  detector_device: string | null
+  detector_model: string | null
 }

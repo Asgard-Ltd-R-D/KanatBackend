@@ -91,7 +91,8 @@ class _Api:
         self.model = model or _Marking()
         self.opener = self._stream
         self.service = service.DetectionService(self.model, "http://backend",
-                                                lambda *args: self.opener(*args), device="cpu")
+                                                lambda *args: self.opener(*args), device="cpu",
+                                                model_name="kanat_yolo26m_v1")
         self.server = service.serve(self.service, 0)
         threading.Thread(target=self.server.serve_forever, args=(0.01,), daemon=True).start()
 
@@ -522,8 +523,17 @@ def test_warming_calls_the_detector_as_runs_do_and_answers_its_device():
     assert model.handed == [None] * 3
 
 
-def test_status_reports_the_detectors_device(api):
-    assert api.call("GET", "/status") == (200, {"run": None, "device": "cpu"})
+def test_status_reports_the_detectors_device_and_model(api):
+    assert api.call("GET", "/status") == (200, {"run": None, "device": "cpu",
+                                                "model": "kanat_yolo26m_v1"})
+
+
+@pytest.mark.parametrize("path, name", [
+    ("trained_models/kanat_yolo26m_v1/weights/best.pt", "kanat_yolo26m_v1"),
+    ("elsewhere/yolo26n.pt", "yolo26n"),
+])
+def test_a_models_name_is_its_training_runs_folder_else_its_file(path, name):
+    assert service.model_name(path) == name
 
 
 def test_a_warm_up_that_fails_is_logged_and_raised(caplog):

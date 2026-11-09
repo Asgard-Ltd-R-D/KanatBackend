@@ -21,14 +21,15 @@ function Row({ name, state }: { name: string; state: ServiceState }) {
 }
 
 // Sidebar indicator: is the backend up, and does it reach the video service
-// and the Detection Service
+// and the Detection Service, and what the Detection Service's detector runs on
 export function ConnectionStatus() {
-  const { backend, videoService, detectionService } = useSystemStatus()
+  const { backend, videoService, detectionService, detector } = useSystemStatus()
   return (
     <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
       <Row name="Backend" state={backend} />
       <Row name="Video service" state={videoService} />
       <Row name="Detection service" state={detectionService} />
+      {detector && <div className="pl-3.5 text-[11px] text-slate-400 truncate" title={detector}>{detector}</div>}
     </div>
   )
 }

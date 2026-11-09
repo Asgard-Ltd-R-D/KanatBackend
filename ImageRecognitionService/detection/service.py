@@ -7,7 +7,7 @@ backend over a control API on 127.0.0.1 (#223).
     POST /runs/{session_id}/end           end it; answered once its posts
                                           are drained
     GET  /status                          the Run, if any, and its state, and
-                                          the device the detector runs on
+                                          the detector's device and model
 
 A Run is the command line's live Run: `process` on a Stream, on a worker
 thread, its Confirmed Bullet Holes posted by a `WebAppPublisher` of its own,
@@ -114,17 +114,26 @@ def warm(model, device=None):
     return resolved
 
 
+def model_name(path):
+    """The name the status indicator shows for the weights at `path`: their
+    training run's folder (`kanat_yolo26m_v1/weights/best.pt`), since every
+    run's file is `best.pt`, else the file's own name less its extension."""
+    path = Path(path)
+    return path.parent.parent.name if path.parent.name == "weights" else path.stem
+
+
 class DetectionService:
     """Runs on `model`, a detector `load_model` loaded once for all of them,
     posting to the backend at `backend_url`. `opener` opens each Run's
     Stream, by default the command line's (`RegisteredFrames.open`).
-    `device` is the detector's, as `warm` answered it, for `/status`.
+    `device` is the detector's, as `warm` answered it, and `model_name` its
+    weights' `model_name`, both for `/status`.
 
     Each call answers `(HTTP status, JSON body)`, as the control API sends it.
     """
-    def __init__(self, model, backend_url, opener=None, device=None):
+    def __init__(self, model, backend_url, opener=None, device=None, model_name=None):
         self._model, self._backend_url, self._opener = model, backend_url, opener
-        self.device = device
+        self.device, self.model_name = device, model_name
         self._lock = threading.Lock()
         # ponytail: one Run at a time; concurrent Runs need a detector each (#220)
         self._run = None
@@ -286,7 +295,8 @@ def serve(service, port=DEFAULT_PORT):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/status":
-                self._answer(200, {"run": service.status(), "device": service.device})
+                self._answer(200, {"run": service.status(), "device": service.device,
+                                   "model": service.model_name})
             else:
                 self._answer(404, {"detail": "no such resource"})
 
@@ -336,7 +346,8 @@ if __name__ == "__main__":
     log.info("Loading the detector %s", a.model, extra={"log_file": str(log_file)})
     model = nbh.load_model(a.model)
     device = warm(model)   # before the control API binds: until warmed, nothing answers
-    service = DetectionService(model, a.backend_url, device=device)
+    service = DetectionService(model, a.backend_url, device=device,
+                               model_name=model_name(a.model))
     server = serve(service, a.port)
     log.info("Detection Service started: control API on http://127.0.0.1:%d; SIGINT or SIGTERM "
              "ends any Run as an end does, then the service", a.port,

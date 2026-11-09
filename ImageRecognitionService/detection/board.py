@@ -111,11 +111,8 @@ SHEET_BOUND_MM = 5.0
 SHEET_CONTEXT_PX = 32      # PROVISIONAL
 
 
-# Registration after the baseline frame (#50). ECC on the greyscale Board within
-# this many Target spans of the ring (a square: its corners reach ~2.1), fitted
-# at this fraction of the frame's resolution. Measured with
-# registration_reach.py on the four spent/threshold-work recordings; not swept.
-REGION_SPANS = 1.5         # PROVISIONAL
+# Registration after the baseline frame (#50): ECC on the greyscale Target
+# Sheets (`texture_region`), fitted at this fraction of the frame's resolution.
 ECC_SCALE = 0.5            # PROVISIONAL: half resolution
 ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drift
 
@@ -464,14 +461,19 @@ def board_shift(previous, frame, W, region):
     return np.float32([[1, 0, dx / ECC_SCALE], [0, 1, dy / ECC_SCALE], [0, 0, 1]])
 
 
-def texture_region(H, frame_size, template_span):
-    """ECC mask in the frame `H` maps the template onto: the square within
-    `REGION_SPANS` Target spans of the ring, so gravel and sky, which move
-    differently from the Board, do not vote."""
-    square = RING_CENTRE_TPL + REGION_SPANS * template_span * np.array(
-        [[-1, -1], [1, -1], [1, 1], [-1, 1]])
+def texture_region(board_to_frame, frame_size, sheets):
+    """ECC mask in the frame: the Target Sheets' bounds (ADR-0011, Board px),
+    carried into the frame by `board_to_frame`. A sheet is the one surface
+    known to be flat. Anything round it (gravel, a stand, a chair's mesh
+    back) need not lie in its plane, and once the Board turns, a mesh's
+    texture outvotes the paper and pulls the homography off the sheet:
+    a turned chair duplicated its sheet's holes 15-30 Board px out. It was
+    the square within 1.5 Target spans of the ring (#50) before. Nothing
+    off the sheets is detected (ADR-0011), so nothing there needs placing."""
     region = np.zeros(frame_size[::-1], np.uint8)
-    cv2.fillConvexPoly(region, apply(H, square).astype(np.int32), 255)
+    for x0, y0, x1, y1 in sheets:
+        corners = apply(board_to_frame, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+        cv2.fillConvexPoly(region, np.round(corners).astype(np.int32), 255)
     return region
 
 
@@ -681,7 +683,6 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     allpts = np.vstack(placed)
 
     # The canvas spans every Target plus a margin, for `--out`.
-    tpl_span = contour_span(template_contour(template_mask))
     margin = BOARD_MARGIN * spread(allpts)
     lo = allpts.min(axis=0) - margin
     size = tuple(int(v) for v in np.ceil(allpts.max(axis=0) - lo + margin))
@@ -689,7 +690,8 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     targets = [(apply(_as_matrix(1.0, (-lo[0], -lo[1])), p)
                 .reshape(-1, 1, 2).astype(np.float32)) for p in placed]
     sheets = sheet_bounds(targets, tpl_to_board)
-    anchor = Anchor(gray(frame), texture_region(H, frame.shape[1::-1], tpl_span), H)
+    anchor = Anchor(gray(frame), texture_region(H @ np.linalg.inv(tpl_to_board),
+                                                frame.shape[1::-1], sheets), H)
     return (BoardView(H, tpl_to_board, size, targets, anchor, sheets, sheet_crops(sheets)),
             correlation)
 

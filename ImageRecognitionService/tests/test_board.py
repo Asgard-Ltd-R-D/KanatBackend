@@ -394,9 +394,10 @@ REANCHOR_REFERENCE = board.BoardView(None, None, None, [],
                                      board.Anchor(None, "sheets", None, "identity"))
 
 
-def _seeded_fits(monkeypatch, correlations):
+def _seeded_fits(monkeypatch, correlations, refit=lambda corr: corr - 0.5):
     """Contour i seeds a fit converging at `correlations[i]` on the identity
-    region; None fails to converge. The refit on the sheets gives 0.5 more."""
+    region; None fails to converge. The refit on the sheets is marked
+    "refit" and converges at `refit(corr)`; None fails to converge."""
     contours = [_square(100 * i, 0, 40) for i in range(len(correlations))]
     monkeypatch.setattr(board, "find_targets", lambda frame: (contours, None))
     monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
@@ -405,8 +406,11 @@ def _seeded_fits(monkeypatch, correlations):
         corr = correlations[[c is seed for c in contours].index(True)]
         if corr is None:
             raise cv2.error("did not converge")
-        fit = board.BoardView(seed, None, None, [], reference.anchor)
-        return (fit, corr) if region == "identity" else (fit, corr + 0.5)
+        if region == "identity":
+            return board.BoardView(seed, None, None, [], reference.anchor), corr
+        if refit(corr) is None:
+            raise cv2.error("did not converge")
+        return board.BoardView(seed, "refit", None, [], reference.anchor), refit(corr)
     monkeypatch.setattr(board, "track_view", track_view)
     return contours
 
@@ -417,8 +421,20 @@ def test_re_anchoring_keeps_the_seed_the_board_texture_agrees_with(monkeypatch):
     one (#80). The sheets alone would not tell a lookalike apart (PR #322):
     it is chosen on `Anchor.identity`, then refitted on the sheets."""
     contours = _seeded_fits(monkeypatch, [0.55, None, 0.99, 0.20])
+    view, _ = board.reanchor_view(None, None, REANCHOR_REFERENCE)
+    assert view.H is contours[2] and view.tpl_to_board == "refit"
+
+
+def test_re_anchoring_reports_the_identity_verdict_not_the_sheet_refits(monkeypatch):
+    """PR #322: a refit below the floor would send a verified re-anchor to
+    `silhouette_disagreement`, which reads the neighbour in view as the
+    reference Target and rejects the right fit. The identity correlation is
+    the verdict; a refit that fails keeps the identity fit."""
+    contours = _seeded_fits(monkeypatch, [0.99])
+    assert board.reanchor_view(None, None, REANCHOR_REFERENCE)[1] == 0.99
+    contours = _seeded_fits(monkeypatch, [0.99], refit=lambda corr: None)
     view, correlation = board.reanchor_view(None, None, REANCHOR_REFERENCE)
-    assert view.H is contours[2] and correlation == pytest.approx(1.49)
+    assert view.H is contours[0] and view.tpl_to_board is None and correlation == 0.99
 
 
 def test_re_anchoring_refuses_a_best_fit_below_the_floor(monkeypatch):

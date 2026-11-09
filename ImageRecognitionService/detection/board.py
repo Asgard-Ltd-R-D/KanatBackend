@@ -860,7 +860,12 @@ def reanchor_view(frame, template_mask, reference):
     above `REANCHOR_MIN_CORRELATION` — with the reference Target out of view,
     the best is a neighbour. That texture is `Anchor.identity`, the backdrop
     round the ring, not the sheets alone (`IDENTITY_SPANS`). The winner is then
-    refitted on the sheets, as every tracked Look is (#321).
+    refitted on the sheets, as every tracked Look is (#321). The correlation
+    returned is still the one that told the Targets apart: the sheet refit's
+    is no verdict on identity, and below the floor it would send the fit to
+    `silhouette_disagreement`, which reads a neighbour as the reference Target
+    when that is off the frame. A refit that does not converge keeps the
+    identity fit.
 
     Returns `(None, None)` when no Target is visible or no fit clears the floor.
     """
@@ -876,7 +881,12 @@ def reanchor_view(frame, template_mask, reference):
             continue
         if fit[1] is not None and fit[1] >= max(REANCHOR_MIN_CORRELATION, best[1] or 0):
             best = fit
-    return best if best[0] is None else track_view(frame, reference, best[0].H)
+    if best[0] is None:
+        return best
+    try:
+        return track_view(frame, reference, best[0].H)[0], best[1]
+    except cv2.error:
+        return best
 
 
 def silhouette_disagreement(frame, template_mask, view):

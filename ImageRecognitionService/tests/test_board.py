@@ -344,6 +344,31 @@ def test_track_view_reads_the_board_move_on_the_board_not_the_gravel(monkeypatch
     assert board.apply(view.H, [[0, 0]])[0] == pytest.approx([100, 60], abs=1.0)
 
 
+def _two_sheets_over_gravel(shift):
+    """Gravel that never moves and two 120x120 textured sheets 300 px apart,
+    both moved by `shift`."""
+    img = np.full((360, 640), 200, np.uint8)
+    for x, y in np.random.default_rng(0).integers(0, (640, 360), (1500, 2)):
+        cv2.circle(img, (int(x), int(y)), 4, 0, -1)
+    rng = np.random.default_rng(1)
+    for x0 in (60, 420):
+        x, y = x0 + shift[0], 120 + shift[1]
+        img[y:y + 120, x:x + 120] = 230
+        for bx, by in rng.integers(10, 110, (6, 2)):
+            cv2.circle(img, (int(x + bx), int(y + by)), 8, 40, -1)
+    return board.gray(cv2.cvtColor(cv2.GaussianBlur(img, (0, 0), 2), cv2.COLOR_GRAY2BGR))
+
+
+def test_the_board_shift_is_read_on_each_sheet_not_the_gravel_between(monkeypatch):
+    """PR #322: the sheet region is two pieces 300 px apart. One box round both
+    is mostly the gravel between them, which stays put and reads no move."""
+    region = np.zeros((360, 640), np.uint8)
+    region[130:230, 70:170] = region[130:230, 430:530] = 255
+    shift = board.board_shift(_two_sheets_over_gravel((0, 0)), _two_sheets_over_gravel((14, 8)),
+                              np.eye(3, dtype=np.float32), region)
+    assert shift[:2, 2] == pytest.approx([14, 8], abs=1.5)   # inside ECC's reach; the old box read 0, 0
+
+
 def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypatch):
     """#80: the silhouette fit is only the seed; texture ECC against the baseline
     frame moves it onto the Board, and Board space, the Targets and the anchor

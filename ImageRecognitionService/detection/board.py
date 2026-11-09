@@ -439,25 +439,33 @@ def _union(*rects):
 def board_shift(previous, frame, W, region):
     """The translation, frame px as a 3x3, that takes the Board in `previous`
     onto the Board in `frame` (#171), both greyscale (`gray`). Read by phase
-    correlation at `ECC_SCALE`, with a Hanning window, over the bounding box of `region` (baseline frame
-    coords) as `W` carries it into `previous`.
+    correlation at `ECC_SCALE`, with a Hanning window, over the bounding box of
+    each piece of `region` (baseline frame coords, one per Target Sheet) as
+    `W` carries it into `previous`; the piece that correlates best wins.
 
-    That box and nothing round it: when only the Board moves, the gravel and
-    sky round it stay put and pull the estimate towards zero. On #171's
+    Those boxes and nothing round them: when only the Board moves, the gravel
+    and sky round it stay put and pull the estimate towards zero. On #171's
     synthetic Board, an `ECC_CROP_MARGIN` of dense gravel round the box held it
-    at zero.
+    at zero. One box round two sheets apart is mostly what lies between them.
 
     ponytail: no gate on phase correlation's response; the #171 probe found no
     estimate that threw ECC off, and a low-response one read ~zero, leaving
     the seed as it was. Gate on the response if one ever does."""
     moved = cv2.warpPerspective(region, W.astype(np.float32), region.shape[::-1],
                                 flags=cv2.INTER_NEAREST)
-    x, y, w, h = cv2.boundingRect(moved)
-    small = lambda im: cv2.resize(im[y:y + h, x:x + w], None, fx=ECC_SCALE, fy=ECC_SCALE,
-                                  interpolation=cv2.INTER_AREA)
-    before, after = small(previous), small(frame)
-    (dx, dy), _ = cv2.phaseCorrelate(before, after,
-                                     cv2.createHanningWindow(before.shape[::-1], cv2.CV_32F))
+    _, _, stats, _ = cv2.connectedComponentsWithStats(moved)
+    best = 0.0, 0.0, -1.0
+    for x, y, w, h, _ in stats[1:]:
+        if min(w, h) * ECC_SCALE < 8:
+            continue   # a sliver at the frame's edge
+        small = lambda im: cv2.resize(im[y:y + h, x:x + w], None, fx=ECC_SCALE, fy=ECC_SCALE,
+                                      interpolation=cv2.INTER_AREA)
+        before, after = small(previous), small(frame)
+        (dx, dy), response = cv2.phaseCorrelate(
+            before, after, cv2.createHanningWindow(before.shape[::-1], cv2.CV_32F))
+        if response > best[2]:
+            best = dx, dy, response
+    dx, dy, _ = best
     return np.float32([[1, 0, dx / ECC_SCALE], [0, 1, dy / ECC_SCALE], [0, 0, 1]])
 
 

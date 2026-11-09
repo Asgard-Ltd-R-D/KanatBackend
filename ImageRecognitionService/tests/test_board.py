@@ -344,6 +344,31 @@ def test_track_view_reads_the_board_move_on_the_board_not_the_gravel(monkeypatch
     assert board.apply(view.H, [[0, 0]])[0] == pytest.approx([100, 60], abs=1.0)
 
 
+def _two_sheets_over_gravel(shift):
+    """Gravel that never moves and two 120x120 textured sheets 300 px apart,
+    both moved by `shift`."""
+    img = np.full((360, 640), 200, np.uint8)
+    for x, y in np.random.default_rng(0).integers(0, (640, 360), (1500, 2)):
+        cv2.circle(img, (int(x), int(y)), 4, 0, -1)
+    rng = np.random.default_rng(1)
+    for x0 in (60, 420):
+        x, y = x0 + shift[0], 120 + shift[1]
+        img[y:y + 120, x:x + 120] = 230
+        for bx, by in rng.integers(10, 110, (6, 2)):
+            cv2.circle(img, (int(x + bx), int(y + by)), 8, 40, -1)
+    return board.gray(cv2.cvtColor(cv2.GaussianBlur(img, (0, 0), 2), cv2.COLOR_GRAY2BGR))
+
+
+def test_the_board_shift_is_read_on_each_sheet_not_the_gravel_between(monkeypatch):
+    """PR #322: the sheet region is two pieces 300 px apart. One box round both
+    is mostly the gravel between them, which stays put and reads no move."""
+    region = np.zeros((360, 640), np.uint8)
+    region[130:230, 70:170] = region[130:230, 430:530] = 255
+    shift = board.board_shift(_two_sheets_over_gravel((0, 0)), _two_sheets_over_gravel((14, 8)),
+                              np.eye(3, dtype=np.float32), region)
+    assert shift[:2, 2] == pytest.approx([14, 8], abs=1.5)   # inside ECC's reach; the old box read 0, 0
+
+
 def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypatch):
     """#80: the silhouette fit is only the seed; texture ECC against the baseline
     frame moves it onto the Board, and Board space, the Targets and the anchor
@@ -365,32 +390,57 @@ def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypa
     assert view.sheets == reference.sheets and view.crops == reference.crops
 
 
-def _seeded_fits(monkeypatch, correlations):
-    """Contour i seeds a fit converging at `correlations[i]`; None fails to converge."""
+REANCHOR_REFERENCE = board.BoardView(None, None, None, [],
+                                     board.Anchor(None, "sheets", None, "identity"))
+
+
+def _seeded_fits(monkeypatch, correlations, refit=lambda corr: corr - 0.5):
+    """Contour i seeds a fit converging at `correlations[i]` on the identity
+    region; None fails to converge. The refit on the sheets is marked
+    "refit" and converges at `refit(corr)`; None fails to converge."""
     contours = [_square(100 * i, 0, 40) for i in range(len(correlations))]
     monkeypatch.setattr(board, "find_targets", lambda frame: (contours, None))
     monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
                         (contour, 0.9))
-    def track_view(frame, reference, seed):
+    def track_view(frame, reference, seed, region=None):
         corr = correlations[[c is seed for c in contours].index(True)]
         if corr is None:
             raise cv2.error("did not converge")
-        return seed, corr
+        if region == "identity":
+            return board.BoardView(seed, None, None, [], reference.anchor), corr
+        if refit(corr) is None:
+            raise cv2.error("did not converge")
+        return board.BoardView(seed, "refit", None, [], reference.anchor), refit(corr)
     monkeypatch.setattr(board, "track_view", track_view)
     return contours
 
 
 def test_re_anchoring_keeps_the_seed_the_board_texture_agrees_with(monkeypatch):
     """The Targets share one artwork: whichever is nearest or largest, the fit
-    that matches the baseline frame's texture best is the right one (#80)."""
+    that matches the baseline frame's texture round the ring best is the right
+    one (#80). The sheets alone would not tell a lookalike apart (PR #322):
+    it is chosen on `Anchor.identity`, then refitted on the sheets."""
     contours = _seeded_fits(monkeypatch, [0.55, None, 0.99, 0.20])
-    assert board.reanchor_view(None, None, None) == (contours[2], 0.99)
+    view, _ = board.reanchor_view(None, None, REANCHOR_REFERENCE)
+    assert view.H is contours[2] and view.tpl_to_board == "refit"
+
+
+def test_re_anchoring_reports_the_identity_verdict_not_the_sheet_refits(monkeypatch):
+    """PR #322: a refit below the floor would send a verified re-anchor to
+    `silhouette_disagreement`, which reads the neighbour in view as the
+    reference Target and rejects the right fit. The identity correlation is
+    the verdict; a refit that fails keeps the identity fit."""
+    contours = _seeded_fits(monkeypatch, [0.99])
+    assert board.reanchor_view(None, None, REANCHOR_REFERENCE)[1] == 0.99
+    contours = _seeded_fits(monkeypatch, [0.99], refit=lambda corr: None)
+    view, correlation = board.reanchor_view(None, None, REANCHOR_REFERENCE)
+    assert view.H is contours[0] and view.tpl_to_board is None and correlation == 0.99
 
 
 def test_re_anchoring_refuses_a_best_fit_below_the_floor(monkeypatch):
     """Only neighbours in view: the best fit is one Target over, not a re-anchor."""
     _seeded_fits(monkeypatch, [0.55, 0.20])
-    assert board.reanchor_view(None, None, None) == (None, None)
+    assert board.reanchor_view(None, None, REANCHOR_REFERENCE) == (None, None)
 
 
 def test_re_anchoring_with_no_target_in_view_finds_nothing(monkeypatch):
@@ -648,3 +698,44 @@ def test_half_a_digit_row_out_of_view_keeps_the_silhouette_fit():
     cv2.fillConvexPoly(frame, board.apply(P, half).astype(np.int32), (90, 110, 100))
 
     assert board.interior_fit(frame, silhouette)[0] is None
+
+
+def _sheet_on_mesh(P, M, size=(1600, 1200)):
+    """The Target Sheet, the template carried into the frame by `P` on a
+    white page cut to `sheet_bound_tpl`, over a dark mesh carried there by
+    `M`: a sheet taped to a chair's mesh back, the mesh off its plane."""
+    pitch = 12
+    mesh = np.full((2400, 3200), 40, np.uint8)
+    for y in range(0, 2400, pitch):
+        for x in range(0, 3200, pitch):
+            mesh[y + 3:y + 9, x + 3:x + 9] = 150
+    frame = cv2.cvtColor(cv2.warpPerspective(mesh, M, size), cv2.COLOR_GRAY2BGR)
+    paper = cv2.warpPerspective(cv2.imread(board.DEFAULT_TEMPLATE), P, size,
+                                borderValue=(235, 235, 235))
+    x0, y0, x1, y1 = board.sheet_bound_tpl()
+    sheet = np.zeros(size[::-1], np.uint8)
+    cv2.fillConvexPoly(sheet, board.apply(P, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+                       .astype(np.int32), 255)
+    frame[sheet > 0] = paper[sheet > 0]
+    return cv2.GaussianBlur(frame, (0, 0), 1)
+
+
+def test_a_turned_sheet_is_tracked_on_the_sheet_not_the_mesh_round_it():
+    """A chair turned under its sheet: the sheet moves one way, the mesh
+    behind it another. Registered on the 1.5-span square round the ring,
+    the mesh outvoted the paper and the sheet's corner holes came out
+    15-30 Board px off, reported again as new. The ECC region is the
+    sheets, so the fit follows the paper."""
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    P = np.float32([[0.5, 0, 450], [0, 0.5, 300], [0, 0, 1]])
+    M = np.float32([[1, 0, -800], [0, 1, -600], [0, 0, 1]])
+    reference, _ = board.build_view(_sheet_on_mesh(P, M), template_mask)
+
+    turned = np.float32([[1.0, 0.02, 10], [-0.02, 1.0, 6], [2e-5, 0, 1]]) @ P
+    mesh = np.float32([[1, 0, -6], [0, 1, 3], [0, 0, 1]]) @ M
+    view, _ = board.track_view(_sheet_on_mesh(turned, mesh), reference)
+
+    corners = [[0, 0], [1405, 0], [1405, 1120], [0, 1120], board.RING_CENTRE_TPL]
+    error = np.linalg.norm(board.apply(view.H, corners) - board.apply(turned, corners), axis=1)
+    assert error.max() < 1.5   # frame px

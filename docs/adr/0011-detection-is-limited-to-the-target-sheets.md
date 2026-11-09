@@ -85,3 +85,34 @@ print scale, with the fitted placement in place of the centring.
 - This reverses #46's bands, and the canvas moves on the model's grid. Marginal
   holes will flip, and the 8/16/32 px canvas-shift control decides whether a
   flip is noise.
+
+**Amended 2026-11-09: the ECC region is the sheets.** Per-Look tracking now
+registers on the Target Sheets' bounds, not the square of ±1.5 Target spans.
+On a sheet taped to a mesh office chair, the square was mostly mesh: curved,
+off the paper's plane, and stronger in texture than the paper. Once the chair
+turned, the mesh outvoted the sheet. Holes already on the sheet came out 15–30
+Board px off and were reported again as new, 6 on one 20 s clip. On the sheets
+alone that clip reports none.
+
+The regression bench lost no truth hole and added no false positive at
+stride 1 or 4. `board_move` still passes 32/32.
+
+One hole moved past the rule's 1 mm: `CamB_20260915_101450` truth #1, on
+Target 2. It moved 2.0–2.2 mm toward its photograph truth, from 1.7 to
+1.1 mm radial, the same at every canvas shift. That board's second sheet is now
+in the region. The move is accepted as an improvement, for this hole only. The
+rule's 1 mm stays as it is for every other change.
+
+Re-anchoring (#80) is the exception. It still picks which Target it found on
+the square, because the sheets alone cannot tell the Targets apart. Every sheet
+carries the same print. With the reference Target off the frame, a
+neighbour's sheet matches the reference sheet, and ECC never sees the rest of
+the region. The 0.9 floor was measured on the square. The fit that wins is
+then refitted on the sheets. The Board shift that seeds each Look is read on
+each sheet's own box, not one box round them all. A box round two sheets
+is mostly what lies between them.
+
+Known limitation: on the chair clip `FirstNoOverlay.mp4`, holes settle 2–7
+Board px from their Baseline Marks after each chair move, against a 9.9 px
+match radius. That is inside the radius, but not by much. The paper likely bends
+over the curved chair back, which no homography fits. It is left as it is.

@@ -111,11 +111,8 @@ SHEET_BOUND_MM = 5.0
 SHEET_CONTEXT_PX = 32      # PROVISIONAL
 
 
-# Registration after the baseline frame (#50). ECC on the greyscale Board within
-# this many Target spans of the ring (a square: its corners reach ~2.1), fitted
-# at this fraction of the frame's resolution. Measured with
-# registration_reach.py on the four spent/threshold-work recordings; not swept.
-REGION_SPANS = 1.5         # PROVISIONAL
+# Registration after the baseline frame (#50): ECC on the greyscale Target
+# Sheets (`texture_region`), fitted at this fraction of the frame's resolution.
 ECC_SCALE = 0.5            # PROVISIONAL: half resolution
 ECC_CROP_MARGIN = 64       # frame px round the region: room for the camera drift
 
@@ -134,6 +131,12 @@ ECC_EPS = 1e-3             # PROVISIONAL
 # the baseline, four CamA/CamB clips: the right Target 0.97-0.99, a neighbour
 # 0.55 (182 frame px off) and 0.20, or no convergence. Not swept.
 REANCHOR_MIN_CORRELATION = 0.9   # PROVISIONAL
+# ...measured, and so scored, on the greyscale Board within this many Target
+# spans of the ring (a square), the ECC region before #321. The sheets alone
+# cannot tell the Targets apart: with the reference Target out of view, a
+# neighbour's sheet matches its sheet and the rest of the region is off the
+# frame, so ECC never sees it. The backdrop round the ring can.
+IDENTITY_SPANS = 1.5       # PROVISIONAL
 
 
 class NotCalibrated(RuntimeError):
@@ -442,36 +445,49 @@ def _union(*rects):
 def board_shift(previous, frame, W, region):
     """The translation, frame px as a 3x3, that takes the Board in `previous`
     onto the Board in `frame` (#171), both greyscale (`gray`). Read by phase
-    correlation at `ECC_SCALE`, with a Hanning window, over the bounding box of `region` (baseline frame
-    coords) as `W` carries it into `previous`.
+    correlation at `ECC_SCALE`, with a Hanning window, over the bounding box of
+    each piece of `region` (baseline frame coords, one per Target Sheet) as
+    `W` carries it into `previous`; the piece that correlates best wins.
 
-    That box and nothing round it: when only the Board moves, the gravel and
-    sky round it stay put and pull the estimate towards zero. On #171's
+    Those boxes and nothing round them: when only the Board moves, the gravel
+    and sky round it stay put and pull the estimate towards zero. On #171's
     synthetic Board, an `ECC_CROP_MARGIN` of dense gravel round the box held it
-    at zero.
+    at zero. One box round two sheets apart is mostly what lies between them.
 
     ponytail: no gate on phase correlation's response; the #171 probe found no
     estimate that threw ECC off, and a low-response one read ~zero, leaving
     the seed as it was. Gate on the response if one ever does."""
     moved = cv2.warpPerspective(region, W.astype(np.float32), region.shape[::-1],
                                 flags=cv2.INTER_NEAREST)
-    x, y, w, h = cv2.boundingRect(moved)
-    small = lambda im: cv2.resize(im[y:y + h, x:x + w], None, fx=ECC_SCALE, fy=ECC_SCALE,
-                                  interpolation=cv2.INTER_AREA)
-    before, after = small(previous), small(frame)
-    (dx, dy), _ = cv2.phaseCorrelate(before, after,
-                                     cv2.createHanningWindow(before.shape[::-1], cv2.CV_32F))
+    _, _, stats, _ = cv2.connectedComponentsWithStats(moved)
+    best = 0.0, 0.0, -1.0
+    for x, y, w, h, _ in stats[1:]:
+        if min(w, h) * ECC_SCALE < 8:
+            continue   # a sliver at the frame's edge
+        small = lambda im: cv2.resize(im[y:y + h, x:x + w], None, fx=ECC_SCALE, fy=ECC_SCALE,
+                                      interpolation=cv2.INTER_AREA)
+        before, after = small(previous), small(frame)
+        (dx, dy), response = cv2.phaseCorrelate(
+            before, after, cv2.createHanningWindow(before.shape[::-1], cv2.CV_32F))
+        if response > best[2]:
+            best = dx, dy, response
+    dx, dy, _ = best
     return np.float32([[1, 0, dx / ECC_SCALE], [0, 1, dy / ECC_SCALE], [0, 0, 1]])
 
 
-def texture_region(H, frame_size, template_span):
-    """ECC mask in the frame `H` maps the template onto: the square within
-    `REGION_SPANS` Target spans of the ring, so gravel and sky, which move
-    differently from the Board, do not vote."""
-    square = RING_CENTRE_TPL + REGION_SPANS * template_span * np.array(
-        [[-1, -1], [1, -1], [1, 1], [-1, 1]])
+def texture_region(board_to_frame, frame_size, sheets):
+    """ECC mask in the frame: the Target Sheets' bounds (ADR-0011, Board px),
+    carried into the frame by `board_to_frame`. A sheet is the one surface
+    known to be flat. Anything round it (gravel, a stand, a chair's mesh
+    back) need not lie in its plane, and once the Board turns, a mesh's
+    texture outvotes the paper and pulls the homography off the sheet:
+    a turned chair duplicated its sheet's holes 15-30 Board px out. It was
+    the square within 1.5 Target spans of the ring (#50) before. Nothing
+    off the sheets is detected (ADR-0011), so nothing there needs placing."""
     region = np.zeros(frame_size[::-1], np.uint8)
-    cv2.fillConvexPoly(region, apply(H, square).astype(np.int32), 255)
+    for x0, y0, x1, y1 in sheets:
+        corners = apply(board_to_frame, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+        cv2.fillConvexPoly(region, np.round(corners).astype(np.int32), 255)
     return region
 
 
@@ -516,6 +532,7 @@ class Anchor(NamedTuple):
     gray: np.ndarray     # the baseline frame, greyscale, 0-1
     region: np.ndarray   # the ECC mask, baseline frame coords
     H: np.ndarray        # template -> baseline frame
+    identity: np.ndarray = None   # re-anchor's mask (`IDENTITY_SPANS`); `region` when None
 
 
 def net_scale(board_scale, template_span_px, frame_span_px, imgsz, canvas_long_side):
@@ -681,7 +698,6 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     allpts = np.vstack(placed)
 
     # The canvas spans every Target plus a margin, for `--out`.
-    tpl_span = contour_span(template_contour(template_mask))
     margin = BOARD_MARGIN * spread(allpts)
     lo = allpts.min(axis=0) - margin
     size = tuple(int(v) for v in np.ceil(allpts.max(axis=0) - lo + margin))
@@ -689,7 +705,12 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     targets = [(apply(_as_matrix(1.0, (-lo[0], -lo[1])), p)
                 .reshape(-1, 1, 2).astype(np.float32)) for p in placed]
     sheets = sheet_bounds(targets, tpl_to_board)
-    anchor = Anchor(gray(frame), texture_region(H, frame.shape[1::-1], tpl_span), H)
+    square = RING_CENTRE_TPL + IDENTITY_SPANS * contour_span(template_contour(template_mask)) * \
+        np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])
+    identity = np.zeros(frame.shape[:2], np.uint8)
+    cv2.fillConvexPoly(identity, apply(H, square).astype(np.int32), 255)
+    anchor = Anchor(gray(frame), texture_region(H @ np.linalg.inv(tpl_to_board),
+                                                frame.shape[1::-1], sheets), H, identity)
     return (BoardView(H, tpl_to_board, size, targets, anchor, sheets, sheet_crops(sheets)),
             correlation)
 
@@ -754,7 +775,7 @@ def sheet_bound_tpl(path=PRINT_SCALE_PATH):
     return x0 - grow, y0 - grow, x1 + grow, y1 + grow
 
 
-def track_view(frame, reference, seed=None, previous=None):
+def track_view(frame, reference, seed=None, previous=None, region=None):
     """Re-register the reference view's Board space onto a later frame.
 
     Board space — scale, origin, canvas size and the Targets in it — is fixed
@@ -792,6 +813,9 @@ def track_view(frame, reference, seed=None, previous=None):
     No Target need be visible: a fit with none in view converges low, and
     `silhouette_disagreement` then calls it grossly wrong (#276).
 
+    `region` replaces the anchor's ECC mask (`reanchor_view` passes
+    `Anchor.identity`).
+
     Returns `(BoardView, ECC correlation)`. Raises `cv2.error` when
     registration fails to converge: "no evidence from this frame".
     """
@@ -799,7 +823,8 @@ def track_view(frame, reference, seed=None, previous=None):
     W = (reference.H if seed is None else seed) @ np.linalg.inv(a.H)
     if seed is None and previous is not None:
         W = board_shift(gray(previous), gray(frame), W, a.region) @ W
-    W, correlation = ecc_warp(a.gray, gray(frame), cv2.MOTION_HOMOGRAPHY, W, a.region)
+    W, correlation = ecc_warp(a.gray, gray(frame), cv2.MOTION_HOMOGRAPHY, W,
+                              a.region if region is None else region)
     return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
                      reference.targets, a, reference.sheets, reference.crops), correlation
 
@@ -833,21 +858,35 @@ def reanchor_view(frame, template_mask, reference):
     which after a jump. Every Target in view seeds a fit and the Board texture
     decides: the best correlation against the baseline frame is kept, and only
     above `REANCHOR_MIN_CORRELATION` — with the reference Target out of view,
-    the best is a neighbour.
+    the best is a neighbour. That texture is `Anchor.identity`, the backdrop
+    round the ring, not the sheets alone (`IDENTITY_SPANS`). The winner is then
+    refitted on the sheets, as every tracked Look is (#321). The correlation
+    returned is still the one that told the Targets apart: the sheet refit's
+    is no verdict on identity, and below the floor it would send the fit to
+    `silhouette_disagreement`, which reads a neighbour as the reference Target
+    when that is off the frame. A refit that does not converge keeps the
+    identity fit.
 
     Returns `(None, None)` when no Target is visible or no fit clears the floor.
     """
     contours, frame_mask = find_targets(frame)
     best = None, None
     for contour in contours:
+        a = reference.anchor
         try:
             seed, _ = register(template_mask, frame_mask, contour)
-            fit = track_view(frame, reference, seed)
+            fit = track_view(frame, reference, seed,
+                             region=a.region if a.identity is None else a.identity)
         except cv2.error:
             continue
         if fit[1] is not None and fit[1] >= max(REANCHOR_MIN_CORRELATION, best[1] or 0):
             best = fit
-    return best
+    if best[0] is None:
+        return best
+    try:
+        return track_view(frame, reference, best[0].H)[0], best[1]
+    except cv2.error:
+        return best
 
 
 def silhouette_disagreement(frame, template_mask, view):

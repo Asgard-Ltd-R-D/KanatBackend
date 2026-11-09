@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Starts the whole WebApp stack on this Mac in one terminal: MediaMTX, the
-# Detection Service, the backend (on a local SQLite file), and the frontend
-# (Vite + Electron). No Docker: every dev service runs natively. Each service's
-# output is prefixed with its name. Ctrl-C, or any one service exiting, stops
-# them all (a second Ctrl-C kills what is still shutting down).
+# Starts the whole WebApp stack on this Mac in one terminal: Postgres (Docker),
+# MediaMTX, the Detection Service, the backend, and the frontend (Vite + Electron).
+# Each service's output is prefixed with its name. Ctrl-C, or any one service
+# exiting, stops them all (a second Ctrl-C kills what is still shutting down);
+# Postgres stays up (docker compose -f WebApp/docker-compose.yml stop).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$HOME/.docker/bin:$PATH"
 
 # Services started with & ignore Ctrl-C (bash does that in a script, and the
 # Detection Service only handles SIGTERM), so stop them with one SIGTERM and wait:
@@ -24,9 +25,19 @@ stop_all() {
 trap stop_all EXIT
 trap 'exit 130' INT TERM
 
-# The log folder, which the services below write their logs into
+if ! docker info >/dev/null 2>&1; then
+  echo "[start-all] starting Docker Desktop..."
+  open -a Docker
+  until docker info >/dev/null 2>&1; do sleep 2; done
+fi
+if lsof -a -c postgres -iTCP:5432 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "[start-all] a local Postgres holds port 5432: brew services stop postgresql@17" >&2
+  exit 1
+fi
+# The log folder is made here, as this user, before Docker would make it as
+# root: the services below write their logs into it
 (cd "$ROOT/WebApp" && mkdir -p "${KANAT_LOG_DIR:-logs}")
-# The SQLite database (settings default, beside the backend), schema applied
+docker compose -f "$ROOT/WebApp/docker-compose.yml" up -d --wait
 (cd "$ROOT/WebApp/backend" && uv run alembic upgrade head)
 
 # run <name> <dir> <command...>: in the background, output prefixed with [name].

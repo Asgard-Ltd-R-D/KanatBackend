@@ -6,7 +6,8 @@ backend over a control API on 127.0.0.1 (#223).
                                           once it is watching
     POST /runs/{session_id}/end           end it; answered once its posts
                                           are drained
-    GET  /status                          the Run, if any, and its state
+    GET  /status                          the Run, if any, and its state, and
+                                          the device the detector runs on
 
 A Run is the command line's live Run: `process` on a Stream, on a worker
 thread, its Confirmed Bullet Holes posted by a `WebAppPublisher` of its own,
@@ -24,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from detection import logs, webapp
 from detection import new_bullet_holes as nbh
@@ -87,15 +89,42 @@ class _Run:
                 "looked_at": _at(self.loop, looked)}
 
 
+def warm(model, device=None):
+    """`model` called three times on a blank frame, before the service's
+    control API answers or end_to_end's replay starts (#319): a cold first
+    call (seconds on MPS, CUDA's setup on a GPU) would otherwise fall inside
+    the first Run's baseline, holding its reader while MediaMTX discards what
+    it fell behind by (#117). The service hands no `device`, as each Run's
+    call is handed none, so it warms the device Runs use. Answers the device
+    the detector resolved to, not what was asked for: handed none, `cuda:0`
+    when CUDA is visible, else `cpu`. A failure is logged and raised: the
+    service then never answers, so never reads as up."""
+    started = time.perf_counter()
+    try:
+        for _ in range(3):
+            nbh._detect(model, [np.zeros((640, 640, 3), np.uint8)], 640,
+                        nbh.DEFAULT_CONFIDENCE, device)
+        resolved = str(model.predictor.device)   # ultralytics' predictor, set up by the first call
+    except Exception:
+        log.exception("Detector warm-up failed")
+        raise
+    seconds = time.perf_counter() - started
+    log.info("Detector warmed on %s in %.2f s", resolved, seconds,
+             extra={"device": resolved, "seconds": round(seconds, 2)})
+    return resolved
+
+
 class DetectionService:
     """Runs on `model`, a detector `load_model` loaded once for all of them,
     posting to the backend at `backend_url`. `opener` opens each Run's
     Stream, by default the command line's (`RegisteredFrames.open`).
+    `device` is the detector's, as `warm` answered it, for `/status`.
 
     Each call answers `(HTTP status, JSON body)`, as the control API sends it.
     """
-    def __init__(self, model, backend_url, opener=None):
+    def __init__(self, model, backend_url, opener=None, device=None):
         self._model, self._backend_url, self._opener = model, backend_url, opener
+        self.device = device
         self._lock = threading.Lock()
         # ponytail: one Run at a time; concurrent Runs need a detector each (#220)
         self._run = None
@@ -257,7 +286,7 @@ def serve(service, port=DEFAULT_PORT):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/status":
-                self._answer(200, {"run": service.status()})
+                self._answer(200, {"run": service.status(), "device": service.device})
             else:
                 self._answer(404, {"detail": "no such resource"})
 
@@ -305,11 +334,14 @@ if __name__ == "__main__":
     a = p.parse_args()
     log_file = logs.configure(a.log_dir)
     log.info("Loading the detector %s", a.model, extra={"log_file": str(log_file)})
-    service = DetectionService(nbh.load_model(a.model), a.backend_url)
+    model = nbh.load_model(a.model)
+    device = warm(model)   # before the control API binds: until warmed, nothing answers
+    service = DetectionService(model, a.backend_url, device=device)
     server = serve(service, a.port)
     log.info("Detection Service started: control API on http://127.0.0.1:%d; SIGINT or SIGTERM "
              "ends any Run as an end does, then the service", a.port,
-             extra={"port": a.port, "model": a.model, "backend_url": a.backend_url})
+             extra={"port": a.port, "model": a.model, "backend_url": a.backend_url,
+                    "device": device})
     signal.signal(signal.SIGTERM, signal.default_int_handler)   # a stop, as Ctrl-C is
     try:
         server.serve_forever()

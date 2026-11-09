@@ -34,7 +34,7 @@ options replace OpenCV's default, `rtsp_transport;tcp`: give the transport
 too, or the reader falls back to FFmpeg's, UDP first.
 
 The model is loaded and warmed before the replay starts, as a Detection
-Service's is after its first Run, so the reader joins the replay's first
+Service's is at startup (`service.warm`), so the reader joins the replay's first
 keyframe after connecting, frame 25. A cold first call on MPS (seconds)
 inside the baseline would hold the reader, and MediaMTX discard what it fell
 behind by (#117).
@@ -286,6 +286,7 @@ def _row(name, values, unit=1000):
 def main():
     from detection import logs
     from detection import new_bullet_holes as nbh
+    from detection import service
     from detection import webapp
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -337,8 +338,7 @@ def main():
 
         # Warmed before the replay starts (see the module's doc)
         model = nbh.load_model(nbh.DEFAULT_MODEL)
-        for _ in range(3):
-            nbh._detect(model, [np.zeros((640, 640, 3), np.uint8)], 640, nbh.DEFAULT_CONFIDENCE, a.device)
+        service.warm(model, a.device)
 
         sent_path = os.path.join(a.out, "sent.csv")
         pacer = subprocess.Popen([sys.executable, "-c", "import sys; from tools.end_to_end import _pace; "

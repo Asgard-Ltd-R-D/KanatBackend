@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 
 import numpy as np
 import pytest
-from test_frame_loop import _FakeStream, _FakeView, _Marking, _openable, _Scripted
+from test_frame_loop import _FakeStream, _FakeView, _Marking, _OnDevice, _openable, _Scripted
 
 from detection import board, logs, service, webapp
 from detection import new_bullet_holes as nbh
@@ -91,7 +91,7 @@ class _Api:
         self.model = model or _Marking()
         self.opener = self._stream
         self.service = service.DetectionService(self.model, "http://backend",
-                                                lambda *args: self.opener(*args))
+                                                lambda *args: self.opener(*args), device="cpu")
         self.server = service.serve(self.service, 0)
         threading.Thread(target=self.server.serve_forever, args=(0.01,), daemon=True).start()
 
@@ -213,7 +213,7 @@ def test_a_run_that_cannot_start_fails_with_its_reason_and_leaves_no_run(
         monkeypatch, api, failing, reason):
     failing(monkeypatch, api)
     assert api.start() == (502, {"detail": reason})
-    assert api.call("GET", "/status") == (200, {"run": None})
+    assert _status(api) is None
 
 
 def _until(answer, timeout=10):
@@ -512,3 +512,28 @@ def test_a_run_not_watching_within_the_start_timeout_is_ended_and_fails(monkeypa
         np.zeros((8, 8, 3), np.int64))
     assert api.start() == (502, {"detail": "not watching within 0.3 s: no baseline was built"})
     assert _status(api) is None
+
+
+def test_warming_calls_the_detector_as_runs_do_and_answers_its_device():
+    """Handed no device, as every Run's call is, so it warms the one Runs
+    use, and answers the device the detector resolved to."""
+    model = _OnDevice()
+    assert service.warm(model) == "cpu:0"
+    assert model.handed == [None] * 3
+
+
+def test_status_reports_the_detectors_device(api):
+    assert api.call("GET", "/status") == (200, {"run": None, "device": "cpu"})
+
+
+def test_a_warm_up_that_fails_is_logged_and_raised(caplog):
+    """So the service ends before its control API binds, and the reason is
+    in detection.log, not only on its console."""
+    class Broken(_OnDevice):
+        def predict(self, *args, **kwargs):
+            raise RuntimeError("CUDA error: no kernel image is available")
+
+    with pytest.raises(RuntimeError, match="no kernel image"):
+        service.warm(Broken())
+    assert [(r.levelname, r.getMessage(), r.exc_info is not None) for r in caplog.records] == [
+        ("ERROR", "Detector warm-up failed", True)]

@@ -1,10 +1,9 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
 
 from app.config.settings import settings
-from app.core.database import Base
+from app.core.database import Base, _make_engine
 
 # Import all models so Alembic can detect them for autogenerate.
 import app.models  # noqa: F401
@@ -30,13 +29,18 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    # The app's engine, so a migration runs with the same SQLite settings as the
+    # app: foreign keys enforced, WAL, a busy timeout (core/database.py)
+    connectable = _make_engine(settings.database_url)
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        # render_as_batch: SQLite cannot ALTER a column, drop a constraint or add
+        # a column with a foreign key in place, so a future migration that does
+        # any of those is run as a table rebuild (batch mode).
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=connection.dialect.name == "sqlite",
+        )
         with context.begin_transaction():
             context.run_migrations()
 

@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, String, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.types import UtcDateTime
 
 if TYPE_CHECKING:
     from app.models.bullet_hole import BulletHole
@@ -22,24 +22,25 @@ class Session(Base):
         CheckConstraint("status IN ('active', 'completed')", name="ck_sessions_status"),
         # One active Session at a time (services/sessions.py checks it first,
         # with a message; this holds when two requests race)
-        Index("uq_sessions_one_active", "status", unique=True, postgresql_where=text("status = 'active'")),
+        Index("uq_sessions_one_active", "status", unique=True,
+              sqlite_where=text("status = 'active'"), postgresql_where=text("status = 'active'")),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     # Whether the operator has recording on for this Session now; when it was on
     # is in recording_intervals
-    record: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    record: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     # The camera whose Stream the Session's Run watches, fixed at creation;
     # None without one, or once the camera is deleted
     camera_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cameras.id", ondelete="SET NULL"), nullable=True
+        Uuid(), ForeignKey("cameras.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()"), index=True
+        UtcDateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"), index=True
     )
 
     bullet_holes: Mapped[list["BulletHole"]] = relationship(  # type: ignore[name-defined]

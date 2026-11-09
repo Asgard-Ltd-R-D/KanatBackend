@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import ForeignKey, Index, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.types import UtcDateTime
 
 if TYPE_CHECKING:
     from app.models.session import Session
@@ -26,16 +26,17 @@ class RecordingInterval(Base):
             "uq_recording_intervals_one_open",
             "session_id",
             unique=True,
+            sqlite_where=text("ended_at IS NULL"),
             postgresql_where=text("ended_at IS NULL"),
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     # None while recording
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
 
     session: Mapped["Session"] = relationship("Session", back_populates="recording_intervals")

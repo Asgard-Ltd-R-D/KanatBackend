@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy.orm import Session as DBSession
 
+from app.core.locks import db_write
 from app.models import BulletHole
 from app.repositories import bullets as repo
 from app.repositories import sessions as session_repo
@@ -14,7 +15,13 @@ log = logging.getLogger(__name__)
 
 
 def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> BulletHole:
-    # Locked, so two bullets reported at once cannot take the same rank
+    # Serialized (db_write), so two bullets reported at once cannot read the same
+    # count and take the same rank: on SQLite get_for_update does not lock
+    with db_write:
+        return _create_bullet(session_id, body, db)
+
+
+def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> BulletHole:
     session = session_repo.get_for_update(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -77,6 +84,13 @@ def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> B
 
 
 def delete_bullet(session_id: uuid.UUID, bullet_id: uuid.UUID, db: DBSession) -> None:
+    # Serialized (db_write) against create_bullet and other deletes, so the
+    # renumbering of ranks after it is not lost to a concurrent write
+    with db_write:
+        _delete_bullet(session_id, bullet_id, db)
+
+
+def _delete_bullet(session_id: uuid.UUID, bullet_id: uuid.UUID, db: DBSession) -> None:
     session = session_repo.get_for_update(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")

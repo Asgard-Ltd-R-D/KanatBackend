@@ -1,18 +1,17 @@
 """A Session's Runs (ADR-0009): each Run of the Detection Service that watched
 it, stored the first time the backend sees it watching, with the camera it
-watched and its Baseline View. Driven through the REST API on a real
-PostgreSQL, the Detection Service faked at its client module, so skipped
-unless TEST_DATABASE_URL is set."""
+watched and its Baseline View. Driven through the REST API on a throwaway SQLite
+database, the Detection Service faked at its client module."""
 import uuid
 from datetime import datetime, timedelta
 
 import anyio
 import pytest
-from alembic import command
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
+from app.core.database import _make_engine
 from app.core.deps import get_db
 from app.core.live import hub
 from app.main import app
@@ -21,15 +20,12 @@ from app.services import detection_sync
 from app.services import recordings as recording_svc
 from tests.fakes import NOW, FakeDetectionService, baseline_view, place
 from tests.test_detection import events, listening
-from tests.test_schema import URL, alembic_config, db_url  # noqa: F401 (db_url is a fixture)
-
-pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")
+from tests.test_schema import db_url  # noqa: F401 (db_url is a fixture that migrates to head)
 
 
 @pytest.fixture
 def engine(db_url):
-    command.upgrade(alembic_config(), "head")
-    engine = create_engine(db_url)
+    engine = _make_engine(db_url)
     yield engine
     engine.dispose()
 
@@ -66,7 +62,7 @@ def camera(engine):
     with engine.begin() as conn:
         conn.execute(text(
             "INSERT INTO cameras (id, alias, mcast_ip, mcast_port) VALUES (:id, 'lane1', '226.226.226.112', 112)"
-        ), {"id": camera_id})
+        ), {"id": camera_id.hex})
     return camera_id
 
 

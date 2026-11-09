@@ -390,32 +390,41 @@ def test_re_anchoring_refines_a_silhouette_seed_in_the_same_board_space(monkeypa
     assert view.sheets == reference.sheets and view.crops == reference.crops
 
 
+REANCHOR_REFERENCE = board.BoardView(None, None, None, [],
+                                     board.Anchor(None, "sheets", None, "identity"))
+
+
 def _seeded_fits(monkeypatch, correlations):
-    """Contour i seeds a fit converging at `correlations[i]`; None fails to converge."""
+    """Contour i seeds a fit converging at `correlations[i]` on the identity
+    region; None fails to converge. The refit on the sheets gives 0.5 more."""
     contours = [_square(100 * i, 0, 40) for i in range(len(correlations))]
     monkeypatch.setattr(board, "find_targets", lambda frame: (contours, None))
     monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
                         (contour, 0.9))
-    def track_view(frame, reference, seed):
+    def track_view(frame, reference, seed, region=None):
         corr = correlations[[c is seed for c in contours].index(True)]
         if corr is None:
             raise cv2.error("did not converge")
-        return seed, corr
+        fit = board.BoardView(seed, None, None, [], reference.anchor)
+        return (fit, corr) if region == "identity" else (fit, corr + 0.5)
     monkeypatch.setattr(board, "track_view", track_view)
     return contours
 
 
 def test_re_anchoring_keeps_the_seed_the_board_texture_agrees_with(monkeypatch):
     """The Targets share one artwork: whichever is nearest or largest, the fit
-    that matches the baseline frame's texture best is the right one (#80)."""
+    that matches the baseline frame's texture round the ring best is the right
+    one (#80). The sheets alone would not tell a lookalike apart (PR #322):
+    it is chosen on `Anchor.identity`, then refitted on the sheets."""
     contours = _seeded_fits(monkeypatch, [0.55, None, 0.99, 0.20])
-    assert board.reanchor_view(None, None, None) == (contours[2], 0.99)
+    view, correlation = board.reanchor_view(None, None, REANCHOR_REFERENCE)
+    assert view.H is contours[2] and correlation == pytest.approx(1.49)
 
 
 def test_re_anchoring_refuses_a_best_fit_below_the_floor(monkeypatch):
     """Only neighbours in view: the best fit is one Target over, not a re-anchor."""
     _seeded_fits(monkeypatch, [0.55, 0.20])
-    assert board.reanchor_view(None, None, None) == (None, None)
+    assert board.reanchor_view(None, None, REANCHOR_REFERENCE) == (None, None)
 
 
 def test_re_anchoring_with_no_target_in_view_finds_nothing(monkeypatch):

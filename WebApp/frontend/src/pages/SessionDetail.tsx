@@ -14,19 +14,14 @@ import { StatTile } from '../components/UI/StatTile'
 import { ConfirmDialog } from '../components/UI/ConfirmDialog'
 import { AddBulletModal } from '../components/Session/AddBulletModal'
 import { BulletLog } from '../components/Session/BulletLog'
-import { LiveDetectionsPanel } from '../components/Session/LiveDetectionsPanel'
 import { CameraFeeds } from '../components/Camera/CameraFeeds'
 import { RecordingControl } from '../components/Session/RecordingControl'
 import { RecordingsCard } from '../components/Session/RecordingsCard'
 import { GroupsCard } from '../components/Session/GroupsCard'
 import { ReplayModal, ReplayTarget } from '../components/Session/ReplayModal'
 import { useRecordings } from '../hooks/useRecordings'
-import { findMoment } from '../utils/recordings'
 import { useSessionLive } from '../hooks/useSessionLive'
 import { formatDuration } from '../utils/format'
-
-// A bullet's replay starts this long before it was seen, to show the shot
-const REPLAY_PREROLL_S = 3
 
 export function SessionDetail() {
   const { id } = useParams<{ id: string }>()
@@ -141,7 +136,6 @@ export function SessionDetail() {
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
               {format(new Date(session.started_at), 'EEEE, MMM d yyyy · HH:mm')}
-              {' · '}{formatDuration(session.started_at, session.ended_at)}
             </p>
           </div>
         </div>
@@ -221,25 +215,16 @@ export function SessionDetail() {
       {active && (
         <div className="flex-1 min-h-0 flex flex-col gap-4">
           {/* Mini stats */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
+          <div className="grid grid-cols-2 gap-3 shrink-0 max-w-md">
             <StatTile label="Total Bullets" value={bullets.length} />
-            <StatTile label="AI Detected" value={bullets.filter(b => b.source === 'model').length} />
-            <StatTile label="Manual" value={bullets.filter(b => b.source === 'manual').length} />
             <StatTile label="Duration" value={formatDuration(session.started_at, null)} />
           </div>
 
-          {/* Cameras (2/3) and live detections (1/3), both to the bottom of the window */}
-          <div className="flex-1 min-h-[420px] grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 flex flex-col min-h-0">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 shrink-0">Camera Feed</p>
-              <div className="flex-1 min-h-[300px]">
-                <CameraFeeds run={runWatches ? run : undefined} runs={session.runs ?? []} bullets={bullets} />
-              </div>
-            </div>
-
-            <div className="flex flex-col min-h-0">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 shrink-0">Live Detections</p>
-              <LiveDetectionsPanel bullets={bullets} />
+          {/* The camera feed fills the rest of the window */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 shrink-0">Camera Feed</p>
+            <div className="flex-1 min-h-[300px]">
+              <CameraFeeds run={runWatches ? run : undefined} runs={session.runs ?? []} bullets={bullets} />
             </div>
           </div>
         </div>
@@ -266,15 +251,6 @@ export function SessionDetail() {
           <BulletLog
             bullets={bullets}
             onDelete={setDeleteTarget}
-            canReplay={b => !!recordings.data && findMoment(recordings.data, b.first_seen_at) !== null}
-            onReplay={b => {
-              // From a Run's camera when it recorded then, where the Overlay draws
-              const runCameras = new Set(session.runs?.map(r => r.camera_alias))
-              const first = recordings.data?.filter(r => runCameras.has(r.alias)) ?? []
-              const rest = recordings.data?.filter(r => !runCameras.has(r.alias)) ?? []
-              const moment = findMoment([...first, ...rest], b.first_seen_at, REPLAY_PREROLL_S)
-              if (moment) setReplay({ alias: moment.alias, part: moment.part, offsetS: moment.offsetS })
-            }}
           />
 
           <ReplayModal

@@ -235,6 +235,10 @@ def _sync_once() -> None:
     if removed:
         log.info("Deleted %s day-old recording file(s) of cameras that no longer exist", removed,
                  extra={"files_deleted": removed})
+    retried = recordings.retry_deletions()
+    if retried:
+        log.info("Deleted %s file(s) that were still in use when their deletion was asked", retried,
+                 extra={"files_deleted": retried})
 
 
 async def run_forever() -> None:

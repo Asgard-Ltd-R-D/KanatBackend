@@ -136,6 +136,65 @@ def _forget_finished_plays() -> None:
             del _in_use[path]
 
 
+# Files the OS would not delete yet: on Windows, a file still open (MediaMTX
+# writing it, a replay being served, an antivirus scanning it) cannot be
+# deleted. Those that must go (a deleted Session's video) are tried again by
+# retry_deletions, every camera sync round. The value is when each was first
+# queued, so one the OS refuses for good (gone read-only, its mount vanished) is
+# given up on instead of retried forever.
+_undeleted: dict[Path, float] = {}
+_undeleted_lock = threading.Lock()
+# A file still refused this long after it was first queued is given up on
+_UNDELETED_GIVE_UP_S = 24 * 3600
+
+
+def _delete(file: Path, retry: bool = True) -> bool:
+    """Deletes the file; True once it is gone. One the OS keeps is left, and
+    with `retry` remembered for retry_deletions; without it, the caller looks
+    at the file again on its own next round (the replay cache)."""
+    try:
+        file.unlink(missing_ok=True)
+        return True
+    except OSError as e:
+        if not retry:
+            return False
+        with _undeleted_lock:
+            new = file not in _undeleted
+            if new:
+                _undeleted[file] = time.monotonic()
+        if new:
+            log.warning("Could not delete %s yet, still in use: trying again later", file.name,
+                        extra={"file": str(file), "error": str(e)})
+        return False
+
+
+def retry_deletions() -> int:
+    """Tries again the deletions the OS refused (_delete); returns how many
+    files went this time. A copy reserved for an imminent replay is left for a
+    later round, so a retry never deletes one out from under its player; a file
+    refused for longer than _UNDELETED_GIVE_UP_S is dropped, not retried on."""
+    with _undeleted_lock:
+        pending = list(_undeleted.items())
+    deleted = 0
+    for file, queued_at in pending:
+        with _locks_guard:  # the lock _mark_in_use takes
+            if _in_use.get(file, 0) > time.monotonic():
+                continue
+        try:
+            file.unlink(missing_ok=True)
+        except OSError as e:
+            if time.monotonic() - queued_at >= _UNDELETED_GIVE_UP_S:
+                with _undeleted_lock:
+                    _undeleted.pop(file, None)
+                log.warning("Gave up deleting %s, still refused after %sh", file.name,
+                            _UNDELETED_GIVE_UP_S // 3600, extra={"file": str(file), "error": str(e)})
+            continue
+        with _undeleted_lock:
+            _undeleted.pop(file, None)
+        deleted += 1
+    return deleted
+
+
 def _unlink_unless_in_use(file: Path) -> bool:
     """Removes the copy unless it is being played. Checked and removed under
     the lock _mark_in_use takes, so a request that marks it while the cache is
@@ -143,8 +202,7 @@ def _unlink_unless_in_use(file: Path) -> bool:
     with _locks_guard:
         if _in_use.get(file, 0) > time.monotonic():
             return False
-        file.unlink(missing_ok=True)
-        return True
+        return _delete(file, retry=False)
 
 
 def _prune_cache(directory: Path) -> None:
@@ -164,7 +222,7 @@ def _prune_cache(directory: Path) -> None:
             stat = file.stat()
             if file.suffix == ".part":
                 if now - stat.st_mtime > PARTIAL_MAX_AGE_S:
-                    file.unlink()
+                    _delete(file, retry=False)
             elif file.suffix == ".mp4":
                 named = _read_cache_name(file)
                 # A name that cannot be read: its age by the time it was written
@@ -255,7 +313,7 @@ def replay_file(alias: str, start: datetime, duration_s: float, still_allowed: C
                         out.write(chunk)
             except httpx.HTTPError as e:
                 # MediaMTX stopped or stalled mid-download: nothing half-written is kept
-                partial.unlink(missing_ok=True)
+                _delete(partial, retry=False)   # else pruned once abandoned
                 log.warning("Fetching a replay part from MediaMTX failed: %s", e, extra=fields)
                 raise mediamtx.MediaMTXUnreachable(f"playback get {alias}: {e}") from e
             finally:
@@ -340,11 +398,13 @@ def remove_unused_recordings(aliases: list[str]) -> int:
             continue
         for file in folder.glob("*.mp4"):
             began = _file_start(file)
-            if began is not None and began < cutoff:
-                file.unlink(missing_ok=True)
+            if began is not None and began < cutoff and _delete(file, retry=False):
                 deleted += 1
         if not any(folder.iterdir()):
-            folder.rmdir()
+            try:
+                folder.rmdir()
+            except OSError:
+                pass   # in use: next round
     return deleted
 
 
@@ -365,7 +425,8 @@ def delete_session_video(
     """Deletes the recordings that started within the windows a Session
     recorded, and their replay copies, keeping any that runs on into what
     another Session recorded. Every camera's folder counts, including those of
-    cameras since deleted. Returns how many recordings were deleted."""
+    cameras since deleted. Returns how many recordings were deleted; one the
+    OS keeps open (Windows) goes later (retry_deletions)."""
 
     def belongs(began: datetime, ended: datetime) -> bool:
         """Overlaps what this Session recorded, and nothing a remaining Session
@@ -381,8 +442,7 @@ def delete_session_video(
     for folder in _camera_folders(root) if root and root.is_dir() else []:
         for file in folder.glob("*.mp4"):
             began = _file_start(file)
-            if began is not None and belongs(began, _file_end(file, began)):
-                file.unlink(missing_ok=True)
+            if began is not None and belongs(began, _file_end(file, began)) and _delete(file):
                 deleted += 1
 
     # Replay copies: finished ones, half-written ones, and downloads just begun
@@ -401,6 +461,6 @@ def delete_session_video(
         _, began, length_s = named
         if belongs(began, began + timedelta(seconds=length_s)):
             with _part_lock(copy):
-                copy.unlink(missing_ok=True)
-                copy.with_suffix(".part").unlink(missing_ok=True)
+                _delete(copy)
+                _delete(copy.with_suffix(".part"))
     return deleted

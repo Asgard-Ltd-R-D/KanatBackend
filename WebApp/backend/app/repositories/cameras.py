@@ -7,7 +7,7 @@ from app.models import Camera
 
 
 class AliasTaken(Exception):
-    """Another camera already has this alias (uq_cameras_alias)."""
+    """Another camera already has this alias, in any case (uq_cameras_alias_ci)."""
 
 
 def get(db: DBSession, camera_id: uuid.UUID) -> Camera | None:

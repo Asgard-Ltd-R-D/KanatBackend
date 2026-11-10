@@ -1,12 +1,18 @@
 """Keeps MediaMTX's camera paths matching the cameras table.
 
-Each enabled camera is a MediaMTX path named after its alias, which runs
-VideoService's run_record.sh: GStreamer joins the camera's multicast group and
-publishes the stream to MediaMTX as RTSP, as KanatFrontend set it up. A
-disabled camera keeps its path without the script, because MediaMTX's playback
-server only plays recordings of a configured path. Paths
-added through the Control API live only in MediaMTX's memory, so they are
-re-applied when the backend starts and every camera_sync_interval_s after.
+Each enabled camera is a MediaMTX path named after its alias whose source is the
+camera's RTP multicast (`udp+rtp://group:port?interface=card`): MediaMTX joins
+the group itself and reads the H.264 directly, so no GStreamer runs. The
+`interface` is the camera's network card by name, so the UI's card picker
+decides which card each camera is read on. A disabled camera keeps its path
+without a source, because MediaMTX's playback server only plays recordings of a
+configured path. Paths added through the Control API live only in MediaMTX's
+memory, so they are re-applied when the backend starts and every
+camera_sync_interval_s after.
+
+VideoService's run_record.sh/.ps1 (GStreamer) is no longer in this pipeline; the
+scripts stay in VideoService for other uses. A path made by an older backend
+still runs GStreamer, so the sync recognises it and clears its runOnInit.
 
 Recording follows the Sessions: the cameras record while an active Session has
 `record` on, and stop when none has.
@@ -15,6 +21,7 @@ import asyncio
 import logging
 import threading
 import time
+from urllib.parse import quote
 
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session as DBSession
@@ -39,7 +46,10 @@ RECORDING = {
     "recordDeleteAfter": "1d",
 }
 
-_RECORD_SCRIPT = "./run_record.sh"
+# The GStreamer recorder older backends ran for each camera. No longer used to
+# build a path; kept so a path left over from such a backend is recognised as a
+# camera's and converted (is_camera_path).
+_RECORD_SCRIPTS = {"bash": "./run_record.sh", "powershell": "./run_record.ps1"}
 
 _lock = threading.Lock()
 # The loop's clock. It counts from an arbitrary start (on Linux, the boot), so
@@ -54,25 +64,46 @@ _recording: bool | None = None
 _config_unknown = False
 
 
-def path_config(camera: Camera, record: bool) -> dict:
-    """The camera's MediaMTX path, as KanatFrontend's makePathDTO built it."""
-    # MediaMTX substitutes ${RTSP_PORT} with its own RTSP port when it runs the
-    # command; every interpolated value is held to safe characters by
-    # schemas/camera.py
-    rtsp_url = f"rtsp://127.0.0.1:${{RTSP_PORT}}/{camera.alias}"
-    iface_arg = f' --iface "{camera.iface}"' if camera.iface else ""
-    run_on_init = (
-        "bash -lc '\n"
-        f'exec {_RECORD_SCRIPT} --mcast-ip "{camera.mcast_ip}" --mcast-port "{camera.mcast_port}"'
-        f' --rtsp-url "{rtsp_url}"{iface_arg}\n'
-        "'"
+def _rtp_source(camera: Camera) -> str:
+    """The camera's multicast as a MediaMTX source. `?interface=` binds the read
+    to the camera's network card by its name (Get-NetAdapter on Windows,
+    `ip link` on Linux), so the UI's card picker decides which card the camera is
+    read on; without a card MediaMTX reads on the OS's default interface. The
+    name is percent-encoded, so a card named "Ethernet 2" is carried safely."""
+    source = f"udp+rtp://{camera.mcast_ip}:{camera.mcast_port}"
+    if camera.iface:
+        source += f"?interface={quote(camera.iface, safe='')}"
+    return source
+
+
+def _rtp_sdp(camera: Camera) -> str:
+    """The stream description MediaMTX needs to read raw RTP. The range cameras
+    repeat their parameter sets (SPS/PPS) inside the H.264, so only the payload
+    type and clock are needed here; 96 is the cameras' H.264 payload type."""
+    return (
+        "v=0\n"
+        "o=- 0 0 IN IP4 127.0.0.1\n"
+        "s=KANAT\n"
+        f"c=IN IP4 {camera.mcast_ip}\n"
+        "t=0 0\n"
+        f"m=video {camera.mcast_port} RTP/AVP 96\n"
+        "a=rtpmap:96 H264/90000\n"
     )
+
+
+def path_config(camera: Camera, record: bool) -> dict:
+    """The camera's MediaMTX path: MediaMTX reads the camera's RTP multicast
+    itself. runOnInit is set empty so a path made by an older backend stops its
+    GStreamer recorder when this backend patches it."""
     return {
-        "source": "publisher",
+        "source": _rtp_source(camera),
         "sourceOnDemand": False,
-        "overridePublisher": True,
-        "runOnInit": run_on_init,
-        "runOnInitRestart": True,
+        "rtpSDP": _rtp_sdp(camera),
+        # Cleared so a path an older backend left as a publisher with a GStreamer
+        # runOnInit is converted to a clean udp+rtp path, not a mixed one
+        "overridePublisher": False,
+        "runOnInit": "",
+        "runOnInitRestart": False,
         "record": record,
         **RECORDING,
     }
@@ -95,9 +126,12 @@ def playback_only_config() -> dict:
 def is_camera_path(name: str, config: dict, config_paths: mediamtx.ConfigPaths | None) -> bool:
     """Whether a path is one of the cameras', which the sync may patch and
     delete. A path mediamtx.yml defines never is, whatever its settings. Of the
-    rest, a camera's path runs run_record.sh, or (disabled) is the playback-only
-    path; without mediamtx.yml's paths, only the first counts."""
-    if _RECORD_SCRIPT in (config.get("runOnInit") or ""):
+    rest, an enabled camera's path reads udp+rtp (or, left by an older backend,
+    runs run_record.sh/.ps1), and a disabled camera's is the playback-only path;
+    without mediamtx.yml's paths, only the first counts."""
+    source = config.get("source") or ""
+    run_on_init = config.get("runOnInit") or ""
+    if source.startswith("udp+rtp://") or any(script in run_on_init for script in _RECORD_SCRIPTS.values()):
         return config_paths is None or not config_paths.defines(name)
     if config_paths is None or config_paths.defines(name):
         return False

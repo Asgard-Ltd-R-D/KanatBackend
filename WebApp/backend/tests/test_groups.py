@@ -9,17 +9,17 @@ from types import SimpleNamespace
 import openpyxl
 
 import pytest
-from alembic import command
+import weasyprint
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session as DBSession
 
+from app.core.database import _make_engine
 from app.core.deps import get_db
 from app.main import app
 from app.repositories import sessions as sessions_repo
-from app.services import export
 from tests.fakes import NOW
-from tests.test_schema import URL, alembic_config, db_url  # noqa: F401 (db_url is a fixture)
+from tests.test_schema import db_url  # noqa: F401 (db_url is a fixture that migrates to head)
 
 SESSION_ID = uuid.uuid4()
 
@@ -135,13 +135,13 @@ def test_the_excel_groups_sheet_holds_the_detail_numbers(client):
 
 def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
     rendered = []
-    real = export.weasyprint.HTML
+    real = weasyprint.HTML
 
     def html(string, base_url):
         rendered.append(string)
         return real(string=string, base_url=base_url)
 
-    monkeypatch.setattr(export.weasyprint, "HTML", html)
+    monkeypatch.setattr(weasyprint, "HTML", html)
     client.holes = RECTANGLE + [MISS]
 
     res = client.get(f"/sessions/{SESSION_ID}/export/pdf")
@@ -157,7 +157,7 @@ def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
 
 def test_without_a_group_the_pdf_still_gives_the_two_counts(client, monkeypatch):
     rendered = []
-    monkeypatch.setattr(export.weasyprint, "HTML",
+    monkeypatch.setattr(weasyprint, "HTML",
                         lambda string, base_url: rendered.append(string) or SimpleNamespace(write_pdf=lambda: b"%PDF"))
     client.holes = [MISS, MANUAL, MANUAL]
 
@@ -166,23 +166,21 @@ def test_without_a_group_the_pdf_still_gives_the_two_counts(client, monkeypatch)
     assert "Misses: 1" in rendered[0] and "Without a Position: 2" in rendered[0]
 
 
-@pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")
 def test_a_deleted_bullet_hole_leaves_its_group(db_url):
-    """On a real PostgreSQL: only the query keeps a deleted Bullet Hole out."""
-    command.upgrade(alembic_config(), "head")
-    engine = create_engine(db_url)
+    """On a real database: only the query keeps a deleted Bullet Hole out."""
+    engine = _make_engine(db_url)
     ids = [uuid.uuid4() for _ in range(3)]
     with engine.begin() as conn:
         conn.execute(text(
             "INSERT INTO sessions (id, name, status, started_at, ended_at)"
-            " VALUES (:id, 'Range 1', 'completed', now(), now())"
-        ), {"id": SESSION_ID})
+            " VALUES (:id, 'Range 1', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ), {"id": SESSION_ID.hex})
         for rank, (hole_id, (x, y)) in enumerate(zip(ids, [(0, 0), (6, 8), (60, 80)]), start=1):
             conn.execute(text(
                 "INSERT INTO bullet_holes (id, session_id, first_seen_at, position_x, position_y,"
                 " target_index, x_mm, y_mm, source, rank)"
-                " VALUES (:id, :session, now(), 700, 560, 0, :x, :y, 'model', :rank)"
-            ), {"id": hole_id, "session": SESSION_ID, "x": x, "y": y, "rank": rank})
+                " VALUES (:id, :session, CURRENT_TIMESTAMP, 700, 560, 0, :x, :y, 'model', :rank)"
+            ), {"id": hole_id.hex, "session": SESSION_ID.hex, "x": x, "y": y, "rank": rank})
 
     def real_db():
         with DBSession(engine) as db:
@@ -201,3 +199,47 @@ def test_a_deleted_bullet_hole_leaves_its_group(db_url):
     assert g["n"] == excel_n == 2
     assert (g["mpi_x_mm"], g["mpi_y_mm"]) == pytest.approx((3.0, 4.0))
     assert g["extreme_spread_mm"] == pytest.approx(10.0)
+
+
+def test_deleting_a_middle_bullet_renumbers_the_ones_after_it(db_url):
+    """On a real database: deleting a non-last bullet moves every later rank
+    down by one, so the next insert does not reuse a rank."""
+    engine = _make_engine(db_url)
+    ids = [uuid.uuid4() for _ in range(3)]
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO sessions (id, name, status, started_at, ended_at)"
+            " VALUES (:id, 'Range 1', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ), {"id": SESSION_ID.hex})
+        for rank, hole_id in enumerate(ids, start=1):
+            conn.execute(text(
+                "INSERT INTO bullet_holes (id, session_id, first_seen_at, position_x, position_y, source, rank)"
+                " VALUES (:id, :session, CURRENT_TIMESTAMP, 700, 560, 'model', :rank)"
+            ), {"id": hole_id.hex, "session": SESSION_ID.hex, "rank": rank})
+
+    def real_db():
+        with DBSession(engine) as db:
+            yield db
+
+    def ranks():
+        with engine.connect() as conn:
+            return [r[0] for r in conn.execute(text(
+                "SELECT rank FROM bullet_holes WHERE session_id = :s AND deleted_at IS NULL ORDER BY rank"
+            ), {"s": SESSION_ID.hex}).all()]
+
+    app.dependency_overrides[get_db] = real_db
+    try:
+        with TestClient(app) as c:
+            # Delete rank 2 (the middle one): rank 3 must become rank 2
+            assert c.delete(f"/sessions/{SESSION_ID}/bullets/{ids[1]}").status_code == 204
+            assert ranks() == [1, 2]
+            # A manual bullet added after (session is completed) takes the next rank, 3, not 2 again
+            added = c.post(f"/sessions/{SESSION_ID}/bullets", json={
+                "version": "v1", "first_seen_at": "2026-10-22T10:15:02.120Z",
+                "position": {"x": 10.0, "y": 10.0}, "source": "manual",
+            })
+            assert added.status_code == 201 and added.json()["rank"] == 3
+            assert ranks() == [1, 2, 3]
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()

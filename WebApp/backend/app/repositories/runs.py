@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session as DBSession
 
 from app.models import Run
@@ -14,7 +14,8 @@ def add_once(db: DBSession, session_id: uuid.UUID, camera_alias: str, taken_at: 
         insert(Run)
         .values(session_id=session_id, camera_alias=camera_alias, taken_at=taken_at, baseline_view=baseline_view,
                 places=places, watched_until=watched_until)
-        .on_conflict_do_nothing(constraint="uq_runs_session_id_taken_at")
+        # SQLite targets the conflict by the index's columns, not its name
+        .on_conflict_do_nothing(index_elements=["session_id", "taken_at"])
     )
     db.commit()
 

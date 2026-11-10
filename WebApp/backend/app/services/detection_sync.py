@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.config.settings import settings
 from app.core.database import SessionLocal
 from app.core.live import hub
+from app.core.locks import db_write
 from app.models import Run, Session
 from app.repositories import cameras as cameras_repo
 from app.repositories import runs as runs_repo
@@ -193,7 +194,11 @@ def _store_run(session_id: uuid.UUID, alias: str, run: detection_client.Run) -> 
             baseline = Place(at=view.taken_at, template_to_picture=view.template_to_picture)
             runs_repo.add_once(db, session_id, alias, view.taken_at, view.model_dump(mode="json"),
                                [baseline.model_dump(mode="json")], view.taken_at)
-            _follow(db, runs_repo.get_for_update(db, session_id, view.taken_at), run)
+            # Serialized (db_write) against the end's answer following the same
+            # Run: on SQLite get_for_update does not lock, so a concurrent
+            # read-modify-write of places/watched_until could be lost
+            with db_write:
+                _follow(db, runs_repo.get_for_update(db, session_id, view.taken_at), run)
     except Exception as e:
         log.warning("The Run of session %s is not stored yet: %s", session_id, e, exc_info=True)
     finally:
@@ -259,7 +264,9 @@ def _end_run(session_id: uuid.UUID, judge: bool = True) -> bool | None:
     db = SessionLocal()
     try:
         if ended.baseline_view is not None:   # none for a Run ended before it watched
-            _follow(db, runs_repo.get_for_update(db, session_id, ended.baseline_view.taken_at), ended)
+            # Serialized (db_write) against a tick following the same Run
+            with db_write:
+                _follow(db, runs_repo.get_for_update(db, session_id, ended.baseline_view.taken_at), ended)
     except Exception as e:   # the Run did end: only what it reported is lost
         log.warning("How far the Run of session %s watched is not stored: %s", session_id, e, exc_info=True)
     finally:

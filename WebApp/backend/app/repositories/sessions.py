@@ -75,7 +75,11 @@ def _commit(db: DBSession) -> None:
         db.commit()
     except IntegrityError as e:
         db.rollback()
-        if "uq_sessions_one_active" in str(e.orig):
+        # The one-active unique index, by how each database names it in the
+        # error: Postgres by the index name, SQLite by the column it is on
+        # (its message for a partial index on a plain column)
+        message = str(e.orig)
+        if "uq_sessions_one_active" in message or "sessions.status" in message:
             raise SecondActiveSession from e
         raise
 

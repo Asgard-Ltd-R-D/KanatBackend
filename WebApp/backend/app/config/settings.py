@@ -1,10 +1,17 @@
+import sys
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-    database_url: str = "postgresql://postgres:postgres@localhost:5432/pdb"
+    # SQLite on disk: one local single-user app, so a file database is enough
+    # (core/database.py sets its pragmas). A relative path is beside where the
+    # backend runs; the container overrides it to a path on a mounted volume so
+    # the database survives a rebuild (docker-compose.yml).
+    database_url: str = "sqlite:///./kanat.db"
     app_title: str = "Kanat WebApp API"
     app_version: str = "1.0.0"
 
@@ -15,6 +22,11 @@ class Settings(BaseSettings):
     # MediaMTX's RTSP server, on which each camera is a path named after its
     # alias: the Stream a Session's Run watches
     mediamtx_rtsp_url: str = "rtsp://127.0.0.1:8554"
+    # Legacy: the OS whose GStreamer recorder (run_record.sh/.ps1) MediaMTX once
+    # launched per camera. MediaMTX now reads each camera's RTP directly
+    # (services/camera_sync.py), so nothing reads this; kept until the Windows
+    # bundle's env/compose plumbing is cleaned up with it.
+    record_launcher: Literal["bash", "powershell"] = "powershell" if sys.platform == "win32" else "bash"
     # The Detection Service's control API on this PC (ADR-0008), its --port
     detection_service_url: str = "http://127.0.0.1:8010"
     # How often the cameras are re-applied to MediaMTX, which forgets them when
@@ -35,9 +47,9 @@ class Settings(BaseSettings):
     mediamtx_config: str = ""
 
     # Logs (core/logs.py): the lowest level written, and the folder of
-    # backend.log, shared with the app's frontend.log, which Grafana Alloy
-    # ships to Loki (WebApp/observability); empty means WebApp/logs. On the
-    # range PC, /var/log/kanat
+    # backend.log, shared with the app's frontend.log, which the app's Logs tab
+    # reads; empty means WebApp/logs. On the range PC, /var/log/kanat in the
+    # backend's container
     log_level: str = "INFO"
     log_dir: str = ""
 

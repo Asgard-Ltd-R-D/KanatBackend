@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy.orm import Session as DBSession
 
+from app.core.locks import db_write
 from app.models import RecordingInterval, Session
 from app.repositories import cameras as cameras_repo
 from app.repositories import sessions as repo
@@ -93,8 +94,17 @@ def create_session(body: SessionCreate, db: DBSession) -> Session:
 
 
 def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) -> Session:
-    # Locked until commit, so two changes at once cannot both see no open
-    # recording interval and each open one
+    # Serialized (db_write): on SQLite get_for_update does not lock, so without
+    # this two changes at once could both read the Session active and, e.g.,
+    # leave a recording interval open on a just-completed Session. The router's
+    # network call (detection_sync.ending) is outside this, around the request.
+    with db_write:
+        session, before = _apply_update(session_id, body, db)
+    _log_changes(session, before)
+    return get_session_detail(session_id, db)
+
+
+def _apply_update(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) -> tuple[Session, dict]:
     session = repo.get_for_update(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -118,8 +128,7 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) ->
         repo.save(db)
     except repo.SecondActiveSession as e:
         raise _refused_as_second_active(db, session_id) from e
-    _log_changes(session, before)
-    return get_session_detail(session_id, db)
+    return session, before
 
 
 def _log_changes(session: Session, before: dict) -> None:
@@ -153,15 +162,16 @@ def recorded_windows(intervals: list[RecordingInterval]) -> list[tuple[datetime,
 def delete_session(session_id: uuid.UUID, db: DBSession) -> list[tuple[datetime, datetime]]:
     """Deletes the Session and returns the windows it recorded, so its video
     can be deleted too (routers/sessions.py)."""
-    # Locked before its intervals are read, as update_session locks it to
-    # change them: a recording switched on at the same moment either commits
-    # first, and its interval is in the windows, or finds the Session gone
-    session = repo.get_for_update(db, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    windows = recorded_windows(session.recording_intervals)
-    name = session.name
-    repo.delete(db, session)
+    # Serialized (db_write) against a concurrent update: a recording switched on
+    # at the same moment either commits first (its interval is in the windows)
+    # or finds the Session gone. On SQLite get_for_update does not lock.
+    with db_write:
+        session = repo.get_for_update(db, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        windows = recorded_windows(session.recording_intervals)
+        name = session.name
+        repo.delete(db, session)
     log.info(
         "Session '%s' deleted", name,
         extra={"session_id": session_id, "session_name": name, "recorded_windows": len(windows)},

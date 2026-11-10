@@ -85,7 +85,9 @@ bld/
 WebApp/logs/*
 !WebApp/logs/.gitkeep
 release/
+# Composer's build output; WebApp/deploy holds the Windows installer's sources
 deploy/
+!WebApp/deploy/
 dev/
 prod/
 

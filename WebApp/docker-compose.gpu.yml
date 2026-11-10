@@ -1,0 +1,18 @@
+# The Detection Service on the PC's NVIDIA GPU: install.ps1 adds this file
+# (COMPOSE_FILE in .env) when Docker can use one, so the CPU image runs
+# otherwise. CUDA 12.6 PyTorch, which any CUDA 12 driver (525 on) runs, across the
+# widest range of NVIDIA cards.
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile app build detection
+services:
+  detection:
+    build:
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cu126
+    image: kanat-detection:${KANAT_VERSION:-dev}-cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

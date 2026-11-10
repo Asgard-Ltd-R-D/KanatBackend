@@ -21,6 +21,7 @@ import asyncio
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi.concurrency import run_in_threadpool
@@ -228,6 +229,10 @@ def _sync_once() -> None:
     try:
         sync(db)
         aliases = [c.alias for c in cameras_repo.list_all(db)]
+        # Every current Session's recorded spans, so a recording the OS held open
+        # until it reached a newer Session is kept, not deleted (retry_deletions)
+        now = datetime.now(timezone.utc)
+        live_windows = [(i.started_at, i.ended_at or now) for i in sessions_repo.all_intervals(db)]
     finally:
         db.close()
     cameras.watch_traffic()
@@ -235,6 +240,10 @@ def _sync_once() -> None:
     if removed:
         log.info("Deleted %s day-old recording file(s) of cameras that no longer exist", removed,
                  extra={"files_deleted": removed})
+    retried = recordings.retry_deletions(live_windows)
+    if retried:
+        log.info("Deleted %s file(s) that were still in use when their deletion was asked", retried,
+                 extra={"files_deleted": retried})
 
 
 async def run_forever() -> None:

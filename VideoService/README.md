@@ -1,6 +1,7 @@
 > **Part of KanatBackend.** This service was the standalone `Asgard-Ltd-R-D/KanatVideo` repository. It now lives in KanatBackend under `VideoService/`, imported with its history, and changes through ordinary KanatBackend PRs.
 >
 > - **Start/stop** from the KanatBackend root: `python composer.py up <env> --mediamtx`, then `python composer.py stop <env>`. Composer runs MediaMTX with `VideoService/` as its working directory, so the relative paths in `mediamtx.yml` (`./run_loopdemo.sh`, `./recordings/...`) and the `./run_record.sh` hooks the WebApp backend creates for each camera resolve here.
+> - **Windows**: the backend gives each camera path `run_record.ps1` instead of `run_record.sh` (`RECORD_LAUNCHER=powershell`); it needs GStreamer's MSVC 64-bit Complete install with its `bin` on PATH. MediaMTX stops it, and GStreamer with it, in a job object. Give the camera network a persistent route for `224.0.0.0/4` (`route -p add 224.0.0.0 mask 240.0.0.0 <camera NIC IP>`) and allow inbound UDP in the firewall, rather than naming an interface.
 > - **Binary**: `mediamtx` (`mediamtx.exe` on Windows) is not committed and is git-ignored. Download a release from [bluenviron/mediamtx](https://github.com/bluenviron/mediamtx/releases) and put only the binary in `VideoService/`. The release archive also contains a `mediamtx.yml`, which would overwrite this one.
 > - **Generated files**: recordings go to `VideoService/recordings/`, and newer MediaMTX releases also write a self-signed `auto.key`/`auto.crt` here. All of these are git-ignored.
 

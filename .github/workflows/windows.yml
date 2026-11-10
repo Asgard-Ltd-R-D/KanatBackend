@@ -1,0 +1,74 @@
+name: Windows
+
+# The Windows pieces the Mac can't check: the PowerShell scripts under the
+# Windows PowerShell 5.1 the range PC runs, and the app's Windows installer
+on:
+  pull_request:
+    branches: [main]
+    paths: [WebApp/deploy/**, VideoService/**, WebApp/frontend/**, .github/workflows/windows.yml]
+  push:
+    branches: [main, feature/**]
+    paths: [WebApp/deploy/**, VideoService/**, WebApp/frontend/**, .github/workflows/windows.yml]
+  workflow_dispatch:
+
+jobs:
+  powershell:
+    name: PowerShell scripts (5.1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: powershell
+        run: Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Force -Scope CurrentUser
+
+      # Parse errors and the analyzer's errors fail the job; its warnings are listed
+      - name: Parse and analyze
+        shell: powershell
+        run: |
+          $failed = $false
+          $files = Get-ChildItem -Recurse -Include *.ps1 -Path WebApp\deploy, VideoService
+          foreach ($f in $files) {
+              $errors = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors)
+              foreach ($e in $errors) {
+                  Write-Host "::error file=$($f.FullName),line=$($e.Extent.StartLineNumber)::$($e.Message)"
+                  $failed = $true
+              }
+              foreach ($r in Invoke-ScriptAnalyzer -Path $f.FullName -Severity Warning, Error) {
+                  $kind = if ($r.Severity -eq 'Error') { 'error' } else { 'warning' }
+                  Write-Host "::${kind} file=$($f.FullName),line=$($r.Line)::$($r.RuleName): $($r.Message)"
+                  if ($r.Severity -eq 'Error') { $failed = $true }
+              }
+              Write-Host "checked $($f.Name)"
+          }
+          if ($failed) { exit 1 }
+
+  app-installer:
+    name: KANAT app installer
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: WebApp/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: WebApp/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the installer
+        run: npm run dist:win
+
+      # Downloadable from the run's page, to install on a test PC
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KANAT-Setup
+          path: WebApp/frontend/release/KANAT-Setup-*.exe
+          retention-days: 14
+          if-no-files-found: error

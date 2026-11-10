@@ -42,6 +42,7 @@ def no_detection_states():
 def no_parts_in_use():
     """Each test starts with no replay copy being played."""
     recording_svc._in_use.clear()
+    recording_svc._undeleted.clear()
 
 
 @pytest.fixture

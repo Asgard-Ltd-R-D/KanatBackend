@@ -28,6 +28,12 @@ export function updateSession(
   })
 }
 
+// A new Run from a fresh baseline, after a Target Sheet is re-hung: the Session
+// and its recording stay active, and detection reads "starting" until it is ready
+export function retakeBaseline(id: string): Promise<Session> {
+  return apiFetch<Session>(`/sessions/${id}/baseline`, { method: 'POST' })
+}
+
 export function deleteSession(id: string): Promise<void> {
   return apiFetch<void>(`/sessions/${id}`, { method: 'DELETE' })
 }

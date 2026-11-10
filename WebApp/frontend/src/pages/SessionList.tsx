@@ -54,7 +54,6 @@ export function SessionList() {
     },
   })
 
-  const totalBullets = sessions?.reduce((s, sess) => s + (sess.status === 'active' ? 0 : (sess.bullet_count ?? 0)), 0) ?? 0
   // One active Session at a time: a new one waits until it is completed
   const active = sessions?.find(s => s.status === 'active')
 
@@ -80,9 +79,8 @@ export function SessionList() {
 
       {/* Stats */}
       {sessions && sessions.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 mb-8">
+        <div className="mb-8 max-w-xs">
           <StatTile label="Total Sessions" value={sessions.length} />
-          <StatTile label="Total Bullets" value={totalBullets} />
         </div>
       )}
 

@@ -1,0 +1,10 @@
+# Line endings that must not follow the checkout's OS. Git for Windows checks
+# text out with CRLF by default, which breaks a script bash or sh runs (on
+# the PC, or in a Linux container: observability/postgres/start.sh) and
+# config the Linux containers read.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+# PowerShell, run on Windows only
+*.ps1 text eol=crlf

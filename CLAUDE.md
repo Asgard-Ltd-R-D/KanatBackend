@@ -80,6 +80,16 @@ Packet capture needs raw-socket rights: `sudo setcap cap_net_raw,cap_net_admin=e
 
 The WebApp has its own domain context at `WebApp/CONTEXT.md`. Read it before working on anything in `WebApp/`.
 
+Each part has its own `CLAUDE.md` with its layout and rules: `WebApp/backend/`, `WebApp/frontend/`, `WebApp/deploy/windows/`, `VideoService/`.
+
+## Workflow (WebApp and VideoService)
+
+- **Git:** one branch, `feature/web-app`; one issue → one PR to `main`, opened one at a time; the user merges every PR. Never push, create branches or merge without the user saying so. `.claude/hooks/guard.sh` enforces this.
+- **Skills** (`.claude/skills/`): `/ship` (issues, commits and PRs, with their content rules), `/review` (find bugs in changes), `/codex-review` (Codex reviews the uncommitted tree, Claude verifies and fixes most severe first, up to 5 rounds), `/codex-merge` (loop GitHub Codex on an open PR, fix and reply to each finding until clean, then merge only if CI is green), `/bundle` (the Windows install bundle), `/migration` (a schema change), `/pc-debug` (fixing a Windows range PC).
+- **Agents** (`.claude/agents/`): `backend-reviewer`, `frontend-reviewer`, `windows-reviewer`, `test-runner`.
+- **MCP** (`.mcp.json`): `codex-review` (`.claude/mcp-servers/codex-review/server.py`) runs the Codex CLI read-only to review changes against `main`; a failed or timed-out review is an error, never a clean result.
+- **Never delete or change the earlier project's files** in `VideoService/` (loopdemo, recorddemo, `H264.mp4`, the setup scripts).
+
 ## Commit conventions
 
 One commit per concern, so an issue usually takes several. Subject `<scope>: <imperative description>`, mandatory 1–2 sentence body explaining what the files implement together, footer `Refs #<number>`. See `docs/agents/commit-conventions.md`.

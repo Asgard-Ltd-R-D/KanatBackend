@@ -663,3 +663,12 @@ ImageRecognitionService/data/videos/*.mkv
 # of what was mined, and is committed.
 ImageRecognitionService/data/negatives/images/
 ImageRecognitionService/data/negatives/labels/
+
+# Claude Code: skills, agents, hooks and MCP servers stay on the developer's machine
+.claude/
+.mcp.json
+
+# WebApp backend: the dev SQLite database (the container uses a Docker volume)
+WebApp/backend/kanat.db
+WebApp/backend/kanat.db-wal
+WebApp/backend/kanat.db-shm

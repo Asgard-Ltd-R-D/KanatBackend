@@ -100,3 +100,51 @@ def test_an_unknown_version_is_refused(client, session, stored):
 
     assert res.status_code == 422
     assert stored == []
+
+
+# --- the write gate: who may add a bullet, and when ---
+
+def test_the_model_cannot_add_a_bullet_to_a_completed_session(client, session, stored):
+    session.status = "completed"
+
+    res = client.post(f"/sessions/{session.id}/bullets", json=body(774.8, 560.3))  # source defaults to model
+
+    assert res.status_code == 409
+    assert stored == []
+
+
+def test_a_manual_bullet_cannot_be_added_while_the_session_is_active(client, session, stored):
+    # Manual bullets are the operator's corrections, only after the session ends
+    res = client.post(f"/sessions/{session.id}/bullets", json=body(774.8, 560.3, source="manual"))
+
+    assert res.status_code == 409
+    assert stored == []
+
+
+# --- ranking ---
+
+def test_bullets_are_ranked_in_the_order_they_arrive(client, session, stored):
+    # rank = count_active + 1, serialized so three in a row are 1, 2, 3
+    for x in (1.0, 2.0, 3.0):
+        assert client.post(f"/sessions/{session.id}/bullets", json=body(x, 0.0)).status_code == 201
+
+    assert [b.rank for b in stored] == [1, 2, 3]
+
+
+def test_a_bullet_reported_again_with_the_same_key_returns_the_stored_one(client, session, stored, monkeypatch):
+    # The model retried a POST whose answer it never got: the stored bullet is
+    # returned and nothing new is stored (idempotency_key dedup)
+    from app.models import BulletHole
+
+    existing = BulletHole(
+        id=uuid.uuid4(), session_id=session.id, first_seen_at=NOW, position_x=1.0, position_y=2.0,
+        source="model", rank=7, idempotency_key="shot-1", created_at=NOW,
+    )
+    monkeypatch.setattr(bullets_repo, "find_by_idempotency_key",
+                        lambda db, session_id, key: existing if key == "shot-1" else None)
+
+    res = client.post(f"/sessions/{session.id}/bullets", json=body(9.0, 9.0, idempotency_key="shot-1"))
+
+    assert res.status_code == 201
+    assert res.json()["id"] == str(existing.id) and res.json()["rank"] == 7
+    assert stored == []   # the retry stored nothing new

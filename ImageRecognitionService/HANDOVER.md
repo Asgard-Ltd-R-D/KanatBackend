@@ -917,6 +917,9 @@ curl -s 127.0.0.1:8010/status
 # `baseline_view`, which names it, and its final `registered` and `looked_at`.
 # No such Run is a 404.
 curl -s -X POST 127.0.0.1:8010/runs/<uuid>/end    # {"session_id": "<uuid>", "state": "ended", "baseline_view": ..., "registered": ..., "looked_at": ...}
+# Stop: the same end and answer, but the Candidates open are dropped unposted,
+# not judged: how the WebApp retakes a baseline after a sheet is re-hung (#327).
+curl -s -X POST 127.0.0.1:8010/runs/<uuid>/stop
 ```
 
 An end does not stop a watching Run at once (#228). The Run keeps looking,

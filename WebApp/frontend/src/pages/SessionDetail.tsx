@@ -2,10 +2,10 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  ArrowLeft, Square, Plus, Download, FileText, FileSpreadsheet, AlertCircle, RefreshCw,
+  ArrowLeft, Square, Plus, Download, FileText, FileSpreadsheet, AlertCircle, RefreshCw, Crosshair,
 } from 'lucide-react'
 import { format } from 'date-fns'
-import { getSession, updateSession, exportUrl } from '../api/sessions'
+import { getSession, updateSession, retakeBaseline, exportUrl } from '../api/sessions'
 import { deleteBullet } from '../api/bullets'
 import { BulletHole } from '../types'
 import { StatusBadge } from '../components/UI/StatusBadge'
@@ -60,6 +60,11 @@ export function SessionDetail() {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       setShowEndConfirm(false)
     },
+  })
+
+  const baselineMutation = useMutation({
+    mutationFn: () => retakeBaseline(id!),
+    onSuccess: s => qc.setQueryData(['session', id], s),
   })
 
   const deleteBulletMutation = useMutation({
@@ -143,6 +148,19 @@ export function SessionDetail() {
 
         <div className="flex items-center gap-2">
           {session.status === 'active' && <RecordingControl session={session} />}
+
+          {session.status === 'active' && session.camera_id && (
+            <button
+              onClick={() => baselineMutation.mutate()}
+              // Not while a Run is starting or ending: the backend refuses it then
+              disabled={baselineMutation.isPending || !['none', 'watching', 'not_watching'].includes(session.detection?.state ?? 'none')}
+              title="After re-hanging a sheet: detection restarts from what the camera sees now. Hold fire until Detection ready."
+              className="flex items-center gap-2 px-4 py-2 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Crosshair size={14} />
+              Retake baseline
+            </button>
+          )}
 
           {session.status === 'active' && (
             <button

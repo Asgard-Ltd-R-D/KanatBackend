@@ -72,7 +72,12 @@ _since: dict[uuid.UUID, float] = {}
 # whatever they read now: one that reads not watching since may still have
 # lost its last Bullet Holes with its Run
 _watched: set[uuid.UUID] = set()
-_lock = threading.Lock()
+# The Sessions whose Run a retake asked to stop, the stop unanswered: a Run of
+# theirs still there has the old sheet's baseline, so it is stopped, not
+# adopted, and none is started for them until it is gone
+_to_stop: set[uuid.UUID] = set()
+# Reentrant: retaking_baseline holds it round a _set
+_lock = threading.RLock()
 
 
 def state_of(session_id: uuid.UUID) -> Detection:
@@ -142,6 +147,34 @@ def _follow(db: DBSession, stored: Run | None, run: detection_client.Run) -> Non
         hub.publish_from_thread(stored.session_id, RunMovedEvent(taken_at=stored.taken_at))
 
 
+def retaking_baseline(session_id: uuid.UUID) -> bool:
+    """The operator asks the active Session for a fresh baseline, after
+    re-hanging a Target Sheet: it reads `starting` until a new Run is watching,
+    so a tick neither starts nor ends one in between. False when a start or an
+    end is already under way. Its Run is put in _to_stop under the same lock,
+    so an end that races the retake stops it rather than judging it."""
+    with _lock:
+        if not _set(session_id, Detection(state="starting"), only_from=IDLE):
+            return False
+        _to_stop.add(session_id)
+    return True
+
+
+def retake_baseline(session_id: uuid.UUID, alias: str) -> None:
+    """Ends the Session's Run and asks for a new one, which takes its baseline
+    from what the camera sees now, the Session and its recording left active.
+    The Run is stopped, not ended as at completion: the Candidates it has
+    open are the re-hung sheet's change, not shots, and are dropped unposted.
+    A Session completed meanwhile reads `ending`, and `watch` ends the Run it
+    started. A stop not answered leaves it not watching, and the old Run, if
+    it is still there, to reconcile to stop: a start now would be answered
+    with it."""
+    if _end_run(session_id, judge=False) is None:
+        _set(session_id, SERVICE_DOWN, only_from=("starting",))
+        return
+    watch(session_id, alias)
+
+
 def _store_run(session_id: uuid.UUID, alias: str, run: detection_client.Run) -> None:
     """Stores the Run, watching on the camera `alias`, for its Session if that
     still exists; one already stored is not stored again. Done before
@@ -202,20 +235,27 @@ def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("star
         _end_run(session_id)
 
 
-def _end_run(session_id: uuid.UUID) -> bool:
-    """Whether the Detection Service answered that this end ended the Run: not
-    when it could not be reached, or had no Run for the Session. Its answer
-    moves the stored Run it names on to how far it watched (`_follow`); one
-    never stored, the database down all its life, moves none."""
+def _end_run(session_id: uuid.UUID, judge: bool = True) -> bool | None:
+    """Whether the Detection Service answered that this end ended the Run:
+    False when it had no Run for the Session, None when it could not be
+    reached, either way not confirmed. An answer of either kind says the
+    Session has no Run left, so takes it out of _to_stop. `judge` as
+    detection_client.end_run's, but a Session in _to_stop is stopped
+    whatever it says: its Run's open Candidates are the re-hang's. Its
+    answer moves the stored Run it names on to how far it watched
+    (`_follow`); one never stored, the database down all its life, moves
+    none."""
     try:
-        ended = detection_client.end_run(session_id)
+        ended = detection_client.end_run(session_id, judge and session_id not in _to_stop)
     except detection_client.DetectionServiceUnreachable as e:
         log.warning("The Run of session %s may not have ended: %s", session_id, e)
-        return False
+        return None
+    with _lock:
+        _to_stop.discard(session_id)
+        if ended is not None:
+            _watched.discard(session_id)
     if ended is None:
         return False
-    with _lock:
-        _watched.discard(session_id)
     db = SessionLocal()
     try:
         if ended.baseline_view is not None:   # none for a Run ended before it watched
@@ -342,6 +382,18 @@ def reconcile(db: DBSession) -> None:
     current = state_of(wanted.id).state
     if current not in IDLE or (run and run.state == "ending"):
         return   # a start or an end is under way
+    if wanted.id in _to_stop:   # a retake's stop went unanswered
+        # Its Run still there, watching or starting, has or may build the
+        # old sheet's baseline. (Another Session's was ended above, and an
+        # ending one returned.)
+        if run:
+            log.info("Stopping the Run of session %s: its baseline was retaken", wanted.id)
+            if _end_run(wanted.id, judge=False) is None:
+                return
+            run = None
+        else:   # the stop did end it, only its answer was lost
+            with _lock:
+                _to_stop.discard(wanted.id)
     if run and run.state == "watching":
         # Unknown since the backend restarted, or its start not answered to it
         _store_run(wanted.id, camera.alias, run)

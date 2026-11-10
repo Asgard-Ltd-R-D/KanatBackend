@@ -76,8 +76,9 @@ class FakeDetectionService:
     a 409 while another Session's Run is active or this one's ending, or else
     as watching, the Run already watching if it is this Session's, or a new
     one whose Baseline View is taken later than any before, registered and
-    looked at only then; `down` makes every call go unanswered. An end is
-    answered with the Run's Baseline View and how far it watched. `on_status`, `on_start` and
+    looked at only then; `down` makes every call go unanswered. An end, or a
+    stop (`judge` false), is answered with the Run's Baseline View and how
+    far it watched. `on_status`, `on_start` and
     `on_end` see each call as it happens, a Run being ended reading
     `ending`."""
 
@@ -117,8 +118,8 @@ class FakeDetectionService:
                                              place(taken_at), taken_at)
         return self.run
 
-    def _end(self, session_id):
-        self.calls.append(("end", session_id))
+    def _end(self, session_id, judge=True):
+        self.calls.append(("end" if judge else "stop", session_id))
         run = self.run if not self.down and self.run and self.run.session_id == session_id else None
         if run:
             self.run = run._replace(state="ending")

@@ -109,6 +109,8 @@ afterwards: the stand bumped, the Board re-hung, or the camera re-aimed. The
 system cannot tell which moved; only the Board's place in the view changed.
 Distinct from the camera creeping, which is gradual, and from the Board swaying
 in wind, which comes back.
+A Target Sheet re-hung on its Board is not a Board Move: the sheet itself
+changed, and only a new Run's baseline sees it as it now is.
 _Avoid_: jump, re-aim (for the general case)
 
 **Baseline Mark**:

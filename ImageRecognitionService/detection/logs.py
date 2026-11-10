@@ -1,16 +1,16 @@
 """The Detection Service's logs: one JSON object a line in detection.log, and
 a readable line on the console, as the WebApp backend's
 (WebApp/backend/app/core/logs.py), beside its backend.log and the app's
-frontend.log, where Grafana Alloy ships them to Loki (WebApp/observability).
+frontend.log, which the app's Logs tab reads (WebApp/frontend/electron/logreader.ts).
 
-detection.log is in --log-dir, else KANAT_LOG_DIR (/var/log/kanat on the
-range PC), else the repo's WebApp/logs when it exists; with none, the service
-logs to the console only. The command line (new_bullet_holes.py) logs to the
-console only: its runs are not the range's.
+detection.log is in --log-dir (/var/log/kanat in its container on the
+range PC), else KANAT_LOG_DIR, else the repo's WebApp/logs when it exists;
+with none, the service logs to the console only. The command line
+(new_bullet_holes.py) logs to the console only: its runs are not the range's.
 
 What happens while the service runs is logged, at the level it deserves; the
 command line's report stays printed. A log call adds its own fields with
-`extra`, which become JSON fields that Grafana filters on:
+`extra`, which become JSON fields the Logs tab shows:
 
     log.warning("Bullet Hole not posted", extra={"session_id": session_id})
 
@@ -27,9 +27,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 LOG_FILE = "detection.log"
-# As the backend's and the app's: 10 files of 10 MB at most
-MAX_BYTES = 10 * 1024 * 1024
-BACKUPS = 10
+# As the backend's and the app's: rotated daily, keeping ~a week of past days
+BACKUP_DAYS = 7
 
 # The Session whose Run is active, set by service.py: there is one Run at a
 # time (ADR-0008), so every line logged meanwhile is that Session's, the
@@ -118,8 +117,8 @@ def configure(configured: Path | None = None, to_file: bool = True, level: str =
         return None
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        file = logging.handlers.RotatingFileHandler(
-            directory / LOG_FILE, maxBytes=MAX_BYTES, backupCount=BACKUPS, encoding="utf-8"
+        file = logging.handlers.TimedRotatingFileHandler(
+            directory / LOG_FILE, when="midnight", backupCount=BACKUP_DAYS, encoding="utf-8", utc=True
         )
     except OSError as e:
         logging.getLogger(__name__).warning("Logging to %s failed, console only: %s", directory, e)

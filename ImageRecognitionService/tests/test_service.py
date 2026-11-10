@@ -185,7 +185,7 @@ def test_a_start_for_another_session_is_refused_while_a_run_is_active(api):
 
 
 def test_a_refused_start_is_logged_under_the_session_refused(api, caplog):
-    """Found by the refused Session's id in Grafana, not the active Run's."""
+    """Found by the refused Session's id in the logs, not the active Run's."""
     caplog.set_level("INFO")
     api.start()
     api.start(OTHER)

@@ -2317,8 +2317,8 @@ if __name__ == "__main__":
     p.add_argument("--session-id",
                    help="WebApp session UUID; when given, POST each confirmed Bullet Hole "
                         "to POST /sessions/{id}/bullets on the backend")
-    p.add_argument("--backend-url", default="http://localhost:8000",
-                   help="WebApp backend base URL (default: http://localhost:8000)")
+    p.add_argument("--backend-url", default="http://127.0.0.1:8000",
+                   help="WebApp backend base URL (default: http://127.0.0.1:8000)")
     p.add_argument("--ref-time",
                    help="UTC wall-clock time at the recording's t=0, ISO 8601 "
                         "(e.g. 2026-10-11T10:30:00Z). Derives first_seen_at timestamps. "

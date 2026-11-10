@@ -1,0 +1,10 @@
+# Only what the service runs on goes into the image (Dockerfile)
+.venv
+**/__pycache__
+.pytest_cache
+.ruff_cache
+data
+!data/targets
+video_output
+tests
+docs

@@ -305,10 +305,12 @@ def _start_body(raw):
     return (session_id, url) if isinstance(url, str) and nbh._is_stream(url) else None
 
 
-def serve(service, port=DEFAULT_PORT):
-    """The control API for `service`, bound to 127.0.0.1 only: it has no
-    authentication, so nothing off this PC may reach it (ADR-0008). The
-    caller runs its `serve_forever`."""
+def serve(service, port=DEFAULT_PORT, host="127.0.0.1"):
+    """The control API for `service`, bound to 127.0.0.1 by default: it has
+    no authentication, so nothing off this PC may reach it (ADR-0008). In a
+    container (Dockerfile) it binds 0.0.0.0 inside the container's network,
+    which publishes no port to the PC's. The caller runs its
+    `serve_forever`."""
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/status":
@@ -344,17 +346,22 @@ def serve(service, port=DEFAULT_PORT):
             self.end_headers()
             self.wfile.write(data)
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    return ThreadingHTTPServer((host, port), Handler)
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser("The Detection Service: Runs the WebApp backend starts "
                                 "and ends over a control API on 127.0.0.1 (ADR-0008)")
     p.add_argument("--port", type=int, default=DEFAULT_PORT,
-                   help=f"the control API's port on 127.0.0.1 (default: {DEFAULT_PORT})")
+                   help=f"the control API's port (default: {DEFAULT_PORT})")
+    p.add_argument("--host", default="127.0.0.1",
+                   help="the address the control API binds: 127.0.0.1 (default), or 0.0.0.0 "
+                        "inside a container, whose network reaches it from the backend's only")
     p.add_argument("--model", default=nbh.DEFAULT_MODEL)
-    p.add_argument("--backend-url", default="http://localhost:8000",
-                   help="WebApp backend base URL (default: http://localhost:8000)")
+    # 127.0.0.1, not localhost: on Windows localhost tries IPv6 first, and
+    # waits for it to fail on every post
+    p.add_argument("--backend-url", default="http://127.0.0.1:8000",
+                   help="WebApp backend base URL (default: http://127.0.0.1:8000)")
     p.add_argument("--log-dir", type=Path, default=None,
                    help=f"where to write {logs.LOG_FILE} (default: KANAT_LOG_DIR, "
                         "else the repo's WebApp/logs when it exists)")
@@ -365,10 +372,10 @@ if __name__ == "__main__":
     device = warm(model)   # before the control API binds: until warmed, nothing answers
     service = DetectionService(model, a.backend_url, device=device,
                                model_name=model_name(a.model))
-    server = serve(service, a.port)
-    log.info("Detection Service started: control API on http://127.0.0.1:%d; SIGINT or SIGTERM "
-             "ends any Run as an end does, then the service", a.port,
-             extra={"port": a.port, "model": a.model, "backend_url": a.backend_url,
+    server = serve(service, a.port, a.host)
+    log.info("Detection Service started: control API on http://%s:%d; SIGINT or SIGTERM "
+             "ends any Run as an end does, then the service", a.host, a.port,
+             extra={"host": a.host, "port": a.port, "model": a.model, "backend_url": a.backend_url,
                     "device": device})
     signal.signal(signal.SIGTERM, signal.default_int_handler)   # a stop, as Ctrl-C is
     try:

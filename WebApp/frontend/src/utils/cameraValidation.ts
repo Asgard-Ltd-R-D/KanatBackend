@@ -1,7 +1,8 @@
-import { CameraInput } from '../types'
+import type { CameraInput } from '../types'
 
 // The backend enforces the same rules (backend/app/schemas/camera.py): these
-// values end up in the command that starts the camera's GStreamer
+// values end up in the camera's MediaMTX source URL and stream description,
+// so keep this charset in step with the backend's
 
 // What the form edits: every field as typed
 export interface CameraForm {
@@ -18,7 +19,8 @@ const ALIAS = /^[A-Za-z0-9][A-Za-z0-9_-]{1,62}$/
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/
 // Multicast groups are 224.0.0.0 to 239.255.255.255
 const isMulticast = (ip: string) => IPV4.test(ip) && Number(ip.split('.')[0]) >= 224 && Number(ip.split('.')[0]) <= 239
-const IFACE = /^[A-Za-z0-9._:-]{1,32}$/
+// Windows friendly names hold spaces and punctuation ("Ethernet 2", "Wi-Fi")
+const IFACE = /^[A-Za-z0-9 ._:#()*-]{1,64}$/
 
 export const EMPTY_CAMERA_FORM: CameraForm = { alias: '', mcast_ip: '', mcast_port: '', iface: '', enabled: true }
 
@@ -47,7 +49,7 @@ export function validateCamera(form: CameraForm): CameraFormErrors {
     errors.mcast_port = 'A port from 1 to 65535'
   }
   if (form.iface.trim() && !IFACE.test(form.iface.trim())) {
-    errors.iface = 'An interface name, e.g. eth1 or enp2s0'
+    errors.iface = 'An interface name, e.g. Ethernet 2, eth1 or enp2s0'
   }
   return errors
 }

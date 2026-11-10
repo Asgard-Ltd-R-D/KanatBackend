@@ -8,6 +8,9 @@ import { ConfirmDialog } from '../UI/ConfirmDialog'
 import { CameraCard } from './CameraCard'
 import { CameraFormModal } from './CameraFormModal'
 
+// At most this many cameras (also enforced by the backend)
+const MAX_CAMERAS = 4
+
 export function CamerasPanel() {
   const qc = useQueryClient()
   const { data: cameras, isLoading, isError, refetch } = useCameras({ watch: true })
@@ -40,13 +43,18 @@ export function CamerasPanel() {
     setFormOpen(true)
   }
 
+  // At most MAX_CAMERAS cameras (the backend enforces it too)
+  const atLimit = (cameras?.length ?? 0) >= MAX_CAMERAS
+
   return (
     <section>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Cameras</h2>
         <button
           onClick={() => openForm(null)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors shadow-lg shadow-blue-600/20"
+          disabled={atLimit}
+          title={atLimit ? `At most ${MAX_CAMERAS} cameras; delete one to add another` : undefined}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors shadow-lg shadow-blue-600/20"
         >
           <Plus size={16} />
           Add Camera

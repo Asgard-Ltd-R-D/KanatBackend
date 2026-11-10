@@ -66,6 +66,12 @@ def intervals_of_other_sessions(db: DBSession, session_id: uuid.UUID) -> list[Re
     return db.query(RecordingInterval).filter(RecordingInterval.session_id != session_id).all()
 
 
+def all_intervals(db: DBSession) -> list[RecordingInterval]:
+    """Every Session's recording intervals, for checking which recordings a
+    Session that exists still owns (recordings.retry_deletions)."""
+    return db.query(RecordingInterval).all()
+
+
 class SecondActiveSession(Exception):
     """Another Session became active first: uq_sessions_one_active refused this one."""
 

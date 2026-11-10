@@ -168,17 +168,31 @@ def _delete(file: Path, retry: bool = True) -> bool:
         return False
 
 
-def retry_deletions() -> int:
+def retry_deletions(live_windows: list[tuple[datetime, datetime]]) -> int:
     """Tries again the deletions the OS refused (_delete); returns how many
     files went this time. A copy reserved for an imminent replay is left for a
-    later round, so a retry never deletes one out from under its player; a file
-    refused for longer than _UNDELETED_GIVE_UP_S is dropped, not retried on."""
+    later round, so a retry never deletes one out from under its player. A
+    recording the OS held open while it kept growing can reach into a Session
+    created after its deletion was asked: if it now overlaps one of
+    live_windows (every current Session's recorded spans), it is that Session's
+    video, so it is dropped from the queue, not deleted. A file refused for
+    longer than _UNDELETED_GIVE_UP_S is dropped, not retried on."""
     with _undeleted_lock:
         pending = list(_undeleted.items())
     deleted = 0
     for file, queued_at in pending:
         with _locks_guard:  # the lock _mark_in_use takes
             if _in_use.get(file, 0) > time.monotonic():
+                continue
+        # A recording (one with a readable start; a replay copy has none) is
+        # re-checked against the Sessions that exist now, with its current
+        # extent, since it may have grown since it was queued.
+        began = _file_start(file)
+        if began is not None:
+            ended = _file_end(file, began)
+            if any(began < e and s < ended for s, e in live_windows):
+                with _undeleted_lock:
+                    _undeleted.pop(file, None)
                 continue
         try:
             file.unlink(missing_ok=True)

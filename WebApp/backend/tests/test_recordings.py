@@ -401,11 +401,38 @@ def test_a_recording_windows_keeps_open_is_deleted_once_it_is_let_go(monkeypatch
 
     assert recording_svc.delete_session_video([(start, start + timedelta(minutes=20))], []) == 1
     assert held.exists() and not free.exists()
-    assert recording_svc.retry_deletions() == 0          # still open
+    assert recording_svc.retry_deletions([]) == 0          # still open
     open_files.clear()                                   # MediaMTX closed it
-    assert recording_svc.retry_deletions() == 1
+    assert recording_svc.retry_deletions([]) == 1
     assert not held.exists()
-    assert recording_svc.retry_deletions() == 0
+    assert recording_svc.retry_deletions([]) == 0
+
+
+def test_retry_keeps_a_recording_that_grew_into_a_newer_session(monkeypatch, tmp_path):
+    # A segment the OS held open kept growing into a Session created after the
+    # deletion was asked: a retry that sees that Session keeps it, not deletes it
+    monkeypatch.setattr(settings, "recordings_dir", str(tmp_path / "recordings"))
+    monkeypatch.setattr(settings, "replay_cache_dir", str(tmp_path / "cache"))
+    start = NOW - timedelta(hours=1)
+    held = _recording(tmp_path / "recordings" / "cam1", start + timedelta(minutes=5))
+    unlink, open_files = Path.unlink, {held}
+
+    def windows_unlink(path, missing_ok=False):
+        if path in open_files:
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+        return unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", windows_unlink)
+
+    assert recording_svc.delete_session_video([(start, start + timedelta(minutes=20))], []) == 0
+    assert held in recording_svc._undeleted
+    open_files.clear()                                   # MediaMTX closed it
+    seg = recording_svc._file_start(held)
+    live = [(seg - timedelta(minutes=1), seg + timedelta(minutes=1))]  # a Session that exists now
+    assert recording_svc.retry_deletions(live) == 0      # kept: it is that Session's video
+    assert held.exists() and held not in recording_svc._undeleted
+    recording_svc._undeleted[held] = time.monotonic()    # with no such Session it goes
+    assert recording_svc.retry_deletions([]) == 1 and not held.exists()
 
 
 def test_retry_does_not_delete_a_copy_reserved_for_a_replay(monkeypatch, tmp_path):
@@ -416,9 +443,9 @@ def test_retry_does_not_delete_a_copy_reserved_for_a_replay(monkeypatch, tmp_pat
     recording_svc._undeleted[copy] = time.monotonic()
     recording_svc._mark_in_use(copy)
     try:
-        assert recording_svc.retry_deletions() == 0 and copy.exists()  # reserved
+        assert recording_svc.retry_deletions([]) == 0 and copy.exists()  # reserved
         recording_svc._in_use[copy] = time.monotonic() - 1             # player stopped
-        assert recording_svc.retry_deletions() == 1 and not copy.exists()
+        assert recording_svc.retry_deletions([]) == 1 and not copy.exists()
     finally:
         recording_svc._undeleted.pop(copy, None)
         recording_svc._in_use.pop(copy, None)
@@ -431,7 +458,7 @@ def test_a_file_the_os_refuses_for_good_is_given_up_on(monkeypatch, tmp_path):
     monkeypatch.setattr(Path, "unlink", lambda *a, **k: (_ for _ in ()).throw(PermissionError(13, "denied")))
     recording_svc._undeleted[file] = time.monotonic() - recording_svc._UNDELETED_GIVE_UP_S - 1
     try:
-        assert recording_svc.retry_deletions() == 0        # still refused
+        assert recording_svc.retry_deletions([]) == 0        # still refused
         assert file not in recording_svc._undeleted        # but no longer retried
     finally:
         recording_svc._undeleted.pop(file, None)

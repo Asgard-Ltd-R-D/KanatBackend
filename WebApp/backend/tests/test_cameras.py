@@ -9,22 +9,50 @@ from tests.fakes import FakeMediaMTX, make_camera
 
 # --- the path each camera gets ---
 
-def test_a_camera_path_runs_run_record_as_kanatfrontend_built_it():
+def test_a_camera_path_reads_its_multicast_over_rtp():
     config = camera_sync.path_config(make_camera(iface="eth1"), record=False)
 
-    assert config["runOnInit"] == (
-        "bash -lc '\n"
-        'exec ./run_record.sh --mcast-ip "226.226.226.112" --mcast-port "112"'
-        ' --rtsp-url "rtsp://127.0.0.1:${RTSP_PORT}/cam1" --iface "eth1"\n'
-        "'"
-    )
-    assert config["runOnInitRestart"] is True
+    assert config["source"] == "udp+rtp://226.226.226.112:112?interface=eth1"
+    assert "m=video 112 RTP/AVP 96" in config["rtpSDP"]
+    assert "c=IN IP4 226.226.226.112" in config["rtpSDP"]
+    assert config["runOnInit"] == ""  # no GStreamer in the pipeline
     assert config["record"] is False
     assert config["recordDeleteAfter"] == "1d"
 
 
-def test_no_iface_leaves_the_flag_out():
-    assert "--iface" not in camera_sync.path_config(make_camera(), record=False)["runOnInit"]
+def test_no_iface_reads_on_the_default_interface():
+    source = camera_sync.path_config(make_camera(), record=False)["source"]
+    assert source == "udp+rtp://226.226.226.112:112"
+    assert "interface=" not in source
+
+
+def test_a_card_name_with_spaces_is_percent_encoded():
+    # Windows friendly names hold spaces; the source URL must stay parseable
+    source = camera_sync.path_config(make_camera(iface="Ethernet 2"), record=False)["source"]
+    assert source == "udp+rtp://226.226.226.112:112?interface=Ethernet%202"
+
+
+def test_a_path_reading_udp_rtp_is_a_cameras():
+    config = camera_sync.path_config(make_camera(), record=False)
+    assert camera_sync.is_camera_path("cam1", config, mediamtx.ConfigPaths())
+
+
+@pytest.mark.parametrize("script", ["./run_record.sh", "./run_record.ps1"])
+def test_a_path_left_running_gstreamer_is_still_a_cameras(script):
+    # A path made by an older backend is adopted so the sync can convert it
+    old = {"source": "publisher", "runOnInit": f"bash -lc 'exec {script} ...'"}
+    assert camera_sync.is_camera_path("cam1", old, mediamtx.ConfigPaths())
+
+
+@pytest.mark.parametrize("alias", ["CON", "nul", "Com1", "LPT9", "aux"])
+def test_a_name_windows_keeps_for_a_device_is_refused(alias):
+    # The alias names the camera's recordings folder
+    with pytest.raises(ValidationError, match="Windows keeps for a device"):
+        CameraInput(alias=alias, mcast_ip="226.226.226.112", mcast_port=112)
+
+
+def test_a_name_only_starting_like_a_device_is_taken():
+    assert CameraInput(alias="console", mcast_ip="226.226.226.112", mcast_port=112).alias == "console"
 
 
 # --- syncing MediaMTX to the database ---
@@ -95,13 +123,18 @@ def test_a_failed_sync_does_not_fail_the_request(monkeypatch, db_state):
     ("mcast_ip", "226.226.226.1\" --x"),
     ("mcast_port", 0),
     ("mcast_port", 70000),
-    ("iface", "eth0\"; reboot"),
-    ("iface", "eth 0"),
+    ("iface", "eth0\"; reboot"),      # quotes/semicolons never belong in a card name
+    ("iface", "eth0\nreboot"),
 ])
-def test_values_that_could_break_the_command_are_refused(field, value):
+def test_values_that_could_corrupt_the_source_or_sdp_are_refused(field, value):
     body = {"alias": "cam1", "mcast_ip": "226.226.226.112", "mcast_port": 112, field: value}
     with pytest.raises(ValidationError):
         CameraInput(**body)
+
+
+def test_a_card_name_with_spaces_is_accepted():
+    # Windows friendly names hold spaces ("Ethernet 2"); camera_sync encodes them
+    assert CameraInput(alias="cam1", mcast_ip="226.226.226.112", mcast_port=112, iface="Ethernet 2").iface == "Ethernet 2"
 
 
 def test_a_blank_iface_means_none():
@@ -184,6 +217,19 @@ def test_without_mediamtx_the_state_is_unreachable(monkeypatch):
 
     assert camera_svc.with_status([make_camera()])[0].status == "unreachable"
 
+
+
+def test_a_fifth_camera_is_refused(monkeypatch):
+    # At most 4 cameras (camera_svc.MAX_CAMERAS); the UI disables Add too
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(camera_svc.repo, "list_all", lambda db: [make_camera(f"cam{i}") for i in range(4)])
+    body = CameraInput(alias="cam5", mcast_ip="226.226.226.112", mcast_port=112)
+
+    with pytest.raises(HTTPException) as refused:
+        camera_svc.create_camera(body, None)
+    assert refused.value.status_code == 409
+    assert "At most 4" in refused.value.detail
 
 
 def test_a_cameras_name_cannot_be_changed(monkeypatch):

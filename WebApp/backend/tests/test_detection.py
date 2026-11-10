@@ -636,6 +636,74 @@ def test_a_tick_with_nothing_to_change_makes_no_call_and_pushes_nothing(client, 
     assert pushed == []
 
 
+# --- retaking the baseline ---
+
+def test_retaking_the_baseline_ends_the_run_and_watches_from_a_new_one(client, db, detection):
+    session_id = uuid.UUID(client.post("/sessions", json={
+        "name": "Range 1", "camera_id": str(add_camera(db).id), "record": True}).json()["id"])
+    first = detection.run
+    state_at_start = []
+    detection.on_start = lambda sid: state_at_start.append(detection_sync.state_of(sid).state)
+
+    with listening(session_id) as stream:
+        res = client.post(f"/sessions/{session_id}/baseline")
+        pushed = events(stream)
+
+    assert res.status_code == 200
+    assert res.json()["detection"]["state"] == "starting"
+    assert detection.calls[-2:] == [("end", session_id), ("start", session_id, "rtsp://127.0.0.1:8554/lane1")]
+    assert detection.run.baseline_view.taken_at > first.baseline_view.taken_at
+    # "Detection ready" only once the new Run's baseline is built
+    assert state_at_start == ["starting"]
+    assert [e["detection"]["state"] for e in pushed] == ["starting", "watching"]
+    session = client.get(f"/sessions/{session_id}").json()
+    assert (session["status"], session["record"], session["detection"]) == ("active", True, WATCHING)
+
+
+def test_a_tick_during_a_retake_leaves_it_to_finish(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    detection.on_end = lambda sid: tick(client)
+
+    client.post(f"/sessions/{session_id}/baseline")
+
+    assert [c[0] for c in detection.calls] == ["start", "end", "start"]
+    assert detection_of(client, session_id) == WATCHING
+
+
+def test_a_retake_while_detection_is_starting_is_refused(client, db, detection):
+    session_id = start_session(client, add_camera(db))
+    detection_sync._states[session_id] = detection_sync.Detection(state="starting")   # a start under way
+    calls = list(detection.calls)
+
+    res = client.post(f"/sessions/{session_id}/baseline")
+
+    assert res.status_code == 409
+    assert detection.calls == calls
+
+
+@pytest.mark.parametrize("case", ["completed", "no_camera", "camera_disabled"])
+def test_only_an_active_session_with_an_enabled_camera_retakes_its_baseline(client, db, detection, case):
+    camera = add_camera(db)
+    if case == "no_camera":
+        session_id = client.post("/sessions", json={"name": "Range 1"}).json()["id"]
+    else:
+        session_id = start_session(client, camera)
+    if case == "completed":
+        client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+    if case == "camera_disabled":
+        camera.enabled = False
+    calls = list(detection.calls)
+
+    res = client.post(f"/sessions/{session_id}/baseline")
+
+    assert res.status_code == 409
+    assert detection.calls == calls
+
+
+def test_retaking_the_baseline_of_an_unknown_session_is_404(client, db, detection):
+    assert client.post(f"/sessions/{uuid.uuid4()}/baseline").status_code == 404
+
+
 # --- the client ---
 
 def test_the_client_reads_the_detection_services_answers(monkeypatch):

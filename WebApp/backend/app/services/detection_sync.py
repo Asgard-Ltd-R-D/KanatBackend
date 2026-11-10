@@ -142,6 +142,23 @@ def _follow(db: DBSession, stored: Run | None, run: detection_client.Run) -> Non
         hub.publish_from_thread(stored.session_id, RunMovedEvent(taken_at=stored.taken_at))
 
 
+def retaking_baseline(session_id: uuid.UUID) -> bool:
+    """The operator asks the active Session for a fresh baseline, after
+    re-hanging a Target Sheet: it reads `starting` until a new Run is watching,
+    so a tick neither starts nor ends one in between. False when a start or an
+    end is already under way."""
+    return _set(session_id, Detection(state="starting"), only_from=IDLE)
+
+
+def retake_baseline(session_id: uuid.UUID, alias: str) -> None:
+    """Ends the Session's Run and asks for a new one, which takes its baseline
+    from what the camera sees now: the same end and start as completing and
+    reopening it, with the Session and its recording left active. A Session
+    completed meanwhile reads `ending`, and `watch` ends the Run it started."""
+    _end_run(session_id)
+    watch(session_id, alias)
+
+
 def _store_run(session_id: uuid.UUID, alias: str, run: detection_client.Run) -> None:
     """Stores the Run, watching on the camera `alias`, for its Session if that
     still exists; one already stored is not stored again. Done before

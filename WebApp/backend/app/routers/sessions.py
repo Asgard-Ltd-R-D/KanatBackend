@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from sqlalchemy.orm import Session as DBSession
 
 from app.core.deps import get_db
@@ -70,6 +70,22 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = D
             name=session.name, status=session.status, ended_at=session.ended_at, record=session.record
         ),
     )
+    return _response(session)
+
+
+@router.post("/{session_id}/baseline", response_model=SessionResponse)
+def retake_baseline(session_id: uuid.UUID, background: BackgroundTasks, db: DBSession = Depends(get_db)):
+    """A new Run for the active Session, from a fresh baseline: after a Target
+    Sheet is re-hung. Answered `starting` at once; `watching` only once the
+    new Run's baseline is built."""
+    session = svc.get_session_or_404(session_id, db)
+    camera = camera_svc.get_camera_or_404(session.camera_id, db) if session.camera_id else None
+    if session.status != "active" or camera is None or not camera.enabled:
+        raise HTTPException(status_code=409, detail="Only an active Session watched by an enabled camera has a baseline")
+    if not detection_sync.retaking_baseline(session.id):
+        raise HTTPException(status_code=409, detail="Detection is already starting or ending: try again")
+    log.info("Retaking the baseline of session %s", session.id)
+    background.add_task(detection_sync.retake_baseline, session.id, camera.alias)
     return _response(session)
 
 

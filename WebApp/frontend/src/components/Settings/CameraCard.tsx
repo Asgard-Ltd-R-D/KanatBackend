@@ -34,10 +34,9 @@ export function CameraCard({ camera, onEdit, onDelete, onToggleEnabled, toggling
         </div>
       </div>
 
-      <dl className="flex-1 grid grid-cols-3 gap-6 min-w-0">
+      <dl className="flex-1 grid grid-cols-2 gap-6 min-w-0">
         <Detail label="Multicast group" value={`${camera.mcast_ip}:${camera.mcast_port}`} />
         <Detail label="Interface" value={camera.iface ?? 'auto'} />
-        <Detail label="Stream path" value={`:8554/${camera.alias}`} />
       </dl>
 
       <div className="flex items-center gap-1 shrink-0">

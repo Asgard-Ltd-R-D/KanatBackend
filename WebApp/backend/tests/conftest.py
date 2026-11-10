@@ -34,6 +34,7 @@ def no_detection_states():
     """Each test starts with no Session's detection remembered."""
     detection_sync._states.clear()
     detection_sync._watched.clear()
+    detection_sync._to_stop.clear()
     detection_sync._since.clear()
 
 

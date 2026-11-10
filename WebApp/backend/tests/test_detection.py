@@ -682,6 +682,36 @@ def test_a_retake_while_detection_is_starting_is_refused(client, db, detection):
     assert detection.calls == calls
 
 
+def test_a_retake_whose_stop_is_unanswered_starts_no_run_until_the_old_one_is_stopped(client, db, detection):
+    """A start now would be answered with the old Run, the old sheet's
+    baseline: the tick that finds it still there stops it, not adopts it."""
+    session_id = start_session(client, add_camera(db))
+    old = detection.run
+    detection.down = True
+
+    client.post(f"/sessions/{session_id}/baseline")
+
+    assert detection.calls[-1] == ("stop", session_id) and detection.run == old
+    assert detection_of(client, session_id)["reason"] == "service_down"
+    detection.down = False
+    tick(client)
+    assert detection.calls[-2:] == [("stop", session_id), ("start", session_id, "rtsp://127.0.0.1:8554/lane1")]
+    assert detection.run.baseline_view.taken_at > old.baseline_view.taken_at
+    assert detection_of(client, session_id) == WATCHING
+
+
+def test_completing_a_session_whose_retake_stop_is_unanswered_stops_its_run(client, db, detection):
+    """Its Run's open Candidates are the re-hang's, so not judged at the end."""
+    session_id = start_session(client, add_camera(db))
+    detection.down = True
+    client.post(f"/sessions/{session_id}/baseline")
+    detection.down = False
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert detection.calls[-1] == ("stop", session_id) and detection.run is None
+
+
 @pytest.mark.parametrize("case", ["completed", "no_camera", "camera_disabled"])
 def test_only_an_active_session_with_an_enabled_camera_retakes_its_baseline(client, db, detection, case):
     camera = add_camera(db)

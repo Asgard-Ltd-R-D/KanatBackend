@@ -39,10 +39,9 @@ export function createWindow(isDev: boolean, config: KanatConfig) {
   win.on('unresponsive', () => mainLog.warning('The app window stopped responding'))
   win.on('responsive', () => mainLog.info('The app window responds again'))
 
-  // A link that opens a window (an export, "Open in Grafana", a link inside
-  // the embedded Grafana): an export is downloaded here, with a Save dialog;
-  // any other web page opens in the browser, not in a bare app window that
-  // would carry the app's preload
+  // A link that opens a window (an export): an export is downloaded here, with
+  // a Save dialog; any other web page opens in the browser, not in a bare app
+  // window that would carry the app's preload
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith(`${config.apiUrl}/`)) win.webContents.downloadURL(url)
     else if (/^https?:\/\//.test(url)) shell.openExternal(url)

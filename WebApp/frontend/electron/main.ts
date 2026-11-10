@@ -13,6 +13,16 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 app.setPath('userData', join(app.getPath('appData'), 'kanat-webapp'))
 app.setName('KANAT')
 
+// One app at a time: a second would write frontend.log beside the first and
+// open the same Session twice. Started again, it brings the first forward
+if (!app.requestSingleInstanceLock()) app.exit(0)
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (!win) return
+  if (win.isMinimized()) win.restore()
+  win.focus()
+})
+
 registerAppScheme()
 
 // Logged, and still shown as Electron shows one without a handler: the
@@ -32,14 +42,14 @@ process.on('unhandledRejection', (reason) =>
 app.whenReady().then(() => {
   const config = readConfig()
   // Resolved here, so the Logs tab shows the folder actually written to
-  config.logDir = startFileLog(resolveLogDir(config.logDir, isDev)) ?? undefined
+  const osLogDir = app.getPath('logs')
+  config.logDir = startFileLog(resolveLogDir(config.logDir, isDev, osLogDir), osLogDir) ?? undefined
   mainLog.info('App started', {
     version: app.getVersion(),
     electron: process.versions.electron,
     packaged: app.isPackaged,
     api_url: config.apiUrl,
     media_url: config.mediaUrl,
-    grafana_url: config.grafanaUrl,
     log_dir: config.logDir,
   })
 

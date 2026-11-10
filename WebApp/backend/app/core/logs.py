@@ -2,12 +2,12 @@
 line on the console.
 
 backend.log is in the WebApp's log folder, WebApp/logs unless LOG_DIR says
-otherwise (/var/log/kanat on the range PC), beside the app's own
-frontend.log (frontend/electron/logs.ts). Grafana Alloy ships the folder to
-Loki, and Grafana shows it (WebApp/observability).
+otherwise (/var/log/kanat in its container on the range PC), beside the app's own
+frontend.log (frontend/electron/logs.ts). The app's Logs tab reads these files
+(frontend/electron/logreader.ts).
 
-A log call adds its own fields with `extra`, and they become JSON fields that
-Grafana filters on:
+A log call adds its own fields with `extra`, and they become JSON fields the
+Logs tab shows:
 
     log.info("Session created", extra={"session_id": session.id, "record": True})
 
@@ -29,10 +29,10 @@ from app.config.settings import settings
 request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 
 LOG_FILE = "backend.log"
-# Rotated at this size, keeping this many old files: at most ~110 MB on disk,
-# and Loki keeps its own copy for its retention period
-MAX_BYTES = 10 * 1024 * 1024
-BACKUPS = 10
+# Rotated once a day, keeping this many past days (~a week on disk): the oldest
+# is dropped when a new day's first line rolls the file over. Rotated files are
+# backend.log.YYYY-MM-DD; a day the app never ran has no file and drops nothing.
+BACKUP_DAYS = 7
 
 # What every LogRecord has, so that what is left over came from `extra`
 # color_message: uvicorn's own copy of its message, with terminal colours
@@ -115,8 +115,8 @@ def configure_logging() -> None:
     directory = log_dir()
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        file = logging.handlers.RotatingFileHandler(
-            directory / LOG_FILE, maxBytes=MAX_BYTES, backupCount=BACKUPS, encoding="utf-8"
+        file = logging.handlers.TimedRotatingFileHandler(
+            directory / LOG_FILE, when="midnight", backupCount=BACKUP_DAYS, encoding="utf-8", utc=True
         )
         file.setFormatter(JsonFormatter())
         root.addHandler(file)

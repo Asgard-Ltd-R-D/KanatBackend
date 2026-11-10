@@ -2,7 +2,7 @@ import type { LogLevel } from '../../electron/logs'
 
 // The app's log. Each line goes to the console and to frontend.log, which
 // the app's main process writes beside the backend's backend.log
-// (electron/logs.ts): Grafana shows both, in the Logs tab. Outside Electron
+// (electron/logs.ts); the Logs tab shows both. Outside Electron
 // (the renderer alone in a browser) the console is all there is.
 //
 //   log.warning('Camera video lost', { camera: 'lane1', reason })

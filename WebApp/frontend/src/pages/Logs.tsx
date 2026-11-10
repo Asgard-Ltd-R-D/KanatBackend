@@ -7,9 +7,15 @@ import { log } from '../utils/logger'
 // The Logs tab is for engineers: when the install bakes a password
 // (window.kanat.logsProtected), it is locked until the password is entered, for
 // this app session only. With no password configured (developing), it is open.
+// Whether the Logs tab was unlocked this app session. Module-scoped so it
+// survives the tab unmounting when the operator visits another page and comes
+// back; the main process keeps the matching logsUnlocked (electron/ipc.ts), so
+// re-prompting on every visit would be pointless.
+let sessionUnlocked = !window.kanat?.logsProtected
+
 export function Logs() {
-  const [unlocked, setUnlocked] = useState(() => !window.kanat?.logsProtected)
-  if (!unlocked) return <LogsGate onUnlock={() => setUnlocked(true)} />
+  const [unlocked, setUnlocked] = useState(sessionUnlocked)
+  if (!unlocked) return <LogsGate onUnlock={() => { sessionUnlocked = true; setUnlocked(true) }} />
   return <LogsViewer />
 }
 

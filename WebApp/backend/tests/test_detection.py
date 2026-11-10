@@ -700,6 +700,22 @@ def test_a_retake_whose_stop_is_unanswered_starts_no_run_until_the_old_one_is_st
     assert detection_of(client, session_id) == WATCHING
 
 
+def test_a_retake_whose_stop_ended_the_run_but_lost_its_answer_keeps_the_new_run(client, db, detection):
+    """The service stopped the old Run, but its answer timed out: the tick
+    that finds no Run starts one, and no later tick stops it as the old."""
+    session_id = start_session(client, add_camera(db))
+    detection.down = True
+    client.post(f"/sessions/{session_id}/baseline")
+    detection.down, detection.run = False, None
+
+    tick(client)
+    new = detection.run
+    tick(client)
+
+    assert detection.calls[-1] == ("start", session_id, "rtsp://127.0.0.1:8554/lane1")
+    assert detection.run == new and detection_of(client, session_id) == WATCHING
+
+
 def test_completing_a_session_whose_retake_stop_is_unanswered_stops_its_run(client, db, detection):
     """Its Run's open Candidates are the re-hang's, so not judged at the end."""
     session_id = start_session(client, add_camera(db))

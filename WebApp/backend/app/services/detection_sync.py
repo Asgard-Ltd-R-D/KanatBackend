@@ -378,12 +378,15 @@ def reconcile(db: DBSession) -> None:
     current = state_of(wanted.id).state
     if current not in IDLE or (run and run.state == "ending"):
         return   # a start or an end is under way
-    if run and run.state == "watching" and wanted.id in _to_stop:
-        # A retake's, its stop unanswered: the old sheet's baseline
-        log.info("Stopping the Run of session %s: its baseline was retaken", wanted.id)
-        if _end_run(wanted.id, judge=False) is None:
-            return
-        run = None
+    if wanted.id in _to_stop:   # a retake's stop went unanswered
+        if run and run.state == "watching":   # the old sheet's baseline
+            log.info("Stopping the Run of session %s: its baseline was retaken", wanted.id)
+            if _end_run(wanted.id, judge=False) is None:
+                return
+            run = None
+        else:   # the stop did end it, only its answer was lost
+            with _lock:
+                _to_stop.discard(wanted.id)
     if run and run.state == "watching":
         # Unknown since the backend restarted, or its start not answered to it
         _store_run(wanted.id, camera.alias, run)

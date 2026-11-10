@@ -734,6 +734,18 @@ def test_a_retake_whose_stop_is_unanswered_stops_a_run_of_it_still_starting(clie
     assert detection_of(client, session_id) == WATCHING
 
 
+def test_completing_a_session_before_its_retake_runs_stops_its_run(client, db, detection):
+    """Completed between the retake's answer and its background stop: the
+    end stops the Run, its open Candidates the re-hang's, not judged."""
+    session_id = start_session(client, add_camera(db))
+    # The request, its task not yet run
+    assert client.portal.call(anyio.to_thread.run_sync, detection_sync.retaking_baseline, session_id)
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert detection.calls[-1] == ("stop", session_id) and detection.run is None
+
+
 def test_completing_a_session_whose_retake_stop_is_unanswered_stops_its_run(client, db, detection):
     """Its Run's open Candidates are the re-hang's, so not judged at the end."""
     session_id = start_session(client, add_camera(db))

@@ -76,7 +76,8 @@ _watched: set[uuid.UUID] = set()
 # theirs still there has the old sheet's baseline, so it is stopped, not
 # adopted, and none is started for them until it is gone
 _to_stop: set[uuid.UUID] = set()
-_lock = threading.Lock()
+# Reentrant: retaking_baseline holds it round a _set
+_lock = threading.RLock()
 
 
 def state_of(session_id: uuid.UUID) -> Detection:
@@ -150,8 +151,13 @@ def retaking_baseline(session_id: uuid.UUID) -> bool:
     """The operator asks the active Session for a fresh baseline, after
     re-hanging a Target Sheet: it reads `starting` until a new Run is watching,
     so a tick neither starts nor ends one in between. False when a start or an
-    end is already under way."""
-    return _set(session_id, Detection(state="starting"), only_from=IDLE)
+    end is already under way. Its Run is put in _to_stop under the same lock,
+    so an end that races the retake stops it rather than judging it."""
+    with _lock:
+        if not _set(session_id, Detection(state="starting"), only_from=IDLE):
+            return False
+        _to_stop.add(session_id)
+    return True
 
 
 def retake_baseline(session_id: uuid.UUID, alias: str) -> None:
@@ -163,8 +169,6 @@ def retake_baseline(session_id: uuid.UUID, alias: str) -> None:
     started. A stop not answered leaves it not watching, and the old Run, if
     it is still there, to reconcile to stop: a start now would be answered
     with it."""
-    with _lock:
-        _to_stop.add(session_id)
     if _end_run(session_id, judge=False) is None:
         _set(session_id, SERVICE_DOWN, only_from=("starting",))
         return

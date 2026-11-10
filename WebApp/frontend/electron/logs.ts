@@ -1,19 +1,22 @@
-import { app } from 'electron'
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from 'fs'
-import { join } from 'path'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'fs'
+import { basename, dirname, join } from 'path'
+
+// The OS's per-app log folder (electron app.getPath('logs')) is passed in by
+// main.ts rather than imported, so this module has no `electron` dependency and
+// its pure logic (rotation, the page-line check) is testable under node --test.
 
 // The app's log: one JSON object a line in frontend.log, as the backend
 // writes backend.log (backend/app/core/logs.py), in the same folder: WebApp/logs
 // while developing, `logDir` from kanat-config.json when installed
-// (/var/log/kanat on the range PC). Grafana Alloy ships the folder to Loki.
+// (C:\ProgramData\Kanat\logs on the range PC). The Logs tab reads these files.
 //
 // Only this, the main process, writes it: the pages hand their lines over IPC
 // (preload.ts), as they may not touch files.
 
 const LOG_FILE = 'frontend.log'
-// Rotated as backend.log is: at this size, keeping this many old files
-const MAX_BYTES = 10 * 1024 * 1024
-const BACKUPS = 10
+// Rotated as backend.log is: once a day, keeping this many past days (~a week).
+// Rotated files are frontend.log.YYYY-MM-DD (UTC), matching the backend's.
+const BACKUP_DAYS = 7
 
 export type LogLevel = 'debug' | 'info' | 'warning' | 'error'
 
@@ -39,18 +42,18 @@ let file: string | null = null
 // The log folder: kanat-config.json's logDir if set; else WebApp/logs while
 // developing (beside backend.log), and the OS's log folder for this app once
 // packaged without one
-export function resolveLogDir(configured: string | undefined, isDev: boolean): string {
+export function resolveLogDir(configured: string | undefined, isDev: boolean, osLogDir: string): string {
   if (configured) return configured
   // dist-electron/main.js -> WebApp/logs
-  return isDev ? join(__dirname, '../../logs') : app.getPath('logs')
+  return isDev ? join(__dirname, '../../logs') : osLogDir
 }
 
 // Logs to `dir`, or, when it cannot be written (made by an installer for
 // another user, say), to the OS's log folder for this app, said on the
 // console and in that log. Returns the folder written to, or null for the
 // console only.
-export function startFileLog(dir: string): string | null {
-  for (const candidate of [dir, app.getPath('logs')]) {
+export function startFileLog(dir: string, osLogDir: string): string | null {
+  for (const candidate of [dir, osLogDir]) {
     try {
       mkdirSync(candidate, { recursive: true })
       appendFileSync(join(candidate, LOG_FILE), '', 'utf8')   // writable, or throws
@@ -101,7 +104,7 @@ export function writeLog(entry: LogEntry) {
     return
   }
   try {
-    rotateIfFull(file, Buffer.byteLength(line, 'utf8') + 1)
+    rotateIfNewDay(file)
     appendFileSync(file, line + '\n', 'utf8')
   } catch (err) {
     console.error('Writing the log failed:', err, line)
@@ -115,11 +118,40 @@ export const mainLog = {
   error: (message: string, context?: Record<string, unknown>) => writeLog({ level: 'error', logger: 'electron', message, context }),
 }
 
-// frontend.log -> frontend.log.1 -> ... -> frontend.log.10, the oldest dropped
-function rotateIfFull(path: string, adding: number) {
-  if (!existsSync(path) || statSync(path).size + adding <= MAX_BYTES) return
-  for (let i = BACKUPS - 1; i >= 1; i--) {
-    if (existsSync(`${path}.${i}`)) renameSync(`${path}.${i}`, `${path}.${i + 1}`)
+// The UTC day (YYYY-MM-DD) of a date, as the rotated files are named
+export function utcDay(date: Date): string {
+  return date.toISOString().slice(0, 10)
+}
+
+// On the first write of a new day, roll frontend.log to frontend.log.<its day>
+// and drop days beyond BACKUP_DAYS. The file's mtime dates its last write, so a
+// file last written days ago is labelled with that day, and a day the app never
+// ran leaves no file (nothing to drop) — like the backend's TimedRotatingFileHandler.
+export function rotateIfNewDay(path: string) {
+  if (!existsSync(path)) return
+  const day = utcDay(statSync(path).mtime)
+  if (day === utcDay(new Date())) return
+  const rotated = `${path}.${day}`
+  if (existsSync(rotated)) return   // already have that day's file; keep appending
+  renameSync(path, rotated)
+  pruneOldDays(path)
+}
+
+// Keep only the newest BACKUP_DAYS rotated files (dates sort lexicographically)
+function pruneOldDays(path: string) {
+  const prefix = basename(path) + '.'
+  let rotated: string[]
+  try {
+    rotated = readdirSync(dirname(path)).filter(f => f.startsWith(prefix) && /\d{4}-\d{2}-\d{2}$/.test(f))
+  } catch {
+    return
   }
-  renameSync(path, `${path}.1`)
+  rotated.sort()   // oldest first
+  for (const f of rotated.slice(0, Math.max(0, rotated.length - BACKUP_DAYS))) {
+    try {
+      unlinkSync(join(dirname(path), f))
+    } catch {
+      // the file may be gone already, or in use; next day tries again
+    }
+  }
 }

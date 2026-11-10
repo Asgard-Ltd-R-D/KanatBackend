@@ -2,3 +2,5 @@
 export const GET_CONFIG = 'kanat-get-config'
 export const WRITE_LOG = 'kanat-write-log'
 export const OPEN_LOG_FOLDER = 'kanat-open-log-folder'
+export const READ_LOGS = 'kanat-read-logs'
+export const VERIFY_LOGS_PASSWORD = 'kanat-verify-logs-password'

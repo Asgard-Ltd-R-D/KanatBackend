@@ -413,6 +413,28 @@ def test_a_stop_drops_the_candidates_open_unposted(shot_before_end):
     assert shot_before_end.posted == [] and _status(shot_before_end) is None
 
 
+def test_a_stop_drops_a_bullet_hole_the_look_in_hand_confirms(monkeypatch, api):
+    """The stop lands while a Look is confirming `api`'s Bullet Hole: the
+    Look finishes, and its hole is not posted."""
+    confirming, go, real = threading.Event(), threading.Event(), nbh._confirmed
+
+    def held(*args):
+        confirming.set()
+        assert go.wait(10)
+        return real(*args)
+    monkeypatch.setattr(nbh, "_confirmed", held)
+    api.start()
+    assert confirming.wait(10)
+    stopped = []
+    stopping = threading.Thread(
+        target=lambda: stopped.append(api.call("POST", f"/runs/{SESSION}/stop")))
+    stopping.start()
+    _until(lambda: _status(api)["state"] == "ending")
+    go.set()
+    stopping.join(10)
+    assert _ends(stopped) == [ENDED] and api.posted == []
+
+
 def test_a_bullet_hole_first_seen_while_the_run_is_ending_is_never_posted(shot_before_end):
     """No Candidate opens while ending: the one at (55, 55) is not posted,
     though seen on every look to the end."""

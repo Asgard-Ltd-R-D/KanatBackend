@@ -65,9 +65,11 @@ class _Run:
     `watching`, `ending`) and since when, and once watching its Baseline
     Marks counted, its Baseline View and how far it has watched (ADR-0009).
     `ready` is set once it is watching or has failed, `ended` once it has
-    ended and its posts are drained."""
+    ended and its posts are drained. `dropping` once it is stopped (#327):
+    nothing is posted from then on, the Look in hand's included."""
     def __init__(self, session_id):
         self.session_id, self.baseline_marks, self.error = session_id, None, None
+        self.dropping = False
         self.baseline_view = None
         self.loop, self.ready, self.ended = None, threading.Event(), threading.Event()
         self.deadline = time.monotonic() + START_TIMEOUT_S
@@ -209,6 +211,8 @@ class DetectionService:
             was, loop = run.state, run.loop
             if was != "ending":   # a repeat end waits on the first, its time kept
                 run.enter("ending")
+            if not judge:
+                run.dropping = True
             # Flags only, so set under the lock: a Run that reads `ending` is
             # already finishing, or stopped
             if was == "watching" and judge:
@@ -228,7 +232,14 @@ class DetectionService:
             if ending:
                 loop.stop()
             with webapp.WebAppPublisher(run.session_id, self._backend_url) as publisher:
-                nbh.process(loop, None, publish=publisher.publish,
+                def publish(hole):
+                    # A stop's lands between Looks, so the Look in hand may
+                    # still confirm one of the Candidates it drops
+                    if run.dropping:
+                        log.info("Bullet Hole not posted: the Run is stopping")
+                    else:
+                        publisher.publish(hole)
+                nbh.process(loop, None, publish=publish,
                             watching=lambda view, marks: self._watching(run, view, marks))
         except BaseException as error:   # SystemExit too: how a Run's open fails
             run.error = str(error) or type(error).__name__

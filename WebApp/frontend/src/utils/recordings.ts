@@ -1,4 +1,4 @@
-import { CameraRecording } from '../types'
+import type { CameraRecording } from '../types'
 
 // Where in a session's recordings a moment can be watched
 export interface ReplayMoment {

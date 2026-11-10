@@ -716,6 +716,24 @@ def test_a_retake_whose_stop_ended_the_run_but_lost_its_answer_keeps_the_new_run
     assert detection.run == new and detection_of(client, session_id) == WATCHING
 
 
+def test_a_retake_whose_stop_is_unanswered_stops_a_run_of_it_still_starting(client, db, detection):
+    """One left starting, by a backend that restarted, may build its baseline
+    from before the re-hang: stopped, not cleared as gone and adopted."""
+    session_id = start_session(client, add_camera(db))
+    detection.down = True
+    client.post(f"/sessions/{session_id}/baseline")
+    old = detection.run
+    detection.down, detection.run = False, old._replace(state="starting")
+
+    tick(client)
+
+    # The retake's unanswered stop, then the tick's
+    assert detection.calls[-3:] == [("stop", session_id), ("stop", session_id),
+                                    ("start", session_id, "rtsp://127.0.0.1:8554/lane1")]
+    assert detection.run.baseline_view.taken_at > old.baseline_view.taken_at
+    assert detection_of(client, session_id) == WATCHING
+
+
 def test_completing_a_session_whose_retake_stop_is_unanswered_stops_its_run(client, db, detection):
     """Its Run's open Candidates are the re-hang's, so not judged at the end."""
     session_id = start_session(client, add_camera(db))

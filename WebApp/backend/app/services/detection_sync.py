@@ -379,7 +379,10 @@ def reconcile(db: DBSession) -> None:
     if current not in IDLE or (run and run.state == "ending"):
         return   # a start or an end is under way
     if wanted.id in _to_stop:   # a retake's stop went unanswered
-        if run and run.state == "watching":   # the old sheet's baseline
+        # Its Run still there, watching or starting, has or may build the
+        # old sheet's baseline. (Another Session's was ended above, and an
+        # ending one returned.)
+        if run:
             log.info("Stopping the Run of session %s: its baseline was retaken", wanted.id)
             if _end_run(wanted.id, judge=False) is None:
                 return

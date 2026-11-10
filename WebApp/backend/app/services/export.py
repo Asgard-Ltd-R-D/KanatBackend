@@ -5,7 +5,6 @@ import urllib.parse
 from datetime import datetime, timezone
 
 import openpyxl
-import weasyprint
 from jinja2 import Environment
 from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -151,6 +150,10 @@ def generate_pdf(session: Session) -> bytes:
         duration=_session_duration(session),
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     )
+    # Imported here: WeasyPrint needs Pango's system libraries (GTK on
+    # Windows), and a PC without them still runs everything but the PDF
+    import weasyprint
+
     return weasyprint.HTML(string=html, base_url=None).write_pdf()
 
 

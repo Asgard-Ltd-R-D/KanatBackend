@@ -651,7 +651,8 @@ def test_retaking_the_baseline_ends_the_run_and_watches_from_a_new_one(client, d
 
     assert res.status_code == 200
     assert res.json()["detection"]["state"] == "starting"
-    assert detection.calls[-2:] == [("end", session_id), ("start", session_id, "rtsp://127.0.0.1:8554/lane1")]
+    # Stopped: what the old Run has open is the re-hang, not a shot
+    assert detection.calls[-2:] == [("stop", session_id), ("start", session_id, "rtsp://127.0.0.1:8554/lane1")]
     assert detection.run.baseline_view.taken_at > first.baseline_view.taken_at
     # "Detection ready" only once the new Run's baseline is built
     assert state_at_start == ["starting"]
@@ -666,7 +667,7 @@ def test_a_tick_during_a_retake_leaves_it_to_finish(client, db, detection):
 
     client.post(f"/sessions/{session_id}/baseline")
 
-    assert [c[0] for c in detection.calls] == ["start", "end", "start"]
+    assert [c[0] for c in detection.calls] == ["start", "stop", "start"]
     assert detection_of(client, session_id) == WATCHING
 
 
@@ -757,6 +758,8 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
                                                 "registered": registered.model_dump(mode="json"),
                                                 "looked_at": looked_at})
     assert detection_client.end_run(session_id) == (session_id, "ended", *read[2:])
+    answers[f"/runs/{session_id}/stop"] = answers[f"/runs/{session_id}/end"]
+    assert detection_client.end_run(session_id, judge=False) == (session_id, "ended", *read[2:])
     for wrong in ((500, {}), (200, {})):
         answers[f"/runs/{session_id}/end"] = wrong
         with pytest.raises(detection_client.DetectionServiceUnreachable):

@@ -152,10 +152,12 @@ def retaking_baseline(session_id: uuid.UUID) -> bool:
 
 def retake_baseline(session_id: uuid.UUID, alias: str) -> None:
     """Ends the Session's Run and asks for a new one, which takes its baseline
-    from what the camera sees now: the same end and start as completing and
-    reopening it, with the Session and its recording left active. A Session
-    completed meanwhile reads `ending`, and `watch` ends the Run it started."""
-    _end_run(session_id)
+    from what the camera sees now, the Session and its recording left active.
+    The Run is stopped, not ended as at completion: the Candidates it has
+    open are the re-hung sheet's change, not shots, and are dropped unposted.
+    A Session completed meanwhile reads `ending`, and `watch` ends the Run it
+    started."""
+    _end_run(session_id, judge=False)
     watch(session_id, alias)
 
 
@@ -219,13 +221,14 @@ def watch(session_id: uuid.UUID, alias: str, only_from: tuple[str, ...] = ("star
         _end_run(session_id)
 
 
-def _end_run(session_id: uuid.UUID) -> bool:
+def _end_run(session_id: uuid.UUID, judge: bool = True) -> bool:
     """Whether the Detection Service answered that this end ended the Run: not
-    when it could not be reached, or had no Run for the Session. Its answer
+    when it could not be reached, or had no Run for the Session. `judge` as
+    detection_client.end_run's. Its answer
     moves the stored Run it names on to how far it watched (`_follow`); one
     never stored, the database down all its life, moves none."""
     try:
-        ended = detection_client.end_run(session_id)
+        ended = detection_client.end_run(session_id, judge)
     except detection_client.DetectionServiceUnreachable as e:
         log.warning("The Run of session %s may not have ended: %s", session_id, e)
         return False

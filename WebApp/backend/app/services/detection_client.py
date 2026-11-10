@@ -153,16 +153,17 @@ def start_run(session_id: uuid.UUID, stream_url: str) -> Run:
         raise DetectionServiceUnreachable(f"POST /runs: HTTP {res.status_code} {res.text[:200]}") from e
 
 
-def end_run(session_id: uuid.UUID) -> Run | None:
+def end_run(session_id: uuid.UUID, judge: bool = True) -> Run | None:
     """End the Session's Run, answered once it has ended and its posts are
-    drained, with how far it watched. None when there was no such Run (404):
-    already ended, but not by this end, so what it saw last is not confirmed
-    posted. Raises DetectionServiceUnreachable, also for an answer that is
-    not an end's."""
-    res = _request("POST", f"/runs/{session_id}/end", END_TIMEOUT_S)
+    drained, with how far it watched. Unless `judge` is false (`stop`), it
+    first judges the Candidates it has open, posting those that persist.
+    None when there was no such Run (404): already ended, but not by this
+    end, so what it saw last is not confirmed posted. Raises
+    DetectionServiceUnreachable, also for an answer that is not an end's."""
+    res = _request("POST", f"/runs/{session_id}/{'end' if judge else 'stop'}", END_TIMEOUT_S)
     if res.status_code == 404:
         return None
     try:
         return _run(res.raise_for_status().json())
     except (httpx.HTTPStatusError, ValueError, KeyError, TypeError) as e:
-        raise DetectionServiceUnreachable(f"POST /runs/{session_id}/end: HTTP {res.status_code} {res.text[:200]}") from e
+        raise DetectionServiceUnreachable(f"POST /runs/{session_id}/{'end' if judge else 'stop'}: HTTP {res.status_code} {res.text[:200]}") from e

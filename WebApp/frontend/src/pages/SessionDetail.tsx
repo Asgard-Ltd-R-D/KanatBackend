@@ -190,7 +190,8 @@ export function SessionDetail() {
               </a>
               <a
                 href={exportUrl(session.id, 'csv')}
-                download
+                target="_blank"
+                rel="noreferrer"
                 className="flex items-center gap-1.5 px-3 py-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
                 title="Export CSV"
               >
@@ -199,7 +200,8 @@ export function SessionDetail() {
               </a>
               <a
                 href={exportUrl(session.id, 'excel')}
-                download
+                target="_blank"
+                rel="noreferrer"
                 className="flex items-center gap-1.5 px-3 py-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
                 title="Export Excel"
               >

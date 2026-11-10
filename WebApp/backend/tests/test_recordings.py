@@ -24,7 +24,7 @@ read_config_paths = mediamtx.config_paths
 # --- recording follows the sessions ---
 
 def test_starting_to_record_patches_only_record(monkeypatch, db_state):
-    # Patching record alone does not restart the camera's GStreamer
+    # Patching record alone does not restart the camera's RTP read
     db_state.cameras, db_state.record = [make_camera()], True
     mtx = FakeMediaMTX(monkeypatch, {"cam1": camera_sync.path_config(make_camera(), record=False)})
 
@@ -40,7 +40,7 @@ def test_a_disabled_camera_keeps_a_path_its_recordings_play_from(monkeypatch, db
 
     camera_sync.sync(None)
 
-    assert mtx.paths["cam1"]["runOnInit"] == ""  # GStreamer stops
+    assert mtx.paths["cam1"]["source"] == "publisher"  # stops reading the camera
     assert mtx.paths["cam1"]["record"] is False
 
 

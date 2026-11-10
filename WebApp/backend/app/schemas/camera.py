@@ -5,9 +5,9 @@ from typing import Annotated, Literal, Optional
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
-# These values go into the shell command MediaMTX runs for the camera
-# (services/camera_sync.py), so each one is held to characters that cannot
-# break out of it.
+# These values go into the camera's MediaMTX source URL and stream description
+# (services/camera_sync.py), so each one is held to safe characters; the card
+# name is also percent-encoded there.
 
 
 def _blank_to_none(value: object) -> object:
@@ -20,11 +20,25 @@ def _multicast(value: IPv4Address) -> IPv4Address:
     return value
 
 
-Alias = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{1,62}$")]
-# The group the camera multicasts to: a unicast address would be accepted by
-# run_record.sh and leave the camera on No signal for good
+# The alias names the camera's recordings folder too, which Windows refuses
+# for its device names, whatever the case
+_WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
+
+
+def _not_reserved(value: str) -> str:
+    if value.upper() in _WINDOWS_RESERVED:
+        raise ValueError(f"'{value}' is a name Windows keeps for a device: choose another")
+    return value
+
+
+Alias = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{1,62}$"), AfterValidator(_not_reserved)]
+# The group the camera multicasts to: a unicast address would leave the camera
+# on No signal for good
 MulticastGroup = Annotated[IPv4Address, AfterValidator(_multicast)]
-Iface = Annotated[Optional[Annotated[str, Field(pattern=r"^[A-Za-z0-9._:-]{1,32}$")]], BeforeValidator(_blank_to_none)]
+# The network card to read the camera on, by its name. Windows friendly names
+# can hold spaces and punctuation ("Ethernet 2", "Wi-Fi"); it is percent-encoded
+# into the source URL, so the set here only keeps out control characters.
+Iface = Annotated[Optional[Annotated[str, Field(pattern=r"^[A-Za-z0-9 ._:#()*-]{1,64}$")]], BeforeValidator(_blank_to_none)]
 
 # live: video is arriving from the camera. no_signal: the camera is configured,
 # but no video arrives from its multicast group. disabled: switched off here.

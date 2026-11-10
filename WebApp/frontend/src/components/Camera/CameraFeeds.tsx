@@ -1,17 +1,29 @@
+import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertCircle, Settings, VideoOff } from 'lucide-react'
 import { useCameras } from '../../hooks/useCameras'
 import { BulletHole, Run } from '../../types'
 import { WhepPlayer } from './WhepPlayer'
 
-// Columns and rows for n cameras: 1 fills the area, 2 stack, 3-4 make a 2x2
-// grid, more go 3 to a row
-function gridFor(n: number): { columns: number; rows: number } {
-  if (n <= 1) return { columns: 1, rows: 1 }
-  if (n === 2) return { columns: 1, rows: 2 }
-  if (n <= 4) return { columns: 2, rows: 2 }
-  return { columns: 3, rows: Math.ceil(n / 3) }
+// The grid for n cameras (at most 4): 1 fills the whole area, 2 stack one below
+// the other, 3 make a triangle (two on top, one centred below), 4 a 2x2 square.
+// More than 4 (not reachable) fall back to 3 a row.
+function gridStyle(n: number): CSSProperties {
+  const tracks = (count: number) => `repeat(${count}, minmax(0, 1fr))`
+  if (n <= 1) return { gridTemplateColumns: '1fr', gridTemplateRows: '1fr' }
+  if (n === 2) return { gridTemplateColumns: '1fr', gridTemplateRows: tracks(2) }
+  if (n === 3) return { gridTemplateColumns: tracks(4), gridTemplateRows: tracks(2) }
+  if (n === 4) return { gridTemplateColumns: tracks(2), gridTemplateRows: tracks(2) }
+  return { gridTemplateColumns: tracks(3), gridTemplateRows: tracks(Math.ceil(n / 3)) }
 }
+
+// Only the triangle (3) needs explicit placement: the columns are quarters, so
+// each video spans two — two half-width on top, one half-width centred below
+const TRIANGLE_CELLS: CSSProperties[] = [
+  { gridColumn: '1 / span 2', gridRow: '1' },
+  { gridColumn: '3 / span 2', gridRow: '1' },
+  { gridColumn: '2 / span 2', gridRow: '2' },
+]
 
 // Every enabled camera, live, sharing all of the space it is given; the
 // Run's Overlay, at its latest place, with the Session's Bullet Holes, only
@@ -50,26 +62,21 @@ export function CameraFeeds({ run, runs, bullets }: { run?: Run; runs: Run[]; bu
     )
   }
 
-  const { columns, rows } = gridFor(enabled.length)
+  const n = enabled.length
   return (
-    <div
-      className="grid gap-3 h-full"
-      style={{
-        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-        gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
-      }}
-    >
-      {enabled.map(camera => (
-        <WhepPlayer
-          key={camera.id}
-          path={camera.alias}
-          label={enabled.length > 1 ? camera.alias : undefined}
-          overlay={
-            run?.camera_alias === camera.alias
-              ? { run, place: run.places[run.places.length - 1], bullets, runs }
-              : undefined
-          }
-        />
+    <div className="grid gap-3 h-full" style={gridStyle(n)}>
+      {enabled.map((camera, i) => (
+        <div key={camera.id} className="min-h-0 h-full w-full" style={n === 3 ? TRIANGLE_CELLS[i] : undefined}>
+          <WhepPlayer
+            path={camera.alias}
+            label={n > 1 ? camera.alias : undefined}
+            overlay={
+              run?.camera_alias === camera.alias
+                ? { run, place: run.places[run.places.length - 1], bullets, runs }
+                : undefined
+            }
+          />
+        </div>
       ))}
     </div>
   )

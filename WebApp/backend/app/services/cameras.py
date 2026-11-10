@@ -111,7 +111,12 @@ def _save(camera: Camera, body: CameraInput, db: DBSession) -> Camera:
         raise HTTPException(status_code=409, detail=f"A camera named '{body.alias}' already exists")
 
 
+MAX_CAMERAS = 4
+
+
 def create_camera(body: CameraInput, db: DBSession) -> Camera:
+    if len(repo.list_all(db)) >= MAX_CAMERAS:
+        raise HTTPException(status_code=409, detail=f"At most {MAX_CAMERAS} cameras are allowed; delete one first")
     camera = _save(Camera(id=uuid.uuid4()), body, db)
     log.info("Camera '%s' added", camera.alias, extra=_fields(camera))
     return camera

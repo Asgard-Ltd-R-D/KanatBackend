@@ -6,6 +6,9 @@ backend over a control API on 127.0.0.1 (#223).
                                           once it is watching
     POST /runs/{session_id}/end           end it; answered once its posts
                                           are drained
+    POST /runs/{session_id}/stop          the same, judging no Candidate it
+                                          has open: a baseline retaken after
+                                          a sheet is re-hung (#327)
     GET  /status                          the Run, if any, and its state, and
                                           the detector's device and model
 
@@ -175,10 +178,12 @@ class DetectionService:
                 return 409, {"detail": "the Session's Run is ending", "run": run.view()}
             return 200, run.view()
 
-    def end(self, session_id):
+    def end(self, session_id, judge=True):
         """End the Session's Run, answered once it has ended and its posts
         are drained. A watching Run first judges the Candidates it has open,
-        opening none, for up to `ENDING_TIMEOUT_S` (#228); one still starting
+        opening none, for up to `ENDING_TIMEOUT_S` (#228), unless `judge` is
+        false: then they are dropped unposted, the re-hung sheet's change
+        that opened them gone with its baseline (#327); one still starting
         stops at once. Answered with its Baseline View, which names it, and
         how far it watched, its last `registered` and `looked_at`. No such
         Run is a 404."""
@@ -186,8 +191,9 @@ class DetectionService:
             run = self._run
             if run is None or run.session_id != session_id:
                 return 404, {"detail": "no such Run"}
-        log.info("Run ending: judging the Candidates it has open, then draining its posts")
-        self._end(run)
+        log.info("Run ending: judging the Candidates it has open, then draining its posts" if judge
+                 else "Run stopping: dropping the Candidates it has open, then draining its posts")
+        self._end(run, judge)
         return 200, {"session_id": session_id, "state": "ended", "baseline_view": run.baseline_view,
                      **run.watched()}
 
@@ -198,16 +204,16 @@ class DetectionService:
         if run:
             self._end(run)
 
-    def _end(self, run):
+    def _end(self, run, judge=True):
         with self._lock:
             was, loop = run.state, run.loop
             if was != "ending":   # a repeat end waits on the first, its time kept
                 run.enter("ending")
             # Flags only, so set under the lock: a Run that reads `ending` is
             # already finishing, or stopped
-            if was == "watching":
+            if was == "watching" and judge:
                 loop.finish()
-            elif was == "starting" and loop:   # no baseline, so no Candidate yet
+            elif was in ("watching", "starting") and loop:   # starting: no baseline, so no Candidate yet
                 loop.stop()
         if was == "watching" and not run.ended.wait(ENDING_TIMEOUT_S):
             loop.stop()   # harmless once it has finished and is draining
@@ -307,9 +313,9 @@ def serve(service, port=DEFAULT_PORT):
                 self._answer(*service.start(*body) if body else
                              (400, {"detail": "a JSON body with the Session's UUID as "
                                               "session_id and an rtsp:// or rtsps:// stream_url"}))
-            elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "end":
+            elif len(parts) == 3 and parts[0] == "runs" and parts[2] in ("end", "stop"):
                 try:
-                    self._answer(*service.end(str(uuid.UUID(parts[1]))))
+                    self._answer(*service.end(str(uuid.UUID(parts[1])), judge=parts[2] == "end"))
                 except ValueError:
                     self._answer(404, {"detail": "no such Run"})
             else:

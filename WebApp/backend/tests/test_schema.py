@@ -39,8 +39,8 @@ def db_url(tmp_path, monkeypatch):
 
 
 def schema(url):
-    """The sessions and bullet_holes columns, whether the runs table exists,
-    and the names of the runs table's unique constraints."""
+    """The sessions and bullet_holes columns, whether the runs table exists and
+    the names of its unique constraints, and whether recording_intervals exists."""
     engine = _make_engine(url)
     try:
         inspector = inspect(engine)
@@ -48,7 +48,7 @@ def schema(url):
         sessions = {c["name"] for c in inspector.get_columns("sessions")} if "sessions" in tables else set()
         holes = {c["name"] for c in inspector.get_columns("bullet_holes")} if "bullet_holes" in tables else set()
         runs = {uc["name"] for uc in inspector.get_unique_constraints("runs")} if "runs" in tables else None
-        return sessions, holes, runs
+        return sessions, holes, runs, "recording_intervals" in tables
     finally:
         engine.dispose()
 
@@ -56,20 +56,62 @@ def schema(url):
 def test_the_migration_applies_and_reverses_cleanly(db_url):
     config = alembic_config()
 
-    sessions, holes, run_constraints = schema(db_url)       # migrated to head by the fixture
+    sessions, holes, run_constraints, has_intervals = schema(db_url)   # migrated to head by the fixture
     # The single chosen camera is gone; each hole names the board it is on,
     # and a Run's identity gained its camera
     assert "camera_id" not in sessions
     assert "camera_alias" in holes
     assert run_constraints == {"uq_runs_session_id_camera_alias_taken_at"}
+    # The recordings feature is gone: no record flag, no recording_intervals
+    assert "record" not in sessions
+    assert not has_intervals
 
     command.downgrade(config, "base")
-    assert schema(db_url) == (set(), set(), None)           # every table dropped
+    assert schema(db_url) == (set(), set(), None, False)   # every table dropped
 
     command.upgrade(config, "head")
-    sessions, holes, run_constraints = schema(db_url)
+    sessions, holes, run_constraints, has_intervals = schema(db_url)
     assert "camera_id" not in sessions and "camera_alias" in holes
     assert run_constraints == {"uq_runs_session_id_camera_alias_taken_at"}
+    assert "record" not in sessions and not has_intervals
+
+
+def test_dropping_recordings_keeps_the_sessions_bullet_holes(tmp_path, monkeypatch):
+    """Migration 003 rebuilds `sessions` to drop `record`; its children must
+    survive the rebuild (the foreign-keys-off guard), not cascade away."""
+    url = f"sqlite:///{tmp_path / 'kanat_drop_rec.db'}"
+    monkeypatch.setattr(settings, "database_url", url)
+    config = alembic_config()
+    command.upgrade(config, "b2c3d4e5f6a7")   # the revision before recordings were dropped
+
+    session_id, hole_id, interval_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    engine = _make_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO sessions (id, name, status, started_at, record) "
+            "VALUES (:id, 'Range 1', 'completed', CURRENT_TIMESTAMP, 1)"
+        ), {"id": session_id.hex})
+        conn.execute(text(
+            "INSERT INTO recording_intervals (id, session_id, started_at) "
+            "VALUES (:id, :session, CURRENT_TIMESTAMP)"
+        ), {"id": interval_id.hex, "session": session_id.hex})
+        conn.execute(text(
+            "INSERT INTO bullet_holes (id, session_id, camera_alias, first_seen_at, position_x, position_y, source, rank) "
+            "VALUES (:id, :session, 'lane1', CURRENT_TIMESTAMP, 700, 560, 'model', 1)"
+        ), {"id": hole_id.hex, "session": session_id.hex})
+    engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = _make_engine(url)
+    with engine.connect() as conn:
+        inspector = inspect(engine)
+        assert "recording_intervals" not in inspector.get_table_names()
+        assert "record" not in {c["name"] for c in inspector.get_columns("sessions")}
+        # The hole and its Session survived the sessions rebuild
+        assert conn.execute(text("SELECT id FROM bullet_holes WHERE id = :id"), {"id": hole_id.hex}).scalar() == hole_id.hex
+        assert conn.execute(text("SELECT name FROM sessions WHERE id = :id"), {"id": session_id.hex}).scalar() == "Range 1"
+    engine.dispose()
 
 
 def test_the_migration_backfills_the_board_from_the_old_camera(tmp_path, monkeypatch):
@@ -168,7 +210,7 @@ def test_deleting_a_camera_leaves_its_sessions_and_holes_untouched(db_url):
         alias = conn.execute(text("SELECT camera_alias FROM bullet_holes WHERE id = :id"), {"id": hole_id.hex}).scalar()
     engine.dispose()
     assert sessions == [(session_id.hex,)]   # the Session stays, unchanged
-    assert alias == "lane1"                  # its hole keeps the board it recorded
+    assert alias == "lane1"                  # its hole keeps the board it was on
 
 
 def test_the_database_holds_one_active_session_at_a_time(db_url):
@@ -240,7 +282,7 @@ def test_a_reopen_racing_a_start_is_answered_409(db_url, monkeypatch):
 
 
 def test_two_cameras_cannot_differ_only_in_case(db_url):
-    # Windows sees Cam1 and cam1 as one recordings folder
+    # Case-insensitive: Cam1 and cam1 are one camera (uq_cameras_alias_ci)
     engine = _make_engine(db_url)
     insert = text("INSERT INTO cameras (id, alias, mcast_ip, mcast_port) VALUES (:id, :alias, '226.226.226.112', 112)")
     with engine.begin() as conn:

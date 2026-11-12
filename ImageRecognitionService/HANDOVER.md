@@ -877,25 +877,30 @@ Two known limitations of the live run, neither closed by #83:
 **The Detection Service** (#223, ADR-0008) is how the WebApp backend gets a
 live Run. `detection.service` loads the detector once and serves a control
 API on 127.0.0.1 only, port 8010 (`DEFAULT_PORT`, `--port`). It has no
-authentication, which is why it is bound to the loopback. It runs one Run at a
-time, on a worker thread. A Run is the live run above on the Stream it is
-given, posting to `--backend-url` as `--session-id` does, one publisher per
-Run. A Run takes the defaults, with no print scale, so `x_mm` and `y_mm` stay
-empty. SIGINT or SIGTERM ends any Run as an end does, its open Candidates
-judged and its posts drained, and then the service.
+authentication, which is why it is bound to the loopback. It runs one Run per
+`(session, camera)` at once, each on its own worker thread: a Session watches
+every enabled camera, so the service runs them concurrently, the one loaded
+detector shared behind an inference lock (only one inference runs at a time,
+the GPU serialising them anyway). A Run is the live run above on the Stream it
+is given, posting to `--backend-url` as `--session-id` does, one publisher per
+Run naming its camera on the v2 contract. A Run takes the defaults, with no
+print scale, so `x_mm` and `y_mm` stay empty. SIGINT or SIGTERM ends every Run
+as an end does, its open Candidates judged and its posts drained, and then the
+service.
 `composer up --detection` runs it in a Terminal window of its own, and `stop`
 and `kill` stop it (#225).
 
 ```bash
 .venv/bin/python -m detection.service    # --port 8010 --backend-url http://localhost:8000 --model ...
-# Start: answered once the baseline is built and the Run is watching. A repeat for
-# the same Session is answered with its Run. Another Session's start while one is
-# active is a 409, and so is the same Session's once its Run is ending. A Stream
-# that does not open within STREAM_TIMEOUT_MS, a baseline frame with no Target, or
-# no baseline built by START_TIMEOUT_S (15 s) is a 502 naming the reason, and
-# leaves no Run.
-curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "rtsp://127.0.0.1:8554/<path>"}'
-# {"session_id": "<uuid>", "state": "watching", "since": "<UTC>", "baseline_marks": 3,
+# Start: answered once the baseline is built and the Run is watching. The body
+# names the camera (board) the Run watches. A repeat for the same (session,
+# camera) is answered with its Run; its other cameras run concurrently. Another
+# Session's start while one is active is a 409, and so is the same (session,
+# camera) once its Run is ending. A Stream that does not open within
+# STREAM_TIMEOUT_MS, a baseline frame with no Target, or no baseline built by
+# START_TIMEOUT_S (15 s) is a 502 naming the reason, and leaves no Run.
+curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "camera": "<alias>", "stream_url": "rtsp://127.0.0.1:8554/<alias>"}'
+# {"session_id": "<uuid>", "camera": "<alias>", "state": "watching", "since": "<UTC>", "baseline_marks": 3,
 #  "baseline_view": {"taken_at": "<UTC>", "picture": {"width": 1920, "height": 1080},
 #                    "template_to_picture": [[...], [...], [...]], "targets": [[[x, y], ...], ...],
 #                    "baseline_marks": [[x, y], ...]},
@@ -907,19 +912,20 @@ curl -s -X POST 127.0.0.1:8010/runs -d '{"session_id": "<uuid>", "stream_url": "
 # Mark in template px. `registered` is the latest registered Look's frame time and
 # homography, which a Lost Look leaves as it was, and `looked_at` the latest Look's
 # frame time, registered or Lost: both null until watching.
-# Status: {"run": null, "device": "cuda:0"}, or the Run, its state (starting, watching,
-# ending) and since when. `device` is the one the detector resolved to, warmed on
+# Status: {"runs": [], "device": "cuda:0"}, or a Run per active board under `runs`,
+# each with its camera, state (starting, watching, ending) and since when. `device`
+# is the one the detector resolved to, warmed on
 # before the control API answers (#319): handed none, cuda:0 when CUDA is visible, else
 # cpu, never mps. The service answers nothing until warmed, and a warm-up that fails is
 # logged and ends it.
 curl -s 127.0.0.1:8010/status
-# End: answered once the Run has ended and its posts are drained, with its
-# `baseline_view`, which names it, and its final `registered` and `looked_at`.
-# No such Run is a 404.
-curl -s -X POST 127.0.0.1:8010/runs/<uuid>/end    # {"session_id": "<uuid>", "state": "ended", "baseline_view": ..., "registered": ..., "looked_at": ...}
+# End: answered once the board's Run has ended and its posts are drained, with
+# its `baseline_view`, which names it, and its final `registered` and `looked_at`.
+# The path names the camera (board). No such Run is a 404.
+curl -s -X POST 127.0.0.1:8010/runs/<uuid>/<camera>/end    # {"session_id": "<uuid>", "camera": "<alias>", "state": "ended", "baseline_view": ..., "registered": ..., "looked_at": ...}
 # Stop: the same end and answer, but the Candidates open are dropped unposted,
 # not judged: how the WebApp retakes a baseline after a sheet is re-hung (#327).
-curl -s -X POST 127.0.0.1:8010/runs/<uuid>/stop
+curl -s -X POST 127.0.0.1:8010/runs/<uuid>/<camera>/stop
 ```
 
 An end does not stop a watching Run at once (#228). The Run keeps looking,
@@ -1034,7 +1040,7 @@ came from. Gating the extraction is what keeps sealed pixels out of it.
 |---|---|
 | `detection/board.py` | Board geometry: find, register, rectify, Target/Miss, scoring, mm |
 | `detection/new_bullet_holes.py` | The pipeline: the shared frame loop, baseline, persistence, change evidence, reporting |
-| `detection/service.py` | The Detection Service: the detector loaded once, one live Run at a time, started and ended over a control API on 127.0.0.1 (#223, ADR-0008) |
+| `detection/service.py` | The Detection Service: the detector loaded once and shared behind an inference lock, a live Run per `(session, camera)` run concurrently, started and ended over a control API on 127.0.0.1 (#223, #341, ADR-0008) |
 | `detection/groups.py` | Group statistics per Target (MPI, CEP50, Mean Radius, RMS, Extreme Spread), printed as `[GROUP]` blocks; pure, for SOW 2.4.1 to reuse (#86) |
 | `tools/evaluate.py`, `tools/derive_truth.py` | Scoring a run against labelled ground truth; deriving that truth from a photograph pair |
 | `tools/position_error.py` | SOW 2.3.2 stage 1: Position Error pooled over every truth recording, per camera, labelled internal (#126) |

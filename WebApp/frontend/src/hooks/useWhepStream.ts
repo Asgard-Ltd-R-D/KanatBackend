@@ -84,6 +84,31 @@ export function useWhepStream(path: string) {
       clearTimeout(stallTimer)
       stallTimer = setTimeout(() => fail(why), STALL_MS)
     }
+    // The camera's feed reaches MediaMTX over the network, but the browser
+    // reaches MediaMTX over the loopback, which a pulled camera cable never
+    // breaks: the connection stays "connected", so the only sign the camera
+    // stopped is its video. The browser mutes a remote track within ~1s of its
+    // incoming RTP stopping and unmutes it the moment frames return, both on
+    // the same connection, so a camera lost and back is shown at once, without
+    // the byte watchdog's wait or a reconnect. The watchdog stays the backstop
+    // that reconnects if the stream is really gone.
+    const signalLost = (why: string) => {
+      if (closed || retryTimer) return
+      if (problem.current !== why) {
+        log.warning(`Camera '${path}': ${why}`, { camera: path, reason: why })
+        problem.current = why
+      }
+      setReason(why)
+      setStatus('error')
+    }
+    const signalBack = () => {
+      // The feed is back on the same connection: cancel a pending reconnect and
+      // re-arm the watchdog so it does not fire on the silence that just ended
+      clearTimeout(retryTimer)
+      retryTimer = undefined
+      lastGrowth = Date.now()
+      onPlaying()
+    }
 
     pc.addTransceiver('video', { direction: 'recvonly' })
     pc.addTransceiver('audio', { direction: 'recvonly' })
@@ -92,6 +117,8 @@ export function useWhepStream(path: string) {
       stream.addTrack(ev.track)
       if (ev.track.kind === 'video') {
         ev.track.addEventListener('ended', () => fail('Stream ended'), { once: true })
+        ev.track.addEventListener('mute', () => signalLost('No signal from camera'))
+        ev.track.addEventListener('unmute', signalBack)
       }
     }
 

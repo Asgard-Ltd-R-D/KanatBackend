@@ -25,10 +25,12 @@ def list_cameras(db: DBSession) -> list[Camera]:
     return repo.list_all(db)
 
 
-# A path stays "ready" after its camera stops sending, because GStreamer keeps
-# its RTSP session open; only the path's inbound bytes still growing show video
-# is arriving. Each path's counter is remembered with when it last grew.
-STALE_S = 10
+# A path stays "ready" after its camera stops sending, because MediaMTX keeps
+# its session open; only the path's inbound bytes still growing show video is
+# arriving. Each path's counter is remembered with when it last grew. Kept
+# short so a camera that stops shows "No signal" within a few seconds, but long
+# enough to ride out a brief gap between frames without flapping.
+STALE_S = 3
 _traffic: dict[str, tuple[int, float | None]] = {}
 _traffic_lock = threading.Lock()
 # The paths the sync loop last saw video arriving on, so a change is logged once

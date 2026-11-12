@@ -12,6 +12,7 @@ from app.core import live
 from app.core.deps import get_db
 from app.core.live import event_stream, hub
 from app.main import app
+from app.repositories import runs as runs_repo
 from app.routers import live as live_router
 from app.schemas.live import BulletDeletedEvent
 from app.services import bullets as bullet_svc
@@ -53,6 +54,8 @@ def client(monkeypatch):
     monkeypatch.setattr(session_svc, "get_session_or_404", get_session_or_404)
     # Nothing to tell MediaMTX: the database is fake
     monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
+    # Completing a Session recovers its boards from stored Runs; the database is fake here
+    monkeypatch.setattr(runs_repo, "cameras_of", lambda db, session_id: [])
     app.dependency_overrides[get_db] = FakeDB
     with TestClient(app) as c:
         yield c

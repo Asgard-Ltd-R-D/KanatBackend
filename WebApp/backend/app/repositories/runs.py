@@ -28,6 +28,13 @@ def get_for_update(db: DBSession, session_id: uuid.UUID, camera_alias: str, take
             .with_for_update().one_or_none())
 
 
+def cameras_of(db: DBSession, session_id: uuid.UUID) -> list[str]:
+    """The distinct camera aliases (boards) this Session has stored Runs for:
+    how its boards are recovered when in-memory state is gone (a restart)."""
+    return [alias for (alias,) in
+            db.query(Run.camera_alias).filter(Run.session_id == session_id).distinct().all()]
+
+
 def save(db: DBSession) -> None:
     """Commits the changes made to Runs loaded from `db`."""
     db.commit()

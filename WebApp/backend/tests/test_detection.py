@@ -15,6 +15,7 @@ from sqlalchemy.exc import PendingRollbackError
 
 from app.core.live import hub
 from app.repositories import bullets as bullets_repo
+from app.repositories import runs as runs_repo
 from app.repositories import sessions as sessions_repo
 from app.services import detection_client, detection_sync
 from app.services import recordings as recording_svc
@@ -467,6 +468,23 @@ def test_completing_after_a_restart_ends_a_run_the_service_still_watches(client,
     assert res.json()["status"] == "completed"
     assert detection.calls[-1] == ("end", session_id, CAM)   # discovered from the service and ended
     assert status_at_end == ["active"]                        # ended before the Session read completed
+
+
+def test_completing_after_a_restart_recovers_boards_from_stored_runs_when_discovery_fails(client, db, detection, monkeypatch):
+    """When the status() discovery itself is unreachable after a restart, the
+    Session's boards are recovered from its stored Runs, so a Run the service may
+    still hold is ended (here it warns, the service being down) rather than left
+    to post into the completed Session."""
+    session_id = start_session(client, add_camera(db))
+    detection_sync._states.clear()   # the backend restarted; its Run did not
+    detection.down = True            # both the status() discovery and the end are unreachable
+    monkeypatch.setattr(runs_repo, "cameras_of", lambda d, sid: [CAM] if sid == session_id else [])
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["status"] == "completed"
+    assert detection.calls[-1] == ("end", session_id, CAM)   # recovered from stored Runs and ended
+    assert board(res.json())["state"] == "end_unconfirmed"   # the end went unconfirmed: last shots may be missing
 
 
 def test_a_tick_during_completion_starts_no_run_for_a_newly_enabled_camera(client, db, detection):

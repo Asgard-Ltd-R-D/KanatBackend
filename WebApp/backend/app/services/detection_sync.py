@@ -353,7 +353,17 @@ def ending(session: Session) -> Iterator[None]:
         try:
             live = [run for run in detection_client.status() if run.session_id == session_id]
         except detection_client.DetectionServiceUnreachable:
-            live = []   # unreachable: end the boards known; the Session completes anyway
+            live = []   # unreachable: fall back to the stored Runs below
+        # The database still holds this Session's Runs after a restart, when
+        # _states is empty and the status() above may be the one call that
+        # failed: seed the boards from them too, so a board the service may
+        # still watch is not skipped. A stored Run watched, so its board warns
+        # (end_unconfirmed) if its end is not confirmed.
+        db = SessionLocal()
+        try:
+            persisted = runs_repo.cameras_of(db, session_id)
+        finally:
+            db.close()
         with _lock:
             for run in live:
                 # A watching or ending Run has watched: keep end_unconfirmed if
@@ -361,6 +371,9 @@ def ending(session: Session) -> Iterator[None]:
                 if run.state in ("watching", "ending"):
                     _watched.add((session_id, run.camera))
                 boards.add(run.camera)
+            for camera in persisted:
+                _watched.add((session_id, camera))
+                boards.add(camera)
         boards = sorted(boards)
         if not boards:
             yield

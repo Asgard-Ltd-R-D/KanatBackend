@@ -2,33 +2,28 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  ArrowLeft, Square, Plus, Download, FileText, FileSpreadsheet, AlertCircle, RefreshCw, Crosshair,
+  ArrowLeft, Square, Download, FileText, FileSpreadsheet, AlertCircle, RefreshCw,
 } from 'lucide-react'
 import { format } from 'date-fns'
-import { getSession, updateSession, retakeBaseline, exportUrl } from '../api/sessions'
-import { deleteBullet } from '../api/bullets'
-import { BulletHole } from '../types'
+import { getSession, updateSession, exportUrl } from '../api/sessions'
 import { StatusBadge } from '../components/UI/StatusBadge'
-import { DetectionBadge } from '../components/Session/DetectionBadge'
 import { StatTile } from '../components/UI/StatTile'
 import { ConfirmDialog } from '../components/UI/ConfirmDialog'
-import { AddBulletModal } from '../components/Session/AddBulletModal'
-import { BulletLog } from '../components/Session/BulletLog'
+import { BoardTabs } from '../components/Session/BoardTabs'
 import { CameraFeeds } from '../components/Camera/CameraFeeds'
 import { RecordingControl } from '../components/Session/RecordingControl'
 import { RecordingsCard } from '../components/Session/RecordingsCard'
-import { GroupsCard } from '../components/Session/GroupsCard'
 import { ReplayModal, ReplayTarget } from '../components/Session/ReplayModal'
 import { useRecordings } from '../hooks/useRecordings'
+import { useCameras } from '../hooks/useCameras'
 import { useSessionLive } from '../hooks/useSessionLive'
+import { boardsOf } from '../utils/boards'
 import { formatDuration } from '../utils/format'
 
 export function SessionDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [showAddBullet, setShowAddBullet] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<BulletHole | null>(null)
   const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [, setTick] = useState(0)
   const [replay, setReplay] = useState<ReplayTarget | null>(null)
@@ -41,6 +36,7 @@ export function SessionDetail() {
 
   useSessionLive(id, session?.status === 'active')
   const recordings = useRecordings(id!, session?.status === 'completed')
+  const { data: cameras } = useCameras()
 
   useEffect(() => {
     if (session?.status !== 'active') return
@@ -54,20 +50,6 @@ export function SessionDetail() {
       qc.invalidateQueries({ queryKey: ['session', id] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
       setShowEndConfirm(false)
-    },
-  })
-
-  const baselineMutation = useMutation({
-    mutationFn: () => retakeBaseline(id!),
-    onSuccess: s => qc.setQueryData(['session', id], s),
-  })
-
-  const deleteBulletMutation = useMutation({
-    mutationFn: (bulletId: string) => deleteBullet(id!, bulletId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['session', id] })
-      qc.invalidateQueries({ queryKey: ['sessions'] })
-      setDeleteTarget(null)
     },
   })
 
@@ -108,16 +90,14 @@ export function SessionDetail() {
 
   const bullets = session.bullet_holes ?? []
   const active = session.status === 'active'
-  // The Overlay: the latest Run's, over its camera, only while a Run watches (ADR-0009)
-  const run = session.runs?.[session.runs.length - 1]
-  const runWatches = session.detection?.state === 'watching' || session.detection?.state === 'ending'
+  // The boards: every enabled camera, merged with the Session's detections,
+  // groupings and holes by camera_alias
+  const boards = boardsOf(session, cameras)
 
   return (
-    // An active session fills the window: the cameras and the live detections
-    // take all the height below the header and stats
-    <div className={active ? 'p-8 h-full flex flex-col' : 'p-8'}>
+    <div className="p-8">
       {/* Top bar */}
-      <div className="flex items-start justify-between mb-6 shrink-0">
+      <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-4">
           <Link
             to="/"
@@ -129,10 +109,6 @@ export function SessionDetail() {
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{session.name}</h1>
               <StatusBadge status={session.status} />
-              {/* Once ended, only to say its Run's end was not confirmed */}
-              {session.detection && (active || session.detection.state === 'end_unconfirmed') && (
-                <DetectionBadge detection={session.detection} />
-              )}
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
               {format(new Date(session.started_at), 'EEEE, MMM d yyyy · HH:mm')}
@@ -141,38 +117,15 @@ export function SessionDetail() {
         </div>
 
         <div className="flex items-center gap-2">
-          {session.status === 'active' && <RecordingControl session={session} />}
+          {active && <RecordingControl session={session} />}
 
-          {session.status === 'active' && session.camera_id && (
-            <button
-              onClick={() => baselineMutation.mutate()}
-              // Not while a Run is starting or ending: the backend refuses it then
-              disabled={baselineMutation.isPending || !['none', 'watching', 'not_watching'].includes(session.detection?.state ?? 'none')}
-              title="After re-hanging a sheet: detection restarts from what the camera sees now. Hold fire until Detection ready."
-              className="flex items-center gap-2 px-4 py-2 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Crosshair size={14} />
-              Retake baseline
-            </button>
-          )}
-
-          {session.status === 'active' && (
+          {active && (
             <button
               onClick={() => setShowEndConfirm(true)}
               className="flex items-center gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-500/10 hover:bg-amber-100 dark:hover:bg-amber-500/20 border border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 text-sm font-medium rounded-lg transition-colors"
             >
               <Square size={14} />
               End Session
-            </button>
-          )}
-
-          {session.status === 'completed' && (
-            <button
-              onClick={() => setShowAddBullet(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-600/10 hover:bg-blue-100 dark:hover:bg-blue-600/20 border border-blue-200 dark:border-blue-600/30 text-blue-700 dark:text-blue-400 text-sm font-medium rounded-lg transition-colors"
-            >
-              <Plus size={14} />
-              Add Bullet
             </button>
           )}
 
@@ -213,57 +166,45 @@ export function SessionDetail() {
         </div>
       </div>
 
-      {/* Active: stats + stream + live bullet feed */}
-      {active && (
-        <div className="flex-1 min-h-0 flex flex-col gap-4">
-          {/* Mini stats */}
-          <div className="grid grid-cols-2 gap-3 shrink-0 max-w-md">
-            <StatTile label="Total Bullets" value={bullets.length} />
-            <StatTile label="Duration" value={formatDuration(session.started_at, null)} />
-          </div>
+      {/* Stats */}
+      <div className="grid grid-cols-2 gap-4 mb-6 max-w-md">
+        <StatTile label="Total Bullets" value={bullets.length} />
+        <StatTile label="Duration" value={formatDuration(session.started_at, session.ended_at)} />
+      </div>
 
-          {/* The camera feed fills the rest of the window */}
-          <div className="flex-1 flex flex-col min-h-0">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 shrink-0">Camera Feed</p>
-            <div className="flex-1 min-h-[300px]">
-              <CameraFeeds run={runWatches ? run : undefined} runs={session.runs ?? []} bullets={bullets} />
-            </div>
+      {/* Active: every enabled camera, live, each with its own board overlay */}
+      {active && (
+        <div className="mb-6">
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Camera Feed</p>
+          <div className="h-[60vh] min-h-[320px]">
+            <CameraFeeds runs={session.runs ?? []} bullets={bullets} detections={session.detections ?? []} />
           </div>
         </div>
       )}
 
-      {/* Completed: stats + bullet table */}
+      {/* Completed: the recordings, one row per camera */}
       {session.status === 'completed' && (
-        <>
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <StatTile label="Total Bullets" value={bullets.length} />
-            <StatTile label="Duration" value={formatDuration(session.started_at, session.ended_at)} />
-          </div>
+        <RecordingsCard
+          recordings={recordings.data}
+          isLoading={recordings.isLoading}
+          isError={recordings.isError}
+          onRetry={() => recordings.refetch()}
+          onPlay={alias => setReplay({ alias })}
+        />
+      )}
 
-          {session.grouping && <GroupsCard grouping={session.grouping} />}
+      {/* Per board: detection, retake, Group, bullet log and manual-add */}
+      <BoardTabs session={session} boards={boards} />
 
-          <RecordingsCard
-            recordings={recordings.data}
-            isLoading={recordings.isLoading}
-            isError={recordings.isError}
-            onRetry={() => recordings.refetch()}
-            onPlay={alias => setReplay({ alias })}
-          />
-
-          <BulletLog
-            bullets={bullets}
-            onDelete={setDeleteTarget}
-          />
-
-          <ReplayModal
-            sessionId={session.id}
-            recordings={recordings.data ?? []}
-            runs={session.runs ?? []}
-            bullets={bullets}
-            target={replay}
-            onChange={setReplay}
-          />
-        </>
+      {session.status === 'completed' && (
+        <ReplayModal
+          sessionId={session.id}
+          recordings={recordings.data ?? []}
+          runs={session.runs ?? []}
+          bullets={bullets}
+          target={replay}
+          onChange={setReplay}
+        />
       )}
 
       <ConfirmDialog
@@ -280,27 +221,6 @@ export function SessionDetail() {
         }}
         loading={endMutation.isPending}
         error={endMutation.error?.message}
-      />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        title="Delete Bullet"
-        message={`Delete bullet #${deleteTarget?.rank ?? ''}?`}
-        confirmLabel="Delete"
-        onConfirm={() => deleteTarget && deleteBulletMutation.mutate(deleteTarget.id)}
-        onCancel={() => {
-          setDeleteTarget(null)
-          deleteBulletMutation.reset()
-        }}
-        loading={deleteBulletMutation.isPending}
-        error={deleteBulletMutation.error?.message}
-      />
-
-      <AddBulletModal
-        open={showAddBullet}
-        sessionId={session.id}
-        onClose={() => setShowAddBullet(false)}
-        onSuccess={() => {}}
       />
     </div>
   )

@@ -6,11 +6,12 @@ import { createBullet } from '../../api/bullets'
 interface Props {
   open: boolean
   sessionId: string
+  camera: string | null // the board (camera alias) the hole is added to; null for no board
   onClose: () => void
   onSuccess: () => void
 }
 
-export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
+export function AddBulletModal({ open, sessionId, camera, onClose, onSuccess }: Props) {
   const qc = useQueryClient()
   const [form, setForm] = useState({ first_seen_at: '', position_x: '', position_y: '' })
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -18,9 +19,10 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
   const mutation = useMutation({
     mutationFn: () =>
       createBullet(sessionId, {
-        version: 'v1',
+        version: 'v2',
         first_seen_at: new Date(form.first_seen_at).toISOString(),
         position: { x: Number(form.position_x), y: Number(form.position_y) },
+        camera,
         source: 'manual',
       }),
     onSuccess: () => {
@@ -57,7 +59,9 @@ export function AddBulletModal({ open, sessionId, onClose, onSuccess }: Props) {
       <div className="absolute inset-0 bg-black/30 dark:bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Add Bullet</h3>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            Add Bullet{camera ? ` · ${camera}` : ''}
+          </h3>
           <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
             <X size={20} />
           </button>

@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertCircle, Settings, VideoOff } from 'lucide-react'
 import { useCameras } from '../../hooks/useCameras'
-import { BulletHole, Run } from '../../types'
+import { BoardDetection, BulletHole, Run } from '../../types'
 import { WhepPlayer } from './WhepPlayer'
 
 // The grid for n cameras (at most 4): 1 fills the whole area, 2 stack one below
@@ -25,10 +25,10 @@ const TRIANGLE_CELLS: CSSProperties[] = [
   { gridColumn: '2 / span 2', gridRow: '2' },
 ]
 
-// Every enabled camera, live, sharing all of the space it is given; the
-// Run's Overlay, at its latest place, with the Session's Bullet Holes, only
-// over the camera it watched
-export function CameraFeeds({ run, runs, bullets }: { run?: Run; runs: Run[]; bullets: BulletHole[] }) {
+// Every enabled camera (board), live, sharing all of the space it is given. Each
+// tile draws its OWN Overlay from that board's latest Run and Bullet Holes, at
+// its latest place, only while that board's Run watches (matched by camera_alias).
+export function CameraFeeds({ runs, bullets, detections }: { runs: Run[]; bullets: BulletHole[]; detections: BoardDetection[] }) {
   const { data: cameras, isLoading, isError } = useCameras()
   const enabled = cameras?.filter(c => c.enabled) ?? []
 
@@ -65,19 +65,27 @@ export function CameraFeeds({ run, runs, bullets }: { run?: Run; runs: Run[]; bu
   const n = enabled.length
   return (
     <div className="grid gap-3 h-full" style={gridStyle(n)}>
-      {enabled.map((camera, i) => (
-        <div key={camera.id} className="min-h-0 h-full w-full" style={n === 3 ? TRIANGLE_CELLS[i] : undefined}>
-          <WhepPlayer
-            path={camera.alias}
-            label={n > 1 ? camera.alias : undefined}
-            overlay={
-              run?.camera_alias === camera.alias
-                ? { run, place: run.places[run.places.length - 1], bullets, runs }
-                : undefined
-            }
-          />
-        </div>
-      ))}
+      {enabled.map((camera, i) => {
+        // This board's Runs (in taken_at order) and its latest one
+        const boardRuns = runs.filter(r => r.camera_alias === camera.alias)
+        const run = boardRuns[boardRuns.length - 1]
+        const state = detections.find(d => d.camera_alias === camera.alias)?.detection.state
+        const watches = state === 'watching' || state === 'ending'
+        const boardBullets = bullets.filter(b => b.camera_alias === camera.alias)
+        return (
+          <div key={camera.id} className="min-h-0 h-full w-full" style={n === 3 ? TRIANGLE_CELLS[i] : undefined}>
+            <WhepPlayer
+              path={camera.alias}
+              label={n > 1 ? camera.alias : undefined}
+              overlay={
+                watches && run
+                  ? { run, place: run.places[run.places.length - 1], bullets: boardBullets, runs: boardRuns }
+                  : undefined
+              }
+            />
+          </div>
+        )
+      })}
     </div>
   )
 }

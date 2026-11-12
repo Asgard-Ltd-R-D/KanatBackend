@@ -10,11 +10,11 @@ export function getSession(id: string): Promise<Session> {
   return apiFetch<Session>(`/sessions/${id}`)
 }
 
-// cameraId: the camera whose stream detection watches, or null for none
-export function createSession(name: string, record: boolean, cameraId: string | null): Promise<Session> {
+// A Session spans every currently-enabled camera (one board each); no camera is chosen
+export function createSession(name: string, record: boolean): Promise<Session> {
   return apiFetch<Session>('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ name, record, camera_id: cameraId }),
+    body: JSON.stringify({ name, record }),
   })
 }
 
@@ -28,10 +28,11 @@ export function updateSession(
   })
 }
 
-// A new Run from a fresh baseline, after a Target Sheet is re-hung: the Session
-// and its recording stay active, and detection reads "starting" until it is ready
-export function retakeBaseline(id: string): Promise<Session> {
-  return apiFetch<Session>(`/sessions/${id}/baseline`, { method: 'POST' })
+// A new Run from a fresh baseline for one board (camera alias), after its Target
+// Sheet is re-hung: the Session and its recording stay active, and that board's
+// detection reads "starting" until it is ready
+export function retakeBaseline(id: string, camera: string): Promise<Session> {
+  return apiFetch<Session>(`/sessions/${id}/baseline/${encodeURIComponent(camera)}`, { method: 'POST' })
 }
 
 export function deleteSession(id: string): Promise<void> {

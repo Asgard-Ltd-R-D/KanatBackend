@@ -29,8 +29,8 @@ uv add <package> / uv remove <package>                               # never edi
 
 - **Migrations:** every model change gets a numbered migration, and a test in `tests/test_schema.py`. A migration that would lose or merge data refuses, naming the rows and the command that fixes them; it never deletes data itself. Never change the database by hand.
 - **127.0.0.1, not localhost**, in every default URL: on Windows localhost tries IPv6 first.
-- **Paths and processes must work on Windows too:** files can be locked while open (see `recordings.py`'s retried deletes), and names like `CON`/`NUL` are reserved.
-- **Cameras:** MediaMTX reads each camera's RTP multicast directly (`camera_sync.py` sets a `udp+rtp://group:port?interface=card` source, the card being the UI's picker value); GStreamer (`run_record.sh/.ps1`) is no longer in this pipeline, and `RECORD_LAUNCHER` is legacy, unused.
+- **Paths and processes must work on Windows too:** files can be locked while open, and names like `CON`/`NUL` are reserved.
+- **Cameras:** MediaMTX reads each camera's RTP multicast directly (`camera_sync.py` sets a `udp+rtp://group:port?interface=card` source, the card being the UI's picker value); GStreamer (`run_record.sh/.ps1`) is not in this pipeline (those scripts are the earlier project's, left for other uses).
 - **Logging:** `logging.getLogger(__name__)`, structured `extra={...}`; never log secrets or full stream URLs with credentials.
 - **The Detection Service contract is versioned (`v2`:** a posted hole names its board by the camera alias): unknown versions, `v1` included, are a 422.
 - **Optional heavy imports** (e.g. WeasyPrint) are imported where used, so the rest of the app runs without them.

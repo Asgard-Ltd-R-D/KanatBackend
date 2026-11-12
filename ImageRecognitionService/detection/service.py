@@ -2,19 +2,25 @@
 running, loads the detector once, and starts and ends Runs for the WebApp
 backend over a control API on 127.0.0.1 (#223).
 
-    POST /runs {session_id, stream_url}   start the Session's Run; answered
-                                          once it is watching
-    POST /runs/{session_id}/end           end it; answered once its posts
+    POST /runs {session_id, camera, stream_url}   start the Run on that
+                                          camera's Stream; answered once it is
+                                          watching
+    POST /runs/{session_id}/{camera}/end  end it; answered once its posts
                                           are drained
-    POST /runs/{session_id}/stop          the same, judging no Candidate it
+    POST /runs/{session_id}/{camera}/stop the same, judging no Candidate it
                                           has open: a baseline retaken after
                                           a sheet is re-hung (#327)
-    GET  /status                          the Run, if any, and its state, and
-                                          the detector's device and model
+    GET  /status                          every Run and its state, under
+                                          `runs`, and the detector's device
+                                          and model
 
-A Run is the command line's live Run: `process` on a Stream, on a worker
-thread, its Confirmed Bullet Holes posted by a `WebAppPublisher` of its own,
-bound to its Session, on the unchanged v1 contract.
+A Session watches every enabled camera at once, so the service runs many Runs
+concurrently, one per (session_id, camera): each is the command line's live
+Run — `process` on its own Stream, on its own worker thread, registering its
+own Board — and its Confirmed Bullet Holes are posted by a `WebAppPublisher`
+of its own, naming its Session and camera, on the v2 contract. The one loaded
+detector is shared behind an inference lock, so only one inference runs at a
+time (the GPU serialises them anyway); everything else is per-Run and parallel.
 """
 import argparse
 import json
@@ -26,6 +32,7 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 import cv2
 import numpy as np
@@ -61,14 +68,15 @@ OUTLINE_POINTS = 64
 
 
 class _Run:
-    """A Run as `/status` reports it: its Session, its state (`starting`,
-    `watching`, `ending`) and since when, and once watching its Baseline
-    Marks counted, its Baseline View and how far it has watched (ADR-0009).
-    `ready` is set once it is watching or has failed, `ended` once it has
-    ended and its posts are drained. `dropping` once it is stopped (#327):
-    nothing is posted from then on, the Look in hand's included."""
-    def __init__(self, session_id):
-        self.session_id, self.baseline_marks, self.error = session_id, None, None
+    """A Run as `/status` reports it: its Session and camera, its state
+    (`starting`, `watching`, `ending`) and since when, and once watching its
+    Baseline Marks counted, its Baseline View and how far it has watched
+    (ADR-0009). `ready` is set once it is watching or has failed, `ended` once
+    it has ended and its posts are drained. `dropping` once it is stopped
+    (#327): nothing is posted from then on, the Look in hand's included."""
+    def __init__(self, session_id, camera):
+        self.session_id, self.camera = session_id, camera
+        self.baseline_marks, self.error = None, None
         self.dropping = False
         self.baseline_view = None
         self.loop, self.ready, self.ended = None, threading.Event(), threading.Event()
@@ -79,7 +87,7 @@ class _Run:
         self.state, self.since = state, datetime.now(timezone.utc)
 
     def view(self):
-        return {"session_id": self.session_id, "state": self.state,
+        return {"session_id": self.session_id, "camera": self.camera, "state": self.state,
                 "since": self.since.isoformat(), "baseline_marks": self.baseline_marks,
                 "baseline_view": self.baseline_view, **self.watched()}
 
@@ -140,36 +148,44 @@ class DetectionService:
         self._model, self._backend_url, self._opener = model, backend_url, opener
         self.device, self.model_name = device, model_name
         self._lock = threading.Lock()
-        # ponytail: one Run at a time; concurrent Runs need a detector each (#220)
-        self._run = None
+        # Every active Run, keyed by (session_id, camera): a Session watches
+        # every enabled camera at once, each on its own Stream and worker
+        # thread (#341). They share the one loaded model, serialised by:
+        self._inference_lock = threading.Lock()
+        self._runs = {}
 
     def status(self):
-        """The Run's `view`, or None."""
+        """Every Run's `view`, in the order they started; empty with none."""
         with self._lock:
-            return self._run and self._run.view()
+            return [run.view() for run in self._runs.values()]
 
-    def start(self, session_id, stream_url):
-        """The Session's Run, started unless it is already active, answered
-        once it is watching. Another Session's active is a 409, and so is
-        this Session's once it is ending. A Run that fails to start, or is
-        not watching by `START_TIMEOUT_S`, is a 502 naming why, and leaves
-        nothing behind."""
+    def start(self, session_id, camera, stream_url):
+        """The Run on this camera's Stream, started unless it is already
+        active, answered once it is watching. Another Session's Run still
+        active is a 409 (the backend keeps one Session; this holds the one Run
+        a time per Session, so `current_session` is never another's); this
+        Session's other cameras run concurrently. The same (session, camera)
+        Run already ending is a 409. A Run that fails to start, or is not
+        watching by `START_TIMEOUT_S`, is a 502 naming why, and leaves nothing
+        behind."""
+        key = (session_id, camera)
         with self._lock:
-            run = self._run
-            if run is None:
-                run = self._run = _Run(session_id)
-                logs.current_session = session_id
-                log.info("Run starting on %s", nbh._redacted(stream_url),
-                         extra={"stream_url": nbh._redacted(stream_url)})
-                threading.Thread(target=self._work, args=(run, stream_url), daemon=True,
-                                 name=f"Run {session_id}").start()
-            elif run.session_id != session_id:
-                # Filed under the Session refused, not the active Run's
+            other = next((r for r in self._runs.values() if r.session_id != session_id), None)
+            if other is not None:
                 log.warning("Run refused for session %s: another Session's Run is active", session_id,
-                            extra={"session_id": session_id, "active_session_id": run.session_id})
-                return 409, {"detail": "another Session's Run is active", "run": run.view()}
+                            extra={"session_id": session_id, "active_session_id": other.session_id})
+                return 409, {"detail": "another Session's Run is active", "run": other.view()}
+            run = self._runs.get(key)
+            if run is None:
+                run = self._runs[key] = _Run(session_id, camera)
+                logs.current_session = session_id
+                log.info("Run starting on %s for camera %s", nbh._redacted(stream_url), camera,
+                         extra={"stream_url": nbh._redacted(stream_url), "camera": camera})
+                threading.Thread(target=self._work, args=(run, stream_url), daemon=True,
+                                 name=f"Run {session_id} {camera}").start()
         if not run.ready.wait(max(0.0, run.deadline - time.monotonic())):
-            log.error("Run not watching within %g s: no baseline was built, so it is ended", START_TIMEOUT_S)
+            log.error("Run on camera %s not watching within %g s: no baseline was built, so it is ended",
+                      camera, START_TIMEOUT_S, extra={"camera": camera})
             self._end(run)
             return 502, {"detail": f"not watching within {START_TIMEOUT_S:g} s: "
                                    f"no baseline was built"}
@@ -177,11 +193,11 @@ class DetectionService:
             if run.error:
                 return 502, {"detail": run.error}
             if run.state != "watching":
-                return 409, {"detail": "the Session's Run is ending", "run": run.view()}
+                return 409, {"detail": "the Run is ending", "run": run.view()}
             return 200, run.view()
 
-    def end(self, session_id, judge=True):
-        """End the Session's Run, answered once it has ended and its posts
+    def end(self, session_id, camera, judge=True):
+        """End the Run on this camera, answered once it has ended and its posts
         are drained. A watching Run first judges the Candidates it has open,
         opening none, for up to `ENDING_TIMEOUT_S` (#228), unless `judge` is
         false: then they are dropped unposted, the re-hung sheet's change
@@ -190,21 +206,27 @@ class DetectionService:
         how far it watched, its last `registered` and `looked_at`. No such
         Run is a 404."""
         with self._lock:
-            run = self._run
-            if run is None or run.session_id != session_id:
+            run = self._runs.get((session_id, camera))
+            if run is None:
                 return 404, {"detail": "no such Run"}
-        log.info("Run ending: judging the Candidates it has open, then draining its posts" if judge
-                 else "Run stopping: dropping the Candidates it has open, then draining its posts")
+        log.info("Run on camera %s ending: judging the Candidates it has open, then draining its posts"
+                 if judge else
+                 "Run on camera %s stopping: dropping the Candidates it has open, then draining its posts",
+                 camera, extra={"camera": camera})
         self._end(run, judge)
-        return 200, {"session_id": session_id, "state": "ended", "baseline_view": run.baseline_view,
-                     **run.watched()}
+        return 200, {"session_id": session_id, "camera": camera, "state": "ended",
+                     "baseline_view": run.baseline_view, **run.watched()}
 
     def close(self):
-        """End the Run, if any, as `end` does: how the service shuts down."""
+        """End every Run, as `end` does, in parallel: how the service shuts
+        down."""
         with self._lock:
-            run = self._run
-        if run:
-            self._end(run)
+            runs = list(self._runs.values())
+        threads = [threading.Thread(target=self._end, args=(run,)) for run in runs]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
 
     def _end(self, run, judge=True):
         with self._lock:
@@ -226,17 +248,19 @@ class DetectionService:
     def _work(self, run, stream_url):
         try:
             loop = nbh.RegisteredFrames.open(stream_url, None, self._model, opener=self._opener)
+            loop.inference_lock = self._inference_lock   # the shared model, serialised
             with self._lock:
                 run.loop = loop
                 ending = run.state == "ending"   # ended while its Stream opened
             if ending:
                 loop.stop()
-            with webapp.WebAppPublisher(run.session_id, self._backend_url) as publisher:
+            with webapp.WebAppPublisher(run.session_id, run.camera, self._backend_url) as publisher:
                 def publish(hole):
                     # A stop's lands between Looks, so the Look in hand may
                     # still confirm one of the Candidates it drops
                     if run.dropping:
-                        log.info("Bullet Hole not posted: the Run is stopping")
+                        log.info("Bullet Hole not posted on camera %s: the Run is stopping",
+                                 run.camera, extra={"camera": run.camera})
                     else:
                         publisher.publish(hole)
                 nbh.process(loop, None, publish=publish,
@@ -245,12 +269,15 @@ class DetectionService:
             run.error = str(error) or type(error).__name__
             # A SystemExit is how a Stream that cannot be opened or read says
             # so: its message is the whole story, with no traceback to add
-            log.error("Run failed: %s", run.error, exc_info=not isinstance(error, SystemExit))
+            log.error("Run on camera %s failed: %s", run.camera, run.error,
+                      exc_info=not isinstance(error, SystemExit), extra={"camera": run.camera})
         finally:
-            log.info("Run ended")
+            log.info("Run on camera %s ended", run.camera, extra={"camera": run.camera})
             with self._lock:
-                if self._run is run:
-                    self._run = None
+                key = (run.session_id, run.camera)
+                if self._runs.get(key) is run:
+                    del self._runs[key]
+                if not self._runs:
                     logs.current_session = None
             run.ready.set()
             run.ended.set()
@@ -261,8 +288,8 @@ class DetectionService:
             run.baseline_marks, run.baseline_view = len(marks), baseline_view
             if run.state == "starting":
                 run.enter("watching")
-        log.info("Run watching, %d Baseline Mark(s) on the Board", len(marks),
-                 extra={"baseline_marks": len(marks)})
+        log.info("Run on camera %s watching, %d Baseline Mark(s) on the Board", run.camera, len(marks),
+                 extra={"camera": run.camera, "baseline_marks": len(marks)})
         run.ready.set()
 
 
@@ -295,14 +322,18 @@ def _outline(points):
 
 
 def _start_body(raw):
-    """`(session_id, stream_url)` from a start's body, the Session's UUID
-    normalised, or None unless it is a Session's UUID and a Stream's URL."""
+    """`(session_id, camera, stream_url)` from a start's body, the Session's
+    UUID normalised, or None unless it is a Session's UUID, a camera alias and
+    a Stream's URL."""
     try:
         body = json.loads(raw)
-        session_id, url = str(uuid.UUID(body["session_id"])), body["stream_url"]
+        session_id = str(uuid.UUID(body["session_id"]))
+        camera, url = body["camera"], body["stream_url"]
     except (ValueError, KeyError, TypeError, AttributeError):
         return None
-    return (session_id, url) if isinstance(url, str) and nbh._is_stream(url) else None
+    if isinstance(camera, str) and camera and isinstance(url, str) and nbh._is_stream(url):
+        return (session_id, camera, url)
+    return None
 
 
 def serve(service, port=DEFAULT_PORT, host="127.0.0.1"):
@@ -314,7 +345,7 @@ def serve(service, port=DEFAULT_PORT, host="127.0.0.1"):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/status":
-                self._answer(200, {"run": service.status(), "device": service.device,
+                self._answer(200, {"runs": service.status(), "device": service.device,
                                    "model": service.model_name})
             else:
                 self._answer(404, {"detail": "no such resource"})
@@ -325,12 +356,15 @@ def serve(service, port=DEFAULT_PORT, host="127.0.0.1"):
                 body = _start_body(self.rfile.read(int(self.headers.get("Content-Length", 0))))
                 self._answer(*service.start(*body) if body else
                              (400, {"detail": "a JSON body with the Session's UUID as "
-                                              "session_id and an rtsp:// or rtsps:// stream_url"}))
-            elif len(parts) == 3 and parts[0] == "runs" and parts[2] in ("end", "stop"):
+                                              "session_id, a camera alias as camera, and an "
+                                              "rtsp:// or rtsps:// stream_url"}))
+            elif len(parts) == 4 and parts[0] == "runs" and parts[3] in ("end", "stop"):
                 try:
-                    self._answer(*service.end(str(uuid.UUID(parts[1])), judge=parts[2] == "end"))
+                    session_id = str(uuid.UUID(parts[1]))
                 except ValueError:
                     self._answer(404, {"detail": "no such Run"})
+                    return
+                self._answer(*service.end(session_id, unquote(parts[2]), judge=parts[3] == "end"))
             else:
                 self._answer(404, {"detail": "no such resource"})
 
@@ -367,6 +401,7 @@ if __name__ == "__main__":
                         "else the repo's WebApp/logs when it exists)")
     a = p.parse_args()
     log_file = logs.configure(a.log_dir)
+    nbh.preset_capture_options()   # once, so the Runs' stream opens never race over it
     log.info("Loading the detector %s", a.model, extra={"log_file": str(log_file)})
     model = nbh.load_model(a.model)
     device = warm(model)   # before the control API binds: until warmed, nothing answers

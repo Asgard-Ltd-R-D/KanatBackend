@@ -496,14 +496,11 @@ def _open_stream(url):
     bounded by `STREAM_TIMEOUT_MS`, so a connection that stays open but stops
     delivering frames fails a read, a drop to recover from, instead of
     blocking for FFmpeg's default 30 s (#84). Decoded on one thread, with
-    `STREAM_CAPTURE_OPTIONS` set while it opens unless the environment sets
-    its own (#279)."""
+    `STREAM_CAPTURE_OPTIONS` set while it opens unless it is already set (#279):
+    the service presets it once (`preset_capture_options`), so its concurrent
+    Runs leave it alone and never race; the command line sets it per open."""
     preset = "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ
     if not preset:
-        # ponytail: process-wide while it opens; a Recording opened on another
-        # thread meanwhile would get it too, and a reconnect on the reader's
-        # thread sets it again. A Run reads one source, and the Detection
-        # Service runs one Run at a time; concurrent Runs need a lock here.
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = STREAM_CAPTURE_OPTIONS
     try:
         return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
@@ -1502,6 +1499,10 @@ class RegisteredFrames:
         # reading `registered` first never reads it past `looked`.
         self.registered = self.looked = None
         self.finishing = False   # set by `finish`
+        # Set by the service (service.py) to a Lock shared by every concurrent
+        # Run, so only one inference runs on the one loaded model at a time: the
+        # GPU serialises them anyway. None on the command line's single Run.
+        self.inference_lock = None
 
     @classmethod
     def open(cls, video, start, model, conf=DEFAULT_CONFIDENCE,
@@ -1627,10 +1628,13 @@ class RegisteredFrames:
                 self.source.close()   # whatever the report did: it releases the source
 
     def _call_detector(self, images, imgsz):
-        """`_detect` on the loop's device, timed as one detector call (#129)."""
-        began = time.perf_counter()
-        found = _detect(self.model, images, imgsz, self.conf, self.device)
-        self.clock.calls.append(time.perf_counter() - began)
+        """`_detect` on the loop's device, timed as one detector call (#129).
+        `inference_lock`, when the service sets one, serialises the shared
+        model's inferences across concurrent Runs; the wait for it is not timed."""
+        with self.inference_lock or contextlib.nullcontext():
+            began = time.perf_counter()
+            found = _detect(self.model, images, imgsz, self.conf, self.device)
+            self.clock.calls.append(time.perf_counter() - began)
         return found
 
     def _detect_sheets(self, view, canvases):
@@ -1701,6 +1705,14 @@ STREAM_TIMEOUT_MS = 5000   # PROVISIONAL
 # threading holds back about a frame per thread, 339 → 65 ms behind.
 STREAM_CAPTURE_OPTIONS = "rtsp_transport;tcp|analyzeduration;100000|probesize;32768"   # PROVISIONAL
 STREAM_DECODER_THREADS = 1   # PROVISIONAL: one core keeps up with 1080p25 on the Mac
+
+
+def preset_capture_options():
+    """Set the process-wide `OPENCV_FFMPEG_CAPTURE_OPTIONS` once, so a service
+    running many Runs at once never has them race to set and unset it per open
+    (`_open_stream` leaves a value already there alone). An operator's own
+    setting is kept (#279). Not called on the single-Run command line."""
+    os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", STREAM_CAPTURE_OPTIONS)
 
 # The wait before each reopen of a dropped stream, for as long as the run goes
 # on (#84). An attempt that opens a silent stream, or cannot reach the host,
@@ -2317,6 +2329,9 @@ if __name__ == "__main__":
     p.add_argument("--session-id",
                    help="WebApp session UUID; when given, POST each confirmed Bullet Hole "
                         "to POST /sessions/{id}/bullets on the backend")
+    p.add_argument("--camera", default=None,
+                   help="the camera/board alias this Run watches; sent with each posted "
+                        "Bullet Hole (api_contract.md v2), required by the backend")
     p.add_argument("--backend-url", default="http://127.0.0.1:8000",
                    help="WebApp backend base URL (default: http://127.0.0.1:8000)")
     p.add_argument("--ref-time",
@@ -2364,8 +2379,12 @@ if __name__ == "__main__":
         if ref_time.tzinfo is None:
             p.error("--ref-time must include a UTC offset (e.g. 2026-10-11T10:30:00Z or +02:00)")
 
+    # The backend names the board by its camera (v2), so a posting run needs one
+    if a.session_id and not a.camera:
+        p.error("--session-id needs --camera: the backend names the board the hole is on")
+
     # Drained on leaving, after the report and even if the run raised (#155).
-    with (webapp.WebAppPublisher(a.session_id, a.backend_url) if a.session_id
+    with (webapp.WebAppPublisher(a.session_id, a.camera, a.backend_url) if a.session_id
           else contextlib.nullcontext()) as publisher:
         loop = RegisteredFrames.open(a.video, a.start, load_model(a.model), a.confidence,
                                      a.template, ref_time, a.device)

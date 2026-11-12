@@ -244,6 +244,52 @@ def test_detections_are_moved_into_board_px_and_dropped_beyond_every_sheet():
     assert look.detections[:, :2].tolist() == [[15.0, 15.0], [115.0, 15.0]]
 
 
+class _ConcurrencyModel(_FakeModel):
+    """Records how many predicts run at once. The first to enter holds inside
+    `predict` until `release` is set, so a second entering means the inference
+    lock did not serialise them. Answers no boxes."""
+    names = {0: "bullet_hole"}
+
+    def __init__(self):
+        self.live = self.peak = 0
+        self._lock = threading.Lock()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def predict(self, images, imgsz, conf, verbose=False, classes=None):
+        with self._lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        self.entered.set()
+        self.release.wait(2.0)
+        with self._lock:
+            self.live -= 1
+        return [types.SimpleNamespace(boxes=[]) for _ in images]
+
+
+def test_the_inference_lock_serialises_runs_on_the_shared_model():
+    """The service shares one model across concurrent Runs behind an inference
+    lock, so only one inference runs at a time (#341). The first call is held
+    inside predict; a second cannot enter while the lock is held, and without
+    the lock it enters at once and the peak reaches 2 -- so this fails if the
+    lock is deleted, without depending on timing."""
+    model = _ConcurrencyModel()
+    loop = _loop(frames=0)
+    loop.model = model
+    loop.inference_lock = threading.Lock()
+    first = threading.Thread(target=lambda: loop._call_detector([None], 64))
+    first.start()
+    assert model.entered.wait(2.0)   # the first call is now inside predict, holding the lock
+    model.entered.clear()
+    second = threading.Thread(target=lambda: loop._call_detector([None], 64))
+    second.start()
+    entered_again = model.entered.wait(0.3)   # true only if the second entered too (no lock)
+    model.release.set()
+    first.join()
+    second.join()
+    assert model.peak == 1 and not entered_again
+
+
 def _openable(monkeypatch):
     """`RegisteredFrames.open` on a one-frame `_FakeCap`, every Target found
     and Board space built without a model, artwork or geometry."""
@@ -742,7 +788,7 @@ def test_a_live_run_on_a_worker_thread_ends_when_its_caller_stops_it(monkeypatch
 
     def work():
         try:
-            with webapp.WebAppPublisher("session", "http://backend") as publisher:
+            with webapp.WebAppPublisher("session", "cam-a", "http://backend") as publisher:
                 ended.append(nbh.process(loop, None, stride=5, publish=publisher.publish))
         except BaseException as error:   # starting off the main thread must raise nothing
             ended.append(error)

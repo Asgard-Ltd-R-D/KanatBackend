@@ -10,6 +10,7 @@ import time
 import types
 from datetime import datetime, timezone
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -21,7 +22,10 @@ from detection import new_bullet_holes as nbh
 
 SESSION = "6f1c0d3e-2b7a-4c1e-9d3f-0a1b2c3d4e5f"
 OTHER = "0b9e8d7c-6a5f-4e3d-8c2b-1a0f9e8d7c6b"
+CAMERA = "cam-a"
+CAMERA2 = "cam b"   # a space, to exercise the path's URL-encoding
 URL = "rtsp://127.0.0.1:8554/cam"
+URL2 = "rtsp://127.0.0.1:8554/camb"
 
 
 # A baseline frame's time, and where the fake Target's ring centre is in its
@@ -119,8 +123,12 @@ class _Api:
         except HTTPError as error:
             return error.code, json.loads(error.read() or b"null")
 
-    def start(self, session_id=SESSION, url=URL):
-        return self.call("POST", "/runs", {"session_id": session_id, "stream_url": url})
+    def start(self, session_id=SESSION, url=URL, camera=CAMERA):
+        return self.call("POST", "/runs",
+                         {"session_id": session_id, "camera": camera, "stream_url": url})
+
+    def end(self, session_id=SESSION, camera=CAMERA, how="end"):
+        return self.call("POST", f"/runs/{session_id}/{quote(camera, safe='')}/{how}")
 
     def close(self):
         self.posting.set()
@@ -177,22 +185,34 @@ def test_a_repeat_start_for_the_session_is_answered_with_its_run(api):
     assert api.opened == [URL]
 
 
-def test_a_start_for_another_session_is_refused_while_a_run_is_active(api):
-    _, run = api.start()
-    status, body = api.start(OTHER)
-    assert (status, _still(body["run"])) == (409, _still(run))
-    assert _still(_status(api)) == _still(run)
+def test_runs_for_different_cameras_watch_concurrently(api):
+    """A Session watches every enabled camera at once: each (session, camera)
+    is its own Run on its own Stream, and `/status` lists them both."""
+    assert api.start(url=URL, camera=CAMERA)[0] == 200
+    assert api.start(url=URL2, camera=CAMERA2)[0] == 200
+    runs = _runs(api)
+    assert set(runs) == {CAMERA, CAMERA2}
+    assert all(run["state"] == "watching" for run in runs.values())
+    assert sorted(api.opened) == sorted([URL, URL2])
 
 
-def test_a_refused_start_is_logged_under_the_session_refused(api, caplog):
-    """Found by the refused Session's id in the logs, not the active Run's."""
+def test_a_second_sessions_run_is_refused_while_the_first_is_active(api):
+    """The backend keeps one active Session; the service refuses a Run for
+    another Session while one's Runs remain, so a line's `current_session` is
+    never another Session's (#341). A Session's own cameras still run together."""
+    assert api.start(session_id=SESSION, camera=CAMERA)[0] == 200
+    status, body = api.start(session_id=OTHER, camera=CAMERA2, url=URL2)
+    assert status == 409 and body["detail"] == "another Session's Run is active"
+    assert api.opened == [URL]   # the refused Session never opened a Stream
+
+
+def test_a_runs_start_log_names_its_camera(api, caplog):
+    """So the two concurrent Runs' lines are told apart by camera."""
     caplog.set_level("INFO")
-    api.start()
-    api.start(OTHER)
-
-    [refused] = [r for r in caplog.records if r.getMessage().startswith("Run refused")]
-    line = json.loads(logs.JsonFormatter().format(refused))
-    assert (line["session_id"], line["active_session_id"]) == (str(OTHER), str(SESSION))
+    api.start(camera=CAMERA)
+    [starting] = [r for r in caplog.records if r.getMessage().startswith("Run starting")]
+    line = json.loads(logs.JsonFormatter().format(starting))
+    assert (line["session_id"], line["camera"]) == (str(SESSION), CAMERA)
 
 
 def _cannot_open(monkeypatch, api):
@@ -227,7 +247,16 @@ def _until(answer, timeout=10):
 
 
 def _status(api):
-    return api.call("GET", "/status")[1]["run"]
+    """The one Run `/status` lists, or None: the tests here watch one camera
+    unless they say otherwise."""
+    runs = api.call("GET", "/status")[1]["runs"]
+    assert len(runs) <= 1
+    return runs[0] if runs else None
+
+
+def _runs(api):
+    """Every Run `/status` lists, by camera."""
+    return {run["camera"]: run for run in api.call("GET", "/status")[1]["runs"]}
 
 
 def test_status_reports_a_run_starting_until_it_is_watching(api):
@@ -319,7 +348,7 @@ def test_an_ends_answer_carries_the_runs_baseline_view_and_final_registered_and_
     placed.registration.lost_from = 100
     placed.start()
     view = _until(lambda: _frame((r := _status(placed))["looked_at"]) >= 100 and r)["baseline_view"]
-    answer = placed.call("POST", f"/runs/{SESSION}/end")
+    answer = placed.call("POST", f"/runs/{SESSION}/{CAMERA}/end")
     looks = [index for index, _ in placed.registration.calls]
     assert _ends([answer]) == [ENDED]
     _, ended = answer
@@ -338,7 +367,7 @@ def test_an_end_is_answered_once_the_runs_posts_are_drained(api):
     assert api.model.past.wait(10)   # its persistence window has elapsed
     ended = []
     ending = threading.Thread(
-        target=lambda: ended.append(api.call("POST", f"/runs/{SESSION}/end")))
+        target=lambda: ended.append(api.call("POST", f"/runs/{SESSION}/{CAMERA}/end")))
     ending.start()
     ending.join(0.3)
     assert ending.is_alive() and _status(api)["state"] == "ending"
@@ -382,7 +411,7 @@ def _end_just_after_a_shot(api, how="end"):
     assert model.seen.wait(10)
     ended = []
     ending = threading.Thread(
-        target=lambda: ended.append(api.call("POST", f"/runs/{SESSION}/{how}")))
+        target=lambda: ended.append(api.call("POST", f"/runs/{SESSION}/{CAMERA}/{how}")))
     ending.start()
     _until(lambda: _status(api)["state"] == "ending")
     model.go.set()
@@ -427,7 +456,7 @@ def test_a_stop_drops_a_bullet_hole_the_look_in_hand_confirms(monkeypatch, api):
     assert confirming.wait(10)
     stopped = []
     stopping = threading.Thread(
-        target=lambda: stopped.append(api.call("POST", f"/runs/{SESSION}/stop")))
+        target=lambda: stopped.append(api.call("POST", f"/runs/{SESSION}/{CAMERA}/stop")))
     stopping.start()
     _until(lambda: _status(api)["state"] == "ending")
     go.set()
@@ -474,12 +503,13 @@ def test_a_runs_lines_carry_its_session_until_it_ends(api, caplog):
     api.start()
     assert api.model.past.wait(10)
     during = logs.current_session
-    api.call("POST", f"/runs/{SESSION}/end")
+    api.call("POST", f"/runs/{SESSION}/{CAMERA}/end")
 
     assert during == SESSION and logs.current_session is None
     messages = [(r.name, r.levelname, r.getMessage()) for r in caplog.records if r.name == "detection.service"]
-    assert ("detection.service", "INFO", "Run watching, 1 Baseline Mark(s) on the Board") in messages
-    assert messages[-1] == ("detection.service", "INFO", "Run ended")
+    assert ("detection.service", "INFO",
+            f"Run on camera {CAMERA} watching, 1 Baseline Mark(s) on the Board") in messages
+    assert messages[-1] == ("detection.service", "INFO", f"Run on camera {CAMERA} ended")
     assert any(r.name == "detection.post" and r.getMessage().endswith("posted: HTTP 201") for r in caplog.records)
 
 
@@ -487,7 +517,7 @@ def test_a_runs_lines_carry_its_session_until_it_ends(api, caplog):
 def test_ending_a_run_that_does_not_exist_answers_404(api, session_id):
     if session_id == OTHER:
         api.start()   # SESSION's Run, not this one
-    assert api.call("POST", f"/runs/{session_id}/end") == (404, {"detail": "no such Run"})
+    assert api.call("POST", f"/runs/{session_id}/{CAMERA}/end") == (404, {"detail": "no such Run"})
 
 
 def test_consecutive_runs_share_the_detector_loaded_once(monkeypatch, api):
@@ -496,7 +526,7 @@ def test_consecutive_runs_share_the_detector_loaded_once(monkeypatch, api):
     monkeypatch.setitem(sys.modules, "ultralytics", None)   # any model load would fail
     for session_id in (SESSION, OTHER):
         assert api.start(session_id)[1]["state"] == "watching"
-        assert api.call("POST", f"/runs/{session_id}/end")[0] == 200
+        assert api.call("POST", f"/runs/{session_id}/{CAMERA}/end")[0] == 200
     assert api.opened == [URL, URL]
 
 
@@ -506,9 +536,12 @@ def test_the_control_api_answers_on_the_loopback_only(api):
 
 @pytest.mark.parametrize("body", [
     b"not json", b"[]", json.dumps({"session_id": SESSION}).encode(),
-    json.dumps({"session_id": "not-a-uuid", "stream_url": URL}).encode(),
-    json.dumps({"session_id": SESSION, "stream_url": "http://127.0.0.1/cam"}).encode()])
-def test_a_start_without_a_sessions_uuid_and_an_rtsp_url_is_refused(api, body):
+    json.dumps({"session_id": "not-a-uuid", "camera": CAMERA, "stream_url": URL}).encode(),
+    json.dumps({"session_id": SESSION, "camera": CAMERA,
+                "stream_url": "http://127.0.0.1/cam"}).encode(),
+    json.dumps({"session_id": SESSION, "stream_url": URL}).encode(),          # no camera
+    json.dumps({"session_id": SESSION, "camera": "", "stream_url": URL}).encode()])  # empty camera
+def test_a_start_without_a_sessions_uuid_a_camera_and_an_rtsp_url_is_refused(api, body):
     assert api.call("POST", "/runs", body)[0] == 400
     assert _status(api) is None and api.opened == []
 
@@ -522,7 +555,7 @@ def test_a_start_whose_run_is_ended_before_it_is_watching_is_refused(api):
     starting = threading.Thread(target=lambda: answers.append(api.start()))
     starting.start()
     _until(lambda: _status(api))
-    ending = threading.Thread(target=api.call, args=("POST", f"/runs/{SESSION}/end"))
+    ending = threading.Thread(target=api.call, args=("POST", f"/runs/{SESSION}/{CAMERA}/end"))
     ending.start()
     _until(lambda: _status(api)["state"] == "ending")
     opening.set()
@@ -554,7 +587,7 @@ def test_warming_calls_the_detector_as_runs_do_and_answers_its_device():
 
 
 def test_status_reports_the_detectors_device_and_model(api):
-    assert api.call("GET", "/status") == (200, {"run": None, "device": "cpu",
+    assert api.call("GET", "/status") == (200, {"runs": [], "device": "cpu",
                                                 "model": "kanat_yolo26m_v1"})
 
 

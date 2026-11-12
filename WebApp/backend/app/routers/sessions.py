@@ -34,11 +34,13 @@ def create_session(body: SessionCreate, background: BackgroundTasks, db: DBSessi
     # Starts the cameras recording if this Session records
     camera_sync.sync_soon(db)
     # The Session spans every enabled camera, one board each: answered "starting"
-    # at once, each Run asked for after the answer, as it takes seconds to watch
-    for camera in camera_svc.list_cameras(db):
-        if camera.enabled:
-            detection_sync.starting(session.id, camera.alias)
-            background.add_task(detection_sync.watch, session.id, camera.alias)
+    # at once, each Run asked for after the answer, as it takes seconds to watch.
+    # The Runs are asked for together (watch_all), so a slow or unavailable camera
+    # does not hold up detection on the others.
+    aliases = [camera.alias for camera in camera_svc.list_cameras(db) if camera.enabled]
+    for alias in aliases:
+        detection_sync.starting(session.id, alias)
+    background.add_task(detection_sync.watch_all, session.id, aliases)
     return _response(session)
 
 

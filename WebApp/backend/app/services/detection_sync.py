@@ -134,6 +134,14 @@ def _set(key: Key, detection: Detection, only_from: tuple[str, ...] | None = Non
     return True
 
 
+async def watch_all(session_id: uuid.UUID, cameras: list[str]) -> None:
+    """Ask for every board's Run at once: `watch` blocks until a board is
+    watching or its start times out, so starting them in turn would let one slow
+    or unavailable camera hold up detection on the others. Each runs in the
+    threadpool (where `publish_from_thread` can reach the event loop), together."""
+    await asyncio.gather(*(run_in_threadpool(watch, session_id, camera) for camera in cameras))
+
+
 def starting(session_id: uuid.UUID, camera: str) -> None:
     """The board's Run is about to be asked for (`watch`)."""
     _set((session_id, camera), Detection(state="starting"))

@@ -259,7 +259,8 @@ class DetectionService:
                     # A stop's lands between Looks, so the Look in hand may
                     # still confirm one of the Candidates it drops
                     if run.dropping:
-                        log.info("Bullet Hole not posted: the Run is stopping")
+                        log.info("Bullet Hole not posted on camera %s: the Run is stopping",
+                                 run.camera, extra={"camera": run.camera})
                     else:
                         publisher.publish(hole)
                 nbh.process(loop, None, publish=publish,

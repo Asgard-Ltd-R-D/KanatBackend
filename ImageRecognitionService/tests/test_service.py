@@ -497,8 +497,9 @@ def test_a_runs_lines_carry_its_session_until_it_ends(api, caplog):
 
     assert during == SESSION and logs.current_session is None
     messages = [(r.name, r.levelname, r.getMessage()) for r in caplog.records if r.name == "detection.service"]
-    assert ("detection.service", "INFO", "Run watching, 1 Baseline Mark(s) on the Board") in messages
-    assert messages[-1] == ("detection.service", "INFO", "Run ended")
+    assert ("detection.service", "INFO",
+            f"Run on camera {CAMERA} watching, 1 Baseline Mark(s) on the Board") in messages
+    assert messages[-1] == ("detection.service", "INFO", f"Run on camera {CAMERA} ended")
     assert any(r.name == "detection.post" and r.getMessage().endswith("posted: HTTP 201") for r in caplog.records)
 
 

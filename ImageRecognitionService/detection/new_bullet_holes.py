@@ -497,22 +497,21 @@ def _open_stream(url):
     delivering frames fails a read, a drop to recover from, instead of
     blocking for FFmpeg's default 30 s (#84). Decoded on one thread, with
     `STREAM_CAPTURE_OPTIONS` set while it opens unless the environment sets
-    its own (#279)."""
-    preset = "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ
-    if not preset:
-        # ponytail: process-wide while it opens; a Recording opened on another
-        # thread meanwhile would get it too, and a reconnect on the reader's
-        # thread sets it again. A Run reads one source, and the Detection
-        # Service runs one Run at a time; concurrent Runs need a lock here.
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = STREAM_CAPTURE_OPTIONS
-    try:
-        return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
-                                [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
-                                 cv2.CAP_PROP_READ_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
-                                 cv2.CAP_PROP_N_THREADS, STREAM_DECODER_THREADS])
-    finally:
+    its own (#279). `OPENCV_FFMPEG_CAPTURE_OPTIONS` is process-wide, so
+    `_STREAM_OPEN_LOCK` serialises the set-open-remove across the concurrent
+    Runs' streams; a reconnect on a reader thread takes it the same way."""
+    with _STREAM_OPEN_LOCK:
+        preset = "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ
         if not preset:
-            os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = STREAM_CAPTURE_OPTIONS
+        try:
+            return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
+                                    [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
+                                     cv2.CAP_PROP_READ_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
+                                     cv2.CAP_PROP_N_THREADS, STREAM_DECODER_THREADS])
+        finally:
+            if not preset:
+                os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
 
 
 def _same_file(path, others):
@@ -1708,6 +1707,9 @@ STREAM_TIMEOUT_MS = 5000   # PROVISIONAL
 # threading holds back about a frame per thread, 339 → 65 ms behind.
 STREAM_CAPTURE_OPTIONS = "rtsp_transport;tcp|analyzeduration;100000|probesize;32768"   # PROVISIONAL
 STREAM_DECODER_THREADS = 1   # PROVISIONAL: one core keeps up with 1080p25 on the Mac
+# `OPENCV_FFMPEG_CAPTURE_OPTIONS` is process-wide, so concurrent Runs opening or
+# reconnecting at once would race over it; held across set, open and remove
+_STREAM_OPEN_LOCK = threading.Lock()
 
 # The wait before each reopen of a dropped stream, for as long as the run goes
 # on (#84). An attempt that opens a silent stream, or cannot reach the host,
@@ -2373,6 +2375,10 @@ if __name__ == "__main__":
         ref_time = datetime.fromisoformat(a.ref_time.replace("Z", "+00:00"))
         if ref_time.tzinfo is None:
             p.error("--ref-time must include a UTC offset (e.g. 2026-10-11T10:30:00Z or +02:00)")
+
+    # The backend names the board by its camera (v2), so a posting run needs one
+    if a.session_id and not a.camera:
+        p.error("--session-id needs --camera: the backend names the board the hole is on")
 
     # Drained on leaving, after the report and even if the run raised (#155).
     with (webapp.WebAppPublisher(a.session_id, a.camera, a.backend_url) if a.session_id

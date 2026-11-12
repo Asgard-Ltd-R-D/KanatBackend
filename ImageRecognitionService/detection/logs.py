@@ -30,9 +30,10 @@ LOG_FILE = "detection.log"
 # As the backend's and the app's: rotated daily, keeping ~a week of past days
 BACKUP_DAYS = 7
 
-# The Session whose Run is active, set by service.py: there is one Run at a
-# time (ADR-0008), so every line logged meanwhile is that Session's, the
-# Stream's reader thread and the poster's included
+# The active Session, set by service.py. The WebApp runs one Session at a time
+# (it keeps one active Session), and that Session's Runs — one per camera — are
+# every Run there is, so every line logged meanwhile is that Session's, each
+# Run's Stream reader thread and poster included
 current_session: uuid.UUID | None = None
 
 # The attributes every LogRecord has: anything else on one came from `extra`

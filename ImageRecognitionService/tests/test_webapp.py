@@ -47,7 +47,7 @@ def _backend(monkeypatch, *answers, seconds=0.0):
 def test_a_value_becomes_the_v2_payload(monkeypatch):
     """Template coordinates as they are, off the artwork too, UTC to the
     millisecond with a `Z`, the camera/board it was seen on, and keyed by the
-    Session, the first frame and the rounded Template coordinates."""
+    Session, the camera, the first frame and the rounded Template coordinates."""
     sent = _backend(monkeypatch, 201)
     with webapp.WebAppPublisher("session", CAMERA, "http://backend:8000/") as publisher:
         publisher.publish(_value())
@@ -63,9 +63,21 @@ def test_a_value_becomes_the_v2_payload(monkeypatch):
         "x_mm": -12.3,
         "y_mm": 4.1,
         "source": "model",
-        "idempotency_key": str(uuid.uuid5(uuid.NAMESPACE_URL, "session:13:1500:-4")),
+        "idempotency_key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"session:{CAMERA}:13:1500:-4")),
     }
     assert miss["target_index"] is miss["x_mm"] is miss["y_mm"] is None
+
+
+def test_two_cameras_on_the_same_frame_and_px_get_different_keys(monkeypatch):
+    """Boards share Template space and each Stream counts its own frames, so the
+    same hole position on two boards must not collide into one key (#341)."""
+    a = _backend(monkeypatch, 201)
+    with webapp.WebAppPublisher("session", "cam-a", "http://backend:8000/") as pub:
+        pub.publish(_value())
+    b = _backend(monkeypatch, 201)
+    with webapp.WebAppPublisher("session", "cam-b", "http://backend:8000/") as pub:
+        pub.publish(_value())
+    assert a[0][1]["idempotency_key"] != b[0][1]["idempotency_key"]
 
 
 def _logged(caplog):

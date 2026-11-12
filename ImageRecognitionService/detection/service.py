@@ -150,7 +150,7 @@ class DetectionService:
         self._lock = threading.Lock()
         # Every active Run, keyed by (session_id, camera): a Session watches
         # every enabled camera at once, each on its own Stream and worker
-        # thread (#223). They share the one loaded model, serialised by:
+        # thread (#341). They share the one loaded model, serialised by:
         self._inference_lock = threading.Lock()
         self._runs = {}
 
@@ -260,9 +260,10 @@ class DetectionService:
             run.error = str(error) or type(error).__name__
             # A SystemExit is how a Stream that cannot be opened or read says
             # so: its message is the whole story, with no traceback to add
-            log.error("Run failed: %s", run.error, exc_info=not isinstance(error, SystemExit))
+            log.error("Run on camera %s failed: %s", run.camera, run.error,
+                      exc_info=not isinstance(error, SystemExit), extra={"camera": run.camera})
         finally:
-            log.info("Run ended")
+            log.info("Run on camera %s ended", run.camera, extra={"camera": run.camera})
             with self._lock:
                 key = (run.session_id, run.camera)
                 if self._runs.get(key) is run:
@@ -278,8 +279,8 @@ class DetectionService:
             run.baseline_marks, run.baseline_view = len(marks), baseline_view
             if run.state == "starting":
                 run.enter("watching")
-        log.info("Run watching, %d Baseline Mark(s) on the Board", len(marks),
-                 extra={"baseline_marks": len(marks)})
+        log.info("Run on camera %s watching, %d Baseline Mark(s) on the Board", run.camera, len(marks),
+                 extra={"camera": run.camera, "baseline_marks": len(marks)})
         run.ready.set()
 
 

@@ -125,10 +125,12 @@ def _payload(value, session_id, camera):
     (api_contract.md v2): the board it was seen on is named by `camera`. Its
     key is derived, the same on every retry and on every run of the same
     Recording into the Session: two Bullet Holes first seen on one frame are a
-    match radius apart, more than a rounded px."""
+    match radius apart, more than a rounded px. The `camera` is in the key:
+    boards share Template space and each Stream counts frames from its own
+    start, so two holes on different boards can share a frame and rounded px."""
     x, y = value.template_xy
     key = uuid.uuid5(uuid.NAMESPACE_URL,
-                     f"{session_id}:{value.first_frame}:{round(x)}:{round(y)}")
+                     f"{session_id}:{camera}:{value.first_frame}:{round(x)}:{round(y)}")
     utc = value.first_seen_at.astimezone(timezone.utc)
     mm = value.mm
     return {

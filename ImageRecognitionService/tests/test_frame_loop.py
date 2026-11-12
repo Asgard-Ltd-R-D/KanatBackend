@@ -244,6 +244,41 @@ def test_detections_are_moved_into_board_px_and_dropped_beyond_every_sheet():
     assert look.detections[:, :2].tolist() == [[15.0, 15.0], [115.0, 15.0]]
 
 
+class _ConcurrencyModel(_FakeModel):
+    """Records how many predicts run at once, so a missing inference lock shows
+    as an overlap. Each predict holds for a moment, then answers no boxes."""
+    names = {0: "bullet_hole"}
+
+    def __init__(self):
+        self.live = self.peak = 0
+        self._lock = threading.Lock()
+
+    def predict(self, images, imgsz, conf, verbose=False, classes=None):
+        with self._lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(0.02)
+        with self._lock:
+            self.live -= 1
+        return [types.SimpleNamespace(boxes=[]) for _ in images]
+
+
+def test_the_inference_lock_serialises_runs_on_the_shared_model():
+    """The service shares one model across concurrent Runs behind an inference
+    lock, so only one inference runs at a time (#341); deleting the lock lets
+    the two predicts overlap and the peak reach 2."""
+    model = _ConcurrencyModel()
+    loop = _loop(frames=0)
+    loop.model = model
+    loop.inference_lock = threading.Lock()
+    threads = [threading.Thread(target=lambda: loop._call_detector([None], 64)) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert model.peak == 1
+
+
 def _openable(monkeypatch):
     """`RegisteredFrames.open` on a one-frame `_FakeCap`, every Target found
     and Board space built without a model, artwork or geometry."""

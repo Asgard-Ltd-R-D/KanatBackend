@@ -245,19 +245,23 @@ def test_detections_are_moved_into_board_px_and_dropped_beyond_every_sheet():
 
 
 class _ConcurrencyModel(_FakeModel):
-    """Records how many predicts run at once, so a missing inference lock shows
-    as an overlap. Each predict holds for a moment, then answers no boxes."""
+    """Records how many predicts run at once. The first to enter holds inside
+    `predict` until `release` is set, so a second entering means the inference
+    lock did not serialise them. Answers no boxes."""
     names = {0: "bullet_hole"}
 
     def __init__(self):
         self.live = self.peak = 0
         self._lock = threading.Lock()
+        self.entered = threading.Event()
+        self.release = threading.Event()
 
     def predict(self, images, imgsz, conf, verbose=False, classes=None):
         with self._lock:
             self.live += 1
             self.peak = max(self.peak, self.live)
-        time.sleep(0.02)
+        self.entered.set()
+        self.release.wait(2.0)
         with self._lock:
             self.live -= 1
         return [types.SimpleNamespace(boxes=[]) for _ in images]
@@ -265,18 +269,25 @@ class _ConcurrencyModel(_FakeModel):
 
 def test_the_inference_lock_serialises_runs_on_the_shared_model():
     """The service shares one model across concurrent Runs behind an inference
-    lock, so only one inference runs at a time (#341); deleting the lock lets
-    the two predicts overlap and the peak reach 2."""
+    lock, so only one inference runs at a time (#341). The first call is held
+    inside predict; a second cannot enter while the lock is held, and without
+    the lock it enters at once and the peak reaches 2 -- so this fails if the
+    lock is deleted, without depending on timing."""
     model = _ConcurrencyModel()
     loop = _loop(frames=0)
     loop.model = model
     loop.inference_lock = threading.Lock()
-    threads = [threading.Thread(target=lambda: loop._call_detector([None], 64)) for _ in range(2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert model.peak == 1
+    first = threading.Thread(target=lambda: loop._call_detector([None], 64))
+    first.start()
+    assert model.entered.wait(2.0)   # the first call is now inside predict, holding the lock
+    model.entered.clear()
+    second = threading.Thread(target=lambda: loop._call_detector([None], 64))
+    second.start()
+    entered_again = model.entered.wait(0.3)   # true only if the second entered too (no lock)
+    model.release.set()
+    first.join()
+    second.join()
+    assert model.peak == 1 and not entered_again
 
 
 def _openable(monkeypatch):

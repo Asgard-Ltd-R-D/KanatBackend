@@ -487,6 +487,24 @@ def test_completing_after_a_restart_recovers_boards_from_stored_runs_when_discov
     assert board(res.json())["state"] == "end_unconfirmed"   # the end went unconfirmed: last shots may be missing
 
 
+def test_completing_does_not_rewarn_a_board_the_service_already_ended(client, db, detection, monkeypatch):
+    """A camera removed mid-Session has its Run ended (confirmed) and cleared,
+    but its stored Run row remains. Completing with the service reachable must
+    not re-open that board as end_unconfirmed from the stored Run: the live
+    status, which no longer lists it, is the truth."""
+    session_id = start_session(client, add_camera(db))   # lane1 watching
+    # lane1's Run was ended cleanly and cleared; only its stored Run is left
+    detection.runs.clear()
+    detection_sync._states.pop((session_id, CAM), None)
+    detection_sync._watched.discard((session_id, CAM))
+    monkeypatch.setattr(runs_repo, "cameras_of", lambda d, sid: [CAM])
+
+    client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert ("end", session_id, CAM) not in detection.calls          # not re-ended
+    assert detection_sync.state_of(session_id, CAM).state == "none"  # not warned end_unconfirmed
+
+
 def test_a_tick_during_completion_starts_no_run_for_a_newly_enabled_camera(client, db, detection):
     """A camera enabled in the completion window must not get a Run from a
     concurrent tick: such a Run would outlive the completed Session and its last

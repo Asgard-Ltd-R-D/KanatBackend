@@ -352,18 +352,22 @@ def ending(session: Session) -> Iterator[None]:
         # Session has completed, when their last Bullet Holes would be rejected.
         try:
             live = [run for run in detection_client.status() if run.session_id == session_id]
+            answered = True
         except detection_client.DetectionServiceUnreachable:
-            live = []   # unreachable: fall back to the stored Runs below
-        # The database still holds this Session's Runs after a restart, when
-        # _states is empty and the status() above may be the one call that
-        # failed: seed the boards from them too, so a board the service may
-        # still watch is not skipped. A stored Run watched, so its board warns
-        # (end_unconfirmed) if its end is not confirmed.
-        db = SessionLocal()
-        try:
-            persisted = runs_repo.cameras_of(db, session_id)
-        finally:
-            db.close()
+            live, answered = [], False
+        # Only when the service could not be asked do we fall back to the Runs
+        # the database still holds (after a restart, _states is empty and that
+        # status() may be the one call that failed): a board the service may
+        # still watch is then not skipped. When the service answered, its live
+        # Runs are the truth — a board it no longer holds was already ended, and
+        # a stored Run of it must not re-open it as end_unconfirmed.
+        persisted: list[str] = []
+        if not answered:
+            db = SessionLocal()
+            try:
+                persisted = runs_repo.cameras_of(db, session_id)
+            finally:
+                db.close()
         with _lock:
             for run in live:
                 # A watching or ending Run has watched: keep end_unconfirmed if

@@ -161,12 +161,20 @@ class DetectionService:
 
     def start(self, session_id, camera, stream_url):
         """The Run on this camera's Stream, started unless it is already
-        active, answered once it is watching. The same (session, camera) Run
-        already ending is a 409; another's is let run concurrently. A Run that
-        fails to start, or is not watching by `START_TIMEOUT_S`, is a 502
-        naming why, and leaves nothing behind."""
+        active, answered once it is watching. Another Session's Run still
+        active is a 409 (the backend keeps one Session; this holds the one Run
+        a time per Session, so `current_session` is never another's); this
+        Session's other cameras run concurrently. The same (session, camera)
+        Run already ending is a 409. A Run that fails to start, or is not
+        watching by `START_TIMEOUT_S`, is a 502 naming why, and leaves nothing
+        behind."""
         key = (session_id, camera)
         with self._lock:
+            other = next((r for r in self._runs.values() if r.session_id != session_id), None)
+            if other is not None:
+                log.warning("Run refused for session %s: another Session's Run is active", session_id,
+                            extra={"session_id": session_id, "active_session_id": other.session_id})
+                return 409, {"detail": "another Session's Run is active", "run": other.view()}
             run = self._runs.get(key)
             if run is None:
                 run = self._runs[key] = _Run(session_id, camera)

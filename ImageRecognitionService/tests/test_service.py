@@ -196,6 +196,16 @@ def test_runs_for_different_cameras_watch_concurrently(api):
     assert sorted(api.opened) == sorted([URL, URL2])
 
 
+def test_a_second_sessions_run_is_refused_while_the_first_is_active(api):
+    """The backend keeps one active Session; the service refuses a Run for
+    another Session while one's Runs remain, so a line's `current_session` is
+    never another Session's (#341). A Session's own cameras still run together."""
+    assert api.start(session_id=SESSION, camera=CAMERA)[0] == 200
+    status, body = api.start(session_id=OTHER, camera=CAMERA2, url=URL2)
+    assert status == 409 and body["detail"] == "another Session's Run is active"
+    assert api.opened == [URL]   # the refused Session never opened a Stream
+
+
 def test_a_runs_start_log_names_its_camera(api, caplog):
     """So the two concurrent Runs' lines are told apart by camera."""
     caplog.set_level("INFO")

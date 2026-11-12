@@ -32,8 +32,6 @@ DOCKER_DESKTOP_URL="https://desktop.docker.com/win/main/amd64/241994/Docker%20De
 DOCKER_DESKTOP_SHA=a9814e31049d66156477a86614e83365669677733014ec72f74229623ff3890a
 WSL_URL="https://github.com/microsoft/WSL/releases/download/2.7.14/wsl.2.7.14.0.x64.msi"
 WSL_SHA=db084e536279a59e90a26ec598d8aa8a4dff8309f41d078fd06242953ac1ebcd
-GSTREAMER_URL="https://gstreamer.freedesktop.org/data/pkg/windows/1.28.8/msvc/gstreamer-1.0-msvc-x86_64-1.28.8.exe"
-GSTREAMER_SHA=e4c41ee6ee9c6c32a45d198463ec08d79bac3bd5fa58adc93d13fe4a08abc9d9
 MEDIAMTX_URL="https://github.com/bluenviron/mediamtx/releases/download/v1.21.2/mediamtx_v1.21.2_windows_amd64.zip"
 MEDIAMTX_SHA=a84224f5a490855684e62ba6fb71e80ea2a5e16aed61883bb58380290e93e467
 CUDA_TORCH_INDEX=https://download.pytorch.org/whl/cu126
@@ -61,9 +59,8 @@ echo "$VERSION" > "$OUT/VERSION"
 say "Installers"
 download "$DOCKER_DESKTOP_URL" $DOCKER_DESKTOP_SHA "Docker Desktop Installer.exe"
 download "$WSL_URL" $WSL_SHA "$(basename "$WSL_URL")"
-download "$GSTREAMER_URL" $GSTREAMER_SHA "$(basename "$GSTREAMER_URL")"
 download "$MEDIAMTX_URL" $MEDIAMTX_SHA "$(basename "$MEDIAMTX_URL")"
-cp "$CACHE/Docker Desktop Installer.exe" "$CACHE/$(basename "$WSL_URL")" "$CACHE/$(basename "$GSTREAMER_URL")" "$OUT/installers/"
+cp "$CACHE/Docker Desktop Installer.exe" "$CACHE/$(basename "$WSL_URL")" "$OUT/installers/"
 
 say "The KANAT app's installer"
 (cd "$REPO/WebApp/frontend" && npm ci --no-audit --no-fund && npm run dist:win)
@@ -83,7 +80,7 @@ fi
 
 say "MediaMTX, VideoService and the WebApp's configuration"
 unzip -q -o "$CACHE/$(basename "$MEDIAMTX_URL")" mediamtx.exe -d "$OUT/app/VideoService"
-cp "$REPO/VideoService/mediamtx.yml" "$REPO/VideoService/run_record.ps1" "$REPO/VideoService/LICENSE" "$OUT/app/VideoService/"
+cp "$REPO/VideoService/mediamtx.yml" "$REPO/VideoService/LICENSE" "$OUT/app/VideoService/"
 cp "$REPO/WebApp/docker-compose.yml" "$REPO/WebApp/docker-compose.gpu.yml" "$REPO/WebApp/.env.example" "$OUT/app/WebApp/"
 cp "$REPO/WebApp/deploy/windows/install.ps1" "$REPO/WebApp/deploy/windows/README.md" "$OUT/"
 

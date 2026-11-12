@@ -2,8 +2,9 @@
 
 `WebAppPublisher` is the WebApp's adapter on the pipeline's `publish` seam:
 `process` hands it each Confirmed Bullet Hole once, as a
-`BulletHoleConfirmed`, and it owns everything that is the WebApp's: the v1
-wire format (WebApp/backend/docs/api_contract.md), the idempotency key, the
+`BulletHoleConfirmed`, and it owns everything that is the WebApp's: the v2
+wire format (WebApp/backend/docs/api_contract.md), which names the Run's
+camera/board, the idempotency key, the
 queue, retries and the final drain. It reads the value's fields and nothing
 else, and never imports the pipeline, so it knows nothing of Board space,
 frames or the source.
@@ -44,8 +45,9 @@ class WebAppPublisher:
     posted, but a POST in flight gets one socket timeout to finish.
     """
 
-    def __init__(self, session_id, backend_url):
+    def __init__(self, session_id, camera, backend_url):
         self._session_id = session_id
+        self._camera = camera
         self._url = f"{backend_url.rstrip('/')}/sessions/{session_id}/bullets"
         self._queue = queue.Queue()
         self._stop = threading.Event()
@@ -75,7 +77,7 @@ class WebAppPublisher:
 
     def _post(self, value):
         seen = _clock(value.first_seen_at)
-        payload = _payload(value, self._session_id)
+        payload = _payload(value, self._session_id, self._camera)
         data = json.dumps(payload).encode()
         fields = {"session_id": self._session_id, "first_seen_at": payload["first_seen_at"],
                   "target_index": payload["target_index"], "position": payload["position"]}
@@ -118,18 +120,20 @@ class WebAppPublisher:
             return False
 
 
-def _payload(value, session_id):
+def _payload(value, session_id, camera):
     """A `BulletHoleConfirmed` as POST /sessions/{id}/bullets takes it
-    (api_contract.md v1). Its key is derived, the same on every retry and on
-    every run of the same Recording into the Session: two Bullet Holes first
-    seen on one frame are a match radius apart, more than a rounded px."""
+    (api_contract.md v2): the board it was seen on is named by `camera`. Its
+    key is derived, the same on every retry and on every run of the same
+    Recording into the Session: two Bullet Holes first seen on one frame are a
+    match radius apart, more than a rounded px."""
     x, y = value.template_xy
     key = uuid.uuid5(uuid.NAMESPACE_URL,
                      f"{session_id}:{value.first_frame}:{round(x)}:{round(y)}")
     utc = value.first_seen_at.astimezone(timezone.utc)
     mm = value.mm
     return {
-        "version": "v1",
+        "version": "v2",
+        "camera": camera,
         "first_seen_at": utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
         "position": {"x": x, "y": y},
         "target_index": value.target,

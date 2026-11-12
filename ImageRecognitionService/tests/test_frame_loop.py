@@ -742,7 +742,7 @@ def test_a_live_run_on_a_worker_thread_ends_when_its_caller_stops_it(monkeypatch
 
     def work():
         try:
-            with webapp.WebAppPublisher("session", "http://backend") as publisher:
+            with webapp.WebAppPublisher("session", "cam-a", "http://backend") as publisher:
                 ended.append(nbh.process(loop, None, stride=5, publish=publisher.publish))
         except BaseException as error:   # starting off the main thread must raise nothing
             ended.append(error)

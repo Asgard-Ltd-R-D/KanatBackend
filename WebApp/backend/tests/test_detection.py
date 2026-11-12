@@ -487,6 +487,43 @@ def test_completing_after_a_restart_recovers_boards_from_stored_runs_when_discov
     assert board(res.json())["state"] == "end_unconfirmed"   # the end went unconfirmed: last shots may be missing
 
 
+def test_completing_does_not_rewarn_a_removed_cameras_ended_board(client, db, detection, monkeypatch):
+    """A camera removed mid-Session had its Run ended (confirmed) when it was
+    disabled; its stored Run row remains, and after a restart _states is empty.
+    Completing with the service reachable must not re-open that board as
+    end_unconfirmed: the camera is gone, so its end was the clean removal."""
+    camera = add_camera(db)
+    session_id = start_session(client, camera)   # lane1 watching
+    camera.enabled = False                       # its camera was removed mid-Session
+    detection.runs.clear()                       # its Run was ended and cleared
+    detection_sync._states.clear()               # the backend restarted
+    detection_sync._watched.clear()
+    monkeypatch.setattr(runs_repo, "cameras_of", lambda d, sid: [CAM])
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert ("end", session_id, CAM) not in detection.calls           # not re-ended
+    assert board(res.json(), CAM)["state"] == "none"                 # not a warned board
+    assert detection_sync.state_of(session_id, CAM).state == "none"  # not end_unconfirmed
+
+
+def test_completing_after_a_restart_warns_an_enabled_boards_lost_run(client, db, detection, monkeypatch):
+    """A board still enabled whose Run vanished (a Stream failure or a Detection
+    Service crash drops it) is not in a reachable status either, but absence is
+    not a confirmed end: after a restart it is recovered from its stored Run and
+    warned end_unconfirmed, so missing last shots are not hidden."""
+    session_id = start_session(client, add_camera(db))   # lane1 enabled, watching
+    detection.runs.clear()                               # its Run vanished (not a clean end)
+    detection_sync._states.clear()                       # the backend restarted
+    detection_sync._watched.clear()
+    monkeypatch.setattr(runs_repo, "cameras_of", lambda d, sid: [CAM])
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert ("end", session_id, CAM) in detection.calls       # recovered and its end attempted
+    assert board(res.json(), CAM)["state"] == "end_unconfirmed"   # its last shots may be missing
+
+
 def test_a_tick_during_completion_starts_no_run_for_a_newly_enabled_camera(client, db, detection):
     """A camera enabled in the completion window must not get a Run from a
     concurrent tick: such a Run would outlive the completed Session and its last

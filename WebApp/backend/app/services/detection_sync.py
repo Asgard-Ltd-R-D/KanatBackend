@@ -352,16 +352,21 @@ def ending(session: Session) -> Iterator[None]:
         # Session has completed, when their last Bullet Holes would be rejected.
         try:
             live = [run for run in detection_client.status() if run.session_id == session_id]
+            answered = True
         except detection_client.DetectionServiceUnreachable:
-            live = []   # unreachable: fall back to the stored Runs below
-        # The database still holds this Session's Runs after a restart, when
-        # _states is empty and the status() above may be the one call that
-        # failed: seed the boards from them too, so a board the service may
-        # still watch is not skipped. A stored Run watched, so its board warns
-        # (end_unconfirmed) if its end is not confirmed.
+            live, answered = [], False
+        live_cameras = {run.camera for run in live}
+        # After a restart _states is empty; recover the Session's other boards
+        # from its stored Runs. A stored board the service does not list either
+        # ended cleanly (its camera was removed, so it reads disabled now) or was
+        # lost unconfirmed (its camera still enabled, its Run having crashed or
+        # its Stream failed — service.py drops such a Run too). Warn only the
+        # latter; when the service could not be asked at all, none is confirmed.
         db = SessionLocal()
         try:
-            persisted = runs_repo.cameras_of(db, session_id)
+            stored = runs_repo.cameras_of(db, session_id)
+            enabled = ({c.alias for c in cameras_repo.list_all(db) if c.enabled}
+                       if stored and answered else set())
         finally:
             db.close()
         with _lock:
@@ -371,9 +376,15 @@ def ending(session: Session) -> Iterator[None]:
                 if run.state in ("watching", "ending"):
                     _watched.add((session_id, run.camera))
                 boards.add(run.camera)
-            for camera in persisted:
-                _watched.add((session_id, camera))
-                boards.add(camera)
+            for camera in stored:
+                if camera in live_cameras:
+                    continue   # handled above
+                if not answered or camera in enabled:
+                    # unconfirmed: the service could not be asked, or an enabled
+                    # board's Run is gone (lost, not a clean removal)
+                    _watched.add((session_id, camera))
+                    boards.add(camera)
+                # else: its camera was removed and its Run already ended; leave it
         boards = sorted(boards)
         if not boards:
             yield

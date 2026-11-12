@@ -39,7 +39,7 @@ def make_bullet(rank=1):
 def make_session(status="active"):
     return SimpleNamespace(
         id=SESSION_ID, name="Range 1", status=status, started_at=NOW,
-        ended_at=None, record=False, camera_id=None, created_at=NOW, active_bullet_holes=[],
+        ended_at=None, created_at=NOW, active_bullet_holes=[],
     )
 
 
@@ -111,8 +111,8 @@ def test_ending_the_session_is_published_with_its_end_time(client, subscribed, m
     assert client.patch(f"/sessions/{SESSION_ID}", json={"status": "completed"}).status_code == 200
     event = next_event(subscribed)
 
-    assert (event["type"], event["name"], event["status"], event["record"]) == (
-        "session_updated", "Range 1", "completed", False
+    assert (event["type"], event["name"], event["status"]) == (
+        "session_updated", "Range 1", "completed"
     )
     assert datetime.fromisoformat(event["ended_at"]) == NOW
 

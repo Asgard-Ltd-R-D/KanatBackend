@@ -7,9 +7,8 @@ traceback: uvicorn's own report of it is dropped (core/logs.py), so one
 failure counts once; work after the answer that raises is a line of its own.
 A client that goes away before an answer is a warning, not a 500.
 
-The status poll (every 3 s from each window), the health check and each byte
-range a replay player asks for would bury everything else, so they are logged
-at DEBUG unless they fail.
+The status poll (every 3 s from each window) and the health check would bury
+everything else, so they are logged at DEBUG unless they fail.
 """
 import logging
 import re
@@ -20,12 +19,12 @@ from app.core.logs import request_id
 
 log = logging.getLogger("app.request")
 
-_QUIET = re.compile(r"^/(status|health)$|^/sessions/[^/]+/recordings/[^/]+/video$")
+_QUIET = re.compile(r"^/(status|health)$")
 
 
 class RequestLog:
-    """Pure ASGI middleware, so a streamed response (the live stream, a replay)
-    is logged when it ends, with its true duration."""
+    """Pure ASGI middleware, so a streamed response (the live stream) is logged
+    when it ends, with its true duration."""
 
     def __init__(self, app):
         self.app = app

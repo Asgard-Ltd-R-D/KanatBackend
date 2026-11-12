@@ -1,5 +1,5 @@
 # On the range PC, the WebApp backend and the Detection Service (profile "app").
-# MediaMTX with GStreamer (VideoService) and the Electron app run on the PC
+# MediaMTX (VideoService) and the Electron app run on the PC
 # itself: the cameras' multicast does not reach containers on Docker Desktop.
 # The containers reach MediaMTX at host.docker.internal.
 #
@@ -21,8 +21,7 @@
 #   docker compose --profile app up -d --build    the backend and the Detection Service, as on the range PC
 services:
   # The backend, as start-all.sh runs it on this PC: it applies the
-  # migrations, then answers the app on 127.0.0.1:8000. It reads and deletes
-  # MediaMTX's recordings, and keeps the replay cache, in VideoService.
+  # migrations, then answers the app on 127.0.0.1:8000.
   backend:
     profiles: ["app"]
     build: ./backend
@@ -34,23 +33,16 @@ services:
       # SQLite on the webapp_db_data volume, mounted at /data below
       DATABASE_URL: sqlite:////data/kanat.db
       MEDIAMTX_API_URL: http://host.docker.internal:9997
-      MEDIAMTX_PLAYBACK_URL: http://host.docker.internal:9996
       # The Stream a Run watches, as the Detection Service's container reaches it
       MEDIAMTX_RTSP_URL: rtsp://host.docker.internal:8554
       DETECTION_SERVICE_URL: http://detection:8010
-      RECORDINGS_DIR: /video/recordings
-      REPLAY_CACHE_DIR: /video/replay-cache
       MEDIAMTX_CONFIG: /video/mediamtx.yml
       LOG_DIR: /var/log/kanat
-      # How MediaMTX, on the PC, starts a camera's recorder: powershell on Windows
-      RECORD_LAUNCHER: ${RECORD_LAUNCHER:-bash}
-      # The PC's zone: MediaMTX names its recordings in local time
+      # The PC's zone, so log timestamps are in local time
       TZ: ${KANAT_TZ:-Asia/Jerusalem}
     volumes:
       - webapp_db_data:/data
       - ${KANAT_LOG_DIR:-./logs}:/var/log/kanat
-      - ${KANAT_VIDEO_DIR:-../VideoService}/recordings:/video/recordings
-      - ${KANAT_VIDEO_DIR:-../VideoService}/replay-cache:/video/replay-cache
       - ${KANAT_VIDEO_DIR:-../VideoService}/mediamtx.yml:/video/mediamtx.yml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"

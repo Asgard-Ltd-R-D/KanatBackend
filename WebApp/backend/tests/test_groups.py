@@ -51,7 +51,7 @@ def client(monkeypatch):
         ]
         return SimpleNamespace(
             id=SESSION_ID, name="Range 1", status="completed", started_at=NOW, ended_at=NOW,
-            record=False, created_at=NOW, bullet_holes=holes, active_bullet_holes=holes,
+            created_at=NOW, bullet_holes=holes, active_bullet_holes=holes,
         )
 
     monkeypatch.setattr(sessions_repo, "get_with_bullets", get_with_bullets)

@@ -194,7 +194,7 @@ def retaking_baseline(session_id: uuid.UUID, camera: str) -> bool:
 
 def retake_baseline(session_id: uuid.UUID, camera: str) -> None:
     """Ends the board's Run and asks for a new one, which takes its baseline
-    from what the camera sees now, the Session and its recording left active.
+    from what the camera sees now, the Session left active.
     The Run is stopped, not ended as at completion: the Candidates it has
     open are the re-hung sheet's change, not shots, and are dropped unposted.
     A Session completed meanwhile reads `ending`, and `watch` ends the Run it

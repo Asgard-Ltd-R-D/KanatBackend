@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
   Installs KANAT on an offline Windows 10/11 PC from the bundle this script
-  sits in (build-bundle.sh): Docker Desktop with WSL 2, GStreamer, MediaMTX,
-  the WebApp's containers and the KANAT app.
+  sits in (build-bundle.sh): Docker Desktop with WSL 2, MediaMTX, the WebApp's
+  containers and the KANAT app.
 
 .DESCRIPTION
   Run it as Administrator, as the Windows user that will operate the range
@@ -13,7 +13,7 @@
   It can be run again at any time: each step checks what is already there.
   The first run on a PC without WSL turns it on and asks for a restart; run
   it again after the restart. Running it from a newer bundle updates KANAT,
-  keeping its database and recordings.
+  keeping its database.
 
   The SQLite database (on a Docker volume) starts empty: the bundle carries no data.
 
@@ -25,11 +25,11 @@
 
 .PARAMETER InstallDir
   Where KANAT's files go (default C:\Kanat): WebApp\ (the containers'
-  configuration) and VideoService\ (MediaMTX, its recordings).
+  configuration) and VideoService\ (MediaMTX and its config).
 
 .PARAMETER TimeZone
-  The PC's time zone as an IANA name (default Asia/Jerusalem): MediaMTX names
-  its recordings in local time, which the backend's container reads.
+  The PC's time zone as an IANA name (default Asia/Jerusalem): the containers
+  read it so their log timestamps are in local time.
 
 .PARAMETER CpuOnly
   Run the Detection Service on the CPU even if an NVIDIA GPU is usable.
@@ -176,59 +176,20 @@ if (-not $up) {
 }
 Ok "running"
 
-# --- 3. GStreamer ----------------------------------------------------------
-
-Step "GStreamer (joins each camera's multicast for MediaMTX)"
-function Find-Gst {
-    $root = [Environment]::GetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64", "Machine")
-    foreach ($dir in @($root, "$env:ProgramFiles\gstreamer\1.0\msvc_x86_64") | Where-Object { $_ }) {
-        $exe = Join-Path $dir "bin\gst-launch-1.0.exe"
-        if (Test-Path $exe) { return $exe }
-    }
-    return $null
-}
-$gst = Find-Gst
-if (-not $gst) {
-    $installer = Get-ChildItem (Join-Path $Bundle "installers") -Filter "gstreamer-1.0-msvc-x86_64-*.exe" | Select-Object -First 1
-    # Its runtime only, with the Visual C++ runtime it embeds, for all users
-    Run $installer.FullName "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS /TYPE=runtime" | Out-Null
-    $gst = Find-Gst
-    if (-not $gst) { Fail "GStreamer installed, but gst-launch-1.0.exe was not found" }
-    Ok "installed"
-} else {
-    Ok "already installed"
-}
-$gstBin = Split-Path $gst
-$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-if (($machinePath -split ";") -notcontains $gstBin) {
-    [Environment]::SetEnvironmentVariable("Path", "$machinePath;$gstBin", "Machine")
-    Ok "added to PATH: $gstBin"
-}
-$env:Path += ";$gstBin"
-& $gst --version | Select-Object -First 1 | ForEach-Object { Ok $_ }
-$inspect = Join-Path $gstBin "gst-inspect-1.0.exe"
-foreach ($element in @("udpsrc", "rtpjitterbuffer", "rtph264depay", "h264parse", "rtspclientsink")) {
-    & $inspect $element *> $null
-    if ($LASTEXITCODE -ne 0) { Fail "GStreamer has no ${element}: reinstall it with every runtime component" }
-}
-Ok "has every element the cameras need"
-
-# --- 4. KANAT's files -------------------------------------------------------
+# --- 3. KANAT's files -------------------------------------------------------
 
 Step "KANAT's files in $InstallDir"
 New-Item -ItemType Directory -Force -Path $WebAppDir, $VideoDir, $LogDir | Out-Null
-# The configuration is replaced by the bundle's; .env, the recordings and the
-# replay cache stay
+# The configuration is replaced by the bundle's; .env stays
 Copy-Item -Recurse -Force (Join-Path $Bundle "app\WebApp\*") $WebAppDir
 Get-Process mediamtx -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 1
 Copy-Item -Recurse -Force (Join-Path $Bundle "app\VideoService\*") $VideoDir
-New-Item -ItemType Directory -Force -Path (Join-Path $VideoDir "recordings"), (Join-Path $VideoDir "replay-cache") | Out-Null
 # The log folder is written by the app as this user, and by the containers
 & icacls.exe $LogDir /grant "*S-1-5-32-545:(OI)(CI)M" /T /Q | Out-Null   # BUILTIN\Users: modify
 Ok "copied; logs in $LogDir"
 
-# --- 5. Settings: .env and kanat-config.json --------------------------------
+# --- 4. Settings: .env and kanat-config.json --------------------------------
 
 Step "Settings"
 $envFile = Join-Path $WebAppDir ".env"
@@ -241,7 +202,6 @@ if (Test-Path $envFile) {
 $values["COMPOSE_PROFILES"] = "app"
 $values["KANAT_VERSION"] = $Version
 $values["KANAT_LOG_DIR"] = $LogDir
-$values["RECORD_LAUNCHER"] = "powershell"
 $values["KANAT_TZ"] = $TimeZone
 $values.Keys | ForEach-Object { "$_=$($values[$_])" } | Set-Content -Path $envFile -Encoding ASCII
 Ok ".env written"
@@ -258,20 +218,16 @@ if ($LogsPasswordHash) { $config["logsPasswordHash"] = $LogsPasswordHash }
 Write-Utf8 $appConfig ($config | ConvertTo-Json)
 Ok "kanat-config.json written for every user"
 
-# --- 6. The network for the cameras -----------------------------------------
+# --- 5. The network for the cameras -----------------------------------------
 
 Step "Network: firewall and the cameras' adapter"
-# GStreamer receives the cameras' multicast: allowed in, which Windows would
-# otherwise ask about in a window nobody sees, and block
-Get-NetFirewallRule -DisplayName "KANAT GStreamer camera video" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName "KANAT GStreamer camera video" -Direction Inbound -Action Allow `
-    -Program $gst -Protocol UDP -Profile Domain, Private, Public | Out-Null
-# MediaMTX receives the cameras' RTP multicast directly (backend camera_sync.py),
-# so its inbound UDP is allowed, as GStreamer's is
+# MediaMTX receives the cameras' RTP multicast directly (backend camera_sync.py):
+# its inbound UDP is allowed, which Windows would otherwise ask about in a window
+# nobody sees, and block
 Get-NetFirewallRule -DisplayName "KANAT MediaMTX camera video" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule -DisplayName "KANAT MediaMTX camera video" -Direction Inbound -Action Allow `
     -Program (Join-Path $VideoDir "mediamtx.exe") -Protocol UDP -Profile Domain, Private, Public | Out-Null
-# Its TCP service ports (RTSP, the control and playback APIs) stay off the
+# Its TCP service ports (RTSP, the control API) stay off the
 # network: the app and the containers reach them on 127.0.0.1 / host.docker.internal
 Get-NetFirewallRule -DisplayName "KANAT MediaMTX local only" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule -DisplayName "KANAT MediaMTX local only" -Direction Inbound -Action Block `
@@ -312,7 +268,7 @@ if ($CameraInterface) {
     Note "no camera adapter given: Windows picks the adapter for multicast"
 }
 
-# --- 7. Never sleep ---------------------------------------------------------
+# --- 6. Never sleep ---------------------------------------------------------
 
 Step "Power: the PC never sleeps"
 & powercfg.exe /change standby-timeout-ac 0
@@ -320,7 +276,7 @@ Step "Power: the PC never sleeps"
 & powercfg.exe /hibernate off
 Ok "sleep and hibernation off"
 
-# --- 8. The containers -----------------------------------------------------
+# --- 7. The containers -----------------------------------------------------
 
 Step "Loading the containers' images"
 # The GPU image (several GB) only where an NVIDIA driver could run it
@@ -364,7 +320,7 @@ Pop-Location
 if ($composeExit -ne 0) { Fail "docker compose up (see its output above)" }
 Ok "started; Docker starts them again whenever it starts"
 
-# --- 9. MediaMTX at login ---------------------------------------------------
+# --- 8. MediaMTX at login ---------------------------------------------------
 
 Step "MediaMTX, started when $env:USERNAME logs in"
 $taskName = "KANAT MediaMTX"
@@ -378,14 +334,14 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Se
 Start-ScheduledTask -TaskName $taskName
 Ok "registered and started"
 
-# --- 10. The KANAT app ------------------------------------------------------
+# --- 9. The KANAT app ------------------------------------------------------
 
 Step "The KANAT app"
 $setup = Get-ChildItem (Join-Path $Bundle "installers") -Filter "KANAT-Setup-*.exe" | Select-Object -First 1
 Run $setup.FullName "/S" | Out-Null
 Ok "installed (desktop and Start menu shortcut: KANAT)"
 
-# --- 11. Check -------------------------------------------------------------
+# --- 10. Check -------------------------------------------------------------
 
 Step "Checking"
 $deadline = (Get-Date).AddMinutes(3)

@@ -11,16 +11,16 @@ export function getSession(id: string): Promise<Session> {
 }
 
 // A Session spans every currently-enabled camera (one board each); no camera is chosen
-export function createSession(name: string, record: boolean): Promise<Session> {
+export function createSession(name: string): Promise<Session> {
   return apiFetch<Session>('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ name, record }),
+    body: JSON.stringify({ name }),
   })
 }
 
 export function updateSession(
   id: string,
-  patch: { name?: string; status?: 'active' | 'completed'; record?: boolean },
+  patch: { name?: string; status?: 'active' | 'completed' },
 ): Promise<Session> {
   return apiFetch<Session>(`/sessions/${id}`, {
     method: 'PATCH',
@@ -29,8 +29,8 @@ export function updateSession(
 }
 
 // A new Run from a fresh baseline for one board (camera alias), after its Target
-// Sheet is re-hung: the Session and its recording stay active, and that board's
-// detection reads "starting" until it is ready
+// Sheet is re-hung: the Session stays active, and that board's detection reads
+// "starting" until it is ready
 export function retakeBaseline(id: string, camera: string): Promise<Session> {
   return apiFetch<Session>(`/sessions/${id}/baseline/${encodeURIComponent(camera)}`, { method: 'POST' })
 }

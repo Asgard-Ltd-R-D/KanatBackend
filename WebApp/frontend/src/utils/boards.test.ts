@@ -20,7 +20,7 @@ function hole(camera_alias: string | null, rank: number): BulletHole {
 
 function session(partial: Partial<Session>): Session {
   return {
-    id: 's', name: 'S', status: 'active', started_at: '', ended_at: null, record: false, created_at: '', ...partial,
+    id: 's', name: 'S', status: 'active', started_at: '', ended_at: null, created_at: '', ...partial,
   }
 }
 

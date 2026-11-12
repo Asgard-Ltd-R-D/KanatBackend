@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Video } from 'lucide-react'
 import { createSession } from '../../api/sessions'
 import { Modal } from '../UI/Modal'
-import { Toggle } from '../UI/Toggle'
 
 interface Props {
   open: boolean
@@ -15,16 +13,14 @@ export function NewSessionModal({ open, onClose }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [name, setName] = useState('')
-  const [record, setRecord] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setName('')
-    setRecord(false)
   }, [open])
 
   const mutation = useMutation({
-    mutationFn: () => createSession(name.trim() || 'Unnamed Session', record),
+    mutationFn: () => createSession(name.trim() || 'Unnamed Session'),
     onSuccess: (session) => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       onClose()
@@ -51,17 +47,9 @@ export function NewSessionModal({ open, onClose }: Props) {
       />
 
       {/* A Session watches every enabled camera, one board each */}
-      <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+      <p className="text-xs text-slate-500 dark:text-slate-400 mb-5">
         Detection watches every enabled camera, each as its own board, for the whole session.
       </p>
-
-      <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2.5 mb-5">
-        <div className="flex items-center gap-3">
-          <Video size={16} className="text-slate-400 dark:text-slate-500 shrink-0" />
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Record video</p>
-        </div>
-        <Toggle checked={record} onChange={setRecord} label="Record video" />
-      </div>
 
       {mutation.isError && (
         <p className="text-red-500 dark:text-red-400 text-sm mb-4">{(mutation.error as Error).message}</p>

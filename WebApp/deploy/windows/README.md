@@ -5,7 +5,7 @@ This folder installs everything KANAT needs on a Windows PC with no internet. It
 | Part | Runs |
 |---|---|
 | The backend (with its SQLite database) and the Detection Service | Docker Desktop (WSL 2), started with Windows |
-| MediaMTX, with GStreamer joining each camera's multicast | on Windows, started by Task Scheduler at login |
+| MediaMTX, reading each camera's multicast | on Windows, started by Task Scheduler at login |
 | The KANAT app | on Windows (Start menu, desktop) |
 
 The app's Logs tab reads the services' log files directly, so there is no log stack (Loki, Grafana) to run.
@@ -42,15 +42,15 @@ Other options:
 
 ## What it changes on the PC
 
-- **Windows features:** WSL and Virtual Machine Platform turned on, WSL 2.7.14, Docker Desktop 4.94.0 (licence accepted, starts at login, no update checks), and GStreamer 1.28.8 (runtime, on `PATH`).
+- **Windows features:** WSL and Virtual Machine Platform turned on, WSL 2.7.14, Docker Desktop 4.94.0 (licence accepted, starts at login, no update checks).
 - **Files:**
   - `C:\Kanat\WebApp`: the containers' configuration, with `.env`.
-  - `C:\Kanat\VideoService`: MediaMTX, its recordings and the replay cache.
+  - `C:\Kanat\VideoService`: MediaMTX and its config.
   - `C:\ProgramData\Kanat\logs`: every service's log.
   - `C:\ProgramData\Kanat\kanat-config.json`: the app's settings.
 - **Firewall:**
-  - GStreamer is allowed inbound UDP: the cameras' multicast.
-  - MediaMTX is blocked from the network; it serves this PC only.
+  - MediaMTX is allowed inbound UDP: the cameras' multicast.
+  - MediaMTX's TCP service ports are blocked from the network; it serves this PC only.
 - **Network:**
   - The camera adapter is set to the Private profile.
   - A persistent route sends `224.0.0.0/4` (multicast) through it.
@@ -60,7 +60,7 @@ Other options:
 
 ## Update
 
-Run `install.ps1` from a newer bundle. It replaces the images and the configuration. The database, the recordings, the logs and `.env` stay.
+Run `install.ps1` from a newer bundle. It replaces the images and the configuration. The database, the logs and `.env` stay.
 
 ## When something doesn't work
 
@@ -69,6 +69,6 @@ Run these from `C:\Kanat\WebApp`:
 | Symptom | Look at |
 |---|---|
 | The app says the backend is offline | `docker compose ps`, `docker compose logs backend` |
-| A camera shows "No signal" | Task Scheduler: is "KANAT MediaMTX" running? Is the firewall rule "KANAT GStreamer camera video" there? Are the camera adapter and the route right (`route print 224*`)? |
+| A camera shows "No signal" | Task Scheduler: is "KANAT MediaMTX" running? Is the firewall rule "KANAT MediaMTX camera video" there? Are the camera adapter and the route right (`route print 224*`)? |
 | Detection never says ready | `docker compose logs detection` |
 | Anything | The app's Logs tab, or the files in `C:\ProgramData\Kanat\logs` |

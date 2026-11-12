@@ -17,8 +17,7 @@ if TYPE_CHECKING:
 class Run(Base):
     """A Run of the Detection Service that watched the Session, stored the
     first time the backend saw it watching (ADR-0009). It names its camera by
-    alias, which also names the camera's recordings, so it keeps matching them
-    once the camera is deleted."""
+    alias, a stable key that survives the camera's deletion."""
 
     __tablename__ = "runs"
     # A Run is told apart by its camera and its baseline frame's time: read

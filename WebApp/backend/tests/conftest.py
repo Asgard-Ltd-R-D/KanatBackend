@@ -13,7 +13,6 @@ from app.repositories import runs as runs_repo
 from app.repositories import sessions as sessions_repo
 from app.services import camera_sync, detection_sync, mediamtx
 from app.services import cameras as camera_svc
-from app.services import recordings as recording_svc
 from tests.fakes import NOW, FakeDB, FakeDetectionService
 
 
@@ -38,19 +37,11 @@ def no_detection_states():
     detection_sync._since.clear()
 
 
-@pytest.fixture(autouse=True)
-def no_parts_in_use():
-    """Each test starts with no replay copy being played."""
-    recording_svc._in_use.clear()
-    recording_svc._undeleted.clear()
-
-
 @pytest.fixture
 def db_state(monkeypatch):
-    """What sync reads from the database: the cameras and whether to record."""
-    state = SimpleNamespace(cameras=[], record=False)
+    """What sync reads from the database: the cameras."""
+    state = SimpleNamespace(cameras=[])
     monkeypatch.setattr(cameras_repo, "list_all", lambda db: state.cameras)
-    monkeypatch.setattr(sessions_repo, "recording_session_active", lambda db: state.record)
     return state
 
 

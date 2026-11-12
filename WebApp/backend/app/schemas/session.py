@@ -65,17 +65,14 @@ class BoardGrouping(BaseModel):
 
 class SessionCreate(BaseModel):
     name: str
-    record: bool = False
 
 
 class SessionUpdate(BaseModel):
-    # Unknown fields are refused: a Session's name, status and recording change,
-    # nothing else
+    # Unknown fields are refused: a Session's name and status change, nothing else
     model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None
     status: Optional[Literal["active", "completed"]] = None
-    record: Optional[bool] = None
 
 
 class SessionResponse(BaseModel):
@@ -86,7 +83,6 @@ class SessionResponse(BaseModel):
     status: str
     started_at: datetime
     ended_at: Optional[datetime]
-    record: bool
     created_at: datetime
     bullet_holes: list[BulletHoleInSession] = Field(default=[], validation_alias="active_bullet_holes")
     # Each Run that watched it, any board, in taken_at order
@@ -105,6 +101,5 @@ class SessionListItem(BaseModel):
     status: str
     started_at: datetime
     ended_at: Optional[datetime]
-    record: bool
     created_at: datetime
     bullet_count: int = 0

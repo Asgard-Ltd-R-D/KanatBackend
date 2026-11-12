@@ -4,7 +4,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession, selectinload
 
-from app.models import BulletHole, RecordingInterval, Session
+from app.models import BulletHole, Session
 
 
 def get(db: DBSession, session_id: uuid.UUID) -> Session | None:
@@ -18,9 +18,9 @@ def exists(db: DBSession, session_id: uuid.UUID) -> bool:
 
 
 def get_for_update(db: DBSession, session_id: uuid.UUID) -> Session | None:
-    """The Session, its row locked until commit: bullets are ranked, and its
-    recording interval opened or closed, under it. Read afresh, even when `db`
-    loaded it before the lock (a Session's end waits for its Run first)."""
+    """The Session, its row locked until commit: bullets are ranked under it.
+    Read afresh, even when `db` loaded it before the lock (a Session's end waits
+    for its Run first)."""
     return db.query(Session).filter(Session.id == session_id).with_for_update().populate_existing().first()
 
 
@@ -48,28 +48,6 @@ def list_with_bullet_counts(db: DBSession) -> list[tuple[Session, int]]:
 def list_active(db: DBSession) -> list[Session]:
     """The active Sessions, the earliest started first."""
     return db.query(Session).filter(Session.status == "active").order_by(Session.started_at).all()
-
-
-def recording_session_active(db: DBSession) -> bool:
-    """Whether an active Session is recording now (has an open interval)."""
-    return (
-        db.query(RecordingInterval.id)
-        .join(Session, RecordingInterval.session_id == Session.id)
-        .filter(Session.status == "active", RecordingInterval.ended_at.is_(None))
-        .first()
-        is not None
-    )
-
-
-def intervals_of_other_sessions(db: DBSession, session_id: uuid.UUID) -> list[RecordingInterval]:
-    """Every other Session's recording intervals."""
-    return db.query(RecordingInterval).filter(RecordingInterval.session_id != session_id).all()
-
-
-def all_intervals(db: DBSession) -> list[RecordingInterval]:
-    """Every Session's recording intervals, for checking which recordings a
-    Session that exists still owns (recordings.retry_deletions)."""
-    return db.query(RecordingInterval).all()
 
 
 class SecondActiveSession(Exception):

@@ -12,5 +12,5 @@ test('a refusal repeated within a minute is counted, then logged with the count'
 
 test('a different refusal is logged at once', () => {
   refusalToLog('GET /cameras 503 Database unavailable', 0)
-  assert.deepEqual(refusalToLog('GET /recordings 503 Database unavailable', 1), { log: true, repeats: 0 })
+  assert.deepEqual(refusalToLog('GET /sessions 503 Database unavailable', 1), { log: true, repeats: 0 })
 })

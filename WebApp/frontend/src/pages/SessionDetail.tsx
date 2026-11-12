@@ -11,10 +11,6 @@ import { StatTile } from '../components/UI/StatTile'
 import { ConfirmDialog } from '../components/UI/ConfirmDialog'
 import { BoardTabs } from '../components/Session/BoardTabs'
 import { CameraFeeds } from '../components/Camera/CameraFeeds'
-import { RecordingControl } from '../components/Session/RecordingControl'
-import { RecordingsCard } from '../components/Session/RecordingsCard'
-import { ReplayModal, ReplayTarget } from '../components/Session/ReplayModal'
-import { useRecordings } from '../hooks/useRecordings'
 import { useCameras } from '../hooks/useCameras'
 import { useSessionLive } from '../hooks/useSessionLive'
 import { boardsOf } from '../utils/boards'
@@ -26,7 +22,6 @@ export function SessionDetail() {
   const qc = useQueryClient()
   const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [, setTick] = useState(0)
-  const [replay, setReplay] = useState<ReplayTarget | null>(null)
 
   const { data: session, isLoading, refetch } = useQuery({
     queryKey: ['session', id],
@@ -35,7 +30,6 @@ export function SessionDetail() {
   })
 
   useSessionLive(id, session?.status === 'active')
-  const recordings = useRecordings(id!, session?.status === 'completed')
   const { data: cameras } = useCameras()
 
   useEffect(() => {
@@ -117,8 +111,6 @@ export function SessionDetail() {
         </div>
 
         <div className="flex items-center gap-2">
-          {active && <RecordingControl session={session} />}
-
           {active && (
             <button
               onClick={() => setShowEndConfirm(true)}
@@ -182,30 +174,8 @@ export function SessionDetail() {
         </div>
       )}
 
-      {/* Completed: the recordings, one row per camera */}
-      {session.status === 'completed' && (
-        <RecordingsCard
-          recordings={recordings.data}
-          isLoading={recordings.isLoading}
-          isError={recordings.isError}
-          onRetry={() => recordings.refetch()}
-          onPlay={alias => setReplay({ alias })}
-        />
-      )}
-
       {/* Per board: detection, retake, Group, bullet log and manual-add */}
       <BoardTabs session={session} boards={boards} />
-
-      {session.status === 'completed' && (
-        <ReplayModal
-          sessionId={session.id}
-          recordings={recordings.data ?? []}
-          runs={session.runs ?? []}
-          bullets={bullets}
-          target={replay}
-          onChange={setReplay}
-        />
-      )}
 
       <ConfirmDialog
         open={showEndConfirm}

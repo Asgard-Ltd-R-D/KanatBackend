@@ -4,7 +4,6 @@ export interface Session {
   status: 'active' | 'completed'
   started_at: string
   ended_at: string | null
-  record: boolean // the cameras are recorded while this session is active
   created_at: string
   bullet_holes?: BulletHole[]
   bullet_count?: number
@@ -125,7 +124,7 @@ export interface WhepSession {
 export type LiveEvent =
   | { type: 'bullet_created'; bullet: BulletHole }
   | { type: 'bullet_deleted'; bullet_id: string }
-  | { type: 'session_updated'; name: string; status: Session['status']; ended_at: string | null; record: boolean }
+  | { type: 'session_updated'; name: string; status: Session['status']; ended_at: string | null }
   | { type: 'detection_updated'; camera_alias: string; detection: Detection } // the board named by camera_alias
   | { type: 'run_moved'; camera_alias: string; taken_at: string } // a board's Run kept a new place: the refetch brings it
 
@@ -149,16 +148,6 @@ export interface Camera extends CameraInput {
   status: CameraStatus
 }
 
-export interface RecordingSpan {
-  start: string
-  duration_s: number
-}
-
-// What one camera recorded during a session
-export interface CameraRecording {
-  alias: string
-  spans: RecordingSpan[]
-}
 
 // From GET /status: whether the backend reaches the video service (MediaMTX)
 // and the Detection Service. The backend answering at all is its own status.

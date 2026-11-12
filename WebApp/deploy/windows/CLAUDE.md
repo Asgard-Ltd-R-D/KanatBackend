@@ -5,13 +5,13 @@ The bundle that installs KANAT on an offline Windows 10 22H2 (build 19045+) or 1
 | File | What |
 |---|---|
 | `build-bundle.sh` | Runs on the Mac. Downloads the pinned installers (checked against their SHA-256), builds the backend and detection images for `linux/amd64`, saves the base images, builds the app's installer, copies the app files, writes `SHA256SUMS.txt`, and zips it all into `~/KanatBundle/KANAT-<version>{/,.zip}`. CPU-only by default; `KANAT_GPU=1` adds the CUDA image (+4 GB). |
-| `install.ps1` | Runs on the PC as Administrator: WSL 2, Docker Desktop, GStreamer, the files to `C:\Kanat`, `.env`, `kanat-config.json`, firewall, multicast route, power, images, `docker compose up`, the "KANAT MediaMTX" task, the app, and a health check. Safe to run again: it skips what's done and keeps `.env`, data and logs. |
+| `install.ps1` | Runs on the PC as Administrator: WSL 2, Docker Desktop, the files to `C:\Kanat`, `.env`, `kanat-config.json`, firewall, multicast route, power, images, `docker compose up`, the "KANAT MediaMTX" task, the app, and a health check. Safe to run again: it skips what's done and keeps `.env`, data and logs. |
 | `README.md` | Requirements, install, what it changes, update, troubleshooting. |
 
 ## How it runs on the PC
 
 - **Docker Desktop (WSL 2):** the backend (with its SQLite database on a volume) and detection (`WebApp/docker-compose.yml`, profile `app`). The app's Logs tab reads the log files directly, so there is no Loki/Grafana stack.
-- **Windows:** MediaMTX + GStreamer (Task Scheduler at login), the KANAT app.
+- **Windows:** MediaMTX (Task Scheduler at login), the KANAT app.
 - **Containers reach MediaMTX** through `host.docker.internal`; the app reaches everything on `127.0.0.1`.
 
 ## Rules
@@ -28,4 +28,4 @@ The bundle that installs KANAT on an offline Windows 10 22H2 (build 19045+) or 1
 - **Nothing from a developer's database goes in the bundle:** the database starts empty on the PC.
 - **Every failure prints `FAILED: <what> (<what to do>)`**, so an operator can send that one line.
 - **Before building a bundle:** parse both `.ps1` files (`[System.Management.Automation.Language.Parser]::ParseFile`) and run PSScriptAnalyzer. CI does this on `windows-latest`.
-- **Not verifiable on the Mac:** WSL, Docker Desktop, GStreamer, the firewall, the route, the scheduled task. Say so; don't claim it works until it's been run on a Windows PC.
+- **Not verifiable on the Mac:** WSL, Docker Desktop, the firewall, the route, the scheduled task. Say so; don't claim it works until it's been run on a Windows PC.

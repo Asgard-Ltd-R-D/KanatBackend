@@ -8,8 +8,7 @@ interface Props {
   onDelete: (bullet: BulletHole) => void
 }
 
-// A completed session's Bullet Holes, in order, each one deletable. The video
-// is in the Recordings card, not here.
+// A completed session's Bullet Holes, in order, each one deletable.
 export function BulletLog({ bullets, onDelete }: Props) {
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm dark:shadow-none">

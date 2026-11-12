@@ -16,8 +16,8 @@ class Camera(Base):
     """
 
     __tablename__ = "cameras"
-    # Unique whatever the case: the alias names the camera's recordings
-    # folder, and Windows sees Cam1 and cam1 as one folder
+    # Unique whatever the case: an alias names a stream path, and Windows sees
+    # Cam1 and cam1 as one name
     __table_args__ = (Index("uq_cameras_alias_ci", text("lower(alias)"), unique=True),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)

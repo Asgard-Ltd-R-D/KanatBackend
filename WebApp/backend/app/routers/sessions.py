@@ -11,7 +11,6 @@ from app.schemas.live import SessionUpdatedEvent
 from app.schemas.session import SessionCreate, SessionListItem, SessionResponse, SessionUpdate
 from app.services import camera_sync, detection_sync, groups
 from app.services import cameras as camera_svc
-from app.services import recordings as recording_svc
 from app.services import sessions as svc
 
 log = logging.getLogger(__name__)
@@ -31,7 +30,6 @@ def _response(session: Session) -> SessionResponse:
 @router.post("", response_model=SessionResponse, status_code=201)
 def create_session(body: SessionCreate, background: BackgroundTasks, db: DBSession = Depends(get_db)):
     session = svc.create_session(body, db)
-    # Starts the cameras recording if this Session records
     camera_sync.sync_soon(db)
     # The Session spans every enabled camera, one board each: answered "starting"
     # at once, each Run asked for after the answer, as it takes seconds to watch.
@@ -65,13 +63,10 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = D
         session = svc.update_session(session_id, body, db)
     if body.status == "active":
         detection_sync.reopened(session_id)
-    # Ending a Session or switching its recording starts or stops the cameras recording
     camera_sync.sync_soon(db)
     hub.publish_from_thread(
         session_id,
-        SessionUpdatedEvent(
-            name=session.name, status=session.status, ended_at=session.ended_at, record=session.record
-        ),
+        SessionUpdatedEvent(name=session.name, status=session.status, ended_at=session.ended_at),
     )
     return _response(session)
 
@@ -94,24 +89,7 @@ def retake_baseline(session_id: uuid.UUID, camera: str, background: BackgroundTa
 
 @router.delete("/{session_id}", status_code=204)
 def delete_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
-    # Its Run ends first: nothing is left for it to post into, and the
-    # Detection Service holds one Run at a time
+    # Its Runs end first: nothing is left for them to post into
     with detection_sync.ending(svc.get_session_or_404(session_id, db)):
-        windows = svc.delete_session(session_id, db)
-    # Stop the recording first if this Session was recording, then delete its
-    # video: no Session is left to replay it
-    camera_sync.sync_soon(db)
-    others = svc.other_recorded_windows(session_id, db)
-    # Deleting may wait for a replay download of the same part: the connection
-    # goes back to the pool first
-    db.close()
-    try:
-        deleted = recording_svc.delete_session_video(windows, others)
-        if deleted:
-            log.info("Deleted %s recording file(s) of session %s", deleted, session_id,
-                     extra={"session_id": session_id, "files_deleted": deleted})
-    except OSError:
-        # The Session is already deleted; its files expire with MediaMTX's
-        # recordDeleteAfter anyway
-        log.exception("Deleting the video of session %s failed", session_id)
+        svc.delete_session(session_id, db)
     return Response(status_code=204)

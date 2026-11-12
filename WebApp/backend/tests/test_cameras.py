@@ -1,39 +1,44 @@
+import json
+import re
+
 import pytest
 from pydantic import ValidationError
 
+from app.config.settings import settings
 from app.schemas.camera import CameraInput
 from app.services import camera_sync, mediamtx
 from app.services import cameras as camera_svc
 from tests.fakes import FakeMediaMTX, make_camera
 
+read_config_paths = mediamtx.config_paths
+
 
 # --- the path each camera gets ---
 
 def test_a_camera_path_reads_its_multicast_over_rtp():
-    config = camera_sync.path_config(make_camera(iface="eth1"), record=False)
+    config = camera_sync.path_config(make_camera(iface="eth1"))
 
     assert config["source"] == "udp+rtp://226.226.226.112:112?interface=eth1"
     assert "m=video 112 RTP/AVP 96" in config["rtpSDP"]
     assert "c=IN IP4 226.226.226.112" in config["rtpSDP"]
     assert config["runOnInit"] == ""  # no GStreamer in the pipeline
-    assert config["record"] is False
-    assert config["recordDeleteAfter"] == "1d"
+    assert config["record"] is False  # the WebApp no longer records
 
 
 def test_no_iface_reads_on_the_default_interface():
-    source = camera_sync.path_config(make_camera(), record=False)["source"]
+    source = camera_sync.path_config(make_camera())["source"]
     assert source == "udp+rtp://226.226.226.112:112"
     assert "interface=" not in source
 
 
 def test_a_card_name_with_spaces_is_percent_encoded():
     # Windows friendly names hold spaces; the source URL must stay parseable
-    source = camera_sync.path_config(make_camera(iface="Ethernet 2"), record=False)["source"]
+    source = camera_sync.path_config(make_camera(iface="Ethernet 2"))["source"]
     assert source == "udp+rtp://226.226.226.112:112?interface=Ethernet%202"
 
 
 def test_a_path_reading_udp_rtp_is_a_cameras():
-    config = camera_sync.path_config(make_camera(), record=False)
+    config = camera_sync.path_config(make_camera())
     assert camera_sync.is_camera_path("cam1", config, mediamtx.ConfigPaths())
 
 
@@ -46,7 +51,7 @@ def test_a_path_left_running_gstreamer_is_still_a_cameras(script):
 
 @pytest.mark.parametrize("alias", ["CON", "nul", "Com1", "LPT9", "aux"])
 def test_a_name_windows_keeps_for_a_device_is_refused(alias):
-    # The alias names the camera's recordings folder
+    # The alias names the camera's stream path
     with pytest.raises(ValidationError, match="Windows keeps for a device"):
         CameraInput(alias=alias, mcast_ip="226.226.226.112", mcast_port=112)
 
@@ -68,7 +73,7 @@ def test_a_new_camera_is_added(monkeypatch, db_state):
 
 def test_an_unchanged_camera_is_left_alone(monkeypatch, db_state):
     db_state.cameras = [make_camera()]
-    mtx = FakeMediaMTX(monkeypatch, {"cam1": camera_sync.path_config(make_camera(), record=False)})
+    mtx = FakeMediaMTX(monkeypatch, {"cam1": camera_sync.path_config(make_camera())})
 
     camera_sync.sync(None)
 
@@ -77,7 +82,7 @@ def test_an_unchanged_camera_is_left_alone(monkeypatch, db_state):
 
 def test_a_removed_camera_is_deleted_but_paths_from_mediamtx_yml_are_kept(monkeypatch, db_state):
     mtx = FakeMediaMTX(monkeypatch, {
-        "old": camera_sync.path_config(make_camera("old"), record=False),
+        "old": camera_sync.path_config(make_camera("old")),
         "loopdemo": {"runOnDemand": "./run_loopdemo.sh", "runOnInit": ""},
     })
 
@@ -144,7 +149,7 @@ def test_a_blank_iface_means_none():
 def test_a_name_from_mediamtx_yml_cannot_be_a_camera(monkeypatch):
     monkeypatch.setattr(mediamtx, "list_path_configs", lambda: {
         "loopdemo": {"runOnDemand": "./run_loopdemo.sh", "runOnInit": ""},
-        "cam1": camera_sync.path_config(make_camera(), record=False),
+        "cam1": camera_sync.path_config(make_camera()),
     })
 
     assert camera_sync.taken_by_config("loopdemo") is True
@@ -233,7 +238,7 @@ def test_a_fifth_camera_is_refused(monkeypatch):
 
 
 def test_a_cameras_name_cannot_be_changed(monkeypatch):
-    # It names the camera's stream, which the detection model reads, and its recordings
+    # It names the camera's stream, which the detection model reads
     from fastapi import HTTPException
 
     monkeypatch.setattr(camera_svc, "get_camera_or_404", lambda camera_id, db: make_camera("lane1"))
@@ -242,3 +247,153 @@ def test_a_cameras_name_cannot_be_changed(monkeypatch):
     with pytest.raises(HTTPException) as refused:
         camera_svc.update_camera(None, body, None)
     assert refused.value.status_code == 409
+
+
+# --- mediamtx.yml read as real YAML, and its ~regular expressions ---
+
+@pytest.mark.parametrize("text, names", [
+    ("paths:\n  loopdemo:\n    source: publisher\n", {"loopdemo"}),
+    ("paths:\n    loopdemo:\n        source: publisher\n", {"loopdemo"}),        # four spaces
+    ('paths:\n  "quoted":\n    source: publisher\n', {"quoted"}),               # quoted key
+    ("paths: {inline: {source: publisher}, other: {}}\n", {"inline", "other"}),  # inline mapping
+    ("logLevel: info\n", set()),                                                 # no paths
+    ("paths: [\n", None),                                                        # not valid YAML: unknown
+])
+def test_mediamtx_yml_path_names_are_read_as_yaml(monkeypatch, tmp_path, text, names):
+    config = tmp_path / "mediamtx.yml"
+    config.write_text(text)
+    monkeypatch.setattr(settings, "mediamtx_config", str(config))
+
+    paths = read_config_paths()
+    assert (None if paths is None else paths.names) == names
+
+
+def _config_paths(monkeypatch, tmp_path, text):
+    config = tmp_path / "mediamtx.yml"
+    config.write_text(text)
+    monkeypatch.setattr(settings, "mediamtx_config", str(config))
+    return read_config_paths()
+
+
+def test_a_regexp_path_in_mediamtx_yml_defines_every_name_it_matches(monkeypatch, tmp_path):
+    paths = _config_paths(monkeypatch, tmp_path, 'paths:\n  "~^external[0-9]+$":\n    source: publisher\n  all_others:\n')
+
+    assert paths.defines("external1") and paths.defines("external42")
+    assert not paths.defines("cam1") and not paths.defines("external")
+    assert paths.catch_all and not paths.defines("anything")   # the catch-all leaves names to cameras
+
+
+@pytest.mark.parametrize("pattern", [
+    "(?P<x",                 # not even valid
+    "^external[[:digit:]]+$",  # Go's POSIX class; Python reads a different set
+    "(?i)^external1$",       # flags
+    "\\bexternal",            # word boundary: Unicode in Python, ASCII in Go
+    "^external\\pN$",         # Unicode classes
+    "^external1\\z",          # \z: Go only
+    "(?P<n>external)1",      # named groups
+])
+def test_a_regexp_python_may_read_differently_leaves_mediamtx_yml_unknown(monkeypatch, tmp_path, pattern):
+    text = "paths:\n  " + json.dumps("~" + pattern) + ":\n"
+    assert _config_paths(monkeypatch, tmp_path, text) is None
+
+
+@pytest.mark.parametrize("pattern, matching, other", [
+    ("^external[0-9]+$", "external1", "external"),
+    ("^cam\\d{2}$", "cam12", "cam١٢"),   # \d is ASCII digits, as in Go
+    ("^(?:door|gate)_[a-z]+$", "gate_east", "gate_East"),
+    ("ext[^0-9]", "my-extA", "ext1"),          # unanchored, as Go's MatchString
+])
+def test_a_regexp_with_the_same_meaning_in_go_is_matched(monkeypatch, tmp_path, pattern, matching, other):
+    paths = _config_paths(monkeypatch, tmp_path, "paths:\n  " + json.dumps("~" + pattern) + ":\n")
+
+    assert paths.defines(matching) and not paths.defines(other)
+
+
+def test_regexp_and_all_others_definitions_are_never_deleted_by_the_sync(monkeypatch, tmp_path, db_state):
+    # MediaMTX lists each definition under its key; these look like camera paths
+    _config_paths(monkeypatch, tmp_path, 'paths:\n  "~^external[0-9]+$":\n  all_others:\n')
+    monkeypatch.setattr(mediamtx, "config_paths", read_config_paths)
+    mtx = FakeMediaMTX(monkeypatch, {
+        "~^external[0-9]+$": camera_sync.path_config(make_camera("external")),
+        "all_others": camera_sync.playback_only_config(),
+    })
+
+    camera_sync.sync(None)
+
+    assert mtx.calls == []
+
+
+def test_a_camera_named_like_a_regexp_path_is_refused_and_never_applied(monkeypatch, db_state):
+    monkeypatch.setattr(camera_sync, "_conflicts", set())
+    regexp = mediamtx.ConfigPaths(patterns=(re.compile("^external[0-9]+$"),))
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: regexp)
+    mtx = FakeMediaMTX(monkeypatch, {})
+
+    assert camera_sync.taken_by_config("external1")
+    assert not camera_sync.taken_by_config("cam1")
+    db_state.cameras = [make_camera("external1")]   # created while MediaMTX was down
+    camera_sync.sync(None)
+    assert mtx.calls == []                          # not added over the regexp's path
+
+
+# --- camera sync with disabled cameras and an unknown config ---
+
+def test_a_disabled_camera_keeps_a_reserved_path(monkeypatch, db_state):
+    db_state.cameras = [make_camera(enabled=False)]
+    mtx = FakeMediaMTX(monkeypatch, {"cam1": camera_sync.path_config(make_camera())})
+
+    camera_sync.sync(None)
+
+    assert mtx.paths["cam1"]["source"] == "publisher"  # stops reading the camera
+
+
+def test_a_deleted_camera_that_was_disabled_loses_its_path_too(monkeypatch, db_state):
+    mtx = FakeMediaMTX(monkeypatch, {"cam1": camera_sync.playback_only_config()})
+
+    camera_sync.sync(None)
+
+    assert mtx.calls == [("delete", "cam1")]
+
+
+def test_a_mediamtx_yml_path_with_a_cameras_settings_is_still_never_touched(monkeypatch, db_state):
+    # Same settings as a disabled camera's path, but mediamtx.yml defines it
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths(frozenset({"static"})))
+    mtx = FakeMediaMTX(monkeypatch, {"static": camera_sync.playback_only_config()})
+
+    camera_sync.sync(None)                      # no camera: not deleted
+    db_state.cameras = [make_camera("static")]
+    camera_sync.sync(None)                      # a camera of that name: not patched
+    assert mtx.calls == []
+
+
+def test_without_mediamtx_yml_the_sync_changes_no_path(monkeypatch, db_state):
+    # Unreadable, or a regexp not trusted: any name might be one of its paths,
+    # which MediaMTX lists only under the regexp
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: None)
+    monkeypatch.setattr(camera_sync, "_config_unknown", False)
+    mtx = FakeMediaMTX(monkeypatch, {
+        "~^external[[:digit:]]+$": camera_sync.path_config(make_camera("external")),
+        "stale": camera_sync.path_config(make_camera("stale")),
+        "cam1": camera_sync.playback_only_config(),
+    })
+    db_state.cameras = [make_camera("external1"), make_camera("cam1")]
+
+    camera_sync.sync(None)
+
+    assert mtx.calls == []      # nothing added, patched or deleted
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths())
+    camera_sync.sync(None)      # known again: applied
+    assert ("add", "external1") in [call[:2] for call in mtx.calls]
+
+
+def test_a_path_left_recording_by_an_older_backend_is_stopped(monkeypatch, db_state):
+    # An older backend turned recording on; the new sync patches it off, since
+    # the WebApp no longer records and there is no UI to stop it otherwise
+    db_state.cameras = [make_camera()]
+    legacy = {**camera_sync.path_config(make_camera()), "record": True}
+    mtx = FakeMediaMTX(monkeypatch, {"cam1": legacy})
+
+    camera_sync.sync(None)
+
+    assert ("patch", "cam1", ["record"]) in mtx.calls
+    assert mtx.paths["cam1"]["record"] is False

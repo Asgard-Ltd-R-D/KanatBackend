@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, Index, String, Uuid, text
+from sqlalchemy import CheckConstraint, Index, String, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -12,7 +12,6 @@ from app.core.types import UtcDateTime
 
 if TYPE_CHECKING:
     from app.models.bullet_hole import BulletHole
-    from app.models.recording_interval import RecordingInterval
     from app.models.run import Run
 
 
@@ -31,9 +30,6 @@ class Session(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
     started_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    # Whether the operator has recording on for this Session now; when it was on
-    # is in recording_intervals
-    record: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     # A Session spans every enabled camera: it has no single camera. Which
     # boards it watched is in its Runs and its Bullet Holes' camera_alias
     created_at: Mapped[datetime] = mapped_column(
@@ -54,13 +50,6 @@ class Session(Base):
         order_by="BulletHole.first_seen_at",
         viewonly=True,
         overlaps="bullet_holes,session",
-    )
-
-    recording_intervals: Mapped[list["RecordingInterval"]] = relationship(  # type: ignore[name-defined]
-        "RecordingInterval",
-        back_populates="session",
-        cascade="all, delete-orphan",
-        order_by="RecordingInterval.started_at",
     )
 
     runs: Mapped[list["Run"]] = relationship(  # type: ignore[name-defined]

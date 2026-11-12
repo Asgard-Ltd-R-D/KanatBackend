@@ -144,9 +144,9 @@ function carrier(from: RunGeometry, to: RunGeometry, holes: Point[]): (p: Point)
 }
 
 // The carriers worked out, by the Baseline View carried onto, then all else
-// they depend on: a replay draws the Overlay on every timeupdate, and a carry
-// shift weighs every pair of point and mark (#246). The view stays the same
-// object across refetches (React Query keeps what did not change)
+// they depend on: the live view redraws the Overlay as the Run re-registers,
+// and a carry shift weighs every pair of point and mark (#246). The view stays
+// the same object across refetches (React Query keeps what did not change)
 const carriersOnto = new WeakMap<RunGeometry['baseline_view'], Map<string, (p: Point) => Point>>()
 
 // Each Bullet Hole's position in Run `run`'s template coordinates: as stored

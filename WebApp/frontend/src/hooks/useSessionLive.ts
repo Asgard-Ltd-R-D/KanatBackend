@@ -45,7 +45,7 @@ function applyEvent(session: Session, event: LiveEvent): Session {
     case 'bullet_deleted':
       return removeBullet(session, event.bullet_id)
     case 'session_updated':
-      return { ...session, name: event.name, status: event.status, ended_at: event.ended_at, record: event.record }
+      return { ...session, name: event.name, status: event.status, ended_at: event.ended_at }
     case 'detection_updated': {
       // Upsert the board named by camera_alias, keeping the others
       const others = (session.detections ?? []).filter(d => d.camera_alias !== event.camera_alias)

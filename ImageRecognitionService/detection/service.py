@@ -392,6 +392,7 @@ if __name__ == "__main__":
                         "else the repo's WebApp/logs when it exists)")
     a = p.parse_args()
     log_file = logs.configure(a.log_dir)
+    nbh.preset_capture_options()   # once, so the Runs' stream opens never race over it
     log.info("Loading the detector %s", a.model, extra={"log_file": str(log_file)})
     model = nbh.load_model(a.model)
     device = warm(model)   # before the control API binds: until warmed, nothing answers

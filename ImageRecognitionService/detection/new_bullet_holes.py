@@ -496,22 +496,20 @@ def _open_stream(url):
     bounded by `STREAM_TIMEOUT_MS`, so a connection that stays open but stops
     delivering frames fails a read, a drop to recover from, instead of
     blocking for FFmpeg's default 30 s (#84). Decoded on one thread, with
-    `STREAM_CAPTURE_OPTIONS` set while it opens unless the environment sets
-    its own (#279). `OPENCV_FFMPEG_CAPTURE_OPTIONS` is process-wide, so
-    `_STREAM_OPEN_LOCK` serialises the set-open-remove across the concurrent
-    Runs' streams; a reconnect on a reader thread takes it the same way."""
-    with _STREAM_OPEN_LOCK:
-        preset = "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ
+    `STREAM_CAPTURE_OPTIONS` set while it opens unless it is already set (#279):
+    the service presets it once (`preset_capture_options`), so its concurrent
+    Runs leave it alone and never race; the command line sets it per open."""
+    preset = "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ
+    if not preset:
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = STREAM_CAPTURE_OPTIONS
+    try:
+        return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
+                                [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
+                                 cv2.CAP_PROP_READ_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
+                                 cv2.CAP_PROP_N_THREADS, STREAM_DECODER_THREADS])
+    finally:
         if not preset:
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = STREAM_CAPTURE_OPTIONS
-        try:
-            return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
-                                    [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
-                                     cv2.CAP_PROP_READ_TIMEOUT_MSEC, STREAM_TIMEOUT_MS,
-                                     cv2.CAP_PROP_N_THREADS, STREAM_DECODER_THREADS])
-        finally:
-            if not preset:
-                os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+            os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
 
 
 def _same_file(path, others):
@@ -1707,9 +1705,14 @@ STREAM_TIMEOUT_MS = 5000   # PROVISIONAL
 # threading holds back about a frame per thread, 339 → 65 ms behind.
 STREAM_CAPTURE_OPTIONS = "rtsp_transport;tcp|analyzeduration;100000|probesize;32768"   # PROVISIONAL
 STREAM_DECODER_THREADS = 1   # PROVISIONAL: one core keeps up with 1080p25 on the Mac
-# `OPENCV_FFMPEG_CAPTURE_OPTIONS` is process-wide, so concurrent Runs opening or
-# reconnecting at once would race over it; held across set, open and remove
-_STREAM_OPEN_LOCK = threading.Lock()
+
+
+def preset_capture_options():
+    """Set the process-wide `OPENCV_FFMPEG_CAPTURE_OPTIONS` once, so a service
+    running many Runs at once never has them race to set and unset it per open
+    (`_open_stream` leaves a value already there alone). An operator's own
+    setting is kept (#279). Not called on the single-Run command line."""
+    os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", STREAM_CAPTURE_OPTIONS)
 
 # The wait before each reopen of a dropped stream, for as long as the run goes
 # on (#84). An attempt that opens a silent stream, or cannot reach the host,

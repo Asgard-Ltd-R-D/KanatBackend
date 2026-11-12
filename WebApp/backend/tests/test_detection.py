@@ -192,6 +192,21 @@ def test_completing_a_session_ends_its_run_before_it_reads_completed(client, db,
     ]
 
 
+def test_completing_a_session_ends_every_board_together(client, db, detection):
+    """Each enabled camera's Run is ended, in parallel (detection_sync ends the
+    boards at once), before the Session reads completed."""
+    add_camera(db, "lane1")
+    add_camera(db, "lane2")
+    session_id = uuid.UUID(client.post("/sessions", json={"name": "Range 1"}).json()["id"])
+
+    res = client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+
+    assert res.json()["status"] == "completed"
+    assert {c for c in detection.calls if c[0] == "end"} == {
+        ("end", session_id, "lane1"), ("end", session_id, "lane2"),
+    }
+
+
 def test_completing_a_session_without_a_camera_ends_nothing(client, db, detection):
     session_id = client.post("/sessions", json={"name": "Range 1"}).json()["id"]
 

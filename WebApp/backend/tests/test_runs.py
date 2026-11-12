@@ -263,6 +263,24 @@ def test_every_status_read_moves_watched_until_on(client, detection, camera):
     assert run["places"] == places(first.registered)   # the Board held still
 
 
+def test_completing_publishes_run_moved_from_the_ends_answer(client, detection, camera):
+    """The boards are ended in parallel on completion (detection_sync._in_parallel):
+    a run_moved pushed from that end must still reach the live stream, so the end
+    runs on a worker that can publish, not a bare thread."""
+    session_id = start_session(client, camera)
+    key = (session_id, CAM)
+    detection.runs[key] = later(detection.runs[key], 7, dx=3.0)   # moved since the last read
+
+    with listening(session_id) as queue:
+        client.patch(f"/sessions/{session_id}", json={"status": "completed"})
+        pushed = events(queue)
+
+    [run] = runs_of(client, session_id)
+    assert ("run_moved", taken_at(run)) in [
+        (e["type"], datetime.fromisoformat(e["taken_at"])) for e in pushed if e["type"] == "run_moved"
+    ]
+
+
 def test_the_ends_answer_sets_the_last_watched_until_and_keeps_its_place_if_it_moved(client, detection, camera):
     session_id = start_session(client, camera)
     key = (session_id, CAM)

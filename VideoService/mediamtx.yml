@@ -40,13 +40,7 @@ webrtcAllowOrigins: ["app://kanat", "http://localhost:5173"]
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: ""
 
-# Serves recorded video to the WebApp backend (session replay), so only this PC
-playback: yes
-playbackAddress: 127.0.0.1:9996
-playbackEncryption: no # (or yes with certs)
-
-# The WebApp backend adds the camera paths and turns recording on and off
-# through it, so only this PC
+# The WebApp backend adds the camera paths through it, so only this PC
 api: yes
 apiAddress: 127.0.0.1:9997
 

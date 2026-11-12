@@ -5,7 +5,7 @@
 FROM python:3.12-slim
 
 # Pango for WeasyPrint's PDFs, with fonts to draw them in; tzdata so TZ (set
-# to the PC's zone) reads MediaMTX's recording names, which are in local time
+# to the PC's zone) gives log timestamps in local time
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 \
     libpangoft2-1.0-0 \

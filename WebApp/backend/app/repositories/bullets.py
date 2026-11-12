@@ -13,10 +13,12 @@ def find_by_idempotency_key(db: DBSession, session_id: uuid.UUID, key: str) -> B
     ).first()
 
 
-def count_active(db: DBSession, session_id: uuid.UUID) -> int:
-    """How many of the Session's Bullet Holes are not deleted."""
+def count_active(db: DBSession, session_id: uuid.UUID, camera_alias: str | None) -> int:
+    """How many of the Session's Bullet Holes on this board are not deleted.
+    Ranks run per board, so each board's log numbers from 1."""
     return db.query(func.count(BulletHole.id)).filter(
         BulletHole.session_id == session_id,
+        BulletHole.camera_alias.is_(camera_alias) if camera_alias is None else BulletHole.camera_alias == camera_alias,
         BulletHole.deleted_at.is_(None),
     ).scalar()
 
@@ -30,11 +32,13 @@ def get_active(db: DBSession, session_id: uuid.UUID, bullet_id: uuid.UUID) -> Bu
     ).first()
 
 
-def move_up_after(db: DBSession, session_id: uuid.UUID, rank: int) -> None:
-    """Moves the Session's non-deleted Bullet Holes ranked after `rank` up one
-    rank. Committed with the next save."""
+def move_up_after(db: DBSession, session_id: uuid.UUID, camera_alias: str | None, rank: int) -> None:
+    """Moves this board's non-deleted Bullet Holes ranked after `rank` up one
+    rank. Ranks run per board, so only the same board's holes move. Committed
+    with the next save."""
     db.query(BulletHole).filter(
         BulletHole.session_id == session_id,
+        BulletHole.camera_alias.is_(camera_alias) if camera_alias is None else BulletHole.camera_alias == camera_alias,
         BulletHole.deleted_at.is_(None),
         BulletHole.rank > rank,
     ).update({"rank": BulletHole.rank - 1}, synchronize_session=False)

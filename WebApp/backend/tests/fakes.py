@@ -71,27 +71,37 @@ def place(at, dx=0.0, sx=0.25):
 
 class FakeDetectionService:
     """The Detection Service's control API (services/detection_client.py),
-    holding one Run at a time as the service does: `run`, or None. Every start
-    and end made is in `calls`. A start is answered with `start_error` raised,
-    a 409 while another Session's Run is active or this one's ending, or else
-    as watching, the Run already watching if it is this Session's, or a new
-    one whose Baseline View is taken later than any before, registered and
-    looked at only then; `down` makes every call go unanswered. An end, or a
-    stop (`judge` false), is answered with the Run's Baseline View and how
-    far it watched. `on_status`, `on_start` and
-    `on_end` see each call as it happens, a Run being ended reading
-    `ending`."""
+    holding a Run per board as the service now does: `runs`, keyed by
+    (session_id, camera). Every start and end made is in `calls`. A start is
+    answered with `start_error` raised, a 409 while that board's Run is ending,
+    or else as watching, the Run already watching for that board, or a new one
+    whose Baseline View is taken later than any before, registered and looked at
+    only then; `down` makes every call go unanswered. An end, or a stop (`judge`
+    false), is answered with the Run's Baseline View and how far it watched.
+    `on_status`, `on_start` and `on_end` see each call as it happens, a Run being
+    ended reading `ending`; `on_start`/`on_end` are passed (session_id, camera).
+
+    Different boards run concurrently; there is no cross-Session refusal (the
+    backend only ever watches the one active Session's cameras)."""
 
     def __init__(self, monkeypatch):
         self.calls = []
-        self.run = None
+        self.runs: dict[tuple, "detection_client.Run"] = {}
         self.start_error = None
         self.down = False
         self.on_status = lambda: None
-        self.on_start = self.on_end = lambda session_id: None
+        self.on_start = self.on_end = lambda session_id, camera: None
         monkeypatch.setattr(detection_client, "start_run", self._start)
         monkeypatch.setattr(detection_client, "end_run", self._end)
         monkeypatch.setattr(detection_client, "status", self._status)
+
+    def set_run(self, session_id, camera="cam1", state="watching", taken_at=None):
+        """Place a Run for a board, as a status read would show it; returns it."""
+        taken_at = taken_at or NOW + timedelta(seconds=len(self.runs) + 1)
+        run = detection_client.Run(session_id, camera, state, baseline_view(taken_at),
+                                   place(taken_at), taken_at)
+        self.runs[(session_id, camera)] = run
+        return run
 
     def _answer(self):
         if self.down:
@@ -100,32 +110,33 @@ class FakeDetectionService:
     def _status(self):
         self.on_status()
         self._answer()
-        return self.run
+        return list(self.runs.values())
 
-    def _start(self, session_id, stream_url):
-        self.calls.append(("start", session_id, stream_url))
-        self.on_start(session_id)
+    def _start(self, session_id, camera, stream_url):
+        self.calls.append(("start", session_id, camera, stream_url))
+        self.on_start(session_id, camera)
         self._answer()
         if self.start_error:
             raise self.start_error
-        if self.run and self.run.session_id != session_id:
-            raise detection_client.RunRefused(409, "another Session's Run is active", self.run.session_id)
-        if self.run and self.run.state == "ending":
-            raise detection_client.RunRefused(409, "the Session's Run is ending", self.run.session_id)
-        if not self.run:   # a repeat start is answered with the Run already watching
+        key = (session_id, camera)
+        run = self.runs.get(key)
+        if run and run.state == "ending":
+            raise detection_client.RunRefused(409, "the board's Run is ending", session_id)
+        if not run:   # a repeat start is answered with the Run already watching
             taken_at = NOW + timedelta(seconds=len(self.calls))
-            self.run = detection_client.Run(session_id, "watching", baseline_view(taken_at),
-                                             place(taken_at), taken_at)
-        return self.run
+            run = self.runs[key] = detection_client.Run(session_id, camera, "watching",
+                                                        baseline_view(taken_at), place(taken_at), taken_at)
+        return run
 
-    def _end(self, session_id, judge=True):
-        self.calls.append(("end" if judge else "stop", session_id))
-        run = self.run if not self.down and self.run and self.run.session_id == session_id else None
+    def _end(self, session_id, camera, judge=True):
+        self.calls.append(("end" if judge else "stop", session_id, camera))
+        key = (session_id, camera)
+        run = self.runs.get(key) if not self.down else None
         if run:
-            self.run = run._replace(state="ending")
-        self.on_end(session_id)
+            self.runs[key] = run._replace(state="ending")
+        self.on_end(session_id, camera)
         self._answer()
         if not run:
             return None
-        self.run = None
+        del self.runs[key]
         return run._replace(state="ended")

@@ -31,7 +31,10 @@ function removeBullet(session: Session, bulletId: string): Session {
     ...session,
     bullet_holes: bullets
       .filter((b) => b.id !== bulletId)
-      .map((b) => (b.rank > gone.rank ? { ...b, rank: b.rank - 1 } : b)),
+      // Ranks run per board, so only the deleted bullet's own board moves up
+      .map((b) =>
+        b.camera_alias === gone.camera_alias && b.rank > gone.rank ? { ...b, rank: b.rank - 1 } : b
+      ),
   }
 }
 
@@ -43,9 +46,13 @@ function applyEvent(session: Session, event: LiveEvent): Session {
       return removeBullet(session, event.bullet_id)
     case 'session_updated':
       return { ...session, name: event.name, status: event.status, ended_at: event.ended_at, record: event.record }
-    case 'detection_updated':
-      return { ...session, detection: event.detection }
+    case 'detection_updated': {
+      // Upsert the board named by camera_alias, keeping the others
+      const others = (session.detections ?? []).filter(d => d.camera_alias !== event.camera_alias)
+      return { ...session, detections: [...others, { camera_alias: event.camera_alias, detection: event.detection }] }
+    }
     case 'run_moved':
+      // The new place is carried by the refetch (reconcile) this event triggers
       return session
   }
 }

@@ -52,7 +52,9 @@ _REPORT_HTML = """<!DOCTYPE html>
   </div>
   <div class="groups">
     <h2>Groups</h2>
-    {% if grouping.groups %}
+    {% for bg in groupings %}
+    <h3 style="font-size: 12px; margin: 14px 0 6px;">Board: {{ bg.camera_alias or 'No board' }}</h3>
+    {% if bg.grouping.groups %}
     <table>
       <thead>
         <tr>
@@ -67,7 +69,7 @@ _REPORT_HTML = """<!DOCTYPE html>
         </tr>
       </thead>
       <tbody>
-        {% for g in grouping.groups %}
+        {% for g in bg.grouping.groups %}
         <tr>
           <td>Target {{ g.target_index + 1 }}</td>
           <td>{{ g.n }}</td>
@@ -83,14 +85,16 @@ _REPORT_HTML = """<!DOCTYPE html>
     </table>
     {% endif %}
     <p class="note">
-      In no Group: Misses: {{ grouping.misses }}
-      &nbsp;&middot;&nbsp; Without a Position: {{ grouping.without_position }}
+      In no Group: Misses: {{ bg.grouping.misses }}
+      &nbsp;&middot;&nbsp; Without a Position: {{ bg.grouping.without_position }}
     </p>
+    {% endfor %}
   </div>
   <table>
     <thead>
       <tr>
         <th>#</th>
+        <th>Board</th>
         <th>Detected At (UTC)</th>
         <th>Position X</th>
         <th>Position Y</th>
@@ -100,6 +104,7 @@ _REPORT_HTML = """<!DOCTYPE html>
       {% for b in bullets %}
       <tr>
         <td>{{ b.rank }}</td>
+        <td>{{ b.camera_alias or '—' }}</td>
         <td>{{ b.first_seen_at.strftime('%H:%M:%S') }}</td>
         <td>{{ "%.1f" | format(b.position_x) }}</td>
         <td>{{ "%.1f" | format(b.position_y) }}</td>
@@ -141,12 +146,18 @@ _jinja_env = Environment(autoescape=True)
 _jinja_env.filters["mm"] = lambda v: "—" if v is None else f"{v:.1f}"
 
 
+def _by_board_then_rank(bullets):
+    """Holes grouped by board (alias order, no-board last), each board's in
+    rank order: ranks run per board now."""
+    return sorted(bullets, key=lambda b: (b.camera_alias is None, b.camera_alias or "", b.rank))
+
+
 def generate_pdf(session: Session) -> bytes:
-    bullets = sorted(session.bullet_holes, key=lambda b: b.rank)
+    bullets = _by_board_then_rank(session.bullet_holes)
     html = _jinja_env.from_string(_REPORT_HTML).render(
         session=session,
         bullets=bullets,
-        grouping=groups.grouping(bullets),
+        groupings=groups.groupings(bullets),
         duration=_session_duration(session),
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     )
@@ -158,12 +169,13 @@ def generate_pdf(session: Session) -> bytes:
 
 
 def generate_csv(session: Session) -> str:
-    bullets = sorted(session.bullet_holes, key=lambda b: b.rank)
+    bullets = _by_board_then_rank(session.bullet_holes)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["rank", "first_seen_at", "position_x", "position_y", "source"])
+    writer.writerow(["board", "rank", "first_seen_at", "position_x", "position_y", "source"])
     for b in bullets:
         writer.writerow([
+            b.camera_alias or "",
             b.rank,
             b.first_seen_at.isoformat(),
             b.position_x,
@@ -188,14 +200,15 @@ def _fit_columns(ws) -> None:
 
 
 def generate_excel(session: Session) -> bytes:
-    bullets = sorted(session.bullet_holes, key=lambda b: b.rank)
+    bullets = _by_board_then_rank(session.bullet_holes)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Bullet Holes"
-    _append_header(ws, ["#", "Detected At (UTC)", "Position X", "Position Y", "Source"])
+    _append_header(ws, ["Board", "#", "Detected At (UTC)", "Position X", "Position Y", "Source"])
 
     for b in bullets:
         ws.append([
+            b.camera_alias or "—",
             b.rank,
             b.first_seen_at.strftime("%Y-%m-%d %H:%M:%S"),
             b.position_x,
@@ -204,19 +217,20 @@ def generate_excel(session: Session) -> bytes:
         ])
     _fit_columns(ws)
 
-    # The same rows and counts as the detail response's grouping
-    grouping = groups.grouping(bullets)
+    # The same rows and counts as the detail response's groupings, per board
     ws = wb.create_sheet("Groups")
-    _append_header(ws, ["Target", "Bullet Holes", "MPI X (mm)", "MPI Y (mm)", "CEP (mm)",
+    _append_header(ws, ["Board", "Target", "Bullet Holes", "MPI X (mm)", "MPI Y (mm)", "CEP (mm)",
                         "Mean Radius (mm)", "RMS Radius (mm)", "Extreme Spread (mm)"])
-    for g in grouping.groups:
-        ws.append([f"Target {g.target_index + 1}", g.n, g.mpi_x_mm, g.mpi_y_mm, g.cep_mm,
-                   g.mean_radius_mm, g.rms_radius_mm, g.extreme_spread_mm])
-        for cell in ws[ws.max_row][2:]:
-            cell.number_format = "0.0"
-    ws.append([])
-    ws.append(["Misses", grouping.misses])
-    ws.append(["Without a Position", grouping.without_position])
+    for bg in groups.groupings(bullets):
+        board = bg.camera_alias or "No board"
+        for g in bg.grouping.groups:
+            ws.append([board, f"Target {g.target_index + 1}", g.n, g.mpi_x_mm, g.mpi_y_mm, g.cep_mm,
+                       g.mean_radius_mm, g.rms_radius_mm, g.extreme_spread_mm])
+            for cell in ws[ws.max_row][3:]:
+                cell.number_format = "0.0"
+        ws.append([board, "Misses", bg.grouping.misses])
+        ws.append([board, "Without a Position", bg.grouping.without_position])
+        ws.append([])
     _fit_columns(ws)
 
     buf = io.BytesIO()

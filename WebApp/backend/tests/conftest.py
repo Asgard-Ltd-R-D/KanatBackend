@@ -87,6 +87,8 @@ def db(monkeypatch):
     monkeypatch.setattr(sessions_repo, "exists", lambda db, session_id: session_id in state.sessions)
     monkeypatch.setattr(runs_repo, "add_once", lambda db, *run: None)
     monkeypatch.setattr(runs_repo, "get_for_update", lambda db, *run: None)
+    # No stored Runs by default; a test that needs the restart fallback overrides it
+    monkeypatch.setattr(runs_repo, "cameras_of", lambda db, session_id: [])
     # Nothing to tell MediaMTX: the database is fake
     monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
     return state

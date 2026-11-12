@@ -1,6 +1,7 @@
-"""POST /sessions/{id}/bullets against the v1 contract (docs/api_contract.md),
+"""POST /sessions/{id}/bullets against the v2 contract (docs/api_contract.md),
 with the database replaced: what a Bullet Hole is stored as, and what is
-refused."""
+refused. A Session spans every enabled camera, so a bullet names the board it
+is on (its camera's alias), per-board ranks and all."""
 import json
 import math
 import uuid
@@ -41,7 +42,7 @@ def stored(monkeypatch):
         return bullet
 
     monkeypatch.setattr(bullets_repo, "find_by_idempotency_key", lambda db, session_id, key: None)
-    monkeypatch.setattr(bullets_repo, "count_active", lambda db, session_id: len(rows))
+    monkeypatch.setattr(bullets_repo, "count_active", lambda db, session_id, camera_alias: len(rows))
     monkeypatch.setattr(bullets_repo, "add", add)
     return rows
 
@@ -55,7 +56,7 @@ def client():
 
 
 def body(x, y, **fields):
-    return {"version": "v1", "first_seen_at": NOW.isoformat(), "position": {"x": x, "y": y}, **fields}
+    return {"version": "v2", "first_seen_at": NOW.isoformat(), "position": {"x": x, "y": y}, **fields}
 
 
 @pytest.mark.parametrize("x, y", [
@@ -96,10 +97,19 @@ def test_a_value_that_is_not_a_finite_number_is_refused(client, session, stored,
 
 
 def test_an_unknown_version_is_refused(client, session, stored):
-    res = client.post(f"/sessions/{session.id}/bullets", json={**body(774.8, 560.3), "version": "v2"})
+    # v1 is the previous contract; it is now rejected like any other non-v2 version
+    res = client.post(f"/sessions/{session.id}/bullets", json={**body(774.8, 560.3), "version": "v1"})
 
     assert res.status_code == 422
     assert stored == []
+
+
+def test_the_board_is_stored_from_the_camera_field(client, session, stored):
+    res = client.post(f"/sessions/{session.id}/bullets", json=body(774.8, 560.3, camera="lane2"))
+
+    assert res.status_code == 201
+    assert res.json()["camera_alias"] == "lane2"
+    assert [b.camera_alias for b in stored] == ["lane2"]
 
 
 # --- the write gate: who may add a bullet, and when ---

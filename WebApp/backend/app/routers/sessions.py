@@ -20,10 +20,11 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 def _response(session: Session) -> SessionResponse:
-    """The Session with its detection, which is held in memory, and its Groups."""
+    """The Session with its per-board detection, which is held in memory, and
+    its per-board Groups."""
     response = SessionResponse.model_validate(session)
-    response.detection = detection_sync.state_of(session.id)
-    response.grouping = groups.grouping(response.bullet_holes)
+    response.detections = detection_sync.boards_of(session.id)
+    response.groupings = groups.groupings(response.bullet_holes)
     return response
 
 
@@ -32,12 +33,14 @@ def create_session(body: SessionCreate, background: BackgroundTasks, db: DBSessi
     session = svc.create_session(body, db)
     # Starts the cameras recording if this Session records
     camera_sync.sync_soon(db)
-    if session.camera_id is not None:
-        alias = camera_svc.get_camera_or_404(session.camera_id, db).alias
-        # Answered "starting" at once: the Run is asked for after the answer,
-        # as it takes seconds to be watching
-        detection_sync.starting(session.id)
-        background.add_task(detection_sync.watch, session.id, alias)
+    # The Session spans every enabled camera, one board each: answered "starting"
+    # at once, each Run asked for after the answer, as it takes seconds to watch.
+    # The Runs are asked for together (watch_all), so a slow or unavailable camera
+    # does not hold up detection on the others.
+    aliases = [camera.alias for camera in camera_svc.list_cameras(db) if camera.enabled]
+    for alias in aliases:
+        detection_sync.starting(session.id, alias)
+    background.add_task(detection_sync.watch_all, session.id, aliases)
     return _response(session)
 
 
@@ -73,19 +76,19 @@ def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = D
     return _response(session)
 
 
-@router.post("/{session_id}/baseline", response_model=SessionResponse)
-def retake_baseline(session_id: uuid.UUID, background: BackgroundTasks, db: DBSession = Depends(get_db)):
-    """A new Run for the active Session, from a fresh baseline: after a Target
-    Sheet is re-hung. Answered `starting` at once; `watching` only once the
-    new Run's baseline is built."""
+@router.post("/{session_id}/baseline/{camera}", response_model=SessionResponse)
+def retake_baseline(session_id: uuid.UUID, camera: str, background: BackgroundTasks, db: DBSession = Depends(get_db)):
+    """A new Run for one of the active Session's boards, from a fresh baseline:
+    after that board's Target Sheet is re-hung. Answered `starting` at once;
+    `watching` only once the new Run's baseline is built."""
     session = svc.get_session_or_404(session_id, db)
-    camera = camera_svc.get_camera_or_404(session.camera_id, db) if session.camera_id else None
-    if session.status != "active" or camera is None or not camera.enabled:
-        raise HTTPException(status_code=409, detail="Only an active Session watched by an enabled camera has a baseline")
-    if not detection_sync.retaking_baseline(session.id):
-        raise HTTPException(status_code=409, detail="Detection is already starting or ending: try again")
-    log.info("Retaking the baseline of session %s", session.id)
-    background.add_task(detection_sync.retake_baseline, session.id, camera.alias)
+    camera_row = next((c for c in camera_svc.list_cameras(db) if c.alias == camera), None)
+    if session.status != "active" or camera_row is None or not camera_row.enabled:
+        raise HTTPException(status_code=409, detail="Only a board of an active Session watched by an enabled camera has a baseline")
+    if not detection_sync.retaking_baseline(session.id, camera):
+        raise HTTPException(status_code=409, detail="Detection is already starting or ending on this board: try again")
+    log.info("Retaking the baseline of session %s board %s", session.id, camera)
+    background.add_task(detection_sync.retake_baseline, session.id, camera)
     return _response(session)
 
 

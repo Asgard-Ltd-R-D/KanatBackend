@@ -21,8 +21,12 @@ class Run(Base):
     once the camera is deleted."""
 
     __tablename__ = "runs"
-    # A Run is told apart by its baseline frame's time: read again, it is not stored again
-    __table_args__ = (UniqueConstraint("session_id", "taken_at", name="uq_runs_session_id_taken_at"),)
+    # A Run is told apart by its camera and its baseline frame's time: read
+    # again, it is not stored again. A Session now has a Run per board, so the
+    # camera is part of the key (two boards can take a baseline at the same instant)
+    __table_args__ = (
+        UniqueConstraint("session_id", "camera_alias", "taken_at", name="uq_runs_session_id_camera_alias_taken_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID] = mapped_column(

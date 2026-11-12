@@ -77,16 +77,21 @@ Stopping the Detection Service ends its Run the same way.*
 
 ## Consequences
 
-**A Session names its camera.** Optional, and fixed for the Session's life.
-Without one there is no Run. Disabling or deleting the camera ends the Run; the
-Session goes on.
+**A Session spans every enabled camera.** Each enabled camera is a board with
+its own Run; a Session with no enabled camera has none. Disabling or deleting a
+camera ends its Run; the Session goes on. (Originally a Session named one
+camera, `sessions.camera_id`, fixed for its life; #341 made it span them all,
+each hole naming its board by the camera's alias.)
 
-**One Run at a time.** A second Session that wants detection while a Run is
-active gets none, and its page says so. Concurrent Runs need a detector per Run
-or a lock around one (ultralytics models are not thread-safe), and the
-process-wide signal handlers moved out of `Stream`
-(`detection/new_bullet_holes.py:744`). That is its own decision, for when a
-second camera arrives.
+**One Run per board, concurrent (#341).** A Session's cameras are watched at
+once, so the service holds a Run per `(session, camera)`, each on its own
+worker thread, the one loaded detector shared behind an inference lock
+(ultralytics models are not thread-safe, and the GPU serialises inference
+anyway, so a lock costs nothing a detector-per-Run would save). The
+process-wide signal handlers were moved out of `Stream`
+(`detection/new_bullet_holes.py`) for this. A second *Session* that wants
+detection while another is active still gets none, and its page says so. (This
+was "one Run at a time", deferred until a second camera arrived — it now has.)
 
 **Starting a Run carries the Session and the Stream, nothing else.** Model,
 template, stride and print scale stay the Detection Service's defaults, so

@@ -15,16 +15,24 @@ def add_once(db: DBSession, session_id: uuid.UUID, camera_alias: str, taken_at: 
         .values(session_id=session_id, camera_alias=camera_alias, taken_at=taken_at, baseline_view=baseline_view,
                 places=places, watched_until=watched_until)
         # SQLite targets the conflict by the index's columns, not its name
-        .on_conflict_do_nothing(index_elements=["session_id", "taken_at"])
+        .on_conflict_do_nothing(index_elements=["session_id", "camera_alias", "taken_at"])
     )
     db.commit()
 
 
-def get_for_update(db: DBSession, session_id: uuid.UUID, taken_at: datetime) -> Run | None:
-    """The Session's Run taken at `taken_at`, its row locked until commit:
-    how far it watched is moved on under it."""
-    return (db.query(Run).filter(Run.session_id == session_id, Run.taken_at == taken_at)
+def get_for_update(db: DBSession, session_id: uuid.UUID, camera_alias: str, taken_at: datetime) -> Run | None:
+    """The Session's Run on this camera taken at `taken_at`, its row locked
+    until commit: how far it watched is moved on under it."""
+    return (db.query(Run).filter(Run.session_id == session_id, Run.camera_alias == camera_alias,
+                                 Run.taken_at == taken_at)
             .with_for_update().one_or_none())
+
+
+def cameras_of(db: DBSession, session_id: uuid.UUID) -> list[str]:
+    """The distinct camera aliases (boards) this Session has stored Runs for:
+    how its boards are recovered when in-memory state is gone (a restart)."""
+    return [alias for (alias,) in
+            db.query(Run.camera_alias).filter(Run.session_id == session_id).distinct().all()]
 
 
 def save(db: DBSession) -> None:

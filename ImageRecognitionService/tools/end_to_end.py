@@ -302,6 +302,8 @@ def main():
                    help="the stream reader's decoder threads (CAP_PROP_N_THREADS), in place "
                         "of the pipeline's 1; 0 is FFmpeg's choice")
     p.add_argument("--backend-url", default="http://localhost:8000")
+    p.add_argument("--camera", default="e2e",
+                   help="the board alias posted Bullet Holes are tagged with (api_contract.md v2)")
     p.add_argument("--out", required=True, help="a directory for the CSVs")
     a = p.parse_args()
     cap = cv2.VideoCapture(a.video)
@@ -366,7 +368,7 @@ def main():
         confirmed = []   # (first frame, wall clock, first_seen_at key)
 
         tee = _Tee()
-        with webapp.WebAppPublisher(session, a.backend_url) as publisher:
+        with webapp.WebAppPublisher(session, a.camera, a.backend_url) as publisher:
             def publish(value):
                 confirmed.append((value.first_frame, time.time(),
                                   _key(value.first_seen_at, *value.template_xy)))

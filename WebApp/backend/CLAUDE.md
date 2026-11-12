@@ -32,7 +32,7 @@ uv add <package> / uv remove <package>                               # never edi
 - **Paths and processes must work on Windows too:** files can be locked while open (see `recordings.py`'s retried deletes), and names like `CON`/`NUL` are reserved.
 - **Cameras:** MediaMTX reads each camera's RTP multicast directly (`camera_sync.py` sets a `udp+rtp://group:port?interface=card` source, the card being the UI's picker value); GStreamer (`run_record.sh/.ps1`) is no longer in this pipeline, and `RECORD_LAUNCHER` is legacy, unused.
 - **Logging:** `logging.getLogger(__name__)`, structured `extra={...}`; never log secrets or full stream URLs with credentials.
-- **The Detection Service contract is versioned (`v1`):** unknown versions are a 422.
+- **The Detection Service contract is versioned (`v2`:** a posted hole names its board by the camera alias): unknown versions, `v1` included, are a 422.
 - **Optional heavy imports** (e.g. WeasyPrint) are imported where used, so the rest of the app runs without them.
 - **Don't run ruff's formatter over files:** the code is hand-wrapped, and a formatter pass rewrites unrelated lines.
 - **Docker image:** `Dockerfile` runs `alembic upgrade head` then uvicorn. A new runtime file or system library must be added there, or the Windows bundle breaks.

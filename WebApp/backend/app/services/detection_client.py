@@ -4,6 +4,7 @@ import time
 import uuid
 from datetime import datetime
 from typing import NamedTuple
+from urllib.parse import quote
 
 import httpx
 from pydantic import AwareDatetime, TypeAdapter
@@ -48,8 +49,10 @@ class DetectionServiceUnreachable(Exception):
 
 
 class Run(NamedTuple):
-    """The Detection Service's Run, as its status, a start or an end reports it."""
+    """The Detection Service's Run, as its status, a start or an end reports it.
+    A Session has a Run per board, so a Run names its camera."""
     session_id: uuid.UUID
+    camera: str
     state: str   # starting, watching or ending; ended in an end's answer
     # Where its baseline frame showed the Board (ADR-0009), its taken_at naming
     # the Run; None until watching
@@ -68,7 +71,7 @@ def _run(view: dict) -> Run:
     KeyError or TypeError for anything that is not one. A Detection Service
     older than the Baseline View (ADR-0009) still watches: its Runs have none."""
     baseline_view, registered, looked_at = (view.get(k) for k in ("baseline_view", "registered", "looked_at"))
-    return Run(uuid.UUID(view["session_id"]), view["state"],
+    return Run(uuid.UUID(view["session_id"]), view["camera"], view["state"],
                None if baseline_view is None else BaselineView.model_validate(baseline_view),
                None if registered is None else Place.model_validate(registered),
                None if looked_at is None else _TIME.validate_python(looked_at))
@@ -120,23 +123,24 @@ def is_reachable() -> bool:
     return True
 
 
-def status() -> Run | None:
-    """The Detection Service's Run, or None without one. Raises
-    DetectionServiceUnreachable, also for an answer that is not its status."""
+def status() -> list[Run]:
+    """The Detection Service's Runs, one per board it watches, empty with none.
+    Raises DetectionServiceUnreachable, also for an answer that is not its
+    status."""
     res = _request("GET", "/status", STATUS_READ_TIMEOUT_S)
     try:
-        run = res.raise_for_status().json()["run"]
-        return None if run is None else _run(run)
+        return [_run(r) for r in res.raise_for_status().json()["runs"]]
     except (httpx.HTTPStatusError, ValueError, KeyError, TypeError) as e:
         raise DetectionServiceUnreachable(f"GET /status: HTTP {res.status_code} {res.text[:200]}") from e
 
 
-def start_run(session_id: uuid.UUID, stream_url: str) -> Run:
-    """Start the Session's Run on the Stream, answered once it is watching,
-    with the Run. The same Session's Run already watching is answered as
-    started. Raises RunRefused or DetectionServiceUnreachable, also for an
+def start_run(session_id: uuid.UUID, camera: str, stream_url: str) -> Run:
+    """Start the Session's Run on this camera's Stream, answered once it is
+    watching, with the Run. The same board's Run already watching is answered
+    as started. Raises RunRefused or DetectionServiceUnreachable, also for an
     answer that is not a Run."""
-    res = _request("POST", "/runs", START_TIMEOUT_S, json={"session_id": str(session_id), "stream_url": stream_url})
+    res = _request("POST", "/runs", START_TIMEOUT_S,
+                   json={"session_id": str(session_id), "camera": camera, "stream_url": stream_url})
     if res.is_error:
         try:
             detail = res.json()["detail"]
@@ -153,17 +157,19 @@ def start_run(session_id: uuid.UUID, stream_url: str) -> Run:
         raise DetectionServiceUnreachable(f"POST /runs: HTTP {res.status_code} {res.text[:200]}") from e
 
 
-def end_run(session_id: uuid.UUID, judge: bool = True) -> Run | None:
-    """End the Session's Run, answered once it has ended and its posts are
-    drained, with how far it watched. Unless `judge` is false (`stop`), it
-    first judges the Candidates it has open, posting those that persist.
-    None when there was no such Run (404): already ended, but not by this
-    end, so what it saw last is not confirmed posted. Raises
+def end_run(session_id: uuid.UUID, camera: str, judge: bool = True) -> Run | None:
+    """End the Session's Run on this camera, answered once it has ended and its
+    posts are drained, with how far it watched. Unless `judge` is false
+    (`stop`), it first judges the Candidates it has open, posting those that
+    persist. None when there was no such Run (404): already ended, but not by
+    this end, so what it saw last is not confirmed posted. Raises
     DetectionServiceUnreachable, also for an answer that is not an end's."""
-    res = _request("POST", f"/runs/{session_id}/{'end' if judge else 'stop'}", END_TIMEOUT_S)
+    verb = "end" if judge else "stop"
+    res = _request("POST", f"/runs/{session_id}/{quote(camera, safe='')}/{verb}", END_TIMEOUT_S)
     if res.status_code == 404:
         return None
     try:
         return _run(res.raise_for_status().json())
     except (httpx.HTTPStatusError, ValueError, KeyError, TypeError) as e:
-        raise DetectionServiceUnreachable(f"POST /runs/{session_id}/{'end' if judge else 'stop'}: HTTP {res.status_code} {res.text[:200]}") from e
+        raise DetectionServiceUnreachable(
+            f"POST /runs/{session_id}/{camera}/{verb}: HTTP {res.status_code} {res.text[:200]}") from e

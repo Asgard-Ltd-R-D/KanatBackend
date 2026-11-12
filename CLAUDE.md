@@ -74,7 +74,7 @@ Packet capture needs raw-socket rights: `sudo setcap cap_net_raw,cap_net_admin=e
 - Queries live in `WebApp/backend/app/repositories/`, one module per table (`sessions.py`, `bullets.py`, `cameras.py`); services hold the rules and call them, and nothing else touches the session's query API.
 - Every schema change requires an Alembic migration; never mutate the DB by hand.
 - Frontend API calls are centralised in `WebApp/frontend/src/api/` — components never call `fetch` directly.
-- The detection model's API contract is versioned (`v1`). The version is checked on every inbound bullet payload; unknown versions are rejected with `422`.
+- The detection model's API contract is versioned (`v2`: it names the board the hole is on by its camera alias). The version is checked on every inbound bullet payload; unknown versions, `v1` included, are rejected with `422`.
 
 ## Domain docs
 

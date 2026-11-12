@@ -14,7 +14,19 @@ import itertools
 import math
 import statistics
 
-from app.schemas.session import Group, Grouping
+from app.schemas.session import BoardGrouping, Group, Grouping
+
+
+def groupings(holes) -> list[BoardGrouping]:
+    """One Grouping per board, each from the board's own Bullet Holes, named by
+    its camera's alias. Boards in alias order; holes on no board (camera_alias
+    None, a manual one in a Session with no camera) come last as one group."""
+    by_board: dict[str | None, list] = {}
+    for hole in holes:
+        by_board.setdefault(hole.camera_alias, []).append(hole)
+    aliases = sorted(a for a in by_board if a is not None)
+    order = aliases + ([None] if None in by_board else [])
+    return [BoardGrouping(camera_alias=alias, grouping=grouping(by_board[alias])) for alias in order]
 
 
 def grouping(holes) -> Grouping:

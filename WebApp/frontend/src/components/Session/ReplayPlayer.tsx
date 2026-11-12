@@ -19,10 +19,13 @@ interface Props {
 // watching then, at its place then, with the Bullet Holes first seen by then.
 // None while no Run watched
 function overlayAt(alias: string, runs: Run[], bullets: BulletHole[], at: number): OverlayContent | null {
-  // By the alias each Run kept, so the Runs of a camera since deleted still draw
-  for (const run of runs.filter(r => r.camera_alias === alias)) {
+  // By the alias each Run kept, so the Runs of a camera since deleted still draw.
+  // Only this board's Runs and its own Bullet Holes (matched by camera_alias).
+  const boardRuns = runs.filter(r => r.camera_alias === alias)
+  const boardBullets = bullets.filter(b => b.camera_alias === alias)
+  for (const run of boardRuns) {
     const place = placeAt(run, at)
-    if (place) return { run, place, bullets: bullets.filter(b => Date.parse(b.first_seen_at) <= at), runs }
+    if (place) return { run, place, bullets: boardBullets.filter(b => Date.parse(b.first_seen_at) <= at), runs: boardRuns }
   }
   return null
 }

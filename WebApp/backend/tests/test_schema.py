@@ -39,13 +39,16 @@ def db_url(tmp_path, monkeypatch):
 
 
 def schema(url):
-    """The sessions table's columns, and whether the runs table exists."""
+    """The sessions and bullet_holes columns, whether the runs table exists,
+    and the names of the runs table's unique constraints."""
     engine = _make_engine(url)
     try:
         inspector = inspect(engine)
         tables = inspector.get_table_names()
-        columns = {c["name"] for c in inspector.get_columns("sessions")} if "sessions" in tables else set()
-        return columns, "runs" in tables
+        sessions = {c["name"] for c in inspector.get_columns("sessions")} if "sessions" in tables else set()
+        holes = {c["name"] for c in inspector.get_columns("bullet_holes")} if "bullet_holes" in tables else set()
+        runs = {uc["name"] for uc in inspector.get_unique_constraints("runs")} if "runs" in tables else None
+        return sessions, holes, runs
     finally:
         engine.dispose()
 
@@ -53,34 +56,119 @@ def schema(url):
 def test_the_migration_applies_and_reverses_cleanly(db_url):
     config = alembic_config()
 
-    columns, runs = schema(db_url)
-    assert "camera_id" in columns and runs       # migrated to head by the fixture
+    sessions, holes, run_constraints = schema(db_url)       # migrated to head by the fixture
+    # The single chosen camera is gone; each hole names the board it is on,
+    # and a Run's identity gained its camera
+    assert "camera_id" not in sessions
+    assert "camera_alias" in holes
+    assert run_constraints == {"uq_runs_session_id_camera_alias_taken_at"}
+
     command.downgrade(config, "base")
-    assert schema(db_url) == (set(), False)       # every table dropped
+    assert schema(db_url) == (set(), set(), None)           # every table dropped
+
     command.upgrade(config, "head")
-    columns, runs = schema(db_url)
-    assert "camera_id" in columns and runs
+    sessions, holes, run_constraints = schema(db_url)
+    assert "camera_id" not in sessions and "camera_alias" in holes
+    assert run_constraints == {"uq_runs_session_id_camera_alias_taken_at"}
 
 
-def test_deleting_a_camera_clears_it_on_its_sessions(db_url):
-    engine = _make_engine(db_url)
-    camera_id, session_id = uuid.uuid4(), uuid.uuid4()
+def test_the_migration_backfills_the_board_from_the_old_camera(tmp_path, monkeypatch):
+    """Before sessions.camera_id is dropped, each hole's board (camera_alias) is
+    backfilled from its Session's old camera, so a Session that watched one
+    camera keeps reading as a one-board Session."""
+    url = f"sqlite:///{tmp_path / 'kanat_backfill.db'}"
+    monkeypatch.setattr(settings, "database_url", url)
+    config = alembic_config()
+    command.upgrade(config, "a1b2c3d4e5f6")   # the revision before Sessions spanned every camera
+
+    camera_id, session_id, hole_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    engine = _make_engine(url)
     with engine.begin() as conn:
         conn.execute(text(
-            "INSERT INTO cameras (id, alias, mcast_ip, mcast_port) VALUES (:id, 'cam1', '226.226.226.112', 112)"
+            "INSERT INTO cameras (id, alias, mcast_ip, mcast_port) VALUES (:id, 'lane7', '226.226.226.112', 112)"
         ), {"id": camera_id.hex})
         conn.execute(text(
             "INSERT INTO sessions (id, name, status, started_at, camera_id) "
-            "VALUES (:id, 'Range 1', 'active', CURRENT_TIMESTAMP, :camera)"
+            "VALUES (:id, 'Range 1', 'completed', CURRENT_TIMESTAMP, :camera)"
         ), {"id": session_id.hex, "camera": camera_id.hex})
+        conn.execute(text(
+            "INSERT INTO bullet_holes (id, session_id, first_seen_at, position_x, position_y, source, rank) "
+            "VALUES (:id, :session, CURRENT_TIMESTAMP, 700, 560, 'model', 1)"
+        ), {"id": hole_id.hex, "session": session_id.hex})
+    engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = _make_engine(url)
+    with engine.connect() as conn:
+        alias = conn.execute(text("SELECT camera_alias FROM bullet_holes WHERE id = :id"), {"id": hole_id.hex}).scalar()
+    engine.dispose()
+    assert alias == "lane7"
+
+
+def test_the_migration_backfills_the_board_from_a_saved_run_when_the_camera_was_deleted(tmp_path, monkeypatch):
+    """A camera deleted before the upgrade left sessions.camera_id NULL, so the
+    hole's board cannot come from the camera join; it is recovered from the
+    Session's saved run, keeping the hole on its board instead of 'no board'."""
+    url = f"sqlite:///{tmp_path / 'kanat_backfill_run.db'}"
+    monkeypatch.setattr(settings, "database_url", url)
+    config = alembic_config()
+    command.upgrade(config, "a1b2c3d4e5f6")   # the revision before Sessions spanned every camera
+
+    session_id, hole_id, run_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    engine = _make_engine(url)
+    with engine.begin() as conn:
+        # The camera is gone: sessions.camera_id is NULL (ON DELETE SET NULL)
+        conn.execute(text(
+            "INSERT INTO sessions (id, name, status, started_at, camera_id) "
+            "VALUES (:id, 'Range 1', 'completed', CURRENT_TIMESTAMP, NULL)"
+        ), {"id": session_id.hex})
+        conn.execute(text(
+            "INSERT INTO runs (id, session_id, camera_alias, taken_at, baseline_view, places, watched_until) "
+            "VALUES (:id, :session, 'lane7', CURRENT_TIMESTAMP, '{}', '[]', CURRENT_TIMESTAMP)"
+        ), {"id": run_id.hex, "session": session_id.hex})
+        conn.execute(text(
+            "INSERT INTO bullet_holes (id, session_id, first_seen_at, position_x, position_y, source, rank) "
+            "VALUES (:id, :session, CURRENT_TIMESTAMP, 700, 560, 'model', 1)"
+        ), {"id": hole_id.hex, "session": session_id.hex})
+    engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = _make_engine(url)
+    with engine.connect() as conn:
+        alias = conn.execute(text("SELECT camera_alias FROM bullet_holes WHERE id = :id"), {"id": hole_id.hex}).scalar()
+    engine.dispose()
+    assert alias == "lane7"
+
+
+def test_deleting_a_camera_leaves_its_sessions_and_holes_untouched(db_url):
+    """Sessions no longer reference a camera, and a hole's board is a plain
+    alias, not a foreign key: deleting a camera touches neither."""
+    engine = _make_engine(db_url)
+    camera_id, session_id, hole_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO cameras (id, alias, mcast_ip, mcast_port) VALUES (:id, 'lane1', '226.226.226.112', 112)"
+        ), {"id": camera_id.hex})
+        conn.execute(text(
+            "INSERT INTO sessions (id, name, status, started_at) "
+            "VALUES (:id, 'Range 1', 'active', CURRENT_TIMESTAMP)"
+        ), {"id": session_id.hex})
+        conn.execute(text(
+            "INSERT INTO bullet_holes (id, session_id, camera_alias, first_seen_at, position_x, position_y, source, rank) "
+            "VALUES (:id, :session, 'lane1', CURRENT_TIMESTAMP, 700, 560, 'model', 1)"
+        ), {"id": hole_id.hex, "session": session_id.hex})
 
     with DBSession(engine) as db:
         camera_svc.delete_camera(camera_id, db)
 
     with engine.connect() as conn:
-        rows = conn.execute(text("SELECT camera_id FROM sessions WHERE id = :id"), {"id": session_id.hex}).all()
+        sessions = conn.execute(text("SELECT id FROM sessions WHERE id = :id"), {"id": session_id.hex}).all()
+        alias = conn.execute(text("SELECT camera_alias FROM bullet_holes WHERE id = :id"), {"id": hole_id.hex}).scalar()
     engine.dispose()
-    assert rows == [(None,)]   # the Session stays, without its camera (FK ON DELETE SET NULL)
+    assert sessions == [(session_id.hex,)]   # the Session stays, unchanged
+    assert alias == "lane1"                  # its hole keeps the board it recorded
 
 
 def test_the_database_holds_one_active_session_at_a_time(db_url):

@@ -5,13 +5,29 @@ export interface Session {
   started_at: string
   ended_at: string | null
   record: boolean // the cameras are recorded while this session is active
-  camera_id?: string | null // the camera whose stream detection watches; fixed at creation
   created_at: string
   bullet_holes?: BulletHole[]
   bullet_count?: number
-  detection?: Detection // on a single session, not in the list
-  grouping?: Grouping // on a single session, not in the list
-  runs?: Run[] // on a single session, in taken_at order, not in the list
+  // One per enabled camera (board) that has a detection state; on a single
+  // session, not in the list. A board with no entry yet is "none".
+  detections?: BoardDetection[]
+  // One per board the holes are on (camera_alias null: holes on no board); on
+  // a single session, not in the list
+  groupings?: BoardGrouping[]
+  runs?: Run[] // on a single session, in taken_at order, any board, not in the list
+}
+
+// Whether a Run watches one of the Session's boards, named by its camera
+export interface BoardDetection {
+  camera_alias: string
+  detection: Detection
+}
+
+// One board's Grouping, named by its camera; camera_alias null is the holes on
+// no board (manual ones in a Session with no camera)
+export interface BoardGrouping {
+  camera_alias: string | null
+  grouping: Grouping
 }
 
 // Where a Run's baseline frame showed the Board in the camera's picture (ADR-0009)
@@ -75,6 +91,7 @@ export interface Detection {
 export interface BulletHole {
   id: string
   session_id: string
+  camera_alias: string | null // the board the hole is on; null for a hole on no board
   rank: number
   first_seen_at: string
   position_x: number
@@ -87,9 +104,10 @@ export interface BulletHole {
 }
 
 export interface BulletCreatePayload {
-  version: string
+  version: 'v2'
   first_seen_at: string
   position: { x: number; y: number }
+  camera?: string | null // the board (camera alias) the hole is added to; null for no board
   target_index?: number | null
   x_mm?: number | null
   y_mm?: number | null
@@ -108,8 +126,8 @@ export type LiveEvent =
   | { type: 'bullet_created'; bullet: BulletHole }
   | { type: 'bullet_deleted'; bullet_id: string }
   | { type: 'session_updated'; name: string; status: Session['status']; ended_at: string | null; record: boolean }
-  | { type: 'detection_updated'; detection: Detection }
-  | { type: 'run_moved'; taken_at: string } // a Run kept a new place: the refetch brings it
+  | { type: 'detection_updated'; camera_alias: string; detection: Detection } // the board named by camera_alias
+  | { type: 'run_moved'; camera_alias: string; taken_at: string } // a board's Run kept a new place: the refetch brings it
 
 // live: MediaMTX is receiving the stream. no_signal: configured, but nothing
 // arrives on its multicast group. disabled: switched off in Settings.

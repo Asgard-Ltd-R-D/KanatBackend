@@ -33,7 +33,7 @@ def test_the_status_reports_the_detector_the_last_status_answer_named(monkeypatc
 
     from app.main import app
 
-    answer = {"run": None, "device": "cuda:0", "model": "kanat_yolo26m_v1"}
+    answer = {"runs": [], "device": "cuda:0", "model": "kanat_yolo26m_v1"}
     monkeypatch.setattr(detection_client.httpx, "request", lambda method, url, timeout, **kwargs:
                         httpx.Response(200, json=answer, request=httpx.Request(method, url)))
     monkeypatch.setattr(detection_client, "_last_answer", None)
@@ -87,6 +87,6 @@ def test_any_answer_from_the_detection_service_counts_as_up(monkeypatch):
     monkeypatch.setattr(detection_client.httpx, "request", request)
     monkeypatch.setattr(detection_client, "_last_answer", None)
 
-    detection_client.end_run(uuid.uuid4())     # no such Run: an answer all the same
+    detection_client.end_run(uuid.uuid4(), "lane1")   # no such Run: an answer all the same
     assert detection_client.is_reachable() is True
     assert len(asked) == 1

@@ -58,6 +58,7 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
     bullet = BulletHole(
         id=uuid.uuid4(),
         session_id=session_id,
+        camera_alias=body.camera,
         first_seen_at=body.first_seen_at,
         position_x=body.position.x,
         position_y=body.position.y,
@@ -66,7 +67,7 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
         y_mm=body.y_mm,
         source=body.source,
         idempotency_key=body.idempotency_key,
-        rank=repo.count_active(db, session_id) + 1,
+        rank=repo.count_active(db, session_id, body.camera) + 1,
     )
     bullet = repo.add(db, bullet)
     delay_s = (datetime.now(timezone.utc) - bullet.first_seen_at).total_seconds()
@@ -99,9 +100,9 @@ def _delete_bullet(session_id: uuid.UUID, bullet_id: uuid.UUID, db: DBSession) -
     if not bullet:
         raise HTTPException(status_code=404, detail="Bullet hole not found")
 
-    # Soft delete; the bullets after it move up a rank
+    # Soft delete; the bullets after it on the same board move up a rank
     bullet.deleted_at = datetime.now(timezone.utc)
-    repo.move_up_after(db, session_id, bullet.rank)
+    repo.move_up_after(db, session_id, bullet.camera_alias, bullet.rank)
     repo.save(db)
     log.info(
         "Bullet Hole #%s deleted by the operator", bullet.rank,

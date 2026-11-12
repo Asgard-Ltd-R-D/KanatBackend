@@ -66,8 +66,16 @@ def camera(engine):
     return camera_id
 
 
-def start_session(client, camera):
-    return uuid.UUID(client.post("/sessions", json={"name": "Range 1", "camera_id": str(camera)}).json()["id"])
+CAM = "lane1"
+
+
+def start_session(client, camera=None):
+    # The `camera` fixture already inserted the camera; the Session spans it
+    return uuid.UUID(client.post("/sessions", json={"name": "Range 1"}).json()["id"])
+
+
+def run_of(detection, session_id, camera=CAM):
+    return detection.runs[(session_id, camera)]
 
 
 def runs_of(client, session_id):
@@ -109,8 +117,8 @@ def test_a_sessions_detail_returns_its_run_with_its_baseline_view_and_camera(cli
 
     [run] = runs_of(client, session_id)
 
-    sent = detection.run.baseline_view
-    assert run["camera_alias"] == "lane1"
+    sent = run_of(detection, session_id).baseline_view
+    assert run["camera_alias"] == CAM
     assert taken_at(run) == sent.taken_at
     assert run["baseline_view"] == sent.model_dump(mode="json")
     # Placed where its baseline frame showed the Board, and watched until then
@@ -151,7 +159,7 @@ def test_a_run_first_seen_through_a_status_read_after_a_restart_is_stored(client
     detection.down = True
     session_id = start_session(client, camera)
     detection.down = False
-    detection.run = detection_client.Run(session_id, "watching", baseline_view(NOW))
+    detection.runs[(session_id, CAM)] = detection_client.Run(session_id, CAM, "watching", baseline_view(NOW))
     detection_sync._states.clear()
     calls = list(detection.calls)
 
@@ -163,24 +171,24 @@ def test_a_run_first_seen_through_a_status_read_after_a_restart_is_stored(client
 
 def test_a_sessions_second_run_is_stored_beside_its_first_in_taken_at_order(client, detection, camera):
     session_id = start_session(client, camera)
-    first = detection.run.baseline_view.taken_at
-    detection.run = None   # lost: the next tick starts another, from a fresh baseline
+    first = run_of(detection, session_id).baseline_view.taken_at
+    detection.runs.clear()   # lost: the next tick starts another, from a fresh baseline
 
     tick(client)
 
-    second = detection.run.baseline_view.taken_at
+    second = run_of(detection, session_id).baseline_view.taken_at
     assert first < second
     assert [taken_at(run) for run in runs_of(client, session_id)] == [first, second]
 
 
 def test_a_run_of_a_deleted_session_stores_nothing(client, detection, camera, engine):
     # Deleted while its Run started: the start is answered once it is gone
-    detection.on_start = lambda session_id: client.delete(f"/sessions/{session_id}")
+    detection.on_start = lambda session_id, camera: client.delete(f"/sessions/{session_id}")
 
     session_id = start_session(client, camera)
 
     assert client.get(f"/sessions/{session_id}").status_code == 404
-    assert detection.run is None   # ended, as any start answered too late is
+    assert (session_id, CAM) not in detection.runs   # ended, as any start answered too late is
     assert stored_runs(engine) == 0
 
 
@@ -194,14 +202,19 @@ def test_deleting_a_session_deletes_its_runs(client, detection, camera, engine):
 
 
 @pytest.mark.parametrize("seen_by", ["start", "status read"])
-def test_the_run_is_stored_before_the_watching_push_goes_out(client, detection, camera, monkeypatch, seen_by):
+def test_the_run_is_stored_before_the_watching_push_goes_out(client, detection, camera, engine, monkeypatch, seen_by):
     # The frontend refetches the Session on that push, so it brings the Run
     stored_at_push = []
     publish = hub.publish_from_thread
 
     def publish_watching(session_id, event):
         if getattr(event, "detection", None) == detection_sync.WATCHING:
-            stored_at_push.append(len(runs_of(client, session_id)))
+            # Read the Run straight from the database here, not through the HTTP
+            # API: the push fires while detection_sync holds its lock, which a
+            # GET's boards_of would take too (on another thread), so going
+            # through the API inside the push would deadlock. The point is only
+            # that the Run is already stored when the push goes out.
+            stored_at_push.append(stored_runs(engine))
         publish(session_id, event)
 
     monkeypatch.setattr(hub, "publish_from_thread", publish_watching)
@@ -211,7 +224,7 @@ def test_the_run_is_stored_before_the_watching_push_goes_out(client, detection, 
         detection.down = True
         session_id = start_session(client, camera)
         detection.down = False
-        detection.run = detection_client.Run(session_id, "watching", baseline_view(NOW))
+        detection.runs[(session_id, CAM)] = detection_client.Run(session_id, CAM, "watching", baseline_view(NOW))
         tick(client)
 
     assert stored_at_push == [1]
@@ -225,35 +238,38 @@ def test_the_run_is_stored_before_the_watching_push_goes_out(client, detection, 
 ])
 def test_a_place_moved_more_than_2_px_is_kept_and_pushed_as_run_moved(client, detection, camera, moved, kept):
     session_id = start_session(client, camera)
-    first = detection.run
-    detection.run = later(first, 5, **moved)
+    key = (session_id, CAM)
+    first = detection.runs[key]
+    detection.runs[key] = later(first, 5, **moved)
 
     with listening(session_id) as queue:
         tick(client)
         pushed = events(queue)
 
     [run] = runs_of(client, session_id)
-    assert run["places"] == places(first.registered, *([detection.run.registered] if kept else []))
+    assert run["places"] == places(first.registered, *([detection.runs[key].registered] if kept else []))
     assert [(e["type"], datetime.fromisoformat(e["taken_at"])) for e in pushed] == (
         [("run_moved", taken_at(run))] if kept else [])
 
 
 def test_every_status_read_moves_watched_until_on(client, detection, camera):
     session_id = start_session(client, camera)
-    first = detection.run
+    key = (session_id, CAM)
+    first = detection.runs[key]
 
     for seconds in (5, 10):
-        detection.run = later(first, seconds)
+        detection.runs[key] = later(first, seconds)
         tick(client)
         [run] = runs_of(client, session_id)
-        assert watched_until(run) == detection.run.looked_at
+        assert watched_until(run) == detection.runs[key].looked_at
     assert run["places"] == places(first.registered)   # the Board held still
 
 
 def test_the_ends_answer_sets_the_last_watched_until_and_keeps_its_place_if_it_moved(client, detection, camera):
     session_id = start_session(client, camera)
+    key = (session_id, CAM)
     # Moved since the last read: only the end's answer tells
-    detection.run = last = later(detection.run, 7, dx=3.0)
+    detection.runs[key] = last = later(detection.runs[key], 7, dx=3.0)
 
     client.patch(f"/sessions/{session_id}", json={"status": "completed"})
 
@@ -266,11 +282,12 @@ def test_an_ends_answer_moves_on_only_the_run_it_names(client, detection, camera
     # A later Run never stored, the database down all its life: its end's
     # answer leaves the Run before it as it was
     session_id = start_session(client, camera)
-    first = detection.run
-    detection.run = read = later(first, 5)
+    key = (session_id, CAM)
+    first = detection.runs[key]
+    detection.runs[key] = read = later(first, 5)
     tick(client)
     unstored = first._replace(baseline_view=baseline_view(NOW + timedelta(minutes=1)))
-    detection.run = later(unstored, 7, dx=3.0)
+    detection.runs[key] = later(unstored, 7, dx=3.0)
 
     client.patch(f"/sessions/{session_id}", json={"status": "completed"})
 
@@ -281,9 +298,10 @@ def test_an_ends_answer_moves_on_only_the_run_it_names(client, detection, camera
 
 def test_a_lost_runs_watched_until_stays_at_the_last_read(client, detection, camera):
     session_id = start_session(client, camera)
-    detection.run = read = later(detection.run, 5)
+    key = (session_id, CAM)
+    detection.runs[key] = read = later(detection.runs[key], 5)
     tick(client)
-    detection.run = None   # lost: the next tick starts another
+    detection.runs.clear()   # lost: the next tick starts another
 
     tick(client)
 
@@ -293,8 +311,9 @@ def test_a_lost_runs_watched_until_stays_at_the_last_read(client, detection, cam
 
 def test_a_run_whose_last_looks_are_lost_still_reaches_its_last_looked_at(client, detection, camera):
     session_id = start_session(client, camera)
-    registered = later(detection.run, 5, dx=3.0)
-    detection.run = registered._replace(looked_at=registered.looked_at + timedelta(seconds=4))
+    key = (session_id, CAM)
+    registered = later(detection.runs[key], 5, dx=3.0)
+    detection.runs[key] = registered._replace(looked_at=registered.looked_at + timedelta(seconds=4))
 
     client.patch(f"/sessions/{session_id}", json={"status": "completed"})
 
@@ -307,10 +326,11 @@ def test_a_run_whose_last_looks_are_lost_still_reaches_its_last_looked_at(client
 def test_a_read_older_than_one_already_followed_moves_nothing_back(client, detection, camera, newer_dx):
     # A tick's read, followed after an end's answer that came later
     session_id = start_session(client, camera)
-    first = detection.run
-    detection.run = newer = later(first, 10, dx=newer_dx)
+    key = (session_id, CAM)
+    first = detection.runs[key]
+    detection.runs[key] = newer = later(first, 10, dx=newer_dx)
     tick(client)
-    detection.run = later(first, 5, dx=6.0)
+    detection.runs[key] = later(first, 5, dx=6.0)
 
     tick(client)
 

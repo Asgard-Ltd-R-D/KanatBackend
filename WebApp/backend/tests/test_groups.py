@@ -45,13 +45,13 @@ def client(monkeypatch):
     """GET /sessions/{SESSION_ID} answers a completed Session holding `client.holes`."""
     def get_with_bullets(db, session_id):
         holes = [
-            SimpleNamespace(id=uuid.uuid4(), session_id=SESSION_ID, rank=rank, first_seen_at=NOW,
+            SimpleNamespace(id=uuid.uuid4(), session_id=SESSION_ID, camera_alias=None, rank=rank, first_seen_at=NOW,
                             position_x=700.0, position_y=560.0, created_at=NOW, **fields)
             for rank, fields in enumerate(c.holes, start=1)
         ]
         return SimpleNamespace(
             id=SESSION_ID, name="Range 1", status="completed", started_at=NOW, ended_at=NOW,
-            record=False, camera_id=None, created_at=NOW, bullet_holes=holes, active_bullet_holes=holes,
+            record=False, created_at=NOW, bullet_holes=holes, active_bullet_holes=holes,
         )
 
     monkeypatch.setattr(sessions_repo, "get_with_bullets", get_with_bullets)
@@ -63,10 +63,18 @@ def client(monkeypatch):
 
 
 def grouping(client, holes):
+    """The Grouping of the one board these holes are on. They are all manual or
+    on no board (camera_alias None), so a Session spanning no camera has a
+    single board, None; with no holes there is no board at all."""
     client.holes = holes
     res = client.get(f"/sessions/{SESSION_ID}")
     assert res.status_code == 200
-    return res.json()["grouping"]
+    boards = res.json()["groupings"]
+    if not boards:
+        return {"groups": [], "misses": 0, "without_position": 0}
+    [board] = boards
+    assert board["camera_alias"] is None
+    return board["grouping"]
 
 
 def test_a_hand_computable_group_gives_known_statistics(client):
@@ -124,13 +132,14 @@ def test_the_excel_groups_sheet_holds_the_detail_numbers(client):
     got = grouping(client, RECTANGLE + [on(1, 2, -3), MISS, MANUAL])
 
     rows = groups_sheet(client)
+    # Every row now names its board first; these holes are all on no board
     assert rows[1:3] == [
-        (f"Target {g['target_index'] + 1}", g["n"], g["mpi_x_mm"], g["mpi_y_mm"], g["cep_mm"],
+        ("No board", f"Target {g['target_index'] + 1}", g["n"], g["mpi_x_mm"], g["mpi_y_mm"], g["cep_mm"],
          g["mean_radius_mm"], g["rms_radius_mm"], g["extreme_spread_mm"])
         for g in got["groups"]
     ]
-    assert rows[-2:] == [("Misses", got["misses"]) + (None,) * 6,
-                         ("Without a Position", got["without_position"]) + (None,) * 6]
+    assert rows[3:5] == [("No board", "Misses", got["misses"]) + (None,) * 6,
+                         ("No board", "Without a Position", got["without_position"]) + (None,) * 6]
 
 
 def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
@@ -190,8 +199,9 @@ def test_a_deleted_bullet_hole_leaves_its_group(db_url):
     try:
         with TestClient(app) as c:
             assert c.delete(f"/sessions/{SESSION_ID}/bullets/{ids[2]}").status_code == 204
-            [g] = c.get(f"/sessions/{SESSION_ID}").json()["grouping"]["groups"]
-            excel_n = groups_sheet(c)[1][1]
+            [board] = c.get(f"/sessions/{SESSION_ID}").json()["groupings"]
+            [g] = board["grouping"]["groups"]
+            excel_n = groups_sheet(c)[1][2]   # (Board, Target, Bullet Holes, ...)
     finally:
         app.dependency_overrides.clear()
         engine.dispose()
@@ -235,7 +245,7 @@ def test_deleting_a_middle_bullet_renumbers_the_ones_after_it(db_url):
             assert ranks() == [1, 2]
             # A manual bullet added after (session is completed) takes the next rank, 3, not 2 again
             added = c.post(f"/sessions/{SESSION_ID}/bullets", json={
-                "version": "v1", "first_seen_at": "2026-10-22T10:15:02.120Z",
+                "version": "v2", "first_seen_at": "2026-10-22T10:15:02.120Z",
                 "position": {"x": 10.0, "y": 10.0}, "source": "manual",
             })
             assert added.status_code == 201 and added.json()["rank"] == 3

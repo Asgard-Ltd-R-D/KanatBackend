@@ -29,7 +29,7 @@ class FakeDB:
 
 def make_bullet(rank=1):
     return SimpleNamespace(
-        id=uuid.uuid4(), session_id=SESSION_ID, rank=rank, first_seen_at=NOW,
+        id=uuid.uuid4(), session_id=SESSION_ID, camera_alias="lane1", rank=rank, first_seen_at=NOW,
         position_x=100.0, position_y=200.0, target_index=0, x_mm=1.5, y_mm=-2.5,
         source="model", created_at=NOW,
     )
@@ -72,7 +72,7 @@ def next_event(queue):
 
 
 BULLET_BODY = {
-    "version": "v1",
+    "version": "v2",
     "first_seen_at": NOW.isoformat(),
     "position": {"x": 100, "y": 200},
 }
@@ -89,6 +89,7 @@ def test_a_reported_bullet_is_published(client, subscribed, monkeypatch):
     assert event["bullet"]["id"] == str(bullet.id)
     assert event["bullet"]["rank"] == 1
     assert event["bullet"]["x_mm"] == 1.5
+    assert event["bullet"]["camera_alias"] == "lane1"
 
 
 def test_a_deleted_bullet_is_published(client, subscribed, monkeypatch):

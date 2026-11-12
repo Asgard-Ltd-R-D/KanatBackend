@@ -17,6 +17,9 @@ class BulletCreate(BaseModel):
     version: str
     first_seen_at: AwareDatetime
     position: BulletPosition
+    # The board the hole is on, the camera's alias (v2). None for a hole on no
+    # board: a manual one in a Session with no camera
+    camera: Optional[str] = None
     target_index: Optional[int] = None
     x_mm: Optional[float] = None
     y_mm: Optional[float] = None
@@ -25,9 +28,9 @@ class BulletCreate(BaseModel):
 
     @field_validator("version")
     @classmethod
-    def version_must_be_v1(cls, v: str) -> str:
-        if v != "v1":
-            raise ValueError(f"Unsupported contract version '{v}', expected 'v1'")
+    def version_must_be_v2(cls, v: str) -> str:
+        if v != "v2":
+            raise ValueError(f"Unsupported contract version '{v}', expected 'v2'")
         return v
 
     @field_validator("x_mm", "y_mm")
@@ -43,6 +46,7 @@ class BulletHoleInSession(BaseModel):
 
     id: uuid.UUID
     session_id: uuid.UUID
+    camera_alias: Optional[str]
     rank: int
     first_seen_at: datetime
     position_x: float
@@ -59,6 +63,7 @@ class BulletHoleResponse(BaseModel):
 
     id: uuid.UUID
     session_id: uuid.UUID
+    camera_alias: Optional[str]
     rank: int
     first_seen_at: datetime
     position_x: float

@@ -39,7 +39,7 @@ class Group(BaseModel):
 
 
 class Grouping(BaseModel):
-    """The Session's Groups, one per Target, in target_index order, and the
+    """One board's Groups, one per Target, in target_index order, and the
     Bullet Holes left out of every Group (services/groups.py)."""
 
     groups: list[Group] = []
@@ -48,16 +48,29 @@ class Grouping(BaseModel):
     without_position: int = 0
 
 
+class BoardDetection(BaseModel):
+    """Whether a Run watches one of the Session's boards, named by its camera."""
+
+    camera_alias: str
+    detection: Detection
+
+
+class BoardGrouping(BaseModel):
+    """One board's Grouping, named by its camera; camera_alias None is the
+    holes on no board (manual ones in a Session with no camera)."""
+
+    camera_alias: Optional[str] = None
+    grouping: Grouping
+
+
 class SessionCreate(BaseModel):
     name: str
     record: bool = False
-    # An enabled camera, whose Stream a Run then watches; fixed for the
-    # Session's life, so every Bullet Hole is placed from one baseline
-    camera_id: Optional[uuid.UUID] = None
 
 
 class SessionUpdate(BaseModel):
-    # Unknown fields are refused, camera_id among them: it cannot change
+    # Unknown fields are refused: a Session's name, status and recording change,
+    # nothing else
     model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None
@@ -74,15 +87,14 @@ class SessionResponse(BaseModel):
     started_at: datetime
     ended_at: Optional[datetime]
     record: bool
-    camera_id: Optional[uuid.UUID]
     created_at: datetime
     bullet_holes: list[BulletHoleInSession] = Field(default=[], validation_alias="active_bullet_holes")
-    # Each Run that watched it, in taken_at order
+    # Each Run that watched it, any board, in taken_at order
     runs: list[RunResponse] = []
-    # Held in memory, not in the database: set by routers/sessions.py
-    detection: Detection = Field(default_factory=lambda: Detection(state="none"))
-    # Computed from bullet_holes: set by routers/sessions.py
-    grouping: Grouping = Field(default_factory=Grouping)
+    # One per enabled camera (board): held in memory, set by routers/sessions.py
+    detections: list[BoardDetection] = []
+    # One per board the holes are on: computed from bullet_holes by routers/sessions.py
+    groupings: list[BoardGrouping] = []
 
 
 class SessionListItem(BaseModel):

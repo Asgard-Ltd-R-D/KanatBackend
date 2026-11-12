@@ -20,8 +20,8 @@ def _multicast(value: IPv4Address) -> IPv4Address:
     return value
 
 
-# The alias names the camera's recordings folder too, which Windows refuses
-# for its device names, whatever the case
+# The alias is used in paths and names; Windows refuses its device names for
+# those, whatever the case, so an alias must not be one
 _WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
 
 

@@ -32,10 +32,9 @@ class BulletHole(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # The board this hole is on, named by its camera's alias (which also names
-    # the camera's Stream and recordings, so it still matches them once the
-    # camera is deleted; the Run that reported the hole carries the same alias).
-    # None for a hole on no board: a manual one added to a Session with no camera
+    # The board this hole is on, named by its camera's alias (a stable key that
+    # outlives the camera's deletion; the Run that reported the hole carries the
+    # same alias). None for a hole on no board: a manual one in a cameraless Session
     camera_alias: Mapped[str | None] = mapped_column(String, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     position_x: Mapped[float] = mapped_column(Float, nullable=False)

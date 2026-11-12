@@ -18,7 +18,6 @@ from app.repositories import bullets as bullets_repo
 from app.repositories import runs as runs_repo
 from app.repositories import sessions as sessions_repo
 from app.services import detection_client, detection_sync
-from app.services import recordings as recording_svc
 from app.services import sessions as sessions_svc
 from tests.fakes import NOW, FakeDB, baseline_view, make_camera, place
 
@@ -323,8 +322,6 @@ def test_completing_ends_the_run_of_a_session_whose_camera_was_deleted(client, d
 
 def test_deleting_an_active_session_ends_its_run(client, db, detection, monkeypatch):
     monkeypatch.setattr(sessions_repo, "delete", lambda _, session: db.sessions.pop(session.id))
-    monkeypatch.setattr(sessions_repo, "intervals_of_other_sessions", lambda _, session_id: [])
-    monkeypatch.setattr(recording_svc, "delete_session_video", lambda windows, others: 0)
     session_id = start_session(client, add_camera(db))
 
     assert client.delete(f"/sessions/{session_id}").status_code == 204
@@ -759,7 +756,7 @@ def test_a_tick_with_nothing_to_change_makes_no_call_and_pushes_nothing(client, 
 # --- retaking the baseline ---
 
 def test_retaking_the_baseline_ends_the_run_and_watches_from_a_new_one(client, db, detection):
-    session_id = start_session(client, add_camera(db), record=True)
+    session_id = start_session(client, add_camera(db))
     key = (session_id, CAM)
     first = detection.runs[key]
     state_at_start = []
@@ -778,7 +775,7 @@ def test_retaking_the_baseline_ends_the_run_and_watches_from_a_new_one(client, d
     assert state_at_start == ["starting"]
     assert [e["detection"]["state"] for e in pushed] == ["starting", "watching"]
     session = client.get(f"/sessions/{session_id}").json()
-    assert (session["status"], session["record"], board(session)) == ("active", True, WATCHING)
+    assert (session["status"], board(session)) == ("active", WATCHING)
 
 
 def test_a_tick_during_a_retake_leaves_it_to_finish(client, db, detection):

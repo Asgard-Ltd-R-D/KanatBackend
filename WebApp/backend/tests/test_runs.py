@@ -17,7 +17,6 @@ from app.core.live import hub
 from app.main import app
 from app.services import camera_sync, detection_client
 from app.services import detection_sync
-from app.services import recordings as recording_svc
 from tests.fakes import NOW, FakeDetectionService, baseline_view, place
 from tests.test_detection import events, listening
 from tests.test_schema import db_url  # noqa: F401 (db_url is a fixture that migrates to head)
@@ -33,11 +32,10 @@ def engine(db_url):
 @pytest.fixture
 def client(engine, monkeypatch):
     """The app on the test's database, the Detection Service's loop included;
-    MediaMTX and the recordings are left alone."""
+    MediaMTX is left alone."""
     local = sessionmaker(bind=engine)
     monkeypatch.setattr(detection_sync, "SessionLocal", local)
     monkeypatch.setattr(camera_sync, "sync_soon", lambda db: None)
-    monkeypatch.setattr(recording_svc, "delete_session_video", lambda windows, others: 0)
 
     def real_db():
         with local() as db:

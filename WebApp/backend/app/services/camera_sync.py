@@ -5,23 +5,18 @@ camera's RTP multicast (`udp+rtp://group:port?interface=card`): MediaMTX joins
 the group itself and reads the H.264 directly, so no GStreamer runs. The
 `interface` is the camera's network card by name, so the UI's card picker
 decides which card each camera is read on. A disabled camera keeps its path
-without a source, because MediaMTX's playback server only plays recordings of a
-configured path. Paths added through the Control API live only in MediaMTX's
-memory, so they are re-applied when the backend starts and every
-camera_sync_interval_s after.
+without a source, so its name stays reserved and it re-enables cleanly. Paths
+added through the Control API live only in MediaMTX's memory, so they are
+re-applied when the backend starts and every camera_sync_interval_s after.
 
 VideoService's run_record.sh/.ps1 (GStreamer) is no longer in this pipeline; the
 scripts stay in VideoService for other uses. A path made by an older backend
 still runs GStreamer, so the sync recognises it and clears its runOnInit.
-
-Recording follows the Sessions: the cameras record while an active Session has
-`record` on, and stop when none has.
 """
 import asyncio
 import logging
 import threading
 import time
-from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi.concurrency import run_in_threadpool
@@ -31,21 +26,9 @@ from app.config.settings import settings
 from app.core.database import SessionLocal
 from app.models import Camera
 from app.repositories import cameras as cameras_repo
-from app.repositories import sessions as sessions_repo
-from app.services import cameras, mediamtx, recordings
+from app.services import cameras, mediamtx
 
 log = logging.getLogger(__name__)
-
-# As KanatFrontend recorded: fMP4 in 10-minute files, deleted after a day.
-# Durations are written the way MediaMTX reports them back ("10m" reads back as
-# "10m0s"), so an unchanged path compares equal and is left alone.
-RECORDING = {
-    "recordPath": "./recordings/%path/%Y-%m-%d_%H-%M-%S-%f",
-    "recordFormat": "fmp4",
-    "recordPartDuration": "2s",
-    "recordSegmentDuration": "10m0s",
-    "recordDeleteAfter": "1d",
-}
 
 # The GStreamer recorder older backends ran for each camera. No longer used to
 # build a path; kept so a path left over from such a backend is recognised as a
@@ -59,8 +42,6 @@ _clock = time.monotonic
 # Aliases already reported as clashing with a mediamtx.yml path, so the sync
 # loop logs each once rather than every round
 _conflicts: set[str] = set()
-# Whether the cameras were last set to record, so a change is logged once
-_recording: bool | None = None
 # Whether the sync last found mediamtx.yml unknown, so that is logged once
 _config_unknown = False
 
@@ -92,10 +73,12 @@ def _rtp_sdp(camera: Camera) -> str:
     )
 
 
-def path_config(camera: Camera, record: bool) -> dict:
+def path_config(camera: Camera) -> dict:
     """The camera's MediaMTX path: MediaMTX reads the camera's RTP multicast
     itself. runOnInit is set empty so a path made by an older backend stops its
-    GStreamer recorder when this backend patches it."""
+    GStreamer recorder when this backend patches it. `record` is kept here, set
+    False, so a path an older backend left recording is patched to stop; the
+    WebApp no longer records."""
     return {
         "source": _rtp_source(camera),
         "sourceOnDemand": False,
@@ -105,22 +88,22 @@ def path_config(camera: Camera, record: bool) -> dict:
         "overridePublisher": False,
         "runOnInit": "",
         "runOnInitRestart": False,
-        "record": record,
-        **RECORDING,
+        # The WebApp no longer records; False so a path left recording by an
+        # older backend is patched to stop (the sync only patches keys it sends)
+        "record": False,
     }
 
 
 def playback_only_config() -> dict:
-    """A disabled camera's path: nothing runs or records on it, and its
-    recordings stay playable."""
+    """A disabled camera's path: nothing runs on it, its name is just reserved."""
     return {
         "source": "publisher",
         "sourceOnDemand": False,
         "overridePublisher": True,
         "runOnInit": "",
         "runOnInitRestart": False,
+        # As path_config: stop recording on a path an older backend left recording
         "record": False,
-        **RECORDING,
     }
 
 
@@ -128,8 +111,8 @@ def is_camera_path(name: str, config: dict, config_paths: mediamtx.ConfigPaths |
     """Whether a path is one of the cameras', which the sync may patch and
     delete. A path mediamtx.yml defines never is, whatever its settings. Of the
     rest, an enabled camera's path reads udp+rtp (or, left by an older backend,
-    runs run_record.sh/.ps1), and a disabled camera's is the playback-only path;
-    without mediamtx.yml's paths, only the first counts."""
+    runs run_record.sh/.ps1), and a disabled camera's is the sourceless reserved
+    path; without mediamtx.yml's paths, only the first counts."""
     source = config.get("source") or ""
     run_on_init = config.get("runOnInit") or ""
     if source.startswith("udp+rtp://") or any(script in run_on_init for script in _RECORD_SCRIPTS.values()):
@@ -161,11 +144,9 @@ def sync(db: DBSession) -> None:
     MediaMTX lists a ~regexp path under its key, not the names it covers, so
     any name might be its. Raises MediaMTXUnreachable if it cannot be reached."""
     global _config_unknown
-    global _recording
     with _lock:
-        record = sessions_repo.recording_session_active(db)
         wanted = {
-            c.alias: path_config(c, record) if c.enabled else playback_only_config()
+            c.alias: path_config(c) if c.enabled else playback_only_config()
             for c in cameras_repo.list_all(db)
         }
         current = mediamtx.list_path_configs()
@@ -193,7 +174,7 @@ def sync(db: DBSession) -> None:
                 continue
             if existing is None:
                 mediamtx.add_path(name, config)
-                log.info("MediaMTX path '%s' added", name, extra={"camera": name, "record": config["record"]})
+                log.info("MediaMTX path '%s' added", name, extra={"camera": name})
                 continue
             changed = {key: value for key, value in config.items() if existing.get(key) != value}
             if changed:
@@ -205,14 +186,6 @@ def sync(db: DBSession) -> None:
             if name not in wanted and is_camera_path(name, existing, config_paths):
                 mediamtx.delete_path(name)
                 log.info("MediaMTX path '%s' removed: no camera has that name", name, extra={"camera": name})
-
-        if record != _recording and wanted:
-            # Once MediaMTX has the cameras set to it, not when only asked; at
-            # startup only if they record, there being no "stopped" before
-            if _recording is not None or record:
-                log.info("Cameras %s recording", "started" if record else "stopped",
-                         extra={"record": record, "cameras": sorted(wanted)})
-            _recording = record
 
 
 def sync_soon(db: DBSession) -> None:
@@ -228,37 +201,16 @@ def _sync_once() -> None:
     db = SessionLocal()
     try:
         sync(db)
-        aliases = [c.alias for c in cameras_repo.list_all(db)]
-        # Every current Session's recorded spans, so a recording the OS held open
-        # until it reached a newer Session is kept, not deleted (retry_deletions)
-        now = datetime.now(timezone.utc)
-        live_windows = [(i.started_at, i.ended_at or now) for i in sessions_repo.all_intervals(db)]
     finally:
         db.close()
     cameras.watch_traffic()
-    removed = recordings.remove_unused_recordings(aliases)
-    if removed:
-        log.info("Deleted %s day-old recording file(s) of cameras that no longer exist", removed,
-                 extra={"files_deleted": removed})
-    retried = recordings.retry_deletions(live_windows)
-    if retried:
-        log.info("Deleted %s file(s) that were still in use when their deletion was asked", retried,
-                 extra={"files_deleted": retried})
 
 
 async def run_forever() -> None:
     """The sync loop, started with the app (main.py). Logs only when its state
-    changes, not on every failed attempt. Every CACHE_CLEAN_INTERVAL_S it also
-    cleans the replay cache."""
+    changes, not on every failed attempt."""
     failing = False
-    cleaned_at: float | None = None  # first round cleans, whatever the clock reads
     while True:
-        if cleaned_at is None or _clock() - cleaned_at >= recordings.CACHE_CLEAN_INTERVAL_S:
-            try:
-                await run_in_threadpool(recordings.clean_cache)
-            except OSError as e:
-                log.warning("Cleaning the replay cache failed: %s", e)
-            cleaned_at = _clock()
         try:
             await run_in_threadpool(_sync_once)
             if failing:

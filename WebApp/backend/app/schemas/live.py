@@ -30,7 +30,6 @@ class SessionUpdatedEvent(BaseModel):
     name: str
     status: Literal["active", "completed"]
     ended_at: Optional[datetime]
-    record: bool
 
 
 class DetectionUpdatedEvent(BaseModel):

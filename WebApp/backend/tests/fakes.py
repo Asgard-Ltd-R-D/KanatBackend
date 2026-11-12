@@ -1,4 +1,4 @@
-"""Stand-ins shared by the camera, recording and detection tests."""
+"""Stand-ins shared by the camera and detection tests."""
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace

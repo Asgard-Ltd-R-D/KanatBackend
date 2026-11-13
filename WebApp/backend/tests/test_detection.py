@@ -207,6 +207,28 @@ def test_completing_a_session_ends_every_board_together(client, db, detection):
     }
 
 
+def test_board_ends_do_not_deadlock_when_the_request_workers_are_full():
+    """ending() runs in a sync request, which holds one default worker token and
+    blocks in _in_parallel while its board ends run. If those ends drew from the
+    default pool too, enough concurrent completions would hold every token while
+    waiting for ends that can never get one. The ends run on their own pool, so
+    saturating the default one does not wedge them: with every default token held
+    by a waiting parent, the fan-out still finishes."""
+    async def main():
+        default = anyio.to_thread.current_default_thread_limiter()
+        default.total_tokens = 3   # tiny: three parents hold them all, none to spare
+
+        def parent(_: str) -> None:   # a sync request body fanning its ends out
+            detection_sync._in_parallel(lambda camera: None, ["a", "b"])
+
+        with anyio.fail_after(10):    # a deadlock would hang here instead
+            async with anyio.create_task_group() as task_group:
+                for i in range(3):
+                    task_group.start_soon(anyio.to_thread.run_sync, parent, str(i))
+
+    anyio.run(main)
+
+
 def test_completing_a_session_without_a_camera_ends_nothing(client, db, detection):
     session_id = client.post("/sessions", json={"name": "Range 1"}).json()["id"]
 

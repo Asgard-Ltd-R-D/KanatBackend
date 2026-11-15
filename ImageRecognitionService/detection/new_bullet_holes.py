@@ -97,6 +97,17 @@ DEFAULT_CONFIDENCE = 0.40  # PROVISIONAL
 # Board stays lost. Set from the SOW wording, not from footage.
 REANCHOR_AFTER_LOST = 25   # PROVISIONAL
 
+# A Look whose frame is less sharp than this fraction of the baseline frame's
+# (`sharpness`) is Lost, defocused. ECC fits a blurred frame against the sharp
+# baseline into a wrong basin, and every later Look is seeded from it: after a
+# chair move and 2 s of simulated defocus on SecondNoOverlay the fit crept to
+# 11.5 Board px, past the match radius, and old marks came back as new. Disk
+# defocus of radius 3-10 px read 0.00-0.07, and so does the one real defocus on
+# record (CamA_20260914_144747, 41.8-44.3 s: 0.06). Sharp frames read 0.30 or
+# more on every recording config/recordings.json lists, and 0.52 through the
+# chair move's motion blur, which must still track. The bound sits ~2x clear of each.
+DEFOCUS_RATIO = 0.15   # PROVISIONAL
+
 # A converged fit can be on the wrong scene altogether: CamA_20260914_150248
 # pans off the Board at frame 19 and tracking converges on the Board next over
 # for ~80 frames (#92). At or past this silhouette disagreement
@@ -1147,6 +1158,13 @@ def _looked_at(index, stride, baseline_frames):
     return index < baseline_frames or index % stride == 0
 
 
+def sharpness(frame):
+    """Variance of the Laplacian of `frame` in greyscale at half resolution: high
+    frequencies, which defocus is the first to take away."""
+    g = cv2.resize(board.gray(frame), None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+    return cv2.Laplacian(g, cv2.CV_32F).var()
+
+
 class Registration:
     """Places each Look's frame onto the Board as the baseline frame showed it
     (CONTEXT.md: Registration, Lost).
@@ -1183,11 +1201,18 @@ class Registration:
         self.reanchors = self._reanchored = 0   # attempts, and those that registered (#80)
         # Converged fits after the first, those checked, and the verdicts (#110).
         self._converged = self._checked = self._gross = self._moderate = 0
+        self._sharpness, self._defocused = sharpness(base), 0
 
     def register(self, frame, index):
-        """`frame`'s view, or None for a Lost Look: the Board was not found,
-        ECC failed, or the fit was grossly wrong. No evidence from that frame,
-        either way. `index` is the frame's, for the log."""
+        """`frame`'s view, or None for a Lost Look: the frame was defocused,
+        the Board was not found, ECC failed, or the fit was grossly wrong. No
+        evidence from that frame, either way. `index` is the frame's, for the
+        log. A defocused frame is not even fitted, so it never seeds the next
+        Look's fit; a re-anchor falling due on one waits a full interval."""
+        if sharpness(frame) < DEFOCUS_RATIO * self._sharpness:
+            self._defocused += 1
+            self._lost_run += 1
+            return None
         due = self._lost_run > 0 and self._lost_run % REANCHOR_AFTER_LOST == 0
         try:
             view, correlation = (board.reanchor_view(frame, self._template_mask, self.last)
@@ -1210,6 +1235,8 @@ class Registration:
         """The end-of-run lines."""
         print(f"[REGISTRATION] {self.reanchors} re-anchor attempt(s): {self._reanchored} "
               f"registered, {self.reanchors - self._reanchored} failed (#80)")
+        print(f"[REGISTRATION] {self._defocused} Look(s) defocused, under "
+              f"{DEFOCUS_RATIO} of the baseline frame's sharpness: counted lost")
         self._report_checks()
 
     def _grossly_wrong(self, frame, view, correlation):

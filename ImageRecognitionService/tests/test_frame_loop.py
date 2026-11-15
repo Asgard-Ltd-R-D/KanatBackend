@@ -73,7 +73,7 @@ class _FakeCap:
         if self.at >= self.n:
             return False, None
         self.at += 1
-        return True, np.full((8, 8, 3), self.at, np.int64)
+        return True, np.full((8, 8, 3), self.at, np.uint16)
 
     def release(self):
         self.released = True
@@ -652,7 +652,7 @@ class _FakeStream:
         return True
 
     def retrieve(self):
-        return True, np.full((8, 8, 3), self.at, np.int64)
+        return True, np.full((8, 8, 3), self.at, np.uint16)
 
     def get(self, prop):
         assert prop == nbh.cv2.CAP_PROP_POS_MSEC

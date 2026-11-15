@@ -3,6 +3,7 @@ No model, no video: `board`'s fits are scripted per frame, and frames are
 registered one by one, as the loop does past the baseline."""
 import types
 
+import cv2
 import numpy as np
 import pytest
 
@@ -14,7 +15,7 @@ GROSS = nbh.GROSS_DISAGREEMENT_PX
 
 def _registration(monkeypatch, registers,
                   reanchors=lambda i: False, correlation=lambda i: 0.9,
-                  disagreement=lambda i: 0.0):
+                  disagreement=lambda i: 0.0, base=None):
     """Registration onto a Board space whose view is frame 0's; `registers(index)`
     says which frames register when tracked, `reanchors(index)` which when
     re-anchored (#80). A fit converges at
@@ -49,7 +50,8 @@ def _registration(monkeypatch, registers,
     monkeypatch.setattr(nbh.board, "track_view", fit("track", registers))
     monkeypatch.setattr(nbh.board, "reanchor_view", fit("reanchor", reanchors))
     space = types.SimpleNamespace(index=0)
-    reg = nbh.Registration(space, _frame(0), np.zeros((8, 8), np.uint8),
+    reg = nbh.Registration(space, _frame(0) if base is None else base,
+                           np.zeros((8, 8), np.uint8),
                            lambda index: f"{index / 25:.2f}s")
     reg.calls, reg.silhouetted, reg.space, reg.previous = calls, checked, space, previous
     return reg
@@ -57,7 +59,7 @@ def _registration(monkeypatch, registers,
 
 def _frame(index):
     """A frame whose pixels are its index, so a fake fit can tell which it was handed."""
-    return np.full((8, 8, 3), index, np.int64)
+    return np.full((8, 8, 3), index, np.uint8)
 
 
 def _register(reg, frames):
@@ -244,3 +246,37 @@ def test_a_jumped_board_re_anchors_into_the_affine_baseline_board_space(monkeypa
     points = [nbh.board.RING_CENTRE_TPL, (-145, -9), (1548, -9), (1548, 1180), (-145, 1180)]
     where = nbh.board.apply(view.H, points) + [150, 90]
     assert nbh.board.apply(moved.H, points) == pytest.approx(where, abs=0.5)
+
+
+# --- a defocused frame is Lost ------------------------------------------------
+
+
+def _textured(index, blur=0, contrast=1.0):
+    """A noise frame at `contrast`, defocused by a `blur` px Gaussian, its first
+    pixel its index."""
+    f = np.random.default_rng(7).integers(0, 256, (64, 64, 3))
+    f = (128 + (f - 128) * contrast).astype(np.uint8)
+    if blur:
+        f = cv2.GaussianBlur(f, (0, 0), blur)
+    f[0, 0] = index
+    return f
+
+
+def test_a_defocused_look_is_lost_and_never_seeds_the_next_fit(monkeypatch, capsys):
+    # ECC fits a blurred frame against the sharp baseline into a wrong basin, and
+    # every later Look starts from it: after a chair move and 2 s of defocus the
+    # fit crept 11.5 Board px, past the match radius, and old marks came back new.
+    reg = _registration(monkeypatch, lambda i: True, base=_textured(0))
+    sharp = reg.register(_textured(1), 1)
+    assert reg.register(_textured(2, blur=3), 2) is None
+    reg.register(_textured(3), 3)
+    assert [(i, last) for _, i, last in reg.calls] == [(1, reg.space), (3, sharp)]
+    reg.report()
+    assert "1 Look(s) defocused" in capsys.readouterr().out
+
+
+def test_a_sharp_look_at_lower_contrast_is_not_defocused(monkeypatch):
+    # Laplacian variance falls with contrast squared: an exposure change alone
+    # must not read as defocus and lose every Look after it.
+    reg = _registration(monkeypatch, lambda i: True, base=_textured(0))
+    assert reg.register(_textured(1, contrast=0.3), 1) is not None

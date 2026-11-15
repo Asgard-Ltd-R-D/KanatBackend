@@ -98,7 +98,7 @@ positions taken from different frames are comparable.
 _Avoid_: alignment, tracking
 
 **Lost**:
-A Look whose frame could not be registered, or registered onto the wrong scene
+A Look whose frame was defocused, could not be registered, or registered onto the wrong scene
 altogether. No evidence either way: unlike a Look that saw nothing, it says
 nothing about what was on the Board.
 _Avoid_: dropped, failed frame, missed frame

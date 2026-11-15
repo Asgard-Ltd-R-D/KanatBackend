@@ -102,10 +102,12 @@ REANCHOR_AFTER_LOST = 25   # PROVISIONAL
 # baseline into a wrong basin, and every later Look is seeded from it: after a
 # chair move and 2 s of simulated defocus on SecondNoOverlay the fit crept to
 # 11.5 Board px, past the match radius, and old marks came back as new. Disk
-# defocus of radius 3-10 px read 0.00-0.07, and so does the one real defocus on
-# record (CamA_20260914_144747, 41.8-44.3 s: 0.06). Sharp frames read 0.30 or
-# more on every recording config/recordings.json lists, and 0.52 through the
-# chair move's motion blur, which must still track. The bound sits ~2x clear of each.
+# defocus of radius 3-10 px read 0.00-0.05, and the one real defocus on record
+# (CamA_20260914_144747, 41.8-44.3 s) 0.08. Sharp frames read 0.38 or more on
+# every recording config/recordings.json lists, and 0.55 through the chair
+# move's motion blur, which must still track. The bound sits ~2x clear of each.
+# Contrast is divided out, so a dimmer or flatter exposure is not defocus: the
+# baseline frame at 0.3x contrast reads 1.00 (0.09 before it was).
 DEFOCUS_RATIO = 0.15   # PROVISIONAL
 
 # A converged fit can be on the wrong scene altogether: CamA_20260914_150248
@@ -1159,10 +1161,12 @@ def _looked_at(index, stride, baseline_frames):
 
 
 def sharpness(frame):
-    """Variance of the Laplacian of `frame` in greyscale at half resolution: high
-    frequencies, which defocus is the first to take away."""
+    """Variance of the Laplacian of `frame` in greyscale at half resolution, over
+    the greyscale's own variance: high frequencies, which defocus is the first
+    to take away, with contrast (which scales both) divided out. 0 on a flat frame."""
     g = cv2.resize(board.gray(frame), None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
-    return cv2.Laplacian(g, cv2.CV_32F).var()
+    spread = g.var()
+    return cv2.Laplacian(g, cv2.CV_32F).var() / spread if spread else 0.0
 
 
 class Registration:

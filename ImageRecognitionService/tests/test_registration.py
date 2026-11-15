@@ -251,9 +251,11 @@ def test_a_jumped_board_re_anchors_into_the_affine_baseline_board_space(monkeypa
 # --- a defocused frame is Lost ------------------------------------------------
 
 
-def _textured(index, blur=0):
-    """A noise frame, defocused by a `blur` px Gaussian, its first pixel its index."""
-    f = np.random.default_rng(7).integers(0, 256, (64, 64, 3)).astype(np.uint8)
+def _textured(index, blur=0, contrast=1.0):
+    """A noise frame at `contrast`, defocused by a `blur` px Gaussian, its first
+    pixel its index."""
+    f = np.random.default_rng(7).integers(0, 256, (64, 64, 3))
+    f = (128 + (f - 128) * contrast).astype(np.uint8)
     if blur:
         f = cv2.GaussianBlur(f, (0, 0), blur)
     f[0, 0] = index
@@ -271,3 +273,10 @@ def test_a_defocused_look_is_lost_and_never_seeds_the_next_fit(monkeypatch, caps
     assert [(i, last) for _, i, last in reg.calls] == [(1, reg.space), (3, sharp)]
     reg.report()
     assert "1 Look(s) defocused" in capsys.readouterr().out
+
+
+def test_a_sharp_look_at_lower_contrast_is_not_defocused(monkeypatch):
+    # Laplacian variance falls with contrast squared: an exposure change alone
+    # must not read as defocus and lose every Look after it.
+    reg = _registration(monkeypatch, lambda i: True, base=_textured(0))
+    assert reg.register(_textured(1, contrast=0.3), 1) is not None

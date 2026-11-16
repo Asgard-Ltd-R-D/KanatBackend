@@ -67,7 +67,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageR
 # board/bullet_hole/target), which scored below its own Capture Profile floor
 # on real range footage and so reported nothing.
 BULLET_HOLE_CLASS = "bullet_hole"   # by name: its id differs between checkpoints
-DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26m_v1", "weights", "best.pt")
+DEFAULT_MODEL = os.path.join(BASE_DIR, "trained_models", "kanat_yolo26x_v1", "weights", "best.pt")
 
 # --- Provisional working values --------------------------------------------
 # Not validated. Hand-set against a single clip, and fixed before the sealed

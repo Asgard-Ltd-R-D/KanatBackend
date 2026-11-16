@@ -739,3 +739,42 @@ def test_a_turned_sheet_is_tracked_on_the_sheet_not_the_mesh_round_it():
     corners = [[0, 0], [1405, 0], [1405, 1120], [0, 1120], board.RING_CENTRE_TPL]
     error = np.linalg.norm(board.apply(view.H, corners) - board.apply(turned, corners), axis=1)
     assert error.max() < 1.5   # frame px
+
+
+def _two_target_frame(upper_scale, lower_scale):
+    """Two copies of the artwork, one above the other, at the given scales;
+    with each copy's ring centre in frame px."""
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    frame = np.full((1000, 900, 3), 128, np.uint8)
+    rings = []
+    for scale, (x, y) in ((upper_scale, (200, 40)), (lower_scale, (230, 520))):
+        P = np.float32([[scale, 0, x], [0, scale, y], [0, 0, 1]])
+        copy = cv2.warpPerspective(template, P, frame.shape[1::-1], borderValue=(128, 128, 128))
+        drawn = np.zeros(frame.shape[:2], np.uint8)
+        cv2.fillConvexPoly(drawn, board.apply(P, [[0, 0], [1405, 0], [1405, 1120], [0, 1120]])
+                           .astype(np.int32), 255)
+        frame[drawn > 0] = copy[drawn > 0]
+        rings.append(board.apply(P, [board.RING_CENTRE_TPL])[0])
+    return frame, rings
+
+
+@pytest.mark.parametrize("upper_scale, lower_scale, reference", [(0.3, 0.25, 0), (0.25, 0.3, 1)])
+def test_targets_are_numbered_by_place_not_by_area(upper_scale, lower_scale, reference):
+    """#240: a re-aim that makes the other Target the larger must not renumber
+    them. Registration still fits the largest, and each Target's ring centre
+    is still its own."""
+    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    frame, rings = _two_target_frame(upper_scale, lower_scale)
+
+    view, _ = board.build_view(frame, template_mask)
+
+    assert len(view.targets) == 2 and view.reference_target == reference
+    for i, ring in enumerate(rings):   # index 0 the upper Target, 1 the lower
+        assert view.board_to_frame([view.ring_centre(i)])[0] == pytest.approx(ring, abs=3)
+
+
+def test_targets_at_about_one_height_read_left_to_right():
+    """Top to bottom, and left to right within a row a few px out of level."""
+    targets = [_square(500, 6, 100), _square(0, 0, 100), _square(250, 400, 100),
+               _square(240, 3, 100)]
+    assert board.reading_order(targets) == [1, 3, 0, 2]

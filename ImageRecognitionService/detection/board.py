@@ -158,6 +158,8 @@ def apply(matrix, points):
 
 def find_targets(frame, min_area=MIN_TARGET_AREA_PX):
     """Every printed Target visible in `frame`, largest first, plus the mask.
+    Largest first picks the registration reference; `build_view` then numbers
+    the Targets by `reading_order` (#240).
 
     One hue threshold does this: the artwork is saturated green against paper,
     dirt and plywood. No model is involved, and none is needed.
@@ -167,6 +169,23 @@ def find_targets(frame, min_area=MIN_TARGET_AREA_PX):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     keep = [c for c in contours if cv2.contourArea(c) >= min_area]
     return sorted(keep, key=cv2.contourArea, reverse=True), mask
+
+
+def reading_order(polygons):
+    """Indices of `polygons` top to bottom by centroid, and left to right
+    for those within half a Target's height of a row's first (#240). The
+    order is the Targets' `target_index`: it follows where each sits, so a
+    re-aim that changes which is largest does not renumber them."""
+    centres = [_centroid(p) for p in polygons]
+    tolerance = np.median([cv2.boundingRect(np.float32(p))[3] for p in polygons]) / 2 \
+        if polygons else 0
+    rows = []
+    for i in sorted(range(len(polygons)), key=lambda i: centres[i][1]):
+        if rows and centres[i][1] - centres[rows[-1][0]][1] <= tolerance:
+            rows[-1].append(i)
+        else:
+            rows.append([i])
+    return [i for row in rows for i in sorted(row, key=lambda i: centres[i][0])]
 
 
 def template_contour(template_mask):
@@ -574,11 +593,13 @@ class BoardView:
     """
 
     def __init__(self, H, tpl_to_board, canvas_size, targets, anchor=None, sheets=(),
-                 crops=()):
+                 crops=(), reference_target=0):
         self.H = H                        # template -> frame
         self.tpl_to_board = tpl_to_board  # template -> Board space (scale + origin)
         self.canvas_size = canvas_size    # (width, height) of the rectified Board
-        self.targets = targets            # Target polygons, Board-space coords
+        self.targets = targets            # Target polygons, Board-space coords,
+                                          # in `target_index` order (`reading_order`)
+        self.reference_target = reference_target  # index of the one registration fits
         self.anchor = anchor              # what `track_view` registers onto
         # Per Target, its sheet's bound, (x0, y0, x1, y1) Board px (ADR-0011),
         # and the canvas the detector is shown it on, (x, y, w, h) whole Board
@@ -598,8 +619,10 @@ class BoardView:
         Measuring a Bullet Hole on Target 2 against Target 1's centre is a
         silent, large error, so callers pass the Target the Bullet Hole is on.
 
-        Target 1's is its registered ring; every other's is that moved by
-        its centroid's offset from Target 1's, as `sheet_bounds` places the
+        The reference Target's (`reference_target`, the largest at the
+        baseline, not necessarily index 0: #240) is its registered ring; every
+        other's is that moved by its centroid's offset from the reference's,
+        as `sheet_bounds` places the
         sheets. The silhouettes share the artwork and its edge bias, so the
         offset cancels it; the silhouette's centroid itself does not (#302:
         2-5.5 mm off the disk on CamB). Assumes Targets are not rotated
@@ -608,7 +631,7 @@ class BoardView:
         ring = self.template_to_board([RING_CENTRE_TPL])[0]
         if target_index is None or not self.targets:
             return ring
-        polygons = self.targets[0], self.targets[target_index]
+        polygons = self.targets[self.reference_target], self.targets[target_index]
         if not all(cv2.moments(t)["m00"] for t in polygons):
             return ring
         return ring + (_centroid(polygons[1]) - _centroid(polygons[0])).astype(np.float32)
@@ -674,7 +697,9 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
 
     The largest Target is the registration reference; every other Target is
     mapped into the same Board space through that one homography — the
-    Board-level fit described in the module docstring.
+    Board-level fit described in the module docstring. The view numbers the
+    Targets by `reading_order`, and `reference_target` says which is the
+    reference (#240).
 
     Returns `(None, None)` when no Target is visible.
     """
@@ -704,15 +729,18 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     tpl_to_board = _as_matrix(board_scale, (-lo[0], -lo[1]))
     targets = [(apply(_as_matrix(1.0, (-lo[0], -lo[1])), p)
                 .reshape(-1, 1, 2).astype(np.float32)) for p in placed]
-    sheets = sheet_bounds(targets, tpl_to_board)
+    order = reading_order(targets)
+    targets = [targets[i] for i in order]
+    reference = order.index(0)   # contours[0], the largest, registration's
+    sheets = sheet_bounds(targets, tpl_to_board, reference=reference)
     square = RING_CENTRE_TPL + IDENTITY_SPANS * contour_span(template_contour(template_mask)) * \
         np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])
     identity = np.zeros(frame.shape[:2], np.uint8)
     cv2.fillConvexPoly(identity, apply(H, square).astype(np.int32), 255)
     anchor = Anchor(gray(frame), texture_region(H @ np.linalg.inv(tpl_to_board),
                                                 frame.shape[1::-1], sheets), H, identity)
-    return (BoardView(H, tpl_to_board, size, targets, anchor, sheets, sheet_crops(sheets)),
-            correlation)
+    return (BoardView(H, tpl_to_board, size, targets, anchor, sheets, sheet_crops(sheets),
+                      reference), correlation)
 
 
 def _centroid(polygon):
@@ -720,9 +748,9 @@ def _centroid(polygon):
     return np.array([m["m10"] / m["m00"], m["m01"] / m["m00"]])
 
 
-def sheet_bounds(targets, tpl_to_board, bound_tpl=None):
+def sheet_bounds(targets, tpl_to_board, bound_tpl=None, reference=0):
     """Each Target's sheet bound in Board px, `(x0, y0, x1, y1)`: the
-    reference Target's (`targets[0]`, the one Board space was fitted to)
+    reference Target's (`targets[reference]`, the one Board space was fitted to)
     through Board space, every other's the same moved by its centroid's offset
     from the reference's (#271). `bound_tpl` defaults to `sheet_bound_tpl()`.
 
@@ -733,7 +761,7 @@ def sheet_bounds(targets, tpl_to_board, bound_tpl=None):
     sheet's truth ever sits near that edge."""
     x0, y0, x1, y1 = sheet_bound_tpl() if bound_tpl is None else bound_tpl
     ref = apply(tpl_to_board, [[x0, y0], [x1, y1]]).astype(np.float64).ravel()
-    origin = _centroid(targets[0])
+    origin = _centroid(targets[reference])
     return [tuple(ref + np.tile(_centroid(t) - origin, 2)) for t in targets]
 
 
@@ -826,7 +854,8 @@ def track_view(frame, reference, seed=None, previous=None, region=None):
     W, correlation = ecc_warp(a.gray, gray(frame), cv2.MOTION_HOMOGRAPHY, W,
                               a.region if region is None else region)
     return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
-                     reference.targets, a, reference.sheets, reference.crops), correlation
+                     reference.targets, a, reference.sheets, reference.crops,
+                     reference.reference_target), correlation
 
 
 def shifted(view, d):
@@ -839,7 +868,8 @@ def shifted(view, d):
     move = _as_matrix(1.0, (-d, -d))
     return BoardView(view.H, move @ view.tpl_to_board, view.canvas_size,
                      [t - d for t in view.targets], view.anchor,
-                     [tuple(np.subtract(b, d)) for b in view.sheets], view.crops)
+                     [tuple(np.subtract(b, d)) for b in view.sheets], view.crops,
+                     view.reference_target)
 
 
 def reanchor_view(frame, template_mask, reference):
@@ -916,7 +946,7 @@ def silhouette_disagreement(frame, template_mask, view):
         own_H, _ = register(template_mask, frame_mask, contours[0])
     except cv2.error:
         return None
-    centre = view.targets[0].reshape(-1, 2).mean(axis=0, keepdims=True)
+    centre = view.targets[view.reference_target].reshape(-1, 2).mean(axis=0, keepdims=True)
     own = apply(view.tpl_to_board @ np.linalg.inv(own_H), view.board_to_frame(centre))
     return float(np.linalg.norm(own - centre))
 

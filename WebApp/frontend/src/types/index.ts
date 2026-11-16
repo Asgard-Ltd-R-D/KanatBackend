@@ -111,6 +111,9 @@ export interface BulletCreatePayload {
   x_mm?: number | null
   y_mm?: number | null
   source: 'model' | 'manual'
+  // A stable key so a retried create returns the existing hole instead of a
+  // duplicate (the backend dedupes on it): used when adding shots in a batch.
+  idempotency_key?: string
 }
 
 export type StreamStatus = 'loading' | 'playing' | 'error'

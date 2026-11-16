@@ -2,10 +2,48 @@
 @tailwind components;
 @tailwind utilities;
 
+:root { color-scheme: light dark; }
+
 body {
   font-family: 'Inter Variable', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv11' 1; /* straight-sided glyphs: a steadier, instrument look */
+}
+
+/* Figures line up in tables and readouts */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* One calm, brand-tinted selection and focus ring across the app */
+::selection { background: rgba(63, 99, 166, 0.22); }
+:focus-visible { outline: 2px solid #3f63a6; outline-offset: 2px; border-radius: 4px; }
+
+/* Tactile press: every control dips when pushed, so a click feels answered.
+   Applies to all buttons; `.press` adds it to non-button controls (e.g. export
+   links). `.no-press` opts out an element that positions itself with transform
+   (like the placed-shot markers), so the press never makes it jump.
+   The selector outranks Tailwind's `transition-colors`, so colour hovers still
+   fade while the transform eases. */
+@media (prefers-reduced-motion: no-preference) {
+  button:not(:disabled):not(.no-press),
+  .press {
+    transition: transform 90ms ease, filter 90ms ease,
+      background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+  }
+  button:not(:disabled):not(.no-press):active,
+  .press:active:not(:disabled) {
+    transform: translateY(1px) scale(0.96);
+    filter: brightness(0.92);
+  }
+}
+
+/* Honour the OS "reduce motion" setting: no pulses, no eased transforms */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 /* Light scrollbar */

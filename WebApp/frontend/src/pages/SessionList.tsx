@@ -8,7 +8,7 @@ import { Session } from '../types'
 import { StatusBadge } from '../components/UI/StatusBadge'
 import { ConfirmDialog } from '../components/UI/ConfirmDialog'
 import { NewSessionModal } from '../components/Session/NewSessionModal'
-import { StatTile } from '../components/UI/StatTile'
+import { StatStrip } from '../components/UI/StatStrip'
 import { formatDuration } from '../utils/format'
 
 const SKELETON_WIDTHS = ['65%', '55%', '40%', '30%', '25%', '20%']
@@ -62,13 +62,13 @@ export function SessionList() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Sessions</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Sessions</h1>
         </div>
         <button
           onClick={() => setShowNew(true)}
           disabled={!!active}
           title={active ? `Session '${active.name}' is still active: complete it first` : undefined}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors shadow-lg shadow-blue-600/20"
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors shadow-card press"
         >
           <Plus size={16} />
           New Session
@@ -79,9 +79,7 @@ export function SessionList() {
 
       {/* Stats */}
       {sessions && sessions.length > 0 && (
-        <div className="mb-8 max-w-xs">
-          <StatTile label="Total Sessions" value={sessions.length} />
-        </div>
+        <StatStrip className="mb-8 w-56" items={[{ label: 'Total sessions', value: sessions.length }]} />
       )}
 
       {/* Error */}
@@ -100,12 +98,12 @@ export function SessionList() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Session</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Date</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Duration</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Status</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Bullets</th>
-              <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Actions</th>
+              <th className="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400">Session</th>
+              <th className="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400">Date</th>
+              <th className="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400">Duration</th>
+              <th className="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400">Status</th>
+              <th className="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400">Bullets</th>
+              <th className="text-right px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -121,7 +119,7 @@ export function SessionList() {
                     <p className="text-slate-600 dark:text-slate-400 font-medium">No sessions yet</p>
                     <button
                       onClick={() => setShowNew(true)}
-                      className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                      className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors press"
                     >
                       Start First Session
                     </button>
@@ -185,7 +183,7 @@ export function SessionList() {
                   <StatusBadge status={session.status} />
                 </td>
 
-                <td className="px-4 py-3.5 text-slate-700 dark:text-slate-300 font-mono text-sm">
+                <td className="px-4 py-3.5 text-slate-700 dark:text-slate-300 tnum text-sm">
                   {session.status === 'active' ? '—' : (session.bullet_count ?? 0)}
                 </td>
 

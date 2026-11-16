@@ -14,15 +14,26 @@ function NavItem({ to, icon, label, end = false }: { to: string; icon: ReactNode
       end={end}
       className={({ isActive }) =>
         clsx(
-          'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+          'relative flex items-center gap-3 pl-4 pr-3 py-2 rounded-md text-sm font-medium transition-colors',
           isActive
-            ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-600/30'
-            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800',
+            ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-800 dark:text-blue-200'
+            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/70',
         )
       }
     >
-      {icon}
-      {label}
+      {({ isActive }) => (
+        <>
+          {/* Active items carry a signal bar at the rail, like a lit channel */}
+          <span
+            className={clsx(
+              'absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full transition-colors',
+              isActive ? 'bg-blue-600 dark:bg-blue-400' : 'bg-transparent',
+            )}
+          />
+          {icon}
+          {label}
+        </>
+      )}
     </NavLink>
   )
 }
@@ -40,16 +51,16 @@ export function Layout() {
       {/* Sidebar */}
       <aside className="w-60 flex-shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
         {/* Logo */}
-        <div className="px-6 py-5 border-b border-slate-200 dark:border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center flex-shrink-0">
-              <Crosshair size={16} className="text-white" />
+        <div className="px-5 py-5 border-b border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-blue-600 ring-1 ring-blue-700/50 flex items-center justify-center flex-shrink-0 shadow-card">
+              <Crosshair size={17} className="text-white" />
             </div>
             <div>
-              <div className="font-mono text-xs font-bold tracking-[0.2em] text-blue-600 dark:text-blue-400 uppercase">
-                Kanat
+              <div className="font-mono text-sm font-bold tracking-[0.22em] text-slate-900 dark:text-slate-100">
+                KANAT
               </div>
-              <div className="font-mono text-[10px] tracking-[0.15em] text-slate-400 dark:text-slate-400 uppercase">
+              <div className="font-mono text-[10px] tracking-[0.14em] text-slate-400 dark:text-slate-500">
                 Range System
               </div>
             </div>
@@ -57,7 +68,7 @@ export function Layout() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav className="flex-1 px-3 py-4 space-y-0.5">
           <NavItem to="/" icon={<LayoutList size={16} />} label="Sessions" end />
           <NavItem to="/logs" icon={<ScrollText size={16} />} label="Logs" />
           <NavItem to="/settings" icon={<SettingsIcon size={16} />} label="Settings" />

@@ -46,11 +46,6 @@ export function NewSessionModal({ open, onClose }: Props) {
         className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 mb-4"
       />
 
-      {/* A Session watches every enabled camera, one board each */}
-      <p className="text-xs text-slate-500 dark:text-slate-400 mb-5">
-        Detection watches every enabled camera, each as its own board, for the whole session.
-      </p>
-
       {mutation.isError && (
         <p className="text-red-500 dark:text-red-400 text-sm mb-4">{(mutation.error as Error).message}</p>
       )}
@@ -65,7 +60,7 @@ export function NewSessionModal({ open, onClose }: Props) {
         <button
           onClick={() => mutation.mutate()}
           disabled={mutation.isPending}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
+          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 press"
         >
           {mutation.isPending ? 'Creating…' : 'Start Session'}
         </button>

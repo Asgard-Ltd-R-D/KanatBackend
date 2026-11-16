@@ -16,6 +16,18 @@ type ServiceStates = {
 
 const toState = (up: boolean): ServiceState => (up ? 'online' : 'offline')
 
+// The detector's folder name, shown short and tidy: drop the "kanat_" prefix and
+// the trailing version, spaces for underscores, "YOLO" in caps.
+// "kanat_yolo26n_v1" -> "YOLO26n"
+function formatModel(name: string | null | undefined): string | null {
+  if (!name) return null
+  return name
+    .replace(/^kanat_/, '')
+    .replace(/_v[\d.]+$/i, '')
+    .replace(/_/g, ' ')
+    .replace(/yolo/gi, 'YOLO')
+}
+
 // Whether the backend, the video service and the Detection Service are up,
 // checked every POLL_MS, and the detector the Detection Service runs. When the
 // backend does not answer, the others are unknown.
@@ -32,7 +44,7 @@ export function useSystemStatus(): ServiceStates {
   if (isError) return { backend: 'offline', videoService: 'unknown', detectionService: 'unknown', detector: null }
   // The device without its index: the PC has one GPU, so "cuda:0" reads "CUDA"
   const device = data.detector_device?.split(':')[0].toUpperCase()
-  const detector = [device, data.detector_model].filter(Boolean).join(' · ')
+  const detector = [device, formatModel(data.detector_model)].filter(Boolean).join(' · ')
   return {
     backend: 'online',
     videoService: toState(data.video_service),

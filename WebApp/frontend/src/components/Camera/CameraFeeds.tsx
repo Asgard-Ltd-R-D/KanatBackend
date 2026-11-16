@@ -110,29 +110,30 @@ export function CameraFeeds({ runs, bullets, detections }: { runs: Run[]; bullet
   }
 
   const n = enabled.length
-  const focusedCamera = focused ? enabled.find(c => c.alias === focused) : undefined
+  // Spotlight only makes sense with more than one camera
+  const spotlight = focused != null && n > 1
+  const others = spotlight ? enabled.filter(c => c.alias !== focused) : []
 
-  // Spotlight: the focused camera big on the left, the rest as small 16:9
-  // thumbnails in a column on the right. Each thumbnail's focus button takes
-  // the big slot; the focused one's button restores the grid. Only when >1 camera.
-  if (focusedCamera && n > 1) {
-    const others = enabled.filter(c => c.alias !== focusedCamera.alias)
-    return (
-      <div className="flex gap-3 h-full">
-        <div className="flex-1 min-w-0">{tile(focusedCamera)}</div>
-        <div className="w-60 shrink-0 flex flex-col gap-3 overflow-y-auto">
-          {others.map(camera => (
-            <div key={camera.id} className="shrink-0">{tile(camera, { compact: true })}</div>
-          ))}
-        </div>
-      </div>
-    )
+  // One grid holds every tile in a fixed order, so changing focus only re-styles
+  // cells — React keeps each WhepPlayer mounted and the live video never drops.
+  // Spotlight: the focused camera fills the left column, the rest stack in a
+  // narrow right column; otherwise the equal grid for n cameras.
+  const containerStyle: CSSProperties = spotlight
+    ? { gridTemplateColumns: '1fr 15rem', gridTemplateRows: `repeat(${others.length}, minmax(0, 1fr))` }
+    : gridStyle(n)
+
+  const cellOf = (camera: Camera, i: number): CSSProperties | undefined => {
+    if (spotlight) {
+      return camera.alias === focused
+        ? { gridColumn: '1', gridRow: '1 / -1' }
+        : { gridColumn: '2', gridRow: `${others.findIndex(c => c.id === camera.id) + 1}` }
+    }
+    return n === 3 ? TRIANGLE_CELLS[i] : undefined
   }
 
-  // Equal grid
   return (
-    <div className="grid gap-3 h-full" style={gridStyle(n)}>
-      {enabled.map((camera, i) => tile(camera, { cell: n === 3 ? TRIANGLE_CELLS[i] : undefined }))}
+    <div className="grid gap-3 h-full min-h-0" style={containerStyle}>
+      {enabled.map((camera, i) => tile(camera, { compact: spotlight && camera.alias !== focused, cell: cellOf(camera, i) }))}
     </div>
   )
 }

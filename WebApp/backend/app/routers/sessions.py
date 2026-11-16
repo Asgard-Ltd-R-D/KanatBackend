@@ -55,6 +55,9 @@ def get_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
 @router.patch("/{session_id}", response_model=SessionResponse)
 def update_session(session_id: uuid.UUID, body: SessionUpdate, db: DBSession = Depends(get_db)):
     if body.status == "completed":
+        # Refuse a clashing rename before ending() stops the Runs, so a 409 does
+        # not leave the Session active with its detection interrupted
+        svc.refuse_if_name_rename_taken(session_id, body, db)
         # Its Run ends first, the Session still active, so the Bullet Holes
         # it posts on the way out are stored
         with detection_sync.ending(svc.get_session_or_404(session_id, db)):

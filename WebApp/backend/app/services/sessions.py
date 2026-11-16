@@ -63,6 +63,14 @@ def _refuse_if_name_taken(db: DBSession, name: str, session_id: uuid.UUID | None
         raise HTTPException(status_code=409, detail=_NAME_TAKEN.format(name.strip()))
 
 
+def refuse_if_name_rename_taken(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) -> None:
+    """A preflight for the router: refuse a rename onto another Session's name
+    before the request takes any side effect (completing a Session ends its Runs
+    first). _apply_update still checks under the write lock, for the race."""
+    if body.name is not None:
+        _refuse_if_name_taken(db, body.name, session_id)
+
+
 def create_session(body: SessionCreate, db: DBSession) -> Session:
     # Serialized (db_write) like update_session: the name (and active) checks and
     # the insert are one step, so a create cannot race a rename onto the same name

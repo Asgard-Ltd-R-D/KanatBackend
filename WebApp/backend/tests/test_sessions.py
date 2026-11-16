@@ -1,6 +1,7 @@
 """One active Session at a time (services/sessions.py), driven through the
 REST API with the database replaced (tests/conftest.py); the database's own
 hold on it is in tests/test_schema.py."""
+import uuid
 
 
 def test_a_session_cannot_start_while_another_is_active(client, db, detection):
@@ -79,3 +80,18 @@ def test_a_session_may_keep_its_own_name_on_update(client, db, detection):
     res = client.patch(f"/sessions/{session_id}", json={"name": "Range A", "status": "completed"})
 
     assert res.status_code == 200
+
+
+def test_completing_onto_a_taken_name_is_refused_before_runs_end(client, db, detection):
+    taken = client.post("/sessions", json={"name": "Range A"}).json()["id"]
+    client.patch(f"/sessions/{taken}", json={"status": "completed"})
+    active = client.post("/sessions", json={"name": "Range B"}).json()["id"]
+    detection.set_run(uuid.UUID(active), "cam1")
+    detection.calls.clear()
+
+    # Complete the active Session and rename it onto a name already in use
+    res = client.patch(f"/sessions/{active}", json={"status": "completed", "name": "Range A"})
+
+    assert res.status_code == 409
+    # Refused before ending(): the board's Run was not stopped
+    assert detection.calls == []

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { GET_CONFIG, OPEN_LOG_FOLDER, READ_LOGS, VERIFY_LOGS_PASSWORD, WRITE_LOG } from './channels'
+import { GET_CONFIG, LOCK_LOGS, OPEN_LOG_FOLDER, READ_LOGS, VERIFY_LOGS_PASSWORD, WRITE_LOG } from './channels'
 import type { PublicConfig } from './config'
 import type { LogEntry } from './logs'
 import type { LogLine } from './logreader'
@@ -18,4 +18,5 @@ contextBridge.exposeInMainWorld('kanatLog', {
   openFolder: (): Promise<string> => ipcRenderer.invoke(OPEN_LOG_FOLDER),
   read: (limit?: number): Promise<LogLine[]> => ipcRenderer.invoke(READ_LOGS, limit),
   verifyPassword: (password: string): Promise<boolean> => ipcRenderer.invoke(VERIFY_LOGS_PASSWORD, password),
+  lock: (): void => ipcRenderer.send(LOCK_LOGS),
 })

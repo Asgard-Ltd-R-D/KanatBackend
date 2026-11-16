@@ -1,5 +1,5 @@
 import { ipcMain, shell } from 'electron'
-import { GET_CONFIG, OPEN_LOG_FOLDER, READ_LOGS, VERIFY_LOGS_PASSWORD, WRITE_LOG } from './channels'
+import { GET_CONFIG, LOCK_LOGS, OPEN_LOG_FOLDER, READ_LOGS, VERIFY_LOGS_PASSWORD, WRITE_LOG } from './channels'
 import { KanatConfig, publicConfig } from './config'
 import { fromPage, writeLog } from './logs'
 import { passwordMatches } from './logsAuth'
@@ -36,5 +36,10 @@ export function registerIpcHandlers(config: KanatConfig) {
     const ok = !config.logsPasswordHash || passwordMatches(password, config.logsPasswordHash)
     if (ok) logsUnlocked = true
     return ok
+  })
+  // Re-lock the Logs tab when the operator leaves it, so returning asks for the
+  // password again. A no-op when no password is configured (developing).
+  ipcMain.on(LOCK_LOGS, () => {
+    if (config.logsPasswordHash) logsUnlocked = false
   })
 }

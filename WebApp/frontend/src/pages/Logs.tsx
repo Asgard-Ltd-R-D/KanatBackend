@@ -1,21 +1,27 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronRight, FolderOpen, Lock, Pause, Play, RotateCw, ServerOff } from 'lucide-react'
 import { readLogs, type LogLine } from '../api/logs'
 import { log } from '../utils/logger'
 
 // The Logs tab is for engineers: when the install bakes a password
-// (window.kanat.logsProtected), it is locked until the password is entered, for
-// this app session only. With no password configured (developing), it is open.
-// Whether the Logs tab was unlocked this app session. Module-scoped so it
-// survives the tab unmounting when the operator visits another page and comes
-// back; the main process keeps the matching logsUnlocked (electron/ipc.ts), so
-// re-prompting on every visit would be pointless.
-let sessionUnlocked = !window.kanat?.logsProtected
+// (window.kanat.logsProtected), it is locked until the password is entered, and
+// locked again the moment the operator leaves the tab, so coming back asks for
+// the password once more. With no password configured (developing), it is open.
+const lockedByDefault = () => !window.kanat?.logsProtected
 
 export function Logs() {
-  const [unlocked, setUnlocked] = useState(sessionUnlocked)
-  if (!unlocked) return <LogsGate onUnlock={() => { sessionUnlocked = true; setUnlocked(true) }} />
+  const [unlocked, setUnlocked] = useState(lockedByDefault)
+
+  // Re-lock on leaving the tab: reset the gate and tell the main process, so the
+  // log data cannot be read around the gate from the renderer either.
+  useEffect(() => {
+    return () => {
+      if (window.kanat?.logsProtected) window.kanatLog?.lock()
+    }
+  }, [])
+
+  if (!unlocked) return <LogsGate onUnlock={() => setUnlocked(true)} />
   return <LogsViewer />
 }
 

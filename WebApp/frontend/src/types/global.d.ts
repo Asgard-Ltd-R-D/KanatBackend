@@ -14,6 +14,8 @@ declare global {
       // Checks the engineer password that unlocks the Logs tab (against the
       // baked hash, in the main process). True when no password is configured.
       verifyPassword: (password: string) => Promise<boolean>
+      // Re-locks the Logs tab (on leaving it) so returning asks for the password
+      lock: () => void
     }
   }
 }

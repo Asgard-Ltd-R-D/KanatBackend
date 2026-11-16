@@ -73,6 +73,12 @@ def db(monkeypatch):
     monkeypatch.setattr(sessions_repo, "save", lambda db: None)
     # Sessions are added in the order they start
     monkeypatch.setattr(sessions_repo, "list_active", lambda db: [s for s in state.sessions.values() if s.status == "active"])
+
+    def name_taken(db, name, exclude_id=None):
+        key = name.strip().casefold()
+        return any(s.name.strip().casefold() == key and s.id != exclude_id for s in state.sessions.values())
+
+    monkeypatch.setattr(sessions_repo, "name_taken", name_taken)
     monkeypatch.setattr(cameras_repo, "get", lambda db, camera_id: state.cameras.get(camera_id))
     monkeypatch.setattr(cameras_repo, "list_all", lambda db: list(state.cameras.values()))
     monkeypatch.setattr(detection_sync, "SessionLocal", FakeDB)

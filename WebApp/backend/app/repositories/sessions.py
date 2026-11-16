@@ -50,6 +50,24 @@ def list_active(db: DBSession) -> list[Session]:
     return db.query(Session).filter(Session.status == "active").order_by(Session.started_at).all()
 
 
+def _name_key(name: str) -> str:
+    """A Session name reduced for comparison: surrounding space removed and case
+    folded in Python. Case folding here (not SQLite's lower(), which folds only
+    ASCII) makes accented and other Unicode names, e.g. 'Équipe' and 'équipe',
+    compare equal, and keeps both sides normalised the same way."""
+    return name.strip().casefold()
+
+
+def name_taken(db: DBSession, name: str, exclude_id: uuid.UUID | None = None) -> bool:
+    """Whether another Session already has this name, compared with surrounding
+    space removed and case folded, so "Range A" and "range a " count as the same.
+    exclude_id is the Session being renamed, which is not counted against itself.
+    Few Sessions exist, so the names are fetched and compared in Python, keeping
+    the stored and the incoming name normalised the identical way (see _name_key)."""
+    key = _name_key(name)
+    return any(_name_key(n) == key and sid != exclude_id for sid, n in db.query(Session.id, Session.name).all())
+
+
 class SecondActiveSession(Exception):
     """Another Session became active first: uq_sessions_one_active refused this one."""
 

@@ -36,3 +36,46 @@ def test_the_active_session_can_still_be_changed(client, db, detection):
     res = client.patch(f"/sessions/{session_id}", json={"name": "Range A2", "status": "active"})
 
     assert (res.status_code, res.json()["name"]) == (200, "Range A2")
+
+
+def test_a_session_cannot_take_a_name_already_in_use(client, db, detection):
+    first = client.post("/sessions", json={"name": "Range A"}).json()["id"]
+    client.patch(f"/sessions/{first}", json={"status": "completed"})
+
+    # Same name, differing only in case and surrounding space: still a clash
+    res = client.post("/sessions", json={"name": " range a "})
+
+    assert res.status_code == 409
+    assert "already exists" in res.json()["detail"]
+    assert [s.name for s in db.sessions.values()] == ["Range A"]
+
+
+def test_a_session_cannot_be_renamed_onto_another_name(client, db, detection):
+    first = client.post("/sessions", json={"name": "Range A"}).json()["id"]
+    client.patch(f"/sessions/{first}", json={"status": "completed"})
+    second = client.post("/sessions", json={"name": "Range B"}).json()["id"]
+
+    res = client.patch(f"/sessions/{second}", json={"name": "Range A"})
+
+    assert res.status_code == 409
+    assert "already exists" in res.json()["detail"]
+
+
+def test_a_session_name_clash_folds_unicode_case(client, db, detection):
+    first = client.post("/sessions", json={"name": "Équipe"}).json()["id"]
+    client.patch(f"/sessions/{first}", json={"status": "completed"})
+
+    # Case folded across Unicode, not only ASCII: "équipe" clashes with "Équipe"
+    res = client.post("/sessions", json={"name": " équipe "})
+
+    assert res.status_code == 409
+    assert [s.name for s in db.sessions.values()] == ["Équipe"]
+
+
+def test_a_session_may_keep_its_own_name_on_update(client, db, detection):
+    session_id = client.post("/sessions", json={"name": "Range A"}).json()["id"]
+
+    # Renaming to its own name (here via a status change) is not a clash with itself
+    res = client.patch(f"/sessions/{session_id}", json={"name": "Range A", "status": "completed"})
+
+    assert res.status_code == 200

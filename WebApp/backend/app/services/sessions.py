@@ -53,20 +53,34 @@ def _refused_as_second_active(db: DBSession, session_id: uuid.UUID | None = None
 
 
 _ANOTHER_ACTIVE = "Session '{}' is still active: complete it first"
+_NAME_TAKEN = "A Session named '{}' already exists: pick a different name"
+
+
+def _refuse_if_name_taken(db: DBSession, name: str, session_id: uuid.UUID | None = None) -> None:
+    """A Session's name is its own: two cannot share one. Checked trimmed and
+    case-insensitively; session_id is the Session being renamed, not counted."""
+    if repo.name_taken(db, name, session_id):
+        raise HTTPException(status_code=409, detail=_NAME_TAKEN.format(name.strip()))
 
 
 def create_session(body: SessionCreate, db: DBSession) -> Session:
-    _refuse_if_another_is_active(db)
-    session = Session(
-        id=uuid.uuid4(),
-        name=body.name,
-        status="active",
-        started_at=datetime.now(timezone.utc),
-    )
-    try:
-        session = repo.add(db, session)
-    except repo.SecondActiveSession as e:
-        raise _refused_as_second_active(db) from e
+    # Serialized (db_write) like update_session: the name (and active) checks and
+    # the insert are one step, so a create cannot race a rename onto the same name
+    # — both passing their check before either commits — with no DB constraint to
+    # catch it. SQLite is a single writer; this is the one backend process's lock.
+    with db_write:
+        _refuse_if_another_is_active(db)
+        _refuse_if_name_taken(db, body.name)
+        session = Session(
+            id=uuid.uuid4(),
+            name=body.name,
+            status="active",
+            started_at=datetime.now(timezone.utc),
+        )
+        try:
+            session = repo.add(db, session)
+        except repo.SecondActiveSession as e:
+            raise _refused_as_second_active(db) from e
     log.info(
         "Session '%s' created", session.name,
         extra={"session_id": session.id, "session_name": session.name},
@@ -92,6 +106,7 @@ def _apply_update(session_id: uuid.UUID, body: SessionUpdate, db: DBSession) -> 
 
     before = {"session_name": session.name, "status": session.status}
     if body.name is not None:
+        _refuse_if_name_taken(db, body.name, session_id)
         session.name = body.name
     if body.status is not None:
         session.status = body.status

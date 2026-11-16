@@ -22,9 +22,10 @@ import math
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
+import anyio
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session as DBSession
 
@@ -318,6 +319,36 @@ def _boards_in_state(session_id: uuid.UUID) -> list[str]:
         return sorted({cam for (sid, cam) in _states if sid == session_id})
 
 
+# The ends run on their own worker limiter, not the default one run_in_threadpool
+# uses. ending() is called from a sync request, which already holds a default
+# worker token, and blocks in from_thread.run below while its ends run: if those
+# ends also drew from the default limiter, enough concurrent completions would
+# leave every default token held by a waiting parent with none left for its
+# ends, wedging them and every other sync endpoint for good. A separate pool
+# keeps the ends' capacity out of reach of the parents waiting on them.
+_END_WORKERS = anyio.CapacityLimiter(40)
+
+
+def _in_parallel(fn: Callable[[str], None], cameras: list[str]) -> None:
+    """Run `fn` on each camera at once and wait for all. For board ends, which
+    each block on the Detection Service independently, so ending them in turn
+    would add their waits up. ending() runs in a sync request (an AnyIO worker
+    thread), so the fan-out goes back onto the event loop and each `fn` runs in
+    an AnyIO worker thread -- where `publish_from_thread` can reach the loop, as
+    watch_all does; a plain threading.Thread could not publish run_moved. The
+    ends take tokens from _END_WORKERS, not the default pool the calling request
+    holds one of, so a waiting parent cannot starve its own ends."""
+    async def end_on_worker(camera: str) -> None:
+        await anyio.to_thread.run_sync(fn, camera, limiter=_END_WORKERS)
+
+    async def fan_out() -> None:
+        async with anyio.create_task_group() as task_group:
+            for camera in cameras:
+                task_group.start_soon(end_on_worker, camera)
+
+    anyio.from_thread.run(fan_out)
+
+
 @contextmanager
 def ending(session: Session) -> Iterator[None]:
     """Ends every one of the active Session's boards' Runs before the block
@@ -399,9 +430,15 @@ def ending(session: Session) -> Iterator[None]:
             # ponytail: the Detection Service drops its Run before it answers that
             # tick's end, so this end's 404 can come first and read end_unconfirmed,
             # the safe way round. Waiting on an end of the same Run already under
-            # way closes it if it ever matters
-            for camera in boards:
+            # way closes it if it ever matters.
+            # The boards are ended together: each _end_run blocks until that board's
+            # Run has judged its open Candidates and drained its posts (seconds), so
+            # ending them in turn would add those waits up across the boards. Each
+            # board is independent, and _end_run takes its own locks, so this only
+            # overlaps the waiting.
+            def end_board(camera: str) -> None:
                 confirmed[camera] = _end_run(session_id, camera)
+            _in_parallel(end_board, boards)
             yield
         except BaseException:
             still_active = _still_active(session_id)

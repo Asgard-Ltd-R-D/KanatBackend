@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { ReactNode, useState } from 'react'
 import { VideoOff, Loader2, RotateCcw } from 'lucide-react'
 import { useWhepStream } from '../../hooks/useWhepStream'
 import { Overlay, OverlayContent, OverlayToggle } from './Overlay'
@@ -7,10 +7,11 @@ interface WhepPlayerProps {
   path: string // MediaMTX path name, e.g. "camA"
   label?: string // shown over the video, top right
   overlay?: OverlayContent // drawn over the video, with a toggle to hide it
+  action?: ReactNode // a control pinned to the video's top-right (e.g. focus)
 }
 
 // Fills its container; the video keeps its proportions inside it
-export function WhepPlayer({ path, label, overlay }: WhepPlayerProps) {
+export function WhepPlayer({ path, label, overlay, action }: WhepPlayerProps) {
   const { videoRef, status, reason, reconnect, onPlaying } = useWhepStream(path)
   // On whenever the player opens: never remembered
   const [showOverlay, setShowOverlay] = useState(true)
@@ -56,6 +57,8 @@ export function WhepPlayer({ path, label, overlay }: WhepPlayerProps) {
           <span className="text-[11px] font-mono text-white/80">{label}</span>
         </div>
       )}
+
+      {action && <div className="absolute top-3 right-3">{action}</div>}
 
       {status === 'playing' && (
         <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 rounded-full px-2.5 py-1">

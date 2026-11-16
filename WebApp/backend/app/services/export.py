@@ -60,8 +60,11 @@ _REPORT_HTML = """<!DOCTYPE html>
 
     /* WeasyPrint ignores flexbox `gap`, so the space to the stats is a margin */
     .target-fig { width: 262px; flex: none; margin-right: 44px; }
-    .target { position: relative; overflow: hidden; border: 1px solid #cfd6de; border-radius: 2px; background: #fff; }
-    .target img { display: block; width: 100%; }
+    /* The drawing canvas: its height comes from padding-bottom (set inline per
+       board), the artwork is placed inside it, and shots sit on top. No clipping,
+       so a shot on a neighbouring Target (outside the artwork) still shows. */
+    .target { position: relative; height: 0; }
+    .target-img { position: absolute; display: block; border: 1px solid #cfd6de; border-radius: 2px; background: #fff; }
     .hole { position: absolute; transform: translate(-50%, -50%); width: 16px; height: 16px;
             border-radius: 50%; background: #c62a1b; border: 1.5px solid #fff;
             box-shadow: 0 0 0 0.5px rgba(19,40,63,0.35);
@@ -118,8 +121,9 @@ _REPORT_HTML = """<!DOCTYPE html>
     </div>
     <div class="board-body">
       <figure class="target-fig">
-        <div class="target">
-          <img src="{{ target_uri }}">
+        <div class="target" style="padding-bottom: {{ '%.3f' % board.canvas.pad_pct }}%">
+          <img class="target-img" src="{{ target_uri }}"
+               style="left: {{ '%.3f' % board.canvas.img.left }}%; top: {{ '%.3f' % board.canvas.img.top }}%; width: {{ '%.3f' % board.canvas.img.width }}%; height: {{ '%.3f' % board.canvas.img.height }}%">
           {% for b in board.bullets %}
           <span class="hole" style="left: {{ '%.3f' % b.left }}%; top: {{ '%.3f' % b.top }}%">{{ b.rank }}</span>
           {% endfor %}
@@ -207,26 +211,54 @@ def _target_data_uri() -> str:
     return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
 
 
+def _board_canvas(holes) -> dict:
+    """The drawing area for a board: the artwork box (0..TEMPLATE) widened to
+    hold every shot. A board can watch more than one printed Target, and every
+    Target's shots are stored in the one reference Target's coordinates (the
+    detection maps them through the same homography), so a shot on a neighbouring
+    Target lies outside 0..TEMPLATE. Plotting against the artwork alone would push
+    it off the edge and lose it; instead the canvas grows to cover it and the
+    artwork sits in its place. With every shot inside the artwork (the usual, one
+    Target per board) the canvas is exactly the artwork, unchanged."""
+    xs = [h.position_x for h in holes]
+    ys = [h.position_y for h in holes]
+    min_x, max_x = min([0.0, *xs]), max([float(_TEMPLATE_W), *xs])
+    min_y, max_y = min([0.0, *ys]), max([float(_TEMPLATE_H), *ys])
+    cw, ch = max_x - min_x, max_y - min_y
+    return {
+        "min_x": min_x, "min_y": min_y, "cw": cw, "ch": ch,
+        "pad_pct": ch / cw * 100,  # padding-bottom hack sets the box's height from its width
+        "img": {
+            "left": (0.0 - min_x) / cw * 100,
+            "top": (0.0 - min_y) / ch * 100,
+            "width": _TEMPLATE_W / cw * 100,
+            "height": _TEMPLATE_H / ch * 100,
+        },
+    }
+
+
 def _boards_for_report(bullets) -> list[dict]:
     """One entry per board, in the groupings' order (alias order, no-board last),
-    each with the board's Bullet Holes placed on the Target (left/top as a
-    percentage of the artwork) and its Group statistics."""
+    each with a canvas, the board's Bullet Holes placed on it (left/top as a
+    percentage of the canvas) and its Group statistics."""
     by_alias: dict[str | None, list] = {}
     for b in bullets:
         by_alias.setdefault(b.camera_alias, []).append(b)
     boards = []
     for bg in groups.groupings(bullets):
         holes = sorted(by_alias.get(bg.camera_alias, []), key=lambda b: b.rank)
+        canvas = _board_canvas(holes)
         boards.append({
             "alias": bg.camera_alias or "No board",
             "grouping": bg.grouping,
+            "canvas": canvas,
             "bullets": [{
                 "rank": b.rank,
                 "ts": b.first_seen_at.strftime("%Y-%m-%d %H:%M:%S"),
                 "x": b.position_x,
                 "y": b.position_y,
-                "left": b.position_x / _TEMPLATE_W * 100,
-                "top": b.position_y / _TEMPLATE_H * 100,
+                "left": (b.position_x - canvas["min_x"]) / canvas["cw"] * 100,
+                "top": (b.position_y - canvas["min_y"]) / canvas["ch"] * 100,
             } for b in holes],
         })
     return boards

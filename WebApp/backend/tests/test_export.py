@@ -105,3 +105,24 @@ def test_the_excel_bullet_sheet_drops_source_and_mpi_lives_in_the_groups_sheet()
     assert bullet_headers == ["Board", "#", "Detected At (UTC)", "Position X", "Position Y"]
     # MPI is on the Groups sheet
     assert "MPI X (mm)" in [c.value for c in wb["Groups"][1]]
+
+
+def test_shots_outside_the_reference_artwork_are_still_plotted():
+    # A board watching two printed targets: the second shot sits on the
+    # neighbouring target, stored beyond 0-1405 in the reference target's space.
+    s = SimpleNamespace(
+        name="Range A", status="completed",
+        started_at=datetime(2026, 11, 16, 9, 30, 0, tzinfo=timezone.utc),
+        ended_at=datetime(2026, 11, 16, 9, 42, 0, tzinfo=timezone.utc),
+        bullet_holes=[
+            _hole(1, "lane1", 700, 500, second=5),
+            _hole(2, "lane1", 2000, 500, target_index=1, second=9),
+        ],
+    )
+    html = export_svc._render_report_html(s)
+
+    # Neither shot is clipped away by the artwork's bounds
+    assert html.count('class="hole"') == 2
+    # The canvas widened to cover the far shot, so the artwork is narrower than it
+    # (1405 / 2000 = 70.25%)
+    assert "width: 70.250%" in html

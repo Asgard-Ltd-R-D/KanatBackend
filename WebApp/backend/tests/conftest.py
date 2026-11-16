@@ -35,6 +35,7 @@ def no_detection_states():
     detection_sync._watched.clear()
     detection_sync._to_stop.clear()
     detection_sync._since.clear()
+    detection_sync._shutdown.clear()
 
 
 @pytest.fixture

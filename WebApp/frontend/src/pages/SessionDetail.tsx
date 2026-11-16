@@ -7,9 +7,10 @@ import {
 import { format } from 'date-fns'
 import { getSession, updateSession, exportUrl } from '../api/sessions'
 import { StatusBadge } from '../components/UI/StatusBadge'
-import { StatTile } from '../components/UI/StatTile'
+import { StatStrip } from '../components/UI/StatStrip'
 import { ConfirmDialog } from '../components/UI/ConfirmDialog'
 import { BoardTabs } from '../components/Session/BoardTabs'
+import { RetakeBaselineControl } from '../components/Session/RetakeBaselineControl'
 import { CameraFeeds } from '../components/Camera/CameraFeeds'
 import { useCameras } from '../hooks/useCameras'
 import { useSessionLive } from '../hooks/useSessionLive'
@@ -89,9 +90,11 @@ export function SessionDetail() {
   const boards = boardsOf(session, cameras)
 
   return (
-    <div className="p-8">
+    // Active: fill the viewport so the camera feed can grow to the bottom on any
+    // screen. Completed: natural height, the page scrolls as usual.
+    <div className={active ? 'p-8 h-full flex flex-col min-h-0' : 'p-8'}>
       {/* Top bar */}
-      <div className="flex items-start justify-between mb-6">
+      <div className="flex items-start justify-between mb-6 shrink-0">
         <div className="flex items-center gap-4">
           <Link
             to="/"
@@ -112,13 +115,16 @@ export function SessionDetail() {
 
         <div className="flex items-center gap-2">
           {active && (
-            <button
-              onClick={() => setShowEndConfirm(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-500/10 hover:bg-amber-100 dark:hover:bg-amber-500/20 border border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 text-sm font-medium rounded-lg transition-colors"
-            >
-              <Square size={14} />
-              End Session
-            </button>
+            <>
+              <RetakeBaselineControl session={session} boards={boards} />
+              <button
+                onClick={() => setShowEndConfirm(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-500/10 hover:bg-amber-100 dark:hover:bg-amber-500/20 border border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 text-sm font-medium rounded-lg transition-colors press"
+              >
+                <Square size={14} />
+                End Session
+              </button>
+            </>
           )}
 
           {session.status === 'completed' && (
@@ -127,7 +133,7 @@ export function SessionDetail() {
                 href={exportUrl(session.id, 'pdf')}
                 target="_blank"
                 rel="noreferrer"
-                className="flex items-center gap-1.5 px-3 py-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors press"
                 title="Export PDF"
               >
                 <FileText size={14} />
@@ -137,7 +143,7 @@ export function SessionDetail() {
                 href={exportUrl(session.id, 'csv')}
                 target="_blank"
                 rel="noreferrer"
-                className="flex items-center gap-1.5 px-3 py-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors press"
                 title="Export CSV"
               >
                 <Download size={14} />
@@ -147,7 +153,7 @@ export function SessionDetail() {
                 href={exportUrl(session.id, 'excel')}
                 target="_blank"
                 rel="noreferrer"
-                className="flex items-center gap-1.5 px-3 py-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium rounded-lg transition-colors press"
                 title="Export Excel"
               >
                 <FileSpreadsheet size={14} />
@@ -159,23 +165,27 @@ export function SessionDetail() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 mb-6 max-w-md">
-        <StatTile label="Total Bullets" value={bullets.length} />
-        <StatTile label="Duration" value={formatDuration(session.started_at, session.ended_at)} />
-      </div>
+      <StatStrip
+        className="mb-6 max-w-md shrink-0"
+        items={[
+          { label: 'Total bullets', value: bullets.length },
+          { label: 'Duration', value: formatDuration(session.started_at, session.ended_at) },
+        ]}
+      />
 
-      {/* Active: every enabled camera, live, each with its own board overlay */}
+      {/* Active: the live feed grows to fill the space under the header/stats on
+          any screen. Each board's name + detection status sits above its own
+          stream (CameraFeeds). Retake is in the header; no Bullet Log while live. */}
       {active && (
-        <div className="mb-6">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Camera Feed</p>
-          <div className="h-[60vh] min-h-[320px]">
+        <div className="flex-1 min-h-0">
+          <div className="h-full min-h-[320px]">
             <CameraFeeds runs={session.runs ?? []} bullets={bullets} detections={session.detections ?? []} />
           </div>
         </div>
       )}
 
-      {/* Per board: detection, retake, Group, bullet log and manual-add */}
-      <BoardTabs session={session} boards={boards} />
+      {/* Completed: per board detection, Group, bullet log and manual-add */}
+      {!active && <BoardTabs session={session} boards={boards} />}
 
       <ConfirmDialog
         open={showEndConfirm}

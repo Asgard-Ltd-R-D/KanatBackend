@@ -12,7 +12,8 @@ function Row({ name, state }: { name: string; state: ServiceState }) {
   return (
     <div className="flex items-center justify-between text-xs">
       <span className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-        <span className={clsx('w-1.5 h-1.5 rounded-full', style.dot)} />
+        {/* Online dots pulse — a steady heartbeat that the service is alive */}
+        <span className={clsx('w-1.5 h-1.5 rounded-full', style.dot, state === 'online' && 'animate-pulse')} />
         {name}
       </span>
       <span className={clsx('font-medium', style.text)}>{style.label}</span>

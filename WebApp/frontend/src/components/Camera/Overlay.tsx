@@ -1,8 +1,8 @@
 import { RefObject, useEffect, useState } from 'react'
 import clsx from 'clsx'
+import { Eye, EyeOff } from 'lucide-react'
 import { BulletHole, Place, Run } from '../../types'
 import { Size, baselineMarksToDraw, holesOver, labelGroups, templateToElement } from '../../utils/overlay'
-import { Toggle } from '../UI/Toggle'
 
 const OUTLINE_COLOUR = '#22d3ee'
 const BASELINE_MARK_COLOUR = '#a3a8b0' // slate-400 (tailwind.config.ts)
@@ -130,9 +130,20 @@ export function Overlay({ run, place, bullets, runs, videoRef }: OverlayContent 
 // The Overlay's on/off switch, over the video where `className` puts it
 export function OverlayToggle({ checked, onChange, className }: { checked: boolean; onChange: (on: boolean) => void; className: string }) {
   return (
-    <div className={clsx('flex items-center gap-2 bg-black/60 rounded-full pl-2.5 pr-1 py-1', className)}>
-      <span className="text-[10px] font-medium text-white/80 uppercase tracking-wider">Overlay</span>
-      <Toggle checked={checked} onChange={onChange} label="Overlay" />
-    </div>
+    <button
+      type="button"
+      aria-pressed={checked}
+      onClick={() => onChange(!checked)}
+      title={checked ? 'Hide detection overlay' : 'Show detection overlay'}
+      className={clsx(
+        'flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-wider',
+        'backdrop-blur-sm transition-colors',
+        checked ? 'bg-blue-600/85 hover:bg-blue-600 text-white' : 'bg-black/55 hover:bg-black/75 text-white/75',
+        className,
+      )}
+    >
+      {checked ? <Eye size={13} /> : <EyeOff size={13} />}
+      Overlay
+    </button>
   )
 }

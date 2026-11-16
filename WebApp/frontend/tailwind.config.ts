@@ -24,6 +24,28 @@ export default {
           900: '#2b2d31',
           950: '#1e1f22',
         },
+        // Brand accent, re-hued from Tailwind's generic blue to a deliberate
+        // steel-blue: deeper and more desaturated, reading as a precision
+        // instrument rather than a SaaS default. The darkest shade matches the
+        // range-report masthead (#13283f), so the app and its PDFs are one system.
+        // Every existing `blue-*` class takes these.
+        blue: {
+          50: '#eef3fb',
+          100: '#dae5f4',
+          200: '#bacbe8',
+          300: '#8fa9d5',
+          400: '#5f81bd',
+          500: '#3f63a6',
+          600: '#34538f',
+          700: '#2b4475',
+          800: '#243a60',
+          900: '#13283f',
+          950: '#0d1b2c',
+        },
+      },
+      boxShadow: {
+        // A crisp, low, cool-tinted elevation — not the generic soft grey blur
+        card: '0 1px 2px rgba(19,40,63,0.06), 0 1px 1px rgba(19,40,63,0.04)',
       },
     },
   },

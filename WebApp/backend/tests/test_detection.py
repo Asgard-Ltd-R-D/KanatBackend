@@ -1001,3 +1001,36 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
         answers[f"/runs/{session_id}/{CAM}/end"] = wrong
         with pytest.raises(detection_client.DetectionServiceUnreachable):
             detection_client.end_run(session_id, CAM)
+
+
+def test_shutdown_stops_every_run_the_detection_service_holds(detection):
+    # Two boards of a live Session, each with a Run the service still holds
+    session_id = uuid.uuid4()
+    detection.set_run(session_id, "cam1")
+    detection.set_run(session_id, "cam2")
+
+    detection_sync.stop_all_runs()
+
+    # Both were stopped (judge=False), so none is left orphaned after a restart
+    stops = [c for c in detection.calls if c[0] == "stop"]
+    assert sorted((c[1], c[2]) for c in stops) == [(session_id, "cam1"), (session_id, "cam2")]
+
+
+def test_shutdown_cleanup_is_quiet_when_the_detection_service_is_unreachable(detection):
+    detection.set_run(uuid.uuid4(), "cam1")
+    detection.down = True
+
+    # Must not raise: an unreachable service cannot hold up the app's shutdown
+    detection_sync.stop_all_runs()
+
+
+def test_a_reconcile_round_stands_down_once_shutdown_has_begun(detection, monkeypatch):
+    # Once shutdown is under way, a reconcile round must not run: a Run it started
+    # would land after stop_all_runs snapshots and be left orphaned.
+    ran = []
+    monkeypatch.setattr(detection_sync, "reconcile", lambda db: ran.append(1))
+    detection_sync._shutdown.set()
+
+    detection_sync._reconcile_once()
+
+    assert ran == []

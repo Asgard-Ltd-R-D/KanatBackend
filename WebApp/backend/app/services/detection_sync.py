@@ -91,6 +91,14 @@ _ending: set[uuid.UUID] = set()
 # Reentrant: retaking_baseline holds it round a _set
 _lock = threading.RLock()
 
+# Shutdown coordination (stop_all_runs): once set, a reconcile round stands down
+# without starting or ending Runs, and stop_all_runs holds _reconcile_lock for a
+# round already in flight to finish before it snapshots — cancelling the loop's
+# task does not interrupt the worker thread it is blocked in, so without this a
+# late round could start a Run just after the snapshot and leave it orphaned.
+_shutdown = threading.Event()
+_reconcile_lock = threading.Lock()
+
 
 def state_of(session_id: uuid.UUID, camera: str) -> Detection:
     return _states.get((session_id, camera), NONE)
@@ -572,11 +580,45 @@ def reconcile(db: DBSession) -> None:
 
 
 def _reconcile_once() -> None:
-    db = SessionLocal()
+    # Under _reconcile_lock so shutdown can wait this round out; skip entirely
+    # once shutdown has begun, so no Run is started after stop_all_runs snapshots.
+    with _reconcile_lock:
+        if _shutdown.is_set():
+            return
+        db = SessionLocal()
+        try:
+            reconcile(db)
+        finally:
+            db.close()
+
+
+def stop_all_runs() -> None:
+    """Shutdown cleanup (main.py's lifespan): stop every Run the Detection
+    Service is holding, so none is left orphaned to block the next Session or to
+    hang its end after the app restarts (ADR-0008). A stop (judge=False) is quick
+    — it judges no open Candidate — and needs no database, so it is safe while
+    the app is tearing down. Best-effort: a service that cannot be reached, or a
+    Run that will not stop, is logged, never raised."""
+    # Signal reconcile to stand down, then wait out a round already running, so
+    # the snapshot below sees every Run — including one that round just started.
+    _shutdown.set()
+    with _reconcile_lock:
+        _stop_held_runs()
+
+
+def _stop_held_runs() -> None:
     try:
-        reconcile(db)
-    finally:
-        db.close()
+        runs = detection_client.status()
+    except detection_client.DetectionServiceUnreachable as e:
+        log.warning("Detection Service unreachable on shutdown; its Runs were not stopped: %s", e)
+        return
+    for run in runs:
+        try:
+            detection_client.end_run(run.session_id, run.camera, judge=False)
+            log.info("Stopped the Run of session %s board %s on shutdown", run.session_id, run.camera)
+        except detection_client.DetectionServiceUnreachable as e:
+            log.warning("The Run of session %s board %s may not have stopped on shutdown: %s",
+                        run.session_id, run.camera, e)
 
 
 async def run_forever() -> None:

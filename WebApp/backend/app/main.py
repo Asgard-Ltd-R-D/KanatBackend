@@ -3,6 +3,8 @@ import logging
 import math
 from contextlib import asynccontextmanager
 
+import anyio
+
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -17,6 +19,10 @@ from app.services import camera_sync, detection_sync
 
 configure_logging()
 log = logging.getLogger(__name__)
+
+# How long shutdown waits for the Detection Service's Runs to be stopped before
+# it gives up and lets the app exit anyway
+SHUTDOWN_CLEANUP_TIMEOUT_S = 8
 
 
 @asynccontextmanager
@@ -37,6 +43,17 @@ async def lifespan(app: FastAPI):
     yield
     for task in tasks:
         task.cancel()
+    # Close the Detection Service's Runs on the way down, so a live Session does
+    # not leave one orphaned to block or hang the next Session after a restart.
+    # Bounded and best-effort: a slow or unreachable service must not hold up the
+    # shutdown. Run off the loop, as it makes blocking HTTP calls.
+    if settings.camera_sync_interval_s > 0:
+        with anyio.move_on_after(SHUTDOWN_CLEANUP_TIMEOUT_S):
+            # stop_all_runs signals reconcile to stand down and waits out any round
+            # already running (cancelling its task does not interrupt the worker
+            # thread) before it snapshots, so no Run it starts is left orphaned.
+            # abandon_on_cancel so the timeout above truly bounds this blocking call.
+            await anyio.to_thread.run_sync(detection_sync.stop_all_runs, abandon_on_cancel=True)
     log.info("Backend stopping")
 
 

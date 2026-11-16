@@ -606,19 +606,39 @@ def stop_all_runs() -> None:
         _stop_held_runs()
 
 
+# The shutdown stops are fired together and waited out for at most this long, a
+# touch under main.py's SHUTDOWN_CLEANUP_TIMEOUT_S so this returns before that
+# would abandon it.
+_STOP_ALL_DEADLINE_S = 7
+
+
 def _stop_held_runs() -> None:
     try:
         runs = detection_client.status()
     except detection_client.DetectionServiceUnreachable as e:
         log.warning("Detection Service unreachable on shutdown; its Runs were not stopped: %s", e)
         return
-    for run in runs:
-        try:
-            detection_client.end_run(run.session_id, run.camera, judge=False)
-            log.info("Stopped the Run of session %s board %s on shutdown", run.session_id, run.camera)
-        except detection_client.DetectionServiceUnreachable as e:
-            log.warning("The Run of session %s board %s may not have stopped on shutdown: %s",
-                        run.session_id, run.camera, e)
+    # Stop every Run at once: end_run waits up to END_TIMEOUT_S, so stopping them
+    # in turn would let one slow board eat the whole shutdown budget and leave the
+    # others orphaned. Daemon workers, so a stop that hangs cannot hold up the exit.
+    threads = [
+        threading.Thread(target=_stop_one_run, args=(run,), name=f"shutdown-stop-{run.camera}", daemon=True)
+        for run in runs
+    ]
+    for t in threads:
+        t.start()
+    deadline = time.monotonic() + _STOP_ALL_DEADLINE_S
+    for t in threads:
+        t.join(timeout=max(0.0, deadline - time.monotonic()))
+
+
+def _stop_one_run(run: detection_client.Run) -> None:
+    try:
+        detection_client.end_run(run.session_id, run.camera, judge=False)
+        log.info("Stopped the Run of session %s board %s on shutdown", run.session_id, run.camera)
+    except detection_client.DetectionServiceUnreachable as e:
+        log.warning("The Run of session %s board %s may not have stopped on shutdown: %s",
+                    run.session_id, run.camera, e)
 
 
 async def run_forever() -> None:

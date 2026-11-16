@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { X, Undo2 } from 'lucide-react'
 import { createBullet } from '../../api/bullets'
-import { BulletHole } from '../../types'
+import { BulletHole, Run } from '../../types'
+import { holesOver } from '../../utils/overlay'
 import targetImg from '../../assets/target.png'
 
 // The target artwork is authored at this pixel size, and a Bullet Hole's
@@ -20,11 +21,12 @@ interface Props {
   sessionId: string
   camera: string | null // the board (camera alias) the hole is added to; null for no board
   context?: BulletHole[] // the board's existing holes, drawn for reference
+  runs?: Run[] // the board's Runs (taken_at order), to place the existing holes right
   onClose: () => void
   onSuccess: () => void
 }
 
-export function AddBulletModal({ open, sessionId, camera, context = [], onClose, onSuccess }: Props) {
+export function AddBulletModal({ open, sessionId, camera, context = [], runs = [], onClose, onSuccess }: Props) {
   const qc = useQueryClient()
   // The points placed so far, in template coordinates, in the order clicked
   const [points, setPoints] = useState<Point[]>([])
@@ -89,6 +91,14 @@ export function AddBulletModal({ open, sessionId, camera, context = [], onClose,
   if (!open) return null
 
   const count = points.length
+  // Existing holes may span several Runs in different template spaces (a retake
+  // starts a new Run, ADR-0009). Carry them into the latest Run's space — the one
+  // the artwork stands for — the same way the live overlay does, so the reference
+  // dots sit where the holes really are. No Runs (manual-only board): drawn as-is.
+  const latestRun = runs[runs.length - 1]
+  const contextPoints = latestRun
+    ? holesOver(latestRun, runs, context)
+    : context.map(b => [b.position_x, b.position_y] as [number, number])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -116,11 +126,11 @@ export function AddBulletModal({ open, sessionId, camera, context = [], onClose,
           />
 
           {/* Existing holes, faint, for context */}
-          {context.map(b => (
+          {context.map((b, i) => (
             <span
               key={b.id}
               className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-black"
-              style={{ left: `${(b.position_x / TEMPLATE_W) * 100}%`, top: `${(b.position_y / TEMPLATE_H) * 100}%` }}
+              style={{ left: `${(contextPoints[i][0] / TEMPLATE_W) * 100}%`, top: `${(contextPoints[i][1] / TEMPLATE_H) * 100}%` }}
               title={`#${b.rank}`}
             />
           ))}

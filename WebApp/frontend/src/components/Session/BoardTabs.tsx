@@ -158,6 +158,7 @@ export function BoardTabs({ session, boards }: { session: Session; boards: Board
         sessionId={session.id}
         camera={addFor ?? null}
         context={board?.bullets ?? []}
+        runs={(session.runs ?? []).filter(r => r.camera_alias === (board?.alias ?? null))}
         onClose={() => setAddFor(undefined)}
         onSuccess={() => {}}
       />

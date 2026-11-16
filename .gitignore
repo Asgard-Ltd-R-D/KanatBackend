@@ -88,7 +88,10 @@ release/
 # Composer's build output; WebApp/deploy holds the Windows installer's sources
 deploy/
 !WebApp/deploy/
-dev/
+dev/*
+# The dev camera restreamer is tracked so it can run on another PC (holds dev
+# camera defaults, overridable by env); other dev/ files stay ignored.
+!dev/restream-camera.sh
 prod/
 
 ## Visual Studio temporary files, build results, and

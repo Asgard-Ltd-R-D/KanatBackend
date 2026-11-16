@@ -1,8 +1,11 @@
+import base64
 import csv
 import io
 import re
 import urllib.parse
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 
 import openpyxl
 from jinja2 import Environment
@@ -16,105 +19,263 @@ _REPORT_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <style>
+    @page {
+      size: A4;
+      margin: 42px 44px 52px;
+      @bottom-left { content: "KANAT \\2014 Range Session Report"; font-size: 8px; color: #9aa6b4; }
+      @bottom-right { content: "Page " counter(page) " / " counter(pages); font-size: 8px; color: #9aa6b4; }
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, Inter, system-ui, sans-serif; color: #1e293b; padding: 40px; font-size: 13px; }
-    h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-    .subtitle { color: #64748b; font-size: 12px; margin-bottom: 28px; }
-    .summary { display: flex; gap: 16px; margin-bottom: 32px; }
-    .card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 20px; background: #f8fafc; }
-    .card-label { font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
-    .card-value { font-size: 24px; font-weight: 700; color: #0f172a; }
-    h2 { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
-    .groups { margin-bottom: 32px; }
-    .groups th, .groups td { padding: 8px; }
-    .groups td:first-child { white-space: nowrap; }
-    .note { color: #64748b; font-size: 11px; margin-top: 8px; }
+    body { font-family: Helvetica, Arial, sans-serif; color: #1a2433; font-size: 11px; line-height: 1.45;
+           font-feature-settings: "tnum" 1; font-variant-numeric: tabular-nums; }
+    .num { font-variant-numeric: tabular-nums; }
+
+    /* Masthead: steel band, the session name is the title, system mark at right */
+    .masthead { display: flex; justify-content: space-between; align-items: flex-end;
+                background: #13283f; color: #fff; padding: 18px 20px 14px; border-radius: 3px; }
+    .masthead h1 { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+    .m-sub { color: #9db3cc; font-size: 10px; margin-top: 3px; }
+    .m-mark { text-align: right; }
+    .m-sys { font-size: 13px; font-weight: 700; letter-spacing: 0.22em; }
+    .m-gen { color: #9db3cc; font-size: 8.5px; margin-top: 3px; }
+    .accent { height: 2px; background: #c62a1b; margin-bottom: 20px; border-radius: 0 0 2px 2px; }
+
+    /* Spec readout: label over value, hairline-separated, instrument style */
+    .readout { display: flex; border: 1px solid #e2e7ec; border-radius: 3px; margin-bottom: 26px; }
+    .ro { flex: 1; padding: 9px 14px; border-left: 1px solid #e2e7ec; }
+    .ro:first-child { border-left: 0; }
+    .ro-k { display: block; font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
+            text-transform: uppercase; color: #8893a2; margin-bottom: 3px; }
+    .ro-v { display: block; font-size: 14px; font-weight: 700; color: #13283f; }
+    .ro-v small { font-size: 9px; font-weight: 600; color: #8893a2; }
+
+    /* Lane block: one per board. Each camera after the first starts a new page. */
+    .board { margin-bottom: 26px; }
+    .board + .board { break-before: page; page-break-before: always; margin-bottom: 0; }
+    .board-head { display: flex; justify-content: space-between; align-items: baseline;
+                  border-bottom: 2px solid #13283f; padding-bottom: 5px; margin-bottom: 13px; break-after: avoid; }
+    .board-name { font-size: 14px; font-weight: 700; color: #13283f; letter-spacing: 0.01em; }
+    .board-count { font-size: 10px; font-weight: 600; color: #6a7686; }
+    .board-body { display: flex; align-items: flex-start; break-inside: avoid; }
+
+    /* WeasyPrint ignores flexbox `gap`, so the space to the stats is a margin */
+    .target-fig { width: 262px; flex: none; margin-right: 44px; }
+    /* The drawing canvas: its height comes from padding-bottom (set inline per
+       board), the artwork is placed inside it, and shots sit on top. No clipping,
+       so a shot on a neighbouring Target (outside the artwork) still shows. */
+    .target { position: relative; height: 0; }
+    .target-img { position: absolute; display: block; border: 1px solid #cfd6de; border-radius: 2px; background: #fff; }
+    .hole { position: absolute; transform: translate(-50%, -50%); width: 16px; height: 16px;
+            border-radius: 50%; background: #c62a1b; border: 1.5px solid #fff;
+            box-shadow: 0 0 0 0.5px rgba(19,40,63,0.35);
+            color: #fff; font-size: 8.5px; font-weight: 700; line-height: 13px; text-align: center; }
+
+    .stats { flex: 1; padding-top: 2px; }
+    .stats-title { font-size: 10px; font-weight: 700; color: #13283f; letter-spacing: 0.02em; margin-bottom: 7px; }
+    .muted { color: #8893a2; font-size: 10px; }
+    .note { color: #6a7686; font-size: 9.5px; margin-top: 9px; }
+    .note b { color: #1a2433; font-weight: 700; }
+
     table { width: 100%; border-collapse: collapse; }
-    thead tr { background: #1e293b; }
-    th { text-align: left; padding: 9px 14px; color: #fff; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
-    td { padding: 8px 14px; border-bottom: 1px solid #f1f5f9; }
-    tr:nth-child(even) td { background: #f8fafc; }
-    .footer { margin-top: 28px; font-size: 10px; color: #94a3b8; text-align: right; }
+    thead th { background: #13283f; color: #fff; text-align: left; font-weight: 600;
+               font-size: 8.5px; letter-spacing: 0.04em; padding: 6px 9px; }
+    tbody td { padding: 5px 9px; border-bottom: 1px solid #eef1f4; font-size: 10px; color: #27313f; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .num { text-align: right; }
+    th.num { text-align: right; }
+    .stats table { border: 1px solid #e2e7ec; border-radius: 3px; overflow: hidden; }
+
+    .shotlog { margin-top: 4px; }
+    .shotlog-title { font-size: 9px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+                     color: #8893a2; margin: 15px 0 6px; break-after: avoid; }
+    .shotlog thead th { background: #f0f3f6; color: #51607a; }
+    .shotlog tbody td { color: #3a4454; }
   </style>
 </head>
 <body>
-  <h1>{{ session.name }}</h1>
-  <p class="subtitle">
-    {{ session.started_at.strftime('%Y-%m-%d %H:%M') }} UTC
-    &nbsp;&middot;&nbsp; Duration: {{ duration }}
-    &nbsp;&middot;&nbsp; {{ session.status | capitalize }}
-  </p>
-  <div class="summary">
-    <div class="card">
-      <div class="card-label">Total Bullets</div>
-      <div class="card-value">{{ bullets | length }}</div>
+  <header class="masthead">
+    <div>
+      <h1>{{ session.name }}</h1>
+      <div class="m-sub">Range session report</div>
     </div>
+    <div class="m-mark">
+      <div class="m-sys">KANAT</div>
+      <div class="m-gen">Generated {{ generated_at }}</div>
+    </div>
+  </header>
+  <div class="accent"></div>
+
+  <div class="readout">
+    <div class="ro"><span class="ro-k">Started</span><span class="ro-v">{{ started }} <small>UTC</small></span></div>
+    <div class="ro"><span class="ro-k">Ended</span><span class="ro-v">{% if ended %}{{ ended }} <small>UTC</small>{% else %}&mdash;{% endif %}</span></div>
+    <div class="ro"><span class="ro-k">Duration</span><span class="ro-v">{{ duration }}</span></div>
+    <div class="ro"><span class="ro-k">Shots</span><span class="ro-v">{{ total_bullets }}</span></div>
+    <div class="ro"><span class="ro-k">Boards</span><span class="ro-v">{{ boards | length }}</span></div>
   </div>
-  <div class="groups">
-    <h2>Groups</h2>
-    {% for bg in groupings %}
-    <h3 style="font-size: 12px; margin: 14px 0 6px;">Board: {{ bg.camera_alias or 'No board' }}</h3>
-    {% if bg.grouping.groups %}
-    <table>
+
+  {% for board in boards %}
+  <section class="board">
+    <div class="board-head">
+      <span class="board-name">{{ board.alias }}</span>
+      <span class="board-count">{{ board.bullets | length }} shot{{ '' if board.bullets | length == 1 else 's' }}</span>
+    </div>
+    <div class="board-body">
+      <figure class="target-fig">
+        <div class="target" style="padding-bottom: {{ '%.3f' % board.canvas.pad_pct }}%">
+          <img class="target-img" src="{{ target_uri }}"
+               style="left: {{ '%.3f' % board.canvas.img.left }}%; top: {{ '%.3f' % board.canvas.img.top }}%; width: {{ '%.3f' % board.canvas.img.width }}%; height: {{ '%.3f' % board.canvas.img.height }}%">
+          {% for b in board.bullets %}
+          <span class="hole" style="left: {{ '%.3f' % b.left }}%; top: {{ '%.3f' % b.top }}%">{{ b.rank }}</span>
+          {% endfor %}
+        </div>
+      </figure>
+      <div class="stats">
+        <div class="stats-title">Group statistics (MPI)</div>
+        {% if board.grouping.groups %}
+        <table>
+          <thead>
+            <tr>
+              <th>Target</th>
+              <th class="num">Shots</th>
+              <th class="num">MPI X (mm)</th>
+              <th class="num">MPI Y (mm)</th>
+              <th class="num">CEP (mm)</th>
+              <th class="num">Mean R (mm)</th>
+              <th class="num">RMS R (mm)</th>
+              <th class="num">Ext. Spread (mm)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for g in board.grouping.groups %}
+            <tr>
+              <td>Target {{ g.target_index + 1 }}</td>
+              <td class="num">{{ g.n }}</td>
+              <td class="num">{{ g.mpi_x_mm | mm }}</td>
+              <td class="num">{{ g.mpi_y_mm | mm }}</td>
+              <td class="num">{{ g.cep_mm | mm }}</td>
+              <td class="num">{{ g.mean_radius_mm | mm }}</td>
+              <td class="num">{{ g.rms_radius_mm | mm }}</td>
+              <td class="num">{{ g.extreme_spread_mm | mm }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No group statistics: no positioned shots on a target.</p>
+        {% endif %}
+        <p class="note">
+          Not in a group &mdash; Misses: <b>{{ board.grouping.misses }}</b>
+          &nbsp;&nbsp; Without a position: <b>{{ board.grouping.without_position }}</b>
+        </p>
+      </div>
+    </div>
+
+    <div class="shotlog-title">Shot log</div>
+    <table class="shotlog">
       <thead>
         <tr>
-          <th>Target</th>
-          <th>Bullet Holes</th>
-          <th>MPI X (mm)</th>
-          <th>MPI Y (mm)</th>
-          <th>CEP (mm)</th>
-          <th>Mean Radius (mm)</th>
-          <th>RMS Radius (mm)</th>
-          <th>Extreme Spread (mm)</th>
+          <th class="num">#</th>
+          <th>Detected at (UTC)</th>
+          <th class="num">Position X</th>
+          <th class="num">Position Y</th>
         </tr>
       </thead>
       <tbody>
-        {% for g in bg.grouping.groups %}
+        {% for b in board.bullets %}
         <tr>
-          <td>Target {{ g.target_index + 1 }}</td>
-          <td>{{ g.n }}</td>
-          <td>{{ g.mpi_x_mm | mm }}</td>
-          <td>{{ g.mpi_y_mm | mm }}</td>
-          <td>{{ g.cep_mm | mm }}</td>
-          <td>{{ g.mean_radius_mm | mm }}</td>
-          <td>{{ g.rms_radius_mm | mm }}</td>
-          <td>{{ g.extreme_spread_mm | mm }}</td>
+          <td class="num">{{ b.rank }}</td>
+          <td>{{ b.ts }}</td>
+          <td class="num">{{ '%.1f' % b.x }}</td>
+          <td class="num">{{ '%.1f' % b.y }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
-    {% endif %}
-    <p class="note">
-      In no Group: Misses: {{ bg.grouping.misses }}
-      &nbsp;&middot;&nbsp; Without a Position: {{ bg.grouping.without_position }}
-    </p>
-    {% endfor %}
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Board</th>
-        <th>Detected At (UTC)</th>
-        <th>Position X</th>
-        <th>Position Y</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for b in bullets %}
-      <tr>
-        <td>{{ b.rank }}</td>
-        <td>{{ b.camera_alias or '—' }}</td>
-        <td>{{ b.first_seen_at.strftime('%H:%M:%S') }}</td>
-        <td>{{ "%.1f" | format(b.position_x) }}</td>
-        <td>{{ "%.1f" | format(b.position_y) }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <div class="footer">Generated {{ generated_at }}</div>
+  </section>
+  {% endfor %}
 </body>
 </html>"""
+
+# The target artwork is authored at this pixel size; a Bullet Hole's position is
+# stored in these same template coordinates (ADR-0009), so a hole maps straight
+# to a percentage over the picture — the same mapping the app's overlay uses.
+_TEMPLATE_W = 1405
+_TEMPLATE_H = 1120
+
+
+@lru_cache(maxsize=1)
+def _target_data_uri() -> str:
+    """The Target picture as a data URI, so the PDF carries it with no file or
+    network lookup at render time. Cached: the same bytes for every report."""
+    data = (Path(__file__).resolve().parent.parent / "assets" / "target.png").read_bytes()
+    return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+
+
+def _board_canvas(holes) -> dict:
+    """The drawing area for a board: the artwork box (0..TEMPLATE) widened to
+    hold every shot. A board can watch more than one printed Target, and every
+    Target's shots are stored in the one reference Target's coordinates (the
+    detection maps them through the same homography), so a shot on a neighbouring
+    Target lies outside 0..TEMPLATE. Plotting against the artwork alone would push
+    it off the edge and lose it; instead the canvas grows to cover it and the
+    artwork sits in its place. With every shot inside the artwork (the usual, one
+    Target per board) the canvas is exactly the artwork, unchanged."""
+    xs = [h.position_x for h in holes]
+    ys = [h.position_y for h in holes]
+    min_x, max_x = min([0.0, *xs]), max([float(_TEMPLATE_W), *xs])
+    min_y, max_y = min([0.0, *ys]), max([float(_TEMPLATE_H), *ys])
+    cw, ch = max_x - min_x, max_y - min_y
+    return {
+        "min_x": min_x, "min_y": min_y, "cw": cw, "ch": ch,
+        "pad_pct": ch / cw * 100,  # padding-bottom hack sets the box's height from its width
+        "img": {
+            "left": (0.0 - min_x) / cw * 100,
+            "top": (0.0 - min_y) / ch * 100,
+            "width": _TEMPLATE_W / cw * 100,
+            "height": _TEMPLATE_H / ch * 100,
+        },
+    }
+
+
+def _boards_for_report(bullets) -> list[dict]:
+    """One entry per board, in the groupings' order (alias order, no-board last),
+    each with a canvas, the board's Bullet Holes placed on it (left/top as a
+    percentage of the canvas) and its Group statistics."""
+    by_alias: dict[str | None, list] = {}
+    for b in bullets:
+        by_alias.setdefault(b.camera_alias, []).append(b)
+    boards = []
+    for bg in groups.groupings(bullets):
+        holes = sorted(by_alias.get(bg.camera_alias, []), key=lambda b: b.rank)
+        canvas = _board_canvas(holes)
+        boards.append({
+            "alias": bg.camera_alias or "No board",
+            "grouping": bg.grouping,
+            "canvas": canvas,
+            "bullets": [{
+                "rank": b.rank,
+                "ts": b.first_seen_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "x": b.position_x,
+                "y": b.position_y,
+                "left": (b.position_x - canvas["min_x"]) / canvas["cw"] * 100,
+                "top": (b.position_y - canvas["min_y"]) / canvas["ch"] * 100,
+            } for b in holes],
+        })
+    return boards
+
+
+def _render_report_html(session: Session) -> str:
+    bullets = _by_board_then_rank(session.bullet_holes)
+    return _jinja_env.from_string(_REPORT_HTML).render(
+        session=session,
+        total_bullets=len(bullets),
+        boards=_boards_for_report(bullets),
+        target_uri=_target_data_uri(),
+        started=session.started_at.strftime("%Y-%m-%d %H:%M:%S"),
+        ended=session.ended_at.strftime("%Y-%m-%d %H:%M:%S") if session.ended_at else None,
+        duration=_session_duration(session),
+        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    )
 
 
 def _session_duration(session: Session) -> str:
@@ -153,14 +314,7 @@ def _by_board_then_rank(bullets):
 
 
 def generate_pdf(session: Session) -> bytes:
-    bullets = _by_board_then_rank(session.bullet_holes)
-    html = _jinja_env.from_string(_REPORT_HTML).render(
-        session=session,
-        bullets=bullets,
-        groupings=groups.groupings(bullets),
-        duration=_session_duration(session),
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-    )
+    html = _render_report_html(session)
     # Imported here: WeasyPrint needs Pango's system libraries (GTK on
     # Windows), and a PC without them still runs everything but the PDF
     import weasyprint
@@ -172,7 +326,8 @@ def generate_csv(session: Session) -> str:
     bullets = _by_board_then_rank(session.bullet_holes)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["board", "rank", "first_seen_at", "position_x", "position_y", "source"])
+    # The shots, one per row (no Source column)
+    writer.writerow(["board", "rank", "first_seen_at", "position_x", "position_y"])
     for b in bullets:
         writer.writerow([
             b.camera_alias or "",
@@ -180,8 +335,19 @@ def generate_csv(session: Session) -> str:
             b.first_seen_at.isoformat(),
             b.position_x,
             b.position_y,
-            b.source,
         ])
+    # The Group statistics (MPI), the same numbers as the detail response, the
+    # PDF and the Excel Groups sheet. A blank row sets this second table apart.
+    writer.writerow([])
+    writer.writerow(["board", "target", "bullet_holes", "mpi_x_mm", "mpi_y_mm", "cep_mm",
+                     "mean_radius_mm", "rms_radius_mm", "extreme_spread_mm"])
+    for bg in groups.groupings(bullets):
+        board = bg.camera_alias or ""
+        for g in bg.grouping.groups:
+            writer.writerow([board, f"Target {g.target_index + 1}", g.n, g.mpi_x_mm, g.mpi_y_mm,
+                             g.cep_mm, g.mean_radius_mm, g.rms_radius_mm, g.extreme_spread_mm])
+        writer.writerow([board, "Misses", bg.grouping.misses])
+        writer.writerow([board, "Without a position", bg.grouping.without_position])
     return output.getvalue()
 
 
@@ -204,7 +370,7 @@ def generate_excel(session: Session) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Bullet Holes"
-    _append_header(ws, ["Board", "#", "Detected At (UTC)", "Position X", "Position Y", "Source"])
+    _append_header(ws, ["Board", "#", "Detected At (UTC)", "Position X", "Position Y"])
 
     for b in bullets:
         ws.append([
@@ -213,7 +379,6 @@ def generate_excel(session: Session) -> bytes:
             b.first_seen_at.strftime("%Y-%m-%d %H:%M:%S"),
             b.position_x,
             b.position_y,
-            b.source.capitalize(),   # Model or Manual, as the app shows it
         ])
     _fit_columns(ws)
 

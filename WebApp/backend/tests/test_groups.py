@@ -157,11 +157,12 @@ def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
 
     assert res.status_code == 200 and res.content.startswith(b"%PDF")
     [page] = rendered
-    assert "<h2>Groups</h2>" in page
+    assert "Group statistics (MPI)" in page
+    assert "<td>Target 1</td>" in page
     # MPI, CEP, Mean Radius, RMS radius (sqrt 20) and Extreme Spread, to 0.1 mm
-    for cell in ("Target 1", "10.0", "-5.0", "5.0", "4.0", "4.5"):
-        assert f"<td>{cell}</td>" in page
-    assert "Misses: 1" in page
+    for cell in ("10.0", "-5.0", "5.0", "4.0", "4.5"):
+        assert f'<td class="num">{cell}</td>' in page
+    assert "Misses: <b>1</b>" in page
 
 
 def test_without_a_group_the_pdf_still_gives_the_two_counts(client, monkeypatch):
@@ -172,7 +173,7 @@ def test_without_a_group_the_pdf_still_gives_the_two_counts(client, monkeypatch)
 
     assert client.get(f"/sessions/{SESSION_ID}/export/pdf").status_code == 200
     assert "<td>Target" not in rendered[0]
-    assert "Misses: 1" in rendered[0] and "Without a Position: 2" in rendered[0]
+    assert "Misses: <b>1</b>" in rendered[0] and "Without a position: <b>2</b>" in rendered[0]
 
 
 def test_a_deleted_bullet_hole_leaves_its_group(db_url):

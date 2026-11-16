@@ -599,17 +599,26 @@ def stop_all_runs() -> None:
     — it judges no open Candidate — and needs no database, so it is safe while
     the app is tearing down. Best-effort: a service that cannot be reached, or a
     Run that will not stop, is logged, never raised."""
-    # Signal reconcile to stand down, then wait out a round already running, so
-    # the snapshot below sees every Run — including one that round just started.
     _shutdown.set()
-    with _reconcile_lock:
-        _stop_held_runs()
+    # Stop what the Service holds right now, first and within the budget — do NOT
+    # gate this on the reconcile lock: a slow round (start_run waits on the
+    # Detection Service) could hold it past the shutdown deadline and leave every
+    # Run unstopped. A round in flight may start one more Run after this snapshot,
+    # so drain it for a bounded moment and sweep again; anything still missed, the
+    # next start's reconcile ends anyway (ADR-0008).
+    _stop_held_runs()
+    if _reconcile_lock.acquire(timeout=_RECONCILE_DRAIN_S):
+        try:
+            _stop_held_runs()
+        finally:
+            _reconcile_lock.release()
 
 
-# The shutdown stops are fired together and waited out for at most this long, a
-# touch under main.py's SHUTDOWN_CLEANUP_TIMEOUT_S so this returns before that
-# would abandon it.
-_STOP_ALL_DEADLINE_S = 7
+# Phase-one stops are fired together and waited out for at most this long; then a
+# reconcile round still running is drained for at most this long before a second
+# sweep. Both sit under main.py's SHUTDOWN_CLEANUP_TIMEOUT_S.
+_STOP_ALL_DEADLINE_S = 6
+_RECONCILE_DRAIN_S = 1
 
 
 def _stop_held_runs() -> None:

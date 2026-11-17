@@ -1563,7 +1563,7 @@ class RegisteredFrames:
         # fits the LONGEST side to imgsz, so imgsz is that side: nothing resized.
         crop_w, crop_h = view.crops[0][2:]
         imgsz = max(crop_w, crop_h)
-        frame_span = board.contour_span(board.find_targets(base)[0][0])
+        frame_span = view.reference_span()   # not the largest blob: scenery can be (#370)
         tpl_span = board.contour_span(board.template_contour(template_mask))
         scale = board.net_scale(view.board_scale, tpl_span, frame_span, imgsz,
                                 max(crop_w, crop_h))

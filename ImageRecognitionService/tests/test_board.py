@@ -778,3 +778,73 @@ def test_targets_at_about_one_height_read_left_to_right():
     targets = [_square(500, 6, 100), _square(0, 0, 100), _square(250, 400, 100),
                _square(240, 3, 100)]
     assert board.reading_order(targets) == [1, 3, 0, 2]
+
+
+
+# --- build_view: scenery is not a Target --------------------------------------
+
+def _artwork_beside(scenery_hsv, cut=False):
+    """The artwork at half size on grey, with a solid scenery patch bigger
+    than it, and, when `cut`, a second artwork the frame's left edge cuts
+    through its disk. The template carried in by `P`."""
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    h, w = template.shape[:2]
+    size = (w + 1600, h + 400)
+    P = np.float32([[0.5, 0, 900], [0, 0.5, 200], [0, 0, 1]])
+    frame = cv2.warpPerspective(template, P, size, borderValue=(128, 128, 128))
+    if cut:
+        Q = np.float32([[0.5, 0, -350], [0, 0.5, 200], [0, 0, 1]])
+        other = cv2.warpPerspective(template, Q, size, borderValue=(0, 0, 0))
+        frame[other.any(axis=2)] = other[other.any(axis=2)]
+    else:
+        frame[100:1000, 40:820] = cv2.cvtColor(np.uint8([[scenery_hsv]]), cv2.COLOR_HSV2BGR)[0, 0]
+    return frame, P
+
+
+def test_scenery_bigger_than_the_target_is_neither_reference_nor_target():
+    # The office camera, 2026-11-17: city trees through a window (hue ~80
+    # against the print's ~42) outgrew the print, became the reference, and
+    # every Target was fitted to them.
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    frame, P = _artwork_beside((45, 120, 120))
+    assert cv2.contourArea(board.find_targets(frame)[0][0]) > 300000   # the scenery is largest
+
+    view, _ = board.build_view(frame, template_mask)
+
+    assert len(view.targets) == 1
+    # net scale's frame span is the Target's, not the scenery's (Codex, #371)
+    assert abs(view.reference_span() - board.contour_span(board.find_targets(frame)[0][1])) <= 2
+    ring = board.apply(view.H, [board.RING_CENTRE_TPL])[0]
+    assert np.linalg.norm(ring - board.apply(P, [board.RING_CENTRE_TPL])[0]) < 2
+
+
+def test_a_target_the_frame_cuts_is_kept():
+    # Its disk is out of view, so only its colour says it is the same print.
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    frame, _ = _artwork_beside(None, cut=True)
+    assert len(board.find_targets(frame)[0]) == 2
+
+    assert len(board.build_view(frame, template_mask)[0].targets) == 2
+
+
+def test_no_target_without_the_disk():
+    # good_shooting_vid2's stone wall: dozens of green blobs, none a Target.
+    frame = np.full((600, 800, 3), 128, np.uint8)
+    frame[100:500, 100:700] = cv2.cvtColor(np.uint8([[(36, 45, 65)]]), cv2.COLOR_HSV2BGR)[0, 0]
+    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+
+    assert board.build_view(frame, template_mask) == (None, None)
+
+
+def test_scenery_bigger_than_the_target_does_not_make_a_right_fit_look_wrong():
+    # The registration cross-check (#110) fitted the largest green blob: on
+    # the office camera the trees, so a right fit checked read grossly wrong
+    # and its Look was dropped.
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    frame, _ = _artwork_beside((45, 120, 120))
+    view, _ = board.build_view(frame, template_mask)
+
+    assert board.silhouette_disagreement(frame, template_mask, view) < 5   # Board px

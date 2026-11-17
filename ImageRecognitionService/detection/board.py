@@ -60,6 +60,13 @@ OUTSIDE_RINGS = 0          # on the Target, beyond the 6-ring
 GREEN_LO = (35, 40, 30)    # PROVISIONAL: hue gate for the printed Target
 GREEN_HI = (95, 255, 255)  # PROVISIONAL: one artwork, one lighting condition
 MIN_TARGET_AREA_PX = 5000  # PROVISIONAL: rejects specks, may reject distant Targets
+# A green blob shows the white disk only if it is the printed artwork; trees,
+# glass, a wall pass the hue gate too (`board_targets`). A second Target is
+# the same print under the same light as the reference, so its mean hue is
+# within this of the reference's. Measured 2026-11-17: Targets 0-10 apart on
+# every CamA/CamB clip; the office camera's trees and glass 37-49 from its
+# print. Set between the two, not swept.
+TARGET_HUE_TOLERANCE = 15  # PROVISIONAL
 
 # Apparent size at which the detector actually works.
 #
@@ -169,6 +176,48 @@ def find_targets(frame, min_area=MIN_TARGET_AREA_PX):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     keep = [c for c in contours if cv2.contourArea(c) >= min_area]
     return sorted(keep, key=cv2.contourArea, reverse=True), mask
+
+
+def board_targets(frame, template_mask):
+    """`(contours, frame_mask, H)`: the Targets in `frame`, the registration
+    reference first, and its affine fit, `H` None when there is none.
+
+    The reference is the largest green blob the white disk is found in, by
+    the box seed (cheap) or else the ECC fit; scenery shows none. Every other
+    blob is kept only at the reference's hue (`TARGET_HUE_TOLERANCE`): a
+    Target the frame cuts, or a shaded one, need not show its disk, but it
+    is the same print.
+
+    ponytail: one ECC fit for each blob bigger than the reference, at the
+    baseline only; crop the masks if a busy scene makes that slow.
+    """
+    contours, frame_mask = find_targets(frame)
+    outline = template_contour(template_mask)
+    for reference in contours:
+        try:
+            H, correlation = register(template_mask, frame_mask, reference, None, cv2.MOTION_AFFINE)
+        except cv2.error:
+            continue
+        if any(disk_centre(_patch(frame, fit)) is not None
+               for fit in (box_seed(outline, reference), H)):
+            break
+    else:
+        return [], frame_mask, None
+    others = at_hue(frame, frame_mask, [c for c in contours if c is not reference],
+                    mean_hue(frame, frame_mask, reference))
+    return [reference] + others, frame_mask, (H, correlation)
+
+
+def mean_hue(frame, frame_mask, contour):
+    """The mean hue of `frame_mask`'s pixels inside `contour`."""
+    inside = cv2.drawContours(np.zeros_like(frame_mask), [contour], -1, 255, -1)
+    return cv2.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV), inside & frame_mask)[0]
+
+
+def at_hue(frame, frame_mask, contours, hue):
+    """`contours` within `TARGET_HUE_TOLERANCE` of `hue`: the same print."""
+    return [c for c in contours
+            if abs(mean_hue(frame, frame_mask, c) - hue) <= TARGET_HUE_TOLERANCE]
 
 
 def reading_order(polygons):
@@ -593,13 +642,14 @@ class BoardView:
     """
 
     def __init__(self, H, tpl_to_board, canvas_size, targets, anchor=None, sheets=(),
-                 crops=(), reference_target=0):
+                 crops=(), reference_target=0, hue=None):
         self.H = H                        # template -> frame
         self.tpl_to_board = tpl_to_board  # template -> Board space (scale + origin)
         self.canvas_size = canvas_size    # (width, height) of the rectified Board
         self.targets = targets            # Target polygons, Board-space coords,
                                           # in `target_index` order (`reading_order`)
         self.reference_target = reference_target  # index of the one registration fits
+        self.hue = hue                    # its mean hue in the baseline frame (`board_targets`)
         self.anchor = anchor              # what `track_view` registers onto
         # Per Target, its sheet's bound, (x0, y0, x1, y1) Board px (ADR-0011),
         # and the canvas the detector is shown it on, (x, y, w, h) whole Board
@@ -610,6 +660,14 @@ class BoardView:
     @property
     def board_scale(self):
         return float(self.tpl_to_board[0, 0])
+
+    def reference_span(self):
+        """The reference Target's `contour_span` in the baseline frame, px:
+        its polygon taken back through the fit, as the largest blob may be
+        scenery (`board_targets`)."""
+        to_frame = self.H @ np.linalg.inv(self.tpl_to_board)
+        return contour_span(np.round(apply(to_frame, self.targets[self.reference_target]))
+                            .astype(np.int32))
 
     def ring_centre(self, target_index=None):
         """A Target's 10-ring centre in Board space — SOW 2.3.2's origin.
@@ -692,10 +750,11 @@ class BoardView:
         return inside[0] if inside else None
 
 
-def build_view(frame, template_mask, board_scale=None, init_H=None):
+def build_view(frame, template_mask, board_scale=None):
     """Locate the Board in `frame` and return `(BoardView, ECC correlation)`.
 
-    The largest Target is the registration reference; every other Target is
+    The largest Target showing its disk is the registration reference
+    (`board_targets`); every other Target is
     mapped into the same Board space through that one homography — the
     Board-level fit described in the module docstring. The view numbers the
     Targets by `reading_order`, and `reference_target` says which is the
@@ -703,11 +762,11 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
 
     Returns `(None, None)` when no Target is visible.
     """
-    contours, frame_mask = find_targets(frame)
-    if not contours:
-        return None, None
     # #296: affine, as the silhouette does not constrain a perspective term (#295).
-    H, correlation = register(template_mask, frame_mask, contours[0], init_H, cv2.MOTION_AFFINE)
+    contours, frame_mask, fit = board_targets(frame, template_mask)
+    if fit is None:
+        return None, None
+    H, correlation = fit
     # #302: scale and centre from the printed interior, not the silhouette's edge.
     A, _ = interior_fit(frame, H)
     if A is not None:
@@ -731,7 +790,7 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
                 .reshape(-1, 1, 2).astype(np.float32)) for p in placed]
     order = reading_order(targets)
     targets = [targets[i] for i in order]
-    reference = order.index(0)   # contours[0], the largest, registration's
+    reference = order.index(0)   # contours[0], registration's (`board_targets`)
     sheets = sheet_bounds(targets, tpl_to_board, reference=reference)
     square = RING_CENTRE_TPL + IDENTITY_SPANS * contour_span(template_contour(template_mask)) * \
         np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])
@@ -740,7 +799,7 @@ def build_view(frame, template_mask, board_scale=None, init_H=None):
     anchor = Anchor(gray(frame), texture_region(H @ np.linalg.inv(tpl_to_board),
                                                 frame.shape[1::-1], sheets), H, identity)
     return (BoardView(H, tpl_to_board, size, targets, anchor, sheets, sheet_crops(sheets),
-                      reference), correlation)
+                      reference, mean_hue(frame, frame_mask, contours[0])), correlation)
 
 
 def _centroid(polygon):
@@ -855,7 +914,7 @@ def track_view(frame, reference, seed=None, previous=None, region=None):
                               a.region if region is None else region)
     return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
                      reference.targets, a, reference.sheets, reference.crops,
-                     reference.reference_target), correlation
+                     reference.reference_target, reference.hue), correlation
 
 
 def shifted(view, d):
@@ -869,7 +928,7 @@ def shifted(view, d):
     return BoardView(view.H, move @ view.tpl_to_board, view.canvas_size,
                      [t - d for t in view.targets], view.anchor,
                      [tuple(np.subtract(b, d)) for b in view.sheets], view.crops,
-                     view.reference_target)
+                     view.reference_target, view.hue)
 
 
 def reanchor_view(frame, template_mask, reference):
@@ -935,11 +994,17 @@ def silhouette_disagreement(frame, template_mask, view):
     where a neighbour is largest reads ~one Target spacing and is lost; none was
     on #110's six clips. Match the contour to the baseline's Target if one is.
 
+    Only blobs at the baseline reference's hue (`at_hue`) are Targets:
+    scenery bigger than the Target (trees through a window, #370) would
+    otherwise be fitted and a right fit dropped.
+
     Infinite when no Target is visible: a fit with nothing to fit is wrong
     (`track_view` does not look for one). None when the silhouette fit
     fails: no verdict.
     """
     contours, frame_mask = find_targets(frame)
+    if view.hue is not None:
+        contours = at_hue(frame, frame_mask, contours, view.hue)
     if not contours:
         return math.inf
     try:

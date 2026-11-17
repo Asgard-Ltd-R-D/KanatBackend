@@ -2,7 +2,7 @@ import { RefObject, useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { Eye, EyeOff } from 'lucide-react'
 import { BulletHole, Place, Run } from '../../types'
-import { Size, baselineMarksToDraw, holesOver, labelGroups, templateToElement } from '../../utils/overlay'
+import { Size, baselineMarksToDraw, fromEarlierRun, holesOver, labelGroups, templateToElement } from '../../utils/overlay'
 
 const OUTLINE_COLOUR = '#22d3ee'
 const BASELINE_MARK_COLOUR = '#a3a8b0' // slate-400 (tailwind.config.ts)
@@ -70,6 +70,8 @@ export function Overlay({ run, place, bullets, runs, videoRef }: OverlayContent 
   if (!toElement) return null
   const holes = holesOver(run, runs, bullets)
   const markers = holes.map(toElement)
+  // A hole from an earlier Run is part of this Run's baseline: grey, as a Baseline Mark
+  const colour = (b: BulletHole) => (fromEarlierRun(run, runs, b.first_seen_at) ? BASELINE_MARK_COLOUR : colourOf(b))
 
   return (
     <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden>
@@ -105,7 +107,7 @@ export function Overlay({ run, place, bullets, runs, videoRef }: OverlayContent 
         return <circle key={i} cx={x} cy={y} r={BASELINE_MARK_RADIUS} fill="none" stroke={BASELINE_MARK_COLOUR} strokeWidth={1.5} />
       })}
       {bullets.map((b, i) => (
-        <circle key={b.id} cx={markers[i][0]} cy={markers[i][1]} r={MARKER_RADIUS} fill="none" stroke={colourOf(b)} strokeWidth={2} />
+        <circle key={b.id} cx={markers[i][0]} cy={markers[i][1]} r={MARKER_RADIUS} fill="none" stroke={colour(b)} strokeWidth={2} />
       ))}
       {labelGroups(markers, 2 * MARKER_RADIUS).map(group => {
         // Top right of the group's rings, where a lone ring's label goes
@@ -115,7 +117,7 @@ export function Overlay({ run, place, bullets, runs, videoRef }: OverlayContent 
           <text key={bullets[group[0]].id} x={x} y={y} fontSize={12} fontWeight={700} {...textOutline}>
             {/* By rank: the list is in first_seen_at order, and a rank is the order holes arrived in */}
             {group.sort((a, b) => bullets[a].rank - bullets[b].rank).map((i, n) => (
-              <tspan key={bullets[i].id} fill={colourOf(bullets[i])}>
+              <tspan key={bullets[i].id} fill={colour(bullets[i])}>
                 {n > 0 && ','}
                 {bullets[i].rank}
               </tspan>

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { baselineMarksToDraw, holesOver, labelGroups, placeAt, runOf, templateToElement, type Point } from './overlay.ts'
+import { baselineMarksToDraw, fromEarlierRun, holesOver, labelGroups, placeAt, runOf, templateToElement, type Point } from './overlay.ts'
 
 const IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 const FULL_HD = { width: 1920, height: 1080 }
@@ -178,4 +178,13 @@ test("the carry shift follows the earlier Run's Bullet Holes when they change", 
   const carried = holesOver(late, [early, late], [hole('2026-10-22T10:01:00Z', [130, 100]), hole('2026-10-22T10:02:00Z', [230, 100])])
   near(carried[0], [140, 100])
   near(carried[1], [240, 100])
+})
+
+test("after a retaken baseline, a hole from the earlier Run is the new Run's Baseline Mark; one fired since is its own", () => {
+  const first = { taken_at: '2026-10-22T10:00:00Z' }
+  const retaken = { taken_at: '2026-10-22T10:05:00Z' }
+  const runs = [first, retaken]
+  assert.equal(fromEarlierRun(retaken, runs, '2026-10-22T10:01:00Z'), true)
+  assert.equal(fromEarlierRun(retaken, runs, '2026-10-22T10:06:00Z'), false)
+  assert.equal(fromEarlierRun(first, [first], '2026-10-22T09:59:00Z'), false) // before any Run: the first's own
 })

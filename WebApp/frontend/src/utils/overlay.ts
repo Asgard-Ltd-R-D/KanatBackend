@@ -71,6 +71,12 @@ export function runOf<R extends Pick<Run, 'taken_at'>>(runs: R[], firstSeenAt: s
   return runs.filter(r => Date.parse(r.taken_at) <= seen).pop() ?? runs[0]
 }
 
+// Whether a Bullet Hole belongs to a Run before `run` (runOf): the new Run's
+// baseline saw it as a Baseline Mark, so the Overlay draws it grey
+export function fromEarlierRun<R extends Pick<Run, 'taken_at'>>(run: R, runs: R[], firstSeenAt: string): boolean {
+  return (runOf(runs, firstSeenAt) ?? run).taken_at !== run.taken_at
+}
+
 type RunGeometry = Pick<Run, 'taken_at' | 'baseline_view' | 'places'>
 
 // How far the picture may carry an earlier Run's Bullet Hole from the later

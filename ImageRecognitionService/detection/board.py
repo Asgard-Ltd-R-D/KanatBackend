@@ -661,6 +661,14 @@ class BoardView:
     def board_scale(self):
         return float(self.tpl_to_board[0, 0])
 
+    def reference_span(self):
+        """The reference Target's `contour_span` in the baseline frame, px:
+        its polygon taken back through the fit, as the largest blob may be
+        scenery (`board_targets`)."""
+        to_frame = self.H @ np.linalg.inv(self.tpl_to_board)
+        return contour_span(np.round(apply(to_frame, self.targets[self.reference_target]))
+                            .astype(np.int32))
+
     def ring_centre(self, target_index=None):
         """A Target's 10-ring centre in Board space — SOW 2.3.2's origin.
 

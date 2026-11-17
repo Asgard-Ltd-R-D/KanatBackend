@@ -32,6 +32,7 @@ class _FakeView:
     match_radius = 3.0
     targets = [None]
     board_scale = 1.0
+    reference_span = lambda self: 100.0
     tpl_to_board = np.eye(3)
     sheets = [(0, 0, 64, 64)]
     crops = [(0, 0, 64, 64)]

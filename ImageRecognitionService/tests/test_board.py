@@ -813,6 +813,8 @@ def test_scenery_bigger_than_the_target_is_neither_reference_nor_target():
     view, _ = board.build_view(frame, template_mask)
 
     assert len(view.targets) == 1
+    # net scale's frame span is the Target's, not the scenery's (Codex, #371)
+    assert abs(view.reference_span() - board.contour_span(board.find_targets(frame)[0][1])) <= 2
     ring = board.apply(view.H, [board.RING_CENTRE_TPL])[0]
     assert np.linalg.norm(ring - board.apply(P, [board.RING_CENTRE_TPL])[0]) < 2
 

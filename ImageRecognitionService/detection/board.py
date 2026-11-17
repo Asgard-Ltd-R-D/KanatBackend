@@ -203,12 +203,21 @@ def board_targets(frame, template_mask):
             break
     else:
         return [], frame_mask, None
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    hue = lambda c: cv2.mean(hsv, cv2.drawContours(np.zeros_like(frame_mask), [c], -1, 255, -1)
-                             & frame_mask)[0]
-    others = [c for c in contours if c is not reference
-              and abs(hue(c) - hue(reference)) <= TARGET_HUE_TOLERANCE]
+    others = at_hue(frame, frame_mask, [c for c in contours if c is not reference],
+                    mean_hue(frame, frame_mask, reference))
     return [reference] + others, frame_mask, (H, correlation)
+
+
+def mean_hue(frame, frame_mask, contour):
+    """The mean hue of `frame_mask`'s pixels inside `contour`."""
+    inside = cv2.drawContours(np.zeros_like(frame_mask), [contour], -1, 255, -1)
+    return cv2.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV), inside & frame_mask)[0]
+
+
+def at_hue(frame, frame_mask, contours, hue):
+    """`contours` within `TARGET_HUE_TOLERANCE` of `hue`: the same print."""
+    return [c for c in contours
+            if abs(mean_hue(frame, frame_mask, c) - hue) <= TARGET_HUE_TOLERANCE]
 
 
 def reading_order(polygons):
@@ -633,13 +642,14 @@ class BoardView:
     """
 
     def __init__(self, H, tpl_to_board, canvas_size, targets, anchor=None, sheets=(),
-                 crops=(), reference_target=0):
+                 crops=(), reference_target=0, hue=None):
         self.H = H                        # template -> frame
         self.tpl_to_board = tpl_to_board  # template -> Board space (scale + origin)
         self.canvas_size = canvas_size    # (width, height) of the rectified Board
         self.targets = targets            # Target polygons, Board-space coords,
                                           # in `target_index` order (`reading_order`)
         self.reference_target = reference_target  # index of the one registration fits
+        self.hue = hue                    # its mean hue in the baseline frame (`board_targets`)
         self.anchor = anchor              # what `track_view` registers onto
         # Per Target, its sheet's bound, (x0, y0, x1, y1) Board px (ADR-0011),
         # and the canvas the detector is shown it on, (x, y, w, h) whole Board
@@ -781,7 +791,7 @@ def build_view(frame, template_mask, board_scale=None):
     anchor = Anchor(gray(frame), texture_region(H @ np.linalg.inv(tpl_to_board),
                                                 frame.shape[1::-1], sheets), H, identity)
     return (BoardView(H, tpl_to_board, size, targets, anchor, sheets, sheet_crops(sheets),
-                      reference), correlation)
+                      reference, mean_hue(frame, frame_mask, contours[0])), correlation)
 
 
 def _centroid(polygon):
@@ -896,7 +906,7 @@ def track_view(frame, reference, seed=None, previous=None, region=None):
                               a.region if region is None else region)
     return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
                      reference.targets, a, reference.sheets, reference.crops,
-                     reference.reference_target), correlation
+                     reference.reference_target, reference.hue), correlation
 
 
 def shifted(view, d):
@@ -910,7 +920,7 @@ def shifted(view, d):
     return BoardView(view.H, move @ view.tpl_to_board, view.canvas_size,
                      [t - d for t in view.targets], view.anchor,
                      [tuple(np.subtract(b, d)) for b in view.sheets], view.crops,
-                     view.reference_target)
+                     view.reference_target, view.hue)
 
 
 def reanchor_view(frame, template_mask, reference):
@@ -976,11 +986,17 @@ def silhouette_disagreement(frame, template_mask, view):
     where a neighbour is largest reads ~one Target spacing and is lost; none was
     on #110's six clips. Match the contour to the baseline's Target if one is.
 
+    Only blobs at the baseline reference's hue (`at_hue`) are Targets:
+    scenery bigger than the Target (trees through a window, #370) would
+    otherwise be fitted and a right fit dropped.
+
     Infinite when no Target is visible: a fit with nothing to fit is wrong
     (`track_view` does not look for one). None when the silhouette fit
     fails: no verdict.
     """
     contours, frame_mask = find_targets(frame)
+    if view.hue is not None:
+        contours = at_hue(frame, frame_mask, contours, view.hue)
     if not contours:
         return math.inf
     try:

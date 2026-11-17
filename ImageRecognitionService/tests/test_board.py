@@ -834,3 +834,15 @@ def test_no_target_without_the_disk():
     _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
 
     assert board.build_view(frame, template_mask) == (None, None)
+
+
+def test_scenery_bigger_than_the_target_does_not_make_a_right_fit_look_wrong():
+    # The registration cross-check (#110) fitted the largest green blob: on
+    # the office camera the trees, so a right fit checked read grossly wrong
+    # and its Look was dropped.
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    frame, _ = _artwork_beside((45, 120, 120))
+    view, _ = board.build_view(frame, template_mask)
+
+    assert board.silhouette_disagreement(frame, template_mask, view) < 5   # Board px

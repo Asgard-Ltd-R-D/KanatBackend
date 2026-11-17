@@ -212,7 +212,9 @@ def test_camb_split_is_not_merged_by_the_gate_alone():
 
 
 class _Reference:
-    """Just the one attribute merge_displaced_tracks reads off a BoardView."""
+    """Just the attributes merge_displaced_tracks reads off a BoardView."""
+    reference_target = 0
+
     def __init__(self, centre):
         self.targets = [np.array([centre], np.float32).reshape(-1, 1, 2)]
 

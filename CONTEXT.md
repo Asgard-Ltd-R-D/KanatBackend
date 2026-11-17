@@ -27,6 +27,10 @@ _Avoid_: paper, sheet
 
 **Target**:
 A single printed aiming mark on a Board. A Board commonly carries several.
+A Run numbers them by where they sit in the picture, top to bottom and left
+to right within a row, so two Runs that see every Target give each the same
+number (#240). The largest at the baseline is the Run's reference Target,
+the one registration fits; it need not be Target 1.
 _Avoid_: bullseye
 
 **Target Sheet**:

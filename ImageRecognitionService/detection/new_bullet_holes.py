@@ -227,7 +227,7 @@ def merge_displaced_tracks(holes, reference, fraction=MAX_DISPLACEMENT_FRACTION)
     """
     if not holes or reference is None or not reference.targets:
         return holes, []
-    centre = np.asarray(reference.targets[0], np.float64).reshape(-1, 2).mean(axis=0)
+    centre = np.asarray(reference.targets[reference.reference_target], np.float64).reshape(-1, 2).mean(axis=0)
 
     # Identity, not equality: these dicts hold numpy arrays, and `in`/`remove`
     # would compare them elementwise and raise.

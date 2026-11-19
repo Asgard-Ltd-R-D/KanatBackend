@@ -144,6 +144,9 @@ def api(monkeypatch):
     api.close()
 
 
+CLOCK = 1024.0   # the stall check is handed its time: a power of two, so adding 10 or 120 s is exact (a fresh CI machine's small clock rounded 120 s to just under it)
+
+
 def _still(run):
     """`run` less what moves on with each Look: `registered` and `looked_at`."""
     return {k: v for k, v in run.items() if k not in ("registered", "looked_at")}
@@ -631,7 +634,7 @@ def _stall_a_run(api):
 
 def test_a_run_that_keeps_looking_is_never_ended_as_stalled(api):
     assert api.start()[0] == 200
-    now = time.monotonic()
+    now = CLOCK
     api.service.check_stalls(now)
     time.sleep(0.3)
     api.service.check_stalls(now + 1000)   # a long time on, but it looked on meanwhile
@@ -641,7 +644,7 @@ def test_a_run_that_keeps_looking_is_never_ended_as_stalled(api):
 def test_a_watching_run_that_looks_at_no_frame_for_the_stall_time_is_ended(api):
     freed = _stall_a_run(api)
     try:
-        now = time.monotonic()
+        now = CLOCK
         api.service.check_stalls(now)
         api.service.check_stalls(now + service.STALL_AFTER_S - 1)
         assert len(api.service.status()) == 1   # not yet
@@ -657,7 +660,7 @@ def test_a_stalled_runs_late_bullet_holes_are_not_posted(api):
     freed = _stall_a_run(api)
     try:
         run = next(iter(api.service._runs.values()))
-        now = time.monotonic()
+        now = CLOCK
         api.service.check_stalls(now)
         api.service.check_stalls(now + service.STALL_AFTER_S)
         assert run.dropping and run.error.startswith("stalled")
@@ -679,13 +682,14 @@ def _watching_process_run(svc, looked_at=None):
     run.remote.watched = {"registered": None, "looked_at": looked_at}
     run.process, run.baseline_view = _Process(), {}
     run.enter("watching")
+    run.mark_at = CLOCK   # its stall time counts from here, on the same clock the tests hand the check
     svc._runs[(SESSION, CAMERA)] = run
     return run
 
 
 def test_a_process_run_whose_looked_at_stands_still_is_killed(api):
     run = _watching_process_run(api.service, "2026-10-22T10:15:02.120Z")
-    now = time.monotonic()
+    now = CLOCK
     api.service.check_stalls(now)
     run.remote.watched = {"registered": None, "looked_at": "2026-10-22T10:15:02.193Z"}   # it moved
     api.service.check_stalls(now + service.STALL_AFTER_S)
@@ -697,7 +701,7 @@ def test_a_process_run_whose_looked_at_stands_still_is_killed(api):
 
 def test_a_process_run_that_never_reports_a_look_is_killed_too(api):
     run = _watching_process_run(api.service, None)
-    now = time.monotonic()
+    now = CLOCK
     api.service.check_stalls(now)
     api.service.check_stalls(now + service.STALL_AFTER_S)
     assert run.process.killed
@@ -707,7 +711,7 @@ def test_a_process_run_that_never_reports_a_look_is_killed_too(api):
 def test_a_run_still_starting_is_not_judged_by_the_stall_check(api):
     run = _watching_process_run(api.service)
     run.enter("starting")
-    now = time.monotonic()
+    now = CLOCK
     api.service.check_stalls(now)
     api.service.check_stalls(now + 10 * service.STALL_AFTER_S)
     assert not run.process.killed
@@ -720,7 +724,7 @@ def test_a_stalled_thread_run_exits_the_service_when_asked_to(monkeypatch, api):
     monkeypatch.setattr(service.os, "_exit", exits.append)
     freed = _stall_a_run(api)
     try:
-        now = time.monotonic()
+        now = CLOCK
         api.service.check_stalls(now)
         api.service.check_stalls(now + service.STALL_AFTER_S)
         assert exits == [3]
@@ -733,7 +737,7 @@ def test_a_stalled_thread_run_exits_the_service_when_asked_to(monkeypatch, api):
 def test_a_process_run_whose_camera_is_down_is_waited_for_then_ended_alone(api):
     run = _watching_process_run(api.service, "2026-10-22T10:15:02.120Z")
     run.remote.down = True
-    now = time.monotonic()
+    now = CLOCK
     api.service.check_stalls(now)
     api.service.check_stalls(now + service.STALL_AFTER_S + 1)
     api.service.check_stalls(now + service.CAMERA_DOWN_AFTER_S - 1)
@@ -746,7 +750,7 @@ def test_a_process_run_whose_camera_is_down_is_waited_for_then_ended_alone(api):
 def test_a_process_run_whose_camera_comes_back_is_not_ended(api):
     run = _watching_process_run(api.service, "t0")
     run.remote.down = True
-    now = time.monotonic()
+    now = CLOCK
     api.service.check_stalls(now)
     run.remote.down = False
     run.remote.watched = {"registered": None, "looked_at": "t1"}   # it looks again
@@ -777,7 +781,7 @@ def test_a_thread_run_whose_camera_is_down_never_exits_the_service(monkeypatch, 
     run.loop, run.baseline_view = _LoopOnADownStream(), {}
     run.enter("watching")
     api.service._runs[(SESSION, CAMERA)] = run
-    now = time.monotonic()
+    now = CLOCK
     api.service.check_stalls(now)
     api.service.check_stalls(now + service.CAMERA_DOWN_AFTER_S + 1)
     assert exits == []                       # the service lives on
@@ -793,7 +797,7 @@ def test_a_killed_process_run_is_not_judged_again_while_it_is_retired(api, caplo
     run = _watching_process_run(api.service, "t0")
     kills = []
     run.process.kill = lambda: kills.append(1)
-    now = time.monotonic()
+    now = CLOCK
     api.service.check_stalls(now)
     for second in range(service.STALL_AFTER_S, service.STALL_AFTER_S + 5):
         api.service.check_stalls(now + second)
@@ -855,7 +859,7 @@ def test_the_service_saves_the_other_cameras_before_it_exits_for_a_stuck_thread(
     good = _healthy_thread_run(api.service, "good")
     slow = _healthy_thread_run(api.service, "slow", saves=False)   # cannot finish in time
     try:
-        now = time.monotonic()
+        now = CLOCK
         api.service.check_stalls(now)
         api.service.check_stalls(now + service.STALL_AFTER_S)
         assert exits == [3]

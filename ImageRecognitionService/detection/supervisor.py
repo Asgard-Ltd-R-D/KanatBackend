@@ -26,7 +26,6 @@ service exits, and this starts it again. Everything else after the supervisor's
 own options is passed to the service as it is.
 """
 import argparse
-import ctypes
 import json
 import logging
 import os
@@ -39,19 +38,20 @@ from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from detection import logs
+from detection import logs, winjob
+from detection.stalls import STALL_AFTER_S   # the service's own default, from a file that loads no detector
 
 log = logging.getLogger("detection.supervisor")
 
 STARTUP_GRACE_S = 120   # PROVISIONAL: a cold start loads the model before the API binds
 POLL_EVERY_S = 2
 API_DEAD_AFTER_S = 15   # PROVISIONAL
-STALL_AFTER_S = 10      # the service's own default (service.STALL_AFTER_S), repeated: importing it loads cv2
 BACKOFF_MIN_S = 1
 BACKOFF_MAX_S = 30
 STOP_GRACE_S = 30       # a stop asks every Run to end (judge, post) before the service is killed
 HEALTHY_AFTER_S = 60    # a service that ran this long was fine: its next restart starts from BACKOFF_MIN_S
 DEFAULT_PORT = 8010
+_IS_WINDOWS = os.name == "nt"
 
 
 class _Child:
@@ -68,7 +68,7 @@ class _Child:
             if self._job is not None:
                 # Its job holds the service and every process it started, the Runs a service
                 # that is already gone left behind too
-                _end_job(self._job)
+                winjob.end_job(self._job)
                 self._job = None
             elif self._process.poll() is None:
                 subprocess.run(["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
@@ -87,97 +87,18 @@ class _Child:
             log.error("The Detection Service (pid %d) did not die when killed", self._process.pid)
 
 
-CREATE_SUSPENDED = 0x00000004
-JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
-_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
-_IS_WINDOWS = os.name == "nt"
-
-
-def _kill_when_the_supervisor_ends():
-    """A Windows job that kills every process in it when its last handle closes,
-    which is when the supervisor ends, however: a stop, a crash, a kill from the
-    Task Manager. Without it the service it started would live on, holding its
-    port and the GPU, and the next supervisor's service could not start."""
-    from ctypes import wintypes
-
-    class _Basic(ctypes.Structure):
-        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
-                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
-                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
-                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
-                    ("SchedulingClass", wintypes.DWORD)]
-
-    class _Extended(ctypes.Structure):
-        _fields_ = [("BasicLimitInformation", _Basic), ("IoInfo", ctypes.c_uint64 * 6),
-                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
-                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-    kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
-    kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
-    job = kernel32.CreateJobObjectW(None, None)
-    if not job:
-        raise OSError(ctypes.get_last_error(), "CreateJobObject failed")
-    info = _Extended()
-    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    if not kernel32.SetInformationJobObject(job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
-                                            ctypes.byref(info), ctypes.sizeof(info)):
-        raise OSError(ctypes.get_last_error(), "SetInformationJobObject failed")
-    return job
-
-
-def die_with_me(process):
-    """Puts a just-started, still suspended `process` in a job of its own that
-    dies with the supervisor, so does everything it starts after (the service's
-    Run processes). Answers the job, or None when Windows refused: logged, not
-    raised, since the service runs either way, only unguarded against the
-    supervisor's death. One job for each service, so `_end_job` can kill what
-    an old service left behind without touching the next one's."""
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    from ctypes import wintypes
-    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-    job = None
-    try:
-        job = _kill_when_the_supervisor_ends()
-        if not kernel32.AssignProcessToJobObject(job, int(process._handle)):
-            raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
-        return job
-    except OSError as e:
-        if job:
-            _end_job(job)
-        log.warning("The Detection Service will keep running if the supervisor is killed (Windows refused "
-                    "the guard: %s)", e)
-        return None
-
-
-def _end_job(job):
-    """Kills every process in `job`, and closes it."""
-    from ctypes import wintypes
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.TerminateJobObject(job, 1)
-    kernel32.CloseHandle(job)
-
-
-def _resume(process):
-    """A process started with CREATE_SUSPENDED, let go."""
-    ctypes.WinDLL("ntdll").NtResumeProcess(ctypes.c_void_p(int(process._handle)))
-
-
 def _spawn(command):
     if not _IS_WINDOWS:
         return _Child(subprocess.Popen(command, start_new_session=True))
     # Suspended until it is in the job: Windows' python.exe starts the real
     # interpreter as its own child at once, which is only in the job if the job
     # was there first
-    process = subprocess.Popen(command, creationflags=CREATE_SUSPENDED)
+    process = subprocess.Popen(command, creationflags=winjob.CREATE_SUSPENDED)
     job = None
     try:
-        job = die_with_me(process)
+        job = winjob.die_with_me(process)
     finally:
-        _resume(process)
+        winjob.resume(process)
     return _Child(process, job)
 
 

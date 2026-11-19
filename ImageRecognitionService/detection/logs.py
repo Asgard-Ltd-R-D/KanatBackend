@@ -80,6 +80,47 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, ensure_ascii=False)
 
 
+class SharedFileHandler(logging.Handler):
+    """Appends each line to `path`, which several processes share: the supervisor,
+    the service and, in process mode, every Run's process. It holds no file open,
+    so a day's rotation, by whichever of them writes first after midnight (UTC),
+    is a rename that always works, Windows included, and none goes on writing to
+    the renamed file. A `TimedRotatingFileHandler` per process loses lines
+    instead: a rename the others block fails on every line. Past days are kept
+    as `detection.log.YYYY-MM-DD`, BACKUP_DAYS of them."""
+    def __init__(self, path, backups=BACKUP_DAYS):
+        super().__init__()
+        self.path, self.backups = Path(path), backups
+
+    def emit(self, record):
+        try:
+            line = self.format(record) + "\n"
+            self._rotate_if_a_new_day()
+            with open(self.path, "a", encoding="utf-8") as file:
+                file.write(line)
+        except Exception:
+            self.handleError(record)
+
+    def _rotate_if_a_new_day(self):
+        try:
+            last_written = datetime.fromtimestamp(self.path.stat().st_mtime, timezone.utc).date()
+        except OSError:   # no file yet
+            return
+        if last_written == datetime.now(timezone.utc).date():
+            return
+        past = self.path.with_name(f"{self.path.name}.{last_written.isoformat()}")
+        try:
+            if not past.exists():
+                os.replace(self.path, past)
+        except OSError:   # another process rotated it first, or has it open this instant: the next line retries
+            return
+        for old in sorted(self.path.parent.glob(f"{self.path.name}.*"))[:-self.backups]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+
 class ConsoleFormatter(logging.Formatter):
     """A readable line for the terminal: time, level, logger, message, fields."""
 
@@ -119,9 +160,7 @@ def configure(configured: Path | None = None, to_file: bool = True, level: str =
         return None
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        file = logging.handlers.TimedRotatingFileHandler(
-            directory / LOG_FILE, when="midnight", backupCount=BACKUP_DAYS, encoding="utf-8", utc=True
-        )
+        file = SharedFileHandler(directory / LOG_FILE)
     except OSError as e:
         logging.getLogger(__name__).warning("Logging to %s failed, console only: %s", directory, e)
         return None

@@ -1060,3 +1060,29 @@ def test_a_process_run_whose_detection_fails_still_announces_that_it_is_draining
     run_process.main(conn, None, SESSION, CAMERA, URL, "http://backend", None)
     kinds = [m[0] for m in conn.sent]
     assert kinds.index("draining") < kinds.index("error") < kinds.index("ended")
+
+
+def test_a_thread_run_whose_detection_fails_is_draining_while_its_posts_drain(api, monkeypatch):
+    run = service._Run(SESSION, CAMERA)
+    seen = {}
+
+    class _Publisher:
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            seen["draining"] = run.draining   # the drain happens here
+            return False
+
+    def process(loop, _, publish, watching):
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", staticmethod(lambda *a, **kw: types.SimpleNamespace(stop=lambda: None)))
+    monkeypatch.setattr(nbh, "process", process)
+    monkeypatch.setattr(webapp, "WebAppPublisher", _Publisher)
+    api.service._runs[(SESSION, CAMERA)] = run
+    api.service._work(run, URL)
+    assert seen["draining"]   # so the stall check leaves it to the publisher's own limit

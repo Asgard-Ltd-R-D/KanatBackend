@@ -488,8 +488,13 @@ class DetectionService:
                                  run.camera, extra={"camera": run.camera})
                     else:
                         publisher.publish(hole)
-                nbh.process(loop, None, publish=publish,
-                            watching=lambda view, marks: self._watching(run, view, marks))
+                try:
+                    nbh.process(loop, None, publish=publish,
+                                watching=lambda view, marks: self._watching(run, view, marks))
+                finally:
+                    # Looking is over, ended or failed: the publisher's exit drains its posts next, which
+                    # has its own time limit and is not a stall
+                    run.draining = time.monotonic()
         except BaseException as error:   # SystemExit too: how a Run's open fails
             run.error = str(error) or type(error).__name__
             # A SystemExit is how a Stream that cannot be opened or read says

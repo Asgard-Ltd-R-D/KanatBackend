@@ -244,6 +244,25 @@ def test_a_disabled_camera_is_never_restarted(monkeypatch, db_state):
     assert dog.mtx.calls == []
 
 
+def test_a_path_mediamtx_yml_defines_is_never_restarted_even_if_it_reads_udp_rtp(monkeypatch, db_state):
+    """A camera whose alias clashes with a static path of mediamtx.yml: the sync
+    refuses to touch that path, so the watchdog must not delete it either."""
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths(frozenset({"cam1"})))
+    dog.look()
+    dog.look(after=60)
+    assert dog.mtx.calls == []
+    assert "cam1" in dog.mtx.paths
+
+
+def test_nothing_is_restarted_while_mediamtx_yml_is_unknown(monkeypatch, db_state):
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: None)
+    dog.look()
+    dog.look(after=60)
+    assert dog.mtx.calls == []
+
+
 def test_a_path_the_sync_has_not_applied_yet_is_not_the_watchdogs(monkeypatch, db_state):
     dog = Watchdog(monkeypatch, db_state, make_camera())
     dog.mtx.paths.clear()

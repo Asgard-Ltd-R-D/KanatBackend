@@ -220,6 +220,9 @@ def restart_silent(db: DBSession) -> None:
     with _lock:
         enabled = {c.alias: c for c in cameras_repo.list_all(db) if c.enabled}
         current = mediamtx.list_path_configs()
+        config_paths = mediamtx.config_paths()
+        if config_paths is None:
+            return   # mediamtx.yml unknown: any name might be its, so nothing is deleted (as sync() does)
         states = mediamtx.path_states()
         now = _clock()
         for alias in [a for a in _silence if a not in enabled]:
@@ -227,8 +230,11 @@ def restart_silent(db: DBSession) -> None:
             _silence_logged.discard(alias)
             _silence_restarts.pop(alias, None)
         for alias, camera in enabled.items():
-            if not (current.get(alias, {}).get("source") or "").startswith("udp+rtp://"):
-                # Not applied yet (or mediamtx.yml owns the name): the sync's to do
+            existing = current.get(alias, {})
+            if (config_paths.defines(alias) or not (existing.get("source") or "").startswith("udp+rtp://")
+                    or not is_camera_path(alias, existing, config_paths)):
+                # Not applied yet, or mediamtx.yml owns the name (a static path that also reads
+                # udp+rtp, say): the sync's to do, or nobody's. Never deleted here.
                 _silence.pop(alias, None)
                 _silence_restarts.pop(alias, None)
                 continue

@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     # it restarts, and the Detection Service's Run reconciled with the Session
     # to watch; 0 turns both loops off (tests)
     camera_sync_interval_s: float = 5
+    # The silence watchdog (camera_sync.restart_silent): how often it looks at
+    # each camera's inbound bytes, and how long a camera may send nothing before
+    # its path is deleted and added again, which makes MediaMTX open a new socket
+    # and rejoin the multicast group (a pulled cable drops the membership and
+    # the old socket never gets it back); 0 turns the watchdog off
+    camera_watchdog_interval_s: float = 2
+    camera_silence_restart_s: float = 6
+    # Each restart in a row doubles the wait for the next, up to this
+    camera_silence_restart_max_s: float = 60
     # MediaMTX's config file, whose paths the backend never changes or deletes;
     # empty means this repo's VideoService/mediamtx.yml
     mediamtx_config: str = ""

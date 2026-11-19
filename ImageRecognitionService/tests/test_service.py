@@ -931,3 +931,27 @@ def test_a_process_run_whose_end_came_before_its_process_started_is_stopped_once
     api.service._work_process(run, URL)
     assert parent.sent == ["stop"]   # told to stop, so it does not go on to watch with no one waiting
     assert run.ended.is_set()
+
+
+def test_a_process_run_whose_process_cannot_start_is_retired_not_left_registered(api, monkeypatch):
+    class _Context:
+        def Pipe(self):
+            return _Conn(), _Conn()
+
+        def Process(self, **kw):
+            process = _Process()
+
+            def start():
+                raise OSError("cannot allocate another process")
+
+            def join(timeout=None):
+                raise AssertionError("can only join a started process")
+            process.start, process.join = start, join
+            return process
+
+    monkeypatch.setattr(service.multiprocessing, "get_context", lambda method: _Context())
+    run = service._Run(SESSION, CAMERA)
+    api.service._runs[(SESSION, CAMERA)] = run
+    api.service._work_process(run, URL)
+    assert run.ended.is_set() and (SESSION, CAMERA) not in api.service._runs
+    assert "cannot allocate" in run.error

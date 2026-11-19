@@ -550,14 +550,19 @@ class DetectionService:
         finally:
             try:
                 conn.close()
+                child_conn.close()   # still open here only when the process never started
             except OSError:
                 pass
-            process.join(10)
-            if process.is_alive():
-                log.warning("Run process on camera %s did not exit: killed", run.camera,
-                            extra={"camera": run.camera})
-                process.kill()
-            self._retire(run)
+            try:
+                process.join(10)
+                if process.is_alive():
+                    log.warning("Run process on camera %s did not exit: killed", run.camera,
+                                extra={"camera": run.camera})
+                    process.kill()
+            except (AssertionError, ValueError, OSError):   # it never started: nothing to wait for
+                pass
+            finally:
+                self._retire(run)   # whatever happened above: the Run must leave the service's Runs
 
     def _retire(self, run):
         """A Run that has ended, however it did: out of the service's Runs. Once:

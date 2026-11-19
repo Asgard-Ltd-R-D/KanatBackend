@@ -500,14 +500,15 @@ class DetectionService:
     def _work_process(self, run, stream_url):
         """`_work` for a Run in a process of its own (run_process.py): starts
         it, and carries what it sends back into `run` until it ends."""
-        context = multiprocessing.get_context("spawn")   # a fresh interpreter, as Windows has no fork
-        conn, child_conn = context.Pipe()
-        remote = _RemoteLoop(conn)
-        process = context.Process(
-            target=run_process.main, name=f"Run {run.camera}", daemon=True,
-            args=(child_conn, self._model_path, run.session_id, run.camera, stream_url,
-                  self._backend_url, self._log_dir))
-        try:
+        conn = child_conn = process = None
+        try:   # all of it: a Pipe or a process that cannot be made must still retire the Run
+            context = multiprocessing.get_context("spawn")   # a fresh interpreter, as Windows has no fork
+            conn, child_conn = context.Pipe()
+            remote = _RemoteLoop(conn)
+            process = context.Process(
+                target=run_process.main, name=f"Run {run.camera}", daemon=True,
+                args=(child_conn, self._model_path, run.session_id, run.camera, stream_url,
+                      self._backend_url, self._log_dir))
             with self._lock:
                 run.loop = run.remote = remote   # before it starts: an end may come first
                 run.process = process
@@ -548,18 +549,18 @@ class DetectionService:
             log.error("Run on camera %s failed: %s", run.camera, run.error, exc_info=True,
                       extra={"camera": run.camera})
         finally:
-            try:
-                conn.close()
-                child_conn.close()   # still open here only when the process never started
-            except OSError:
-                pass
+            for end in (conn, child_conn):   # child_conn is still open here only when the process never started
+                try:
+                    end.close()
+                except (AttributeError, OSError):   # never made
+                    pass
             try:
                 process.join(10)
                 if process.is_alive():
                     log.warning("Run process on camera %s did not exit: killed", run.camera,
                                 extra={"camera": run.camera})
                     process.kill()
-            except (AssertionError, ValueError, OSError):   # it never started: nothing to wait for
+            except (AttributeError, AssertionError, ValueError, OSError):   # it never started: nothing to wait for
                 pass
             finally:
                 self._retire(run)   # whatever happened above: the Run must leave the service's Runs

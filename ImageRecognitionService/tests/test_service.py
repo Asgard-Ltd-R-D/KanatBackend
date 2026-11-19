@@ -955,3 +955,16 @@ def test_a_process_run_whose_process_cannot_start_is_retired_not_left_registered
     api.service._work_process(run, URL)
     assert run.ended.is_set() and (SESSION, CAMERA) not in api.service._runs
     assert "cannot allocate" in run.error
+
+
+def test_a_process_run_whose_pipe_cannot_be_made_is_retired_too(api, monkeypatch):
+    class _Context:
+        def Pipe(self):
+            raise OSError("too many open files")
+
+    monkeypatch.setattr(service.multiprocessing, "get_context", lambda method: _Context())
+    run = service._Run(SESSION, CAMERA)
+    api.service._runs[(SESSION, CAMERA)] = run
+    api.service._work_process(run, URL)
+    assert run.ended.is_set() and (SESSION, CAMERA) not in api.service._runs
+    assert "too many open files" in run.error

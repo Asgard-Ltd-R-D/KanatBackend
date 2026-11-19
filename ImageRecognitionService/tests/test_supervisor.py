@@ -166,3 +166,32 @@ def test_the_service_dies_with_a_supervisor_that_is_killed():
         assert not any(psutil.pid_exists(pid) for pid in family)
     finally:
         boss.kill()
+
+
+class _Process:
+    pid, code = 4242, 0
+
+    def poll(self):
+        return self.code
+
+    def wait(self, timeout=None):
+        return self.code
+
+
+def test_on_posix_the_service_leads_a_process_group_of_its_own(monkeypatch):
+    started = {}
+    monkeypatch.setattr(supervisor, "_IS_WINDOWS", False)
+    monkeypatch.setattr(supervisor.subprocess, "Popen", lambda command, **kw: started.update(kw) or _Process())
+    supervisor._spawn(["service"])
+    assert started == {"start_new_session": True}   # so its Runs' processes can be killed with it
+
+
+def test_on_posix_the_whole_group_is_killed_even_when_the_service_is_already_gone(monkeypatch):
+    """A Run in a native call that never returns never sees its Pipe close: it is
+    only reached by killing its group, which the service's exit leaves alive."""
+    killed = []
+    monkeypatch.setattr(supervisor, "_IS_WINDOWS", False)
+    monkeypatch.setattr(supervisor.os, "killpg", lambda pgid, sig: killed.append((pgid, sig)), raising=False)
+    monkeypatch.setattr(supervisor.signal, "SIGKILL", 9, raising=False)
+    supervisor._Child(_Process()).kill_tree()   # poll() answers 0: the service itself has exited
+    assert killed == [(4242, 9)]

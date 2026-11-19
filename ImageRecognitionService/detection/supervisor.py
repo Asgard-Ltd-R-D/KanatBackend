@@ -62,12 +62,18 @@ class _Child:
         return self._process.poll()
 
     def kill_tree(self):
-        if self._process.poll() is None:
-            if os.name == "nt":
+        if _IS_WINDOWS:
+            if self._process.poll() is None:
                 subprocess.run(["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
                                capture_output=True, check=False)
-            else:
-                self._process.kill()
+        else:
+            # The service leads a process group of its own (`_spawn`), which its Runs' processes
+            # are in: killed as a group, even when the service is already gone and they are not,
+            # as a Run stuck in a native call never sees its Pipe close
+            try:
+                os.killpg(self._process.pid, signal.SIGKILL)
+            except OSError:   # no one of the group is left
+                pass
         try:
             self._process.wait(timeout=10)
         except subprocess.TimeoutExpired:
@@ -77,6 +83,7 @@ class _Child:
 CREATE_SUSPENDED = 0x00000004
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_IS_WINDOWS = os.name == "nt"
 _job = None   # held for the supervisor's life: when it ends, however it does, Windows closes it
 
 
@@ -141,8 +148,8 @@ def _resume(process):
 
 
 def _spawn(command):
-    if os.name != "nt":
-        return _Child(subprocess.Popen(command))
+    if not _IS_WINDOWS:
+        return _Child(subprocess.Popen(command, start_new_session=True))
     # Suspended until it is in the job: Windows' python.exe starts the real
     # interpreter as its own child at once, which is only in the job if the job
     # was there first

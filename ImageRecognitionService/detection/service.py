@@ -21,10 +21,16 @@ own Board — and its Confirmed Bullet Holes are posted by a `WebAppPublisher`
 of its own, naming its Session and camera, on the v2 contract. The one loaded
 detector is shared behind an inference lock, so only one inference runs at a
 time (the GPU serialises them anyway); everything else is per-Run and parallel.
+
+`--run-mode process` is the alternative: each Run is a process of its own with
+its own copy of the detector (run_process.py), nothing shared between Runs but
+the GPU. The control API and what `/status` answers are the same either way.
 """
 import argparse
 import json
 import logging
+import multiprocessing
+import os
 import signal
 import threading
 import time
@@ -37,7 +43,7 @@ from urllib.parse import unquote
 import cv2
 import numpy as np
 
-from detection import logs, webapp
+from detection import logs, run_process, webapp
 from detection import new_bullet_holes as nbh
 
 log = logging.getLogger("detection.service")
@@ -52,6 +58,36 @@ DEFAULT_PORT = 8010
 # it the Stream gave frame 0 and then dropped, and reconnecting would hold the
 # one Run for good.
 START_TIMEOUT_S = 15   # PROVISIONAL
+# The same with `--run-mode process`: the Run's process first starts Python,
+# imports the detector's libraries, loads the weights onto the GPU and warms
+# them, before it opens the Stream. Kept under the backend's own wait for a
+# start (detection_client.START_TIMEOUT_S, 20 s).
+PROCESS_START_TIMEOUT_S = 14   # PROVISIONAL: a cold start took ~10 s with 4 Runs at once
+# How long an end gives a Run's process to end, after its stop, before the
+# process is killed: a start still opening its Stream, and a watching Run
+# already past ENDING_TIMEOUT_S. A start that fails then still answers the
+# backend within its 20 s (START_TIMEOUT_S + KILL_STARTING_AFTER_S < 20).
+KILL_STARTING_AFTER_S = 4   # PROVISIONAL
+KILL_AFTER_S = 8   # PROVISIONAL
+# A watching Run that looks at no frame for this long is stalled (stuck on its
+# Stream, a lock or the GPU, but alive, which `is_alive` cannot tell from a
+# healthy one): it is ended, and the backend's reconcile starts it again.
+# Measured with 4 Runs on 1080p streams, in both modes, 3 minutes each, with a
+# Run ended and started again among them: a healthy Run's longest wait between
+# two looks was 0.76 s. 10 s is over 10 times that; the shorter it is, the less
+# a stuck Run costs (a thread-mode stall restarts every camera, so a false alarm
+# costs as much as a real one: keep the margin).
+STALL_AFTER_S = 10
+# A Run that looks at nothing because its camera is down (the Stream reopens
+# itself) is not stuck: it is waited for, and only past this long is it ended,
+# alone and never with the service, for the backend to start again
+CAMERA_DOWN_AFTER_S = 120   # PROVISIONAL
+STALL_CHECK_EVERY_S = 1
+# When a stuck thread makes the service exit, the other Runs are first given this
+# long to judge their open Candidates and post what they hold: a shot confirmed
+# but not yet sent is otherwise lost with the exit. The stuck Run may hold what
+# they need (the GPU, the model's lock), so it is a bounded try, never a wait.
+EXIT_DRAIN_S = 8   # PROVISIONAL
 
 # How long an end lets a watching Run look on, judging the Candidates it has
 # open, before it stops the Run as it stands (#228): one persistence window
@@ -74,17 +110,37 @@ class _Run:
     (ADR-0009). `ready` is set once it is watching or has failed, `ended` once
     it has ended and its posts are drained. `dropping` once it is stopped
     (#327): nothing is posted from then on, the Look in hand's included."""
-    def __init__(self, session_id, camera):
+    def __init__(self, session_id, camera, start_timeout_s=None):
         self.session_id, self.camera = session_id, camera
         self.baseline_marks, self.error = None, None
         self.dropping = False
+        self.stalled = False   # the stall check has dealt with it: not judged again
         self.baseline_view = None
+        # In a process of its own (`--run-mode process`), `loop` is a `_RemoteLoop`
+        # and `remote` the same: how far it has watched is what it last sent
+        self.remote, self.process = None, None
         self.loop, self.ready, self.ended = None, threading.Event(), threading.Event()
-        self.deadline = time.monotonic() + START_TIMEOUT_S
+        self.deadline = time.monotonic() + (START_TIMEOUT_S if start_timeout_s is None else start_timeout_s)
+        # The stall check's memory: the last progress it saw, and when it changed
+        self.mark, self.mark_at = None, time.monotonic()
         self.enter("starting")
 
     def enter(self, state):
         self.state, self.since = state, datetime.now(timezone.utc)
+
+    def progress(self):
+        """Where the Run has looked to, anything that changes with each Look:
+        what a process Run last sent, or the loop's own latest index."""
+        if self.remote is not None:
+            return self.remote.watched.get("looked_at")
+        return getattr(self.loop, "looked", None)
+
+    def camera_down(self):
+        """Whether the Run's Stream has dropped and is reopening: no video to
+        look at, which is not a Run that is stuck."""
+        if self.remote is not None:
+            return self.remote.down
+        return bool(getattr(getattr(self.loop, "source", None), "down", False))
 
     def view(self):
         return {"session_id": self.session_id, "camera": self.camera, "state": self.state,
@@ -97,9 +153,42 @@ class _Run:
         registered or Lost: both None until it is watching (ADR-0009)."""
         if self.baseline_view is None:
             return {"registered": None, "looked_at": None}
-        (index, view), looked = self.loop.registered, self.loop.looked
-        return {"registered": {"at": _at(self.loop, index), "template_to_picture": view.H.tolist()},
-                "looked_at": _at(self.loop, looked)}
+        if self.remote is not None:
+            return self.remote.watched
+        return _watched_of(self.loop)
+
+
+def _watched_of(loop):
+    """`loop`'s `registered` and `looked_at`, as `/status` reports them."""
+    (index, view), looked = loop.registered, loop.looked
+    return {"registered": {"at": _at(loop, index), "template_to_picture": view.H.tolist()},
+            "looked_at": _at(loop, looked)}
+
+
+class _RemoteLoop:
+    """The `finish`, `stop` and `drop` of a Run that is a process of its own,
+    sent to it over its Pipe, and `watched`, what it last said of how far it
+    has watched. What `_end` calls on `run.loop`, as it calls a thread Run's."""
+    def __init__(self, conn):
+        self._conn, self._send_lock = conn, threading.Lock()
+        self.watched = {"registered": None, "looked_at": None}
+        self.down = False   # whether its Stream is down, as the Run last said
+
+    def _send(self, command):
+        with self._send_lock:
+            try:
+                self._conn.send(command)
+            except (OSError, ValueError):   # the Run's process has gone
+                pass
+
+    def finish(self):
+        self._send("finish")
+
+    def stop(self):
+        self._send("stop")
+
+    def drop(self):
+        self._send("drop")
 
 
 def warm(model, device=None):
@@ -144,15 +233,32 @@ class DetectionService:
 
     Each call answers `(HTTP status, JSON body)`, as the control API sends it.
     """
-    def __init__(self, model, backend_url, opener=None, device=None, model_name=None):
+    def __init__(self, model, backend_url, opener=None, device=None, model_name=None,
+                 run_mode="thread", model_path=None, log_dir=None,
+                 stall_after_s=STALL_AFTER_S, exit_on_stall=False):
         self._model, self._backend_url, self._opener = model, backend_url, opener
+        # How long a watching Run may look at nothing before `check_stalls` ends
+        # it; and, for a thread Run (which cannot be killed), whether the whole
+        # service then exits, for whatever supervises it to start it again
+        self._stall_after_s, self._exit_on_stall = stall_after_s, exit_on_stall
+        self._closing = threading.Event()
         self.device, self.model_name = device, model_name
+        # "thread": every Run on a thread of this process, on `model`, shared
+        # behind the inference lock. "process": every Run in a process of its
+        # own (run_process.py), which loads `model_path` itself, so this process
+        # holds no model (`model` is None)
+        self._run_mode, self._model_path, self._log_dir = run_mode, model_path, log_dir
         self._lock = threading.Lock()
         # Every active Run, keyed by (session_id, camera): a Session watches
         # every enabled camera at once, each on its own Stream and worker
         # thread (#341). They share the one loaded model, serialised by:
         self._inference_lock = threading.Lock()
         self._runs = {}
+
+    @property
+    def start_timeout_s(self):
+        """How long a start waits for its Run to be watching, read when asked."""
+        return PROCESS_START_TIMEOUT_S if self._run_mode == "process" else START_TIMEOUT_S
 
     def status(self):
         """Every Run's `view`, in the order they started; empty with none."""
@@ -177,17 +283,18 @@ class DetectionService:
                 return 409, {"detail": "another Session's Run is active", "run": other.view()}
             run = self._runs.get(key)
             if run is None:
-                run = self._runs[key] = _Run(session_id, camera)
+                run = self._runs[key] = _Run(session_id, camera, self.start_timeout_s)
                 logs.current_session = session_id
-                log.info("Run starting on %s for camera %s", nbh._redacted(stream_url), camera,
-                         extra={"stream_url": nbh._redacted(stream_url), "camera": camera})
-                threading.Thread(target=self._work, args=(run, stream_url), daemon=True,
+                log.info("Run starting on %s for camera %s (%s)", nbh._redacted(stream_url), camera,
+                         self._run_mode, extra={"stream_url": nbh._redacted(stream_url), "camera": camera})
+                work = self._work_process if self._run_mode == "process" else self._work
+                threading.Thread(target=work, args=(run, stream_url), daemon=True,
                                  name=f"Run {session_id} {camera}").start()
         if not run.ready.wait(max(0.0, run.deadline - time.monotonic())):
             log.error("Run on camera %s not watching within %g s: no baseline was built, so it is ended",
-                      camera, START_TIMEOUT_S, extra={"camera": camera})
+                      camera, self.start_timeout_s, extra={"camera": camera})
             self._end(run)
-            return 502, {"detail": f"not watching within {START_TIMEOUT_S:g} s: "
+            return 502, {"detail": f"not watching within {self.start_timeout_s:g} s: "
                                    f"no baseline was built"}
         with self._lock:
             if run.error:
@@ -220,6 +327,7 @@ class DetectionService:
     def close(self):
         """End every Run, as `end` does, in parallel: how the service shuts
         down."""
+        self._closing.set()
         with self._lock:
             runs = list(self._runs.values())
         threads = [threading.Thread(target=self._end, args=(run,)) for run in runs]
@@ -228,6 +336,102 @@ class DetectionService:
         for thread in threads:
             thread.join()
 
+    def watch_stalls(self, every=STALL_CHECK_EVERY_S):
+        """The stall check's loop: how the service runs it until it closes."""
+        while not self._closing.wait(every):
+            try:
+                self.check_stalls()
+            except Exception:   # the check must outlive whatever one pass hits
+                log.exception("Stall check failed")
+
+    def check_stalls(self, now=None):
+        """End every watching Run that has looked at no frame for
+        `stall_after_s`. A Run that is still starting or already ending has its
+        own timeouts, so only a watching one is judged here."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            runs = [(run, run.state == "watching") for run in self._runs.values()]
+        for run, watching in runs:
+            if run.stalled:
+                continue   # already ended or being killed: its retirement is under way
+            if not watching:
+                run.mark_at = now   # its stall time counts from when it watches
+                continue
+            mark = run.progress()
+            if mark != run.mark:
+                run.mark, run.mark_at = mark, now
+                continue
+            stuck_s = now - run.mark_at
+            if stuck_s < self._stall_after_s:
+                continue
+            if not run.camera_down():
+                self._stalled(run, stuck_s, input_flowing=True)   # video arrives and the Run does not look: stuck
+            elif stuck_s >= CAMERA_DOWN_AFTER_S:
+                self._stalled(run, stuck_s, input_flowing=False)   # camera down for long: this Run alone
+            # else: the camera is down and its stream reopens itself: wait
+
+    def _stalled(self, run, silent_s, input_flowing):
+        with self._lock:
+            if run.stalled:
+                return   # a pass that overlaps the last one: dealt with once
+            run.stalled = True
+        mode = "process" if run.process is not None else "thread"
+        if input_flowing:
+            why = "video kept arriving but the Run looked at nothing"
+        else:
+            why = "its camera sent no video"
+        log.error("Camera %s: its Run (%s mode) looked at no frame for %.0f s (%s): the Run is ended and "
+                  "started again by the backend; the other cameras are not affected%s",
+                  run.camera, mode, silent_s, why,
+                  "" if run.process is not None or not (self._exit_on_stall and input_flowing)
+                  else " unless the service has to restart (a stuck thread cannot be stopped)",
+                  extra={"camera": run.camera, "session_id": run.session_id, "silent_s": round(silent_s),
+                         "input_flowing": input_flowing, "run_mode": mode})
+        run.error = run.error or f"stalled: no frame looked at for {silent_s:.0f} s"
+        run.dropping = True   # nothing a stuck Run posts late is trusted
+        if run.process is not None:
+            # Killed: its process's end is seen by `_work_process`, which retires the Run
+            try:
+                run.process.kill()
+            except (AttributeError, ValueError, OSError):
+                pass
+            return
+        if self._exit_on_stall and input_flowing:
+            # A thread cannot be killed, and one stuck on the GPU or the shared
+            # model's lock holds every other Run with it: the whole service exits,
+            # for its supervisor to start again
+            self._exit_for_restart(run)
+            return
+        try:
+            run.loop.stop()   # asked, though a stuck thread may never hear it
+        except Exception:
+            pass
+        self._retire(run)   # and left behind: it no longer holds the Session or posts
+
+    def _exit_for_restart(self, stuck):
+        """The service exits so its supervisor starts it again. The other Runs
+        first get EXIT_DRAIN_S to end as `end` does, so the holes they have
+        confirmed are posted, not lost with the process."""
+        with self._lock:
+            others = [r for r in self._runs.values() if r is not stuck and r.state == "watching"]
+        cameras = sorted(r.camera for r in others)
+        log.critical("The Detection Service is exiting to be restarted: camera %s has a Run stuck that cannot be "
+                     "stopped. Cameras %s are saved first (up to %d s), then every camera's Run starts again",
+                     stuck.camera, ", ".join(cameras) or "(none)", EXIT_DRAIN_S,
+                     extra={"camera": stuck.camera, "session_id": stuck.session_id, "other_cameras": cameras})
+        threads = [threading.Thread(target=self._end, args=(r,), daemon=True) for r in others]
+        for thread in threads:
+            thread.start()
+        deadline = time.monotonic() + EXIT_DRAIN_S
+        for thread in threads:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        saved = sorted(r.camera for r in others if r.ended.is_set())
+        log.critical("The Detection Service exits now: cameras %s were saved, cameras %s were not in time",
+                     ", ".join(saved) or "(none)", ", ".join(c for c in cameras if c not in saved) or "(none)",
+                     extra={"saved": saved, "not_saved": [c for c in cameras if c not in saved]})
+        logging.shutdown()
+        os._exit(3)
+
     def _end(self, run, judge=True):
         with self._lock:
             was, loop = run.state, run.loop
@@ -235,6 +439,8 @@ class DetectionService:
                 run.enter("ending")
             if not judge:
                 run.dropping = True
+                if run.remote is not None:
+                    run.remote.drop()
             # Flags only, so set under the lock: a Run that reads `ending` is
             # already finishing, or stopped
             if was == "watching" and judge:
@@ -243,6 +449,17 @@ class DetectionService:
                 loop.stop()
         if was == "watching" and not run.ended.wait(ENDING_TIMEOUT_S):
             loop.stop()   # harmless once it has finished and is draining
+        if run.process is not None:
+            # A Run in a process of its own that has not ended past its stop is
+            # hung (stuck opening its Stream, say): killed, so it can never hold
+            # the Run, the Session or the machine's memory
+            if not run.ended.wait(KILL_STARTING_AFTER_S if was == "starting" else KILL_AFTER_S):
+                log.error("Run process on camera %s did not end after its stop: killed", run.camera,
+                          extra={"camera": run.camera})
+                try:
+                    run.process.kill()
+                except (AttributeError, ValueError, OSError):   # not started, or already gone
+                    pass
         run.ended.wait()
 
     def _work(self, run, stream_url):
@@ -272,24 +489,93 @@ class DetectionService:
             log.error("Run on camera %s failed: %s", run.camera, run.error,
                       exc_info=not isinstance(error, SystemExit), extra={"camera": run.camera})
         finally:
-            log.info("Run on camera %s ended", run.camera, extra={"camera": run.camera})
+            self._retire(run)
+
+    def _work_process(self, run, stream_url):
+        """`_work` for a Run in a process of its own (run_process.py): starts
+        it, and carries what it sends back into `run` until it ends."""
+        context = multiprocessing.get_context("spawn")   # a fresh interpreter, as Windows has no fork
+        conn, child_conn = context.Pipe()
+        remote = _RemoteLoop(conn)
+        process = context.Process(
+            target=run_process.main, name=f"Run {run.camera}", daemon=True,
+            args=(child_conn, self._model_path, run.session_id, run.camera, stream_url,
+                  self._backend_url, self._log_dir))
+        try:
             with self._lock:
-                key = (run.session_id, run.camera)
-                if self._runs.get(key) is run:
-                    del self._runs[key]
-                if not self._runs:
-                    logs.current_session = None
-            run.ready.set()
-            run.ended.set()
+                run.loop = run.remote = remote   # before it starts: an end may come first
+                run.process = process
+            process.start()
+            child_conn.close()   # this side's copy, so the Pipe reads EOF when the Run's process dies
+            while True:
+                try:
+                    # Not a bare `recv`: a dead process only closes its end of the
+                    # Pipe if no other process holds a copy of it, and Runs spawned
+                    # at the same moment can. So ask the process itself as well.
+                    if not conn.poll(1.0):
+                        if process.is_alive() or conn.poll(0):
+                            continue
+                        run.error = run.error or "the Run's process exited"
+                        break
+                    message = conn.recv()
+                except (EOFError, OSError):   # it died without saying it ended
+                    run.error = run.error or "the Run's process exited"
+                    break
+                kind = message[0]
+                if kind == "watching":
+                    self._set_watching(run, message[1], message[2])
+                elif kind == "watched":
+                    remote.watched = message[1]
+                elif kind == "input":
+                    remote.down = message[1]
+                elif kind == "error":
+                    run.error = message[1]
+                elif kind == "ended":
+                    break
+        except BaseException as error:
+            run.error = str(error) or type(error).__name__
+            log.error("Run on camera %s failed: %s", run.camera, run.error, exc_info=True,
+                      extra={"camera": run.camera})
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+            process.join(10)
+            if process.is_alive():
+                log.warning("Run process on camera %s did not exit: killed", run.camera,
+                            extra={"camera": run.camera})
+                process.kill()
+            self._retire(run)
+
+    def _retire(self, run):
+        """A Run that has ended, however it did: out of the service's Runs. Once:
+        a stalled thread Run is retired by the stall check, and again by its own
+        thread if that ever wakes."""
+        with self._lock:
+            if run.ended.is_set():
+                return
+        log.info("Run on camera %s ended", run.camera, extra={"camera": run.camera})
+        with self._lock:
+            key = (run.session_id, run.camera)
+            if self._runs.get(key) is run:
+                del self._runs[key]
+            if not self._runs:
+                logs.current_session = None
+        run.ready.set()
+        run.ended.set()
 
     def _watching(self, run, view, marks):
-        baseline_view = _baseline_view(view, run.loop, marks)
+        self._set_watching(run, _baseline_view(view, run.loop, marks), len(marks))
+
+    def _set_watching(self, run, baseline_view, marks):
+        """`run` is watching: its baseline is built, `marks` Baseline Marks counted."""
         with self._lock:
-            run.baseline_marks, run.baseline_view = len(marks), baseline_view
+            run.baseline_marks, run.baseline_view = marks, baseline_view
             if run.state == "starting":
                 run.enter("watching")
-        log.info("Run on camera %s watching, %d Baseline Mark(s) on the Board", run.camera, len(marks),
-                 extra={"camera": run.camera, "baseline_marks": len(marks)})
+        log.info("Run on camera %s watching, %d Baseline Mark(s) on the Board", run.camera, marks,
+                 extra={"camera": run.camera, "baseline_marks": marks})
         run.ready.set()
 
 
@@ -392,6 +678,17 @@ if __name__ == "__main__":
                    help="the address the control API binds: 127.0.0.1 (default), or 0.0.0.0 "
                         "inside a container, whose network reaches it from the backend's only")
     p.add_argument("--model", default=nbh.DEFAULT_MODEL)
+    p.add_argument("--run-mode", choices=("thread", "process"), default="thread",
+                   help="how each camera's Run runs: 'thread' (default), every Run on a thread of this "
+                        "process, sharing the one loaded detector behind an inference lock; or 'process', "
+                        "every Run in a process of its own with its own copy of the detector (run_process.py)")
+    p.add_argument("--stall-after", type=float, default=STALL_AFTER_S,
+                   help=f"seconds a watching Run may look at no frame before it is ended as stalled "
+                        f"(default: {STALL_AFTER_S:g})")
+    p.add_argument("--exit-on-stall", action="store_true",
+                   help="in thread mode, a stalled Run cannot be killed: exit the whole service, for a "
+                        "supervisor that restarts it (a Windows service, `composer`); off, the Run is "
+                        "only ended and left behind")
     # 127.0.0.1, not localhost: on Windows localhost tries IPv6 first, and
     # waits for it to fail on every post
     p.add_argument("--backend-url", default="http://127.0.0.1:8000",
@@ -402,11 +699,21 @@ if __name__ == "__main__":
     a = p.parse_args()
     log_file = logs.configure(a.log_dir)
     nbh.preset_capture_options()   # once, so the Runs' stream opens never race over it
-    log.info("Loading the detector %s", a.model, extra={"log_file": str(log_file)})
-    model = nbh.load_model(a.model)
-    device = warm(model)   # before the control API binds: until warmed, nothing answers
-    service = DetectionService(model, a.backend_url, device=device,
-                               model_name=model_name(a.model))
+    if a.run_mode == "process":
+        # Each Run's process loads the detector itself: this one holds none, and
+        # only names the device they will use
+        import torch
+        model, device = None, "cuda:0" if torch.cuda.is_available() else "cpu"
+        log.info("Run mode: process (each Run loads its own detector %s on %s)", a.model, device,
+                 extra={"log_file": str(log_file)})
+    else:
+        log.info("Loading the detector %s", a.model, extra={"log_file": str(log_file)})
+        model = nbh.load_model(a.model)
+        device = warm(model)   # before the control API binds: until warmed, nothing answers
+    service = DetectionService(model, a.backend_url, device=device, model_name=model_name(a.model),
+                               run_mode=a.run_mode, model_path=a.model, log_dir=a.log_dir,
+                               stall_after_s=a.stall_after, exit_on_stall=a.exit_on_stall)
+    threading.Thread(target=service.watch_stalls, daemon=True, name="Stall check").start()
     server = serve(service, a.port, a.host)
     log.info("Detection Service started: control API on http://%s:%d; SIGINT or SIGTERM "
              "ends any Run as an end does, then the service", a.host, a.port,

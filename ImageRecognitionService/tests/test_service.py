@@ -968,3 +968,50 @@ def test_a_process_run_whose_pipe_cannot_be_made_is_retired_too(api, monkeypatch
     api.service._work_process(run, URL)
     assert run.ended.is_set() and (SESSION, CAMERA) not in api.service._runs
     assert "too many open files" in run.error
+
+
+class _EndlessConn(_Conn):
+    """The service's end of the Pipe: nothing is ever sent to the Run."""
+    def __init__(self):
+        super().__init__()
+        self._never = threading.Event()
+
+    def recv(self):
+        self._never.wait()
+
+
+def test_a_process_run_sends_where_it_last_looked_before_it_ends(monkeypatch):
+    """Its last Look may fall between two reports: `end` still answers that one."""
+    from detection import run_process
+
+    class _Loop:
+        registered, looked, source = None, "first look", types.SimpleNamespace(down=False)
+
+    class _Publisher:
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def process(loop, _, publish, watching):
+        watching(None, [])
+        loop.looked = "last look"   # looked at once more, then the Stream ended
+
+    monkeypatch.setattr(run_process, "WATCHED_EVERY_S", 30)   # no report of its own falls in this test
+    monkeypatch.setattr(run_process.logs, "configure", lambda directory: None)
+    monkeypatch.setattr(nbh, "preset_capture_options", lambda: None)
+    monkeypatch.setattr(nbh, "load_model", lambda path: None)
+    monkeypatch.setattr(service, "warm", lambda model: "cpu")
+    monkeypatch.setattr(service, "_baseline_view", lambda *a: {})
+    monkeypatch.setattr(service, "_watched_of", lambda loop: {"registered": None, "looked_at": loop.looked})
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", staticmethod(lambda *a, **kw: _Loop()))
+    monkeypatch.setattr(nbh, "process", process)
+    monkeypatch.setattr(run_process.webapp, "WebAppPublisher", _Publisher)
+    conn = _EndlessConn()
+    run_process.main(conn, None, SESSION, CAMERA, URL, "http://backend", None)
+    watched = [m[1]["looked_at"] for m in conn.sent if m[0] == "watched"]
+    assert watched[-1] == "last look" and conn.sent[-1] == ("ended",)

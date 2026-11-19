@@ -90,13 +90,21 @@ def main(conn, model_path, session_id, camera, stream_url, backend_url, log_dir)
 
     threading.Thread(target=commands, daemon=True, name="Run commands").start()
 
+    report_lock = threading.Lock()   # a report is never sent after the final one
+
+    def report(loop):
+        if loop.looked is not None and state.get("watching"):
+            send("watched", service._watched_of(loop))
+            # And whether its Stream is down: what tells a Run with no video
+            # to look at from one that is stuck
+            send("input", bool(getattr(loop.source, "down", False)))
+
     def report_watched(loop):
-        while not state.get("done"):
-            if loop.looked is not None and state.get("watching"):
-                send("watched", service._watched_of(loop))
-                # And whether its Stream is down: what tells a Run with no video
-                # to look at from one that is stuck
-                send("input", bool(getattr(loop.source, "down", False)))
+        while True:
+            with report_lock:
+                if state.get("done"):
+                    return
+                report(loop)
             time.sleep(WATCHED_EVERY_S)
 
     try:
@@ -138,7 +146,12 @@ def main(conn, model_path, session_id, camera, stream_url, backend_url, log_dir)
         send("error", why)
     finally:
         faulthandler.cancel_dump_traceback_later()
-        state["done"] = True
+        with report_lock:
+            state["done"] = True
+            # Where it watched to at its last Look, which may fall between two reports: what
+            # `end` answers and the backend keeps as how far the Run watched
+            if state["loop"] is not None:
+                report(state["loop"])
         send("ended")
         try:
             conn.close()

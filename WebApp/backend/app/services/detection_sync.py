@@ -482,6 +482,28 @@ def reopened(session_id: uuid.UUID) -> None:
         _set((session_id, camera), NONE, only_from=("end_unconfirmed",))
 
 
+# Whether the Detection Service answered the last round (None before the first):
+# only a change is logged, not every round of an outage
+_service_answered: bool | None = None
+
+
+def _note_service(answered: bool, session: Session | None, enabled: set[str]) -> None:
+    """Logs, once each, that the Detection Service stopped answering and that it
+    answers again, for the Logs tab: while it is down no camera is watched, and
+    nothing else in the app says when that began or ended."""
+    global _service_answered
+    was, _service_answered = _service_answered, answered
+    if answered == was or (answered and was is None):
+        return
+    extra = {"session_id": session.id if session else None, "cameras": sorted(enabled)}
+    if answered:
+        log.info("The Detection Service answers again: the cameras of the active Session are watched again "
+                 "within seconds", extra=extra)
+    else:
+        log.warning("The Detection Service is not answering: no camera is watched until it is back "
+                    "(its supervisor restarts it), and a shot fired meanwhile may be missed", extra=extra)
+
+
 def reconcile(db: DBSession) -> None:
     """One round of keeping the Detection Service's Runs on the boards that
     should hold them: the active Session's enabled cameras, one Run each. A Run
@@ -513,6 +535,7 @@ def reconcile(db: DBSession) -> None:
         # Left by a start that raced its Session's end
         _set(key, NONE, only_from=IDLE)
 
+    _note_service(answered, session, enabled)
     runs_by_key = {(r.session_id, r.camera): r for r in runs}
     if answered:
         for (sid, cam), run in list(runs_by_key.items()):
@@ -542,6 +565,8 @@ def reconcile(db: DBSession) -> None:
         if session.id in _ending:
             return   # the Session's end is under way: start no board, new or not
 
+    to_start: dict[str, str] = {}
+    lost: list[str] = []   # boards that read watching and have no Run now
     for cam in sorted(enabled):
         key = (session.id, cam)
         run = runs_by_key.get(key)
@@ -571,12 +596,61 @@ def reconcile(db: DBSession) -> None:
             shown = Detection(state="starting")
         elif current == "watching":
             shown = RUN_LOST
+            lost.append(cam)
         else:
             shown = state_of(session.id, cam)   # retried, still not watching
         if not _set(key, shown, only_from=(current,)):
             continue   # its end began meanwhile
         log.info("Session %s board %s has no Run watching it: starting one", session.id, cam)
-        watch(session.id, cam, only_from=(shown.state,))
+        to_start[cam] = shown.state
+    if lost:
+        log.warning("Detection lost the Run of camera(s) %s (the Detection Service restarted, or the Run "
+                    "stopped on its own): they are started again, and holes shot in between may be missed",
+                    ", ".join(lost), extra={"session_id": session.id, "cameras": lost})
+    _start_together(session.id, to_start)
+
+
+def _start_together(session_id: uuid.UUID, boards: dict[str, str]) -> None:
+    """Ask for the Runs of every board that needs one at once. Each `watch`
+    blocks until its Run is watching, so in turn their waits add up: with the
+    Detection Service just restarted, all four boards are missing a Run, and in
+    process mode each takes seconds to load its model. Only a worker thread of
+    AnyIO can fan out (see `_in_parallel`); anywhere else they go in turn. A
+    board is asked for once: a failure part way never asks the same one again,
+    and never leaves the boards after it unasked."""
+    if not boards:
+        return
+    cameras = sorted(boards)
+    asked: set[str] = set()
+
+    def start(cam: str) -> None:
+        asked.add(cam)
+        try:
+            watch(session_id, cam, only_from=(boards[cam],))
+        except Exception:   # `watch` answers its own failures; this is a bug in it, and the others go on
+            log.exception("Session %s camera %s: asking for its Run failed", session_id, cam,
+                          extra={"session_id": session_id, "camera": cam})
+
+    log.info("Starting the Detection Service's Runs for %d camera(s): %s", len(cameras), ", ".join(cameras),
+             extra={"session_id": session_id, "cameras": cameras})
+    if len(cameras) > 1:
+        try:
+            _in_parallel(start, cameras)
+        except RuntimeError:   # no AnyIO worker thread (no event loop to fan out on), or a failed fan-out
+            if asked:
+                log.exception("Starting the Runs together failed part way: the cameras not yet asked go on in turn",
+                              extra={"session_id": session_id, "asked": sorted(asked)})
+    for cam in cameras:
+        if cam not in asked:
+            start(cam)
+    states = {cam: state_of(session_id, cam).state for cam in cameras}
+    waiting = sorted(cam for cam, state in states.items() if state != "watching")
+    if waiting:
+        log.warning("Detection is not watching camera(s) %s yet: asked again in a few seconds",
+                    ", ".join(waiting), extra={"session_id": session_id, "boards": states})
+    else:
+        log.info("Detection is watching every camera again: %s", ", ".join(cameras),
+                 extra={"session_id": session_id, "boards": states})
 
 
 def _reconcile_once() -> None:

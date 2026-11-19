@@ -419,6 +419,81 @@ def test_a_run_lost_while_the_service_is_up_reads_not_watching_until_it_is_back(
     assert seen == [not_watching(None), WATCHING]
 
 
+def test_a_lost_run_is_logged_as_a_warning_naming_the_camera(client, db, detection, caplog):
+    session_id = start_session(client, add_camera(db))
+    detection.runs.clear()
+    tick(client)
+    line = next(r for r in caplog.records if "lost the Run" in r.getMessage())
+    assert line.levelname == "WARNING" and line.cameras == [CAM] and str(line.session_id) == str(session_id)
+    assert CAM in line.getMessage() and "may be missed" in line.getMessage()
+
+
+def test_the_runs_lost_together_are_started_together(client, db, detection):
+    # Each start blocks until its Run is watching (seconds, each loading a model
+    # in process mode): in turn, four lost Runs would take four times as long
+    import threading
+    add_camera(db, "cam2")
+    session_id = start_session(client, add_camera(db, "cam1"))
+    detection.runs.clear()   # the service restarted: every board lost its Run
+    both_asked = threading.Barrier(2, timeout=5)
+    detection.on_start = lambda sid, camera: both_asked.wait()   # opens only if both are asked at once
+
+    tick(client)
+
+    assert detection_of(client, session_id, "cam1") == WATCHING
+    assert detection_of(client, session_id, "cam2") == WATCHING
+
+
+def test_a_failure_part_way_through_starting_together_asks_no_board_twice(client, db, detection, monkeypatch):
+    add_camera(db, "cam2")
+    session_id = start_session(client, add_camera(db, "cam1"))
+    detection.runs.clear()
+    detection.calls.clear()
+
+    def fan_out_that_fails(fn, cameras):
+        fn(cameras[0])
+        raise RuntimeError("the fan-out broke")
+    monkeypatch.setattr(detection_sync, "_in_parallel", fan_out_that_fails)
+
+    tick(client)
+
+    asked = [call[2] for call in detection.calls if call[0] == "start"]
+    assert sorted(asked) == ["cam1", "cam2"]   # each once: the first not again, the second not left out
+    assert detection_of(client, session_id, "cam1") == WATCHING
+    assert detection_of(client, session_id, "cam2") == WATCHING
+
+
+def test_the_runs_started_again_are_logged_for_the_logs_tab(client, db, detection, caplog):
+    add_camera(db, "cam2")
+    session_id = start_session(client, add_camera(db, "cam1"))
+    detection.runs.clear()
+    caplog.set_level("INFO")
+
+    tick(client)
+
+    starting = next(r for r in caplog.records if r.getMessage().startswith("Starting the Detection Service's Runs"))
+    assert starting.cameras == ["cam1", "cam2"] and str(starting.session_id) == str(session_id)
+    done = next(r for r in caplog.records if "watching every camera again" in r.getMessage())
+    assert done.levelname == "INFO" and done.boards == {"cam1": "watching", "cam2": "watching"}
+
+
+def test_the_service_going_down_and_coming_back_is_logged_once_each(client, db, detection, monkeypatch, caplog):
+    monkeypatch.setattr(detection_sync, "_service_answered", None)
+    start_session(client, add_camera(db))
+    caplog.set_level("INFO")
+    tick(client)                 # up: nothing to say
+    detection.down = True
+    tick(client)
+    tick(client)                 # still down: not said again
+    detection.down = False
+    tick(client)
+
+    said = [(r.levelname, r.getMessage()) for r in caplog.records
+            if "Detection Service" in r.getMessage() and ("not answering" in r.getMessage() or "answers again" in r.getMessage())]
+    assert [level for level, _ in said] == ["WARNING", "INFO"]
+    assert "not answering" in said[0][1] and "answers again" in said[1][1]
+
+
 def test_the_run_of_a_session_completed_while_the_service_was_down_is_ended(client, db, detection):
     session_id = start_session(client, add_camera(db))
     detection.down = True

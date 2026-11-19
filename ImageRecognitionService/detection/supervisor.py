@@ -36,7 +36,8 @@ import sys
 import threading
 import time
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 from detection import logs
 
@@ -48,6 +49,7 @@ API_DEAD_AFTER_S = 15   # PROVISIONAL
 STALL_AFTER_S = 10      # the service's own default (service.STALL_AFTER_S), repeated: importing it loads cv2
 BACKOFF_MIN_S = 1
 BACKOFF_MAX_S = 30
+STOP_GRACE_S = 30       # a stop asks every Run to end (judge, post) before the service is killed
 HEALTHY_AFTER_S = 60    # a service that ran this long was fine: its next restart starts from BACKOFF_MIN_S
 DEFAULT_PORT = 8010
 
@@ -55,15 +57,20 @@ DEFAULT_PORT = 8010
 class _Child:
     """The service's process, as the supervisor needs it: is it gone, and kill
     it with everything it started (its Runs' processes, in process mode)."""
-    def __init__(self, process):
-        self._process = process
+    def __init__(self, process, job=None):
+        self._process, self._job = process, job
 
     def poll(self):
         return self._process.poll()
 
     def kill_tree(self):
         if _IS_WINDOWS:
-            if self._process.poll() is None:
+            if self._job is not None:
+                # Its job holds the service and every process it started, the Runs a service
+                # that is already gone left behind too
+                _end_job(self._job)
+                self._job = None
+            elif self._process.poll() is None:
                 subprocess.run(["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
                                capture_output=True, check=False)
         else:
@@ -84,7 +91,6 @@ CREATE_SUSPENDED = 0x00000004
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _IS_WINDOWS = os.name == "nt"
-_job = None   # held for the supervisor's life: when it ends, however it does, Windows closes it
 
 
 def _kill_when_the_supervisor_ends():
@@ -122,24 +128,37 @@ def _kill_when_the_supervisor_ends():
 
 
 def die_with_me(process):
-    """Puts a just-started, still suspended `process` in the job that dies with
-    the supervisor, so does everything it starts after (the service's Run
-    processes). Answers whether it did; a failure is logged, not raised: the
-    service runs either way, only unguarded against the supervisor's death."""
-    global _job
+    """Puts a just-started, still suspended `process` in a job of its own that
+    dies with the supervisor, so does everything it starts after (the service's
+    Run processes). Answers the job, or None when Windows refused: logged, not
+    raised, since the service runs either way, only unguarded against the
+    supervisor's death. One job for each service, so `_end_job` can kill what
+    an old service left behind without touching the next one's."""
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     from ctypes import wintypes
     kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    job = None
     try:
-        if _job is None:
-            _job = _kill_when_the_supervisor_ends()
-        if not kernel32.AssignProcessToJobObject(_job, int(process._handle)):
+        job = _kill_when_the_supervisor_ends()
+        if not kernel32.AssignProcessToJobObject(job, int(process._handle)):
             raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
-        return True
+        return job
     except OSError as e:
+        if job:
+            _end_job(job)
         log.warning("The Detection Service will keep running if the supervisor is killed (Windows refused "
                     "the guard: %s)", e)
-        return False
+        return None
+
+
+def _end_job(job):
+    """Kills every process in `job`, and closes it."""
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.TerminateJobObject(job, 1)
+    kernel32.CloseHandle(job)
 
 
 def _resume(process):
@@ -154,11 +173,21 @@ def _spawn(command):
     # interpreter as its own child at once, which is only in the job if the job
     # was there first
     process = subprocess.Popen(command, creationflags=CREATE_SUSPENDED)
+    job = None
     try:
-        die_with_me(process)
+        job = die_with_me(process)
     finally:
         _resume(process)
-    return _Child(process)
+    return _Child(process, job)
+
+
+def _end_run(host, port, session_id, camera, timeout=STOP_GRACE_S):
+    """The service's end of a Run, answered once its posts are drained."""
+    try:
+        urlopen(Request(f"http://{host}:{port}/runs/{quote(session_id, safe='')}/{quote(camera, safe='')}/end", data=b"{}", method="POST"),
+                timeout=timeout).read()
+    except Exception as error:
+        log.warning("Ending the Run of camera %s before the stop failed: %s", camera, error)
 
 
 def _fetch_status(host, port, timeout=5):
@@ -174,8 +203,9 @@ class Supervisor:
     """`spawn()` starts the service and answers its `_Child`; `fetch()` answers
     `/status`'s Runs, or None; `clock` is monotonic seconds. All three are the
     tests' to replace."""
-    def __init__(self, spawn, fetch, poll_every_s=POLL_EVERY_S, clock=time.monotonic):
+    def __init__(self, spawn, fetch, poll_every_s=POLL_EVERY_S, clock=time.monotonic, end_run=None):
         self._spawn, self._fetch, self._clock = spawn, fetch, clock
+        self._end_run = end_run   # `end_run(session_id, camera)`: asks the service to end a Run, as the backend does
         self._poll_every_s = poll_every_s
         self.restarts, self.child = 0, None
 
@@ -187,6 +217,8 @@ class Supervisor:
             child = self.child = self._spawn()
             log.info("The Detection Service started")
             reason = self._watch(child, stop, started)
+            if stop.is_set():
+                self.end_runs(child)   # a stop, not a freeze: the Runs end properly first
             child.kill_tree()
             if stop.is_set():
                 return
@@ -202,6 +234,28 @@ class Supervisor:
                       extra={"reason": reason, "lived_s": round(lived), "wait_s": wait, "restarts": self.restarts})
             if stop.wait(wait):
                 return
+
+    def end_runs(self, child):
+        """Asks the service to end every Run it has, as the backend's end does (judges the
+        Candidates open, posts the Bullet Holes), for up to STOP_GRACE_S; what is not
+        done by then is lost with the kill that follows. Nothing is asked of a service
+        that does not answer: it is frozen, not stopping."""
+        if self._end_run is None or child.poll() is not None:
+            return
+        runs = self._fetch() or []
+        threads = [threading.Thread(target=self._end_run, args=(r["session_id"], r["camera"]), daemon=True)
+                   for r in runs]
+        if threads:
+            log.info("The supervisor is stopping: ending %d Run(s) first (up to %d s)", len(threads), STOP_GRACE_S)
+        for thread in threads:
+            thread.start()
+        deadline = time.monotonic() + STOP_GRACE_S
+        for thread in threads:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        late = sum(thread.is_alive() for thread in threads)
+        if late:
+            log.error("%d Run(s) did not end within %d s of the stop: they are killed with the service",
+                      late, STOP_GRACE_S)
 
     def _watch(self, child, stop, started):
         """Why the service has to be started again, once it does."""
@@ -251,7 +305,8 @@ def main(argv=None):
     command += rest
     log.info("Supervising the Detection Service (%s mode): %s", a.run_mode, " ".join(command),
              extra={"log_file": str(log_file)})
-    supervisor = Supervisor(lambda: _spawn(command), lambda: _fetch_status(a.host, a.port))
+    supervisor = Supervisor(lambda: _spawn(command), lambda: _fetch_status(a.host, a.port),
+                            end_run=lambda session_id, camera: _end_run(a.host, a.port, session_id, camera))
     stop = threading.Event()
     _stop_on_signals(stop)
     try:

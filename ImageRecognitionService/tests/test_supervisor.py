@@ -195,3 +195,57 @@ def test_on_posix_the_whole_group_is_killed_even_when_the_service_is_already_gon
     monkeypatch.setattr(supervisor.signal, "SIGKILL", 9, raising=False)
     supervisor._Child(_Process()).kill_tree()   # poll() answers 0: the service itself has exited
     assert killed == [(4242, 9)]
+
+
+def test_a_stop_ends_the_runs_before_the_service_is_killed():
+    """An ordinary stop is not a freeze: each Run is asked to end (judge, post) first."""
+    order, stop = [], threading.Event()
+
+    class _Service(_Child):
+        def kill_tree(self):
+            order.append("killed")
+
+    def end_run(session_id, camera):
+        order.append(f"end {camera}")
+
+    def spawn():
+        stop.set()   # the stop arrives while the service runs
+        return _Service()
+
+    supervisor_ = Supervisor(spawn, lambda: [_run("cam-a"), _run("cam b")], poll_every_s=0, end_run=end_run)
+    supervisor_.run(stop)
+    assert sorted(order[:-1]) == ["end cam b", "end cam-a"] and order[-1] == "killed"
+
+
+def test_a_freeze_kills_the_service_without_asking_it_to_end_its_runs():
+    asked = []
+    world = _World(lambda child, n, now: None, spawns=1)   # never answers: frozen
+    world.supervisor._end_run = lambda *a: asked.append(a)
+    world.go()
+    assert world.children[0].killed and asked == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows jobs")
+def test_what_a_service_that_is_already_gone_left_behind_is_killed_with_its_job(tmp_path):
+    """A Run stuck in a native call outlives a service that crashes: its job kills it."""
+    psutil = pytest.importorskip("psutil")
+    pidfile = tmp_path / "run.pid"
+    code = os.linesep.join([
+        "import os, subprocess, sys",
+        "run = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])",
+        f"open({str(pidfile)!r}, 'w').write(str(run.pid))",
+        "os._exit(3)"])   # the service crashes, its Run is left running
+    child = supervisor._spawn([sys.executable, "-c", code])
+    try:
+        deadline = time.time() + 20
+        while time.time() < deadline and (child.poll() is None or not pidfile.exists()):
+            time.sleep(0.1)
+        left = int(pidfile.read_text())
+        assert child.poll() is not None and psutil.pid_exists(left)
+        child.kill_tree()
+        deadline = time.time() + 10
+        while time.time() < deadline and psutil.pid_exists(left):
+            time.sleep(0.1)
+        assert not psutil.pid_exists(left)
+    finally:
+        child.kill_tree()

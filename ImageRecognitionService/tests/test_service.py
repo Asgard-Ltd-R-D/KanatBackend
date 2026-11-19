@@ -872,3 +872,62 @@ def test_the_service_saves_the_other_cameras_before_it_exits_for_a_stuck_thread(
     finally:
         api.service._runs.clear()
         slow.ended.set()
+
+
+class _Conn:
+    """A Pipe's end: what is sent is kept; `recv` answers `ended` at once."""
+    def __init__(self):
+        self.sent = []
+
+    def send(self, message):
+        self.sent.append(message)
+
+    def poll(self, timeout=None):
+        return True
+
+    def recv(self):
+        return ("ended",)
+
+    def close(self):
+        pass
+
+
+def test_a_process_run_that_is_draining_its_posts_is_not_killed_at_the_kill_time(api, monkeypatch):
+    """Done looking and posting what it confirmed has the publisher's own limit:
+    a kill at KILL_AFTER_S would lose those holes while `end` still answered."""
+    monkeypatch.setattr(service, "KILL_AFTER_S", 0.2)
+    monkeypatch.setattr(service, "ENDING_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(webapp, "DRAIN_TIMEOUT_S", 5)
+    results = {}
+    for draining in (True, False):
+        run = _watching_process_run(api.service, "t0")
+        run.remote._conn, run.draining = _Conn(), draining
+        threading.Timer(0.8, run.ended.set).start()   # it drains for longer than the kill time
+        api.service._end(run)
+        results[draining] = run.process.killed
+        api.service._runs.clear()
+    assert results == {True: False, False: True}   # a hung one, not draining, is still killed
+
+
+def test_a_process_run_whose_end_came_before_its_process_started_is_stopped_once_it_has(api, monkeypatch):
+    parent, child = _Conn(), _Conn()
+    started = []
+
+    class _Context:
+        def Pipe(self):
+            return parent, child
+
+        def Process(self, **kw):
+            process = _Process()
+            process.start = lambda: started.append(list(parent.sent))   # what was sent before it started
+            process.join = lambda timeout=None: None
+            process.is_alive = lambda: False
+            return process
+
+    monkeypatch.setattr(service.multiprocessing, "get_context", lambda method: _Context())
+    run = service._Run(SESSION, CAMERA)
+    run.enter("ending")   # `end` arrived while the Run was still being set up
+    api.service._runs[(SESSION, CAMERA)] = run
+    api.service._work_process(run, URL)
+    assert parent.sent == ["stop"]   # told to stop, so it does not go on to watch with no one waiting
+    assert run.ended.is_set()

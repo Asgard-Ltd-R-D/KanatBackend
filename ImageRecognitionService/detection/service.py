@@ -115,6 +115,7 @@ class _Run:
         self.baseline_marks, self.error = None, None
         self.dropping = False
         self.stalled = False   # the stall check has dealt with it: not judged again
+        self.draining = False   # a process Run has finished looking and is posting what it confirmed
         self.baseline_view = None
         # In a process of its own (`--run-mode process`), `loop` is a `_RemoteLoop`
         # and `remote` the same: how far it has watched is what it last sent
@@ -453,7 +454,12 @@ class DetectionService:
             # A Run in a process of its own that has not ended past its stop is
             # hung (stuck opening its Stream, say): killed, so it can never hold
             # the Run, the Session or the machine's memory
-            if not run.ended.wait(KILL_STARTING_AFTER_S if was == "starting" else KILL_AFTER_S):
+            ended = run.ended.wait(KILL_STARTING_AFTER_S if was == "starting" else KILL_AFTER_S)
+            if not ended and run.draining:
+                # Done looking, only posting the holes it confirmed: that has its own limit
+                # (the publisher's), and killing it now would lose them
+                ended = run.ended.wait(webapp.DRAIN_TIMEOUT_S + KILL_AFTER_S)
+            if not ended:
                 log.error("Run process on camera %s did not end after its stop: killed", run.camera,
                           extra={"camera": run.camera})
                 try:
@@ -505,7 +511,10 @@ class DetectionService:
             with self._lock:
                 run.loop = run.remote = remote   # before it starts: an end may come first
                 run.process = process
+                ending = run.state == "ending"   # ended before its process was started
             process.start()
+            if ending:
+                remote.stop()   # sent now: its process reads it once it is up
             child_conn.close()   # this side's copy, so the Pipe reads EOF when the Run's process dies
             while True:
                 try:
@@ -528,6 +537,8 @@ class DetectionService:
                     remote.watched = message[1]
                 elif kind == "input":
                     remote.down = message[1]
+                elif kind == "draining":
+                    run.draining = True
                 elif kind == "error":
                     run.error = message[1]
                 elif kind == "ended":

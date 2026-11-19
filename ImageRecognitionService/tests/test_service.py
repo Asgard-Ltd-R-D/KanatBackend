@@ -1086,3 +1086,19 @@ def test_a_thread_run_whose_detection_fails_is_draining_while_its_posts_drain(ap
     api.service._runs[(SESSION, CAMERA)] = run
     api.service._work(run, URL)
     assert seen["draining"]   # so the stall check leaves it to the publisher's own limit
+
+
+def test_a_run_whose_camera_comes_back_after_a_long_outage_gets_a_fresh_stall_time(api):
+    """Back means video again, not yet a Look: the outage is not counted as the Run being stuck."""
+    run = _watching_process_run(api.service, "t0")
+    api.service.check_stalls(CLOCK)
+    run.remote.down = True
+    api.service.check_stalls(CLOCK + 1)
+    api.service.check_stalls(CLOCK + 50)               # down 50 s: waited for
+    run.remote.down = False                              # video again, no Look yet
+    api.service.check_stalls(CLOCK + 51)
+    api.service.check_stalls(CLOCK + 51 + service.STALL_AFTER_S - 1)
+    assert not run.process.killed
+    api.service.check_stalls(CLOCK + 51 + service.STALL_AFTER_S + 1)
+    assert run.process.killed                            # video flows and it still looks at nothing: stuck
+    api.service._runs.clear()

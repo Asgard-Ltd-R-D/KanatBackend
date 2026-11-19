@@ -116,6 +116,7 @@ class _Run:
         self.dropping = False
         self.stalled = False   # the stall check has dealt with it: not judged again
         self.draining = None   # when a process Run finished looking, and is posting what it confirmed
+        self.was_down = False   # the stall check saw its camera down: its stall time restarts when it is back
         self.baseline_view = None
         # In a process of its own (`--run-mode process`), `loop` is a `_RemoteLoop`
         # and `remote` the same: how far it has watched is what it last sent
@@ -364,10 +365,17 @@ class DetectionService:
             if mark != run.mark:
                 run.mark, run.mark_at = mark, now
                 continue
+            down = run.camera_down()
+            if run.was_down and not down:
+                # The camera is back: its outage was no one's stall, so a fresh interval starts
+                # (it has the next frame's registration to look at one)
+                run.was_down, run.mark_at = False, now
+                continue
+            run.was_down = down
             stuck_s = now - run.mark_at
             if stuck_s < self._stall_after_s:
                 continue
-            if not run.camera_down():
+            if not down:
                 self._stalled(run, stuck_s, input_flowing=True)   # video arrives and the Run does not look: stuck
             elif stuck_s >= CAMERA_DOWN_AFTER_S:
                 self._stalled(run, stuck_s, input_flowing=False)   # camera down for long: this Run alone

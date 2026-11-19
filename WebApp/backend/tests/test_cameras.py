@@ -117,6 +117,160 @@ def test_a_failed_sync_does_not_fail_the_request(monkeypatch, db_state):
     camera_sync.sync_soon(None)  # no exception: the loop retries
 
 
+# --- the silence watchdog ---
+
+class Watchdog:
+    """The watchdog's world: a clock the test moves, and the byte counter MediaMTX
+    reports for the path `cam1`."""
+
+    def __init__(self, monkeypatch, db_state, camera):
+        camera_sync._silence.clear()
+        camera_sync._silence_logged.clear()
+        camera_sync._silence_restarts.clear()
+        db_state.cameras = [camera]
+        self.now = 100.0
+        self.inbound, self.ready = 0, True
+        self.mtx = FakeMediaMTX(monkeypatch, {camera.alias: camera_sync.path_config(camera)})
+        monkeypatch.setattr(camera_sync, "_clock", lambda: self.now)
+        monkeypatch.setattr(mediamtx, "path_states", lambda: {
+            camera.alias: {"ready": self.ready, "inboundBytes": self.inbound}})
+        monkeypatch.setattr(settings, "camera_silence_restart_s", 6)
+
+    def look(self, after=0.0):
+        self.now += after
+        camera_sync.restart_silent(None)
+
+
+def test_a_camera_that_keeps_sending_is_left_alone(monkeypatch, db_state):
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    for _ in range(10):
+        dog.inbound += 5000
+        dog.look(after=2)
+    assert dog.mtx.calls == []
+
+
+def test_a_camera_that_goes_silent_gets_its_path_restarted(monkeypatch, db_state):
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    dog.inbound = 5000
+    dog.look()
+    dog.look(after=4)           # silent 4s: not yet
+    assert dog.mtx.calls == []
+    dog.look(after=2)           # silent 6s: the cable was pulled
+    assert dog.mtx.calls == [("delete", "cam1"), ("add", "cam1")]
+    assert dog.mtx.paths["cam1"] == camera_sync.path_config(make_camera())
+
+
+def test_a_camera_that_never_sent_is_restarted_too(monkeypatch, db_state):
+    """MediaMTX started before the camera sent: nothing ever arrives on its socket."""
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    dog.look()
+    dog.look(after=7)
+    assert dog.mtx.calls == [("delete", "cam1"), ("add", "cam1")]
+
+
+def test_a_camera_that_stays_off_is_retried_less_and_less_often(monkeypatch, db_state):
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    dog.look()
+    for _ in range(9):
+        dog.look(after=2)       # 18s of silence: restarts at 6s, then waits 12s more
+    assert dog.mtx.calls.count(("delete", "cam1")) == 2
+
+
+def test_the_wait_between_restarts_stops_doubling_at_the_cap(monkeypatch, db_state):
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    monkeypatch.setattr(settings, "camera_silence_restart_max_s", 20)
+    dog.look()
+    for _ in range(300):
+        dog.look(after=2)       # 10 minutes off
+    # 6s, then 12s, then 20s each: 3 restarts by 38s, and one per 20s after
+    assert 28 <= dog.mtx.calls.count(("delete", "cam1")) <= 32
+
+
+def test_a_wait_after_thousands_of_restarts_does_not_overflow(monkeypatch, db_state):
+    """A camera left off for a day: its restart count is in the thousands, and the
+    doubling must not overflow, or the watchdog stops for every camera."""
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    monkeypatch.setattr(settings, "camera_silence_restart_s", 6.0)   # a float, as the setting is
+    dog.look()
+    camera_sync._silence_restarts["cam1"] = 5000
+    dog.look(after=settings.camera_silence_restart_max_s + 1)
+    assert dog.mtx.calls == [("delete", "cam1"), ("add", "cam1")]
+    assert camera_sync._wait_s(10 ** 9) == settings.camera_silence_restart_max_s
+
+
+def test_a_path_going_not_ready_does_not_restart_the_wait(monkeypatch, db_state):
+    """The cable is pulled: the counter freezes, and some seconds later MediaMTX
+    drops the path to not ready, reporting 0. The 6 s count the camera has been
+    silent for does not start over then."""
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    dog.inbound = 5000
+    dog.look()
+    dog.look(after=4)           # frozen 4s
+    dog.inbound, dog.ready = 0, False   # MediaMTX gives the path up
+    dog.look(after=1)           # silent 5s
+    assert dog.mtx.calls == []
+    dog.look(after=1)           # silent 6s: restarted now, not 6s after the path went not ready
+    assert dog.mtx.calls == [("delete", "cam1"), ("add", "cam1")]
+
+
+def test_a_restart_is_logged_with_the_camera_and_what_to_check(monkeypatch, db_state, caplog):
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    dog.look()
+    dog.look(after=7)
+    line = next(r for r in caplog.records if "sent no video" in r.getMessage())
+    assert line.levelname == "WARNING"
+    assert "cable" in line.getMessage() and "next restart waits 12 s" in line.getMessage()
+    assert (line.camera, line.restarts, line.next_wait_s) == ("cam1", 1, 12)
+
+
+def test_a_camera_that_sends_again_starts_from_the_base_wait(monkeypatch, db_state):
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    dog.look()
+    dog.look(after=7)           # restart 1
+    dog.look(after=13)          # restart 2: now it waits 24s
+    dog.inbound = 5000          # it sends again
+    dog.look(after=2)
+    dog.inbound = 5000          # then stops
+    dog.look(after=2)
+    dog.look(after=7)           # silent 7s: the base 6s, not 24s
+    assert dog.mtx.calls.count(("delete", "cam1")) == 3
+
+
+def test_a_disabled_camera_is_never_restarted(monkeypatch, db_state):
+    dog = Watchdog(monkeypatch, db_state, make_camera(enabled=False))
+    dog.mtx.paths["cam1"] = camera_sync.playback_only_config()
+    dog.look()
+    dog.look(after=60)
+    assert dog.mtx.calls == []
+
+
+def test_a_path_mediamtx_yml_defines_is_never_restarted_even_if_it_reads_udp_rtp(monkeypatch, db_state):
+    """A camera whose alias clashes with a static path of mediamtx.yml: the sync
+    refuses to touch that path, so the watchdog must not delete it either."""
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: mediamtx.ConfigPaths(frozenset({"cam1"})))
+    dog.look()
+    dog.look(after=60)
+    assert dog.mtx.calls == []
+    assert "cam1" in dog.mtx.paths
+
+
+def test_nothing_is_restarted_while_mediamtx_yml_is_unknown(monkeypatch, db_state):
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    monkeypatch.setattr(mediamtx, "config_paths", lambda: None)
+    dog.look()
+    dog.look(after=60)
+    assert dog.mtx.calls == []
+
+
+def test_a_path_the_sync_has_not_applied_yet_is_not_the_watchdogs(monkeypatch, db_state):
+    dog = Watchdog(monkeypatch, db_state, make_camera())
+    dog.mtx.paths.clear()
+    dog.look()
+    dog.look(after=60)
+    assert dog.mtx.calls == []
+
+
 # --- what the operator may enter ---
 
 @pytest.mark.parametrize("field, value", [

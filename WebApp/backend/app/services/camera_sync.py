@@ -197,6 +197,115 @@ def sync_soon(db: DBSession) -> None:
         log.warning("MediaMTX not updated now, the sync loop will retry: %s", e)
 
 
+# The silence watchdog's memory: each camera's inbound bytes and when they last
+# changed (_clock), and the cameras whose silence was already logged
+_silence: dict[str, tuple[int, float]] = {}
+_silence_logged: set[str] = set()
+# How many times in a row each silent camera's path was restarted: every restart
+# doubles the silence the next one waits for (up to camera_silence_restart_max_s),
+# so a camera that is simply switched off is not rebuilt every few seconds forever
+_silence_restarts: dict[str, int] = {}
+
+
+def restart_silent(db: DBSession) -> None:
+    """Restart the path of every enabled camera whose video stopped arriving.
+
+    The sync only compares settings, and a camera's settings do not change when
+    its cable is pulled or when MediaMTX started before the camera sent: the
+    group membership is lost (or was never made) and MediaMTX's socket never
+    recovers it. A path whose inbound bytes have not changed for
+    camera_silence_restart_s is deleted and added again, so MediaMTX reads from
+    a new socket and rejoins the group. Raises MediaMTXUnreachable if MediaMTX
+    cannot be reached."""
+    with _lock:
+        enabled = {c.alias: c for c in cameras_repo.list_all(db) if c.enabled}
+        current = mediamtx.list_path_configs()
+        config_paths = mediamtx.config_paths()
+        if config_paths is None:
+            return   # mediamtx.yml unknown: any name might be its, so nothing is deleted (as sync() does)
+        states = mediamtx.path_states()
+        now = _clock()
+        for alias in [a for a in _silence if a not in enabled]:
+            del _silence[alias]
+            _silence_logged.discard(alias)
+            _silence_restarts.pop(alias, None)
+        for alias, camera in enabled.items():
+            existing = current.get(alias, {})
+            if (config_paths.defines(alias) or not (existing.get("source") or "").startswith("udp+rtp://")
+                    or not is_camera_path(alias, existing, config_paths)):
+                # Not applied yet, or mediamtx.yml owns the name (a static path that also reads
+                # udp+rtp, say): the sync's to do, or nobody's. Never deleted here.
+                _silence.pop(alias, None)
+                _silence_restarts.pop(alias, None)
+                continue
+            # The counter as MediaMTX reports it, ready or not: a path that drops to
+            # "not ready" (its source read timed out) reports 0, and that is the
+            # same silence, not a fresh start of the wait
+            inbound = states.get(alias, {}).get("inboundBytes", 0)
+            previous = _silence.get(alias)
+            if previous is None:
+                _silence[alias] = (inbound, now)
+                continue
+            if inbound and inbound != previous[0]:
+                _silence[alias] = (inbound, now)
+                _silence_restarts.pop(alias, None)   # it sends: the next silence starts from the base wait
+                if alias in _silence_logged:
+                    _silence_logged.discard(alias)
+                    log.info("Camera '%s' is sending video again", alias, extra={"camera": alias})
+                continue
+            silent_s = now - previous[1]
+            restarts = _silence_restarts.get(alias, 0)
+            if silent_s < _wait_s(restarts):
+                continue
+            mediamtx.delete_path(alias)
+            mediamtx.add_path(alias, path_config(camera))
+            _silence[alias] = (0, now)
+            _silence_restarts[alias] = restarts + 1
+            # Logged loudly once per silence: a camera that stays off is retried
+            # again and again, which would flood the log
+            level = logging.DEBUG if alias in _silence_logged else logging.WARNING
+            _silence_logged.add(alias)
+            log.log(level, "Camera '%s' sent no video for %.0f s: its MediaMTX path was restarted to rejoin the "
+                    "multicast group. If it is still silent, the next restart waits %.0f s (check the camera, "
+                    "its cable and the network card chosen for it)",
+                    alias, silent_s, _wait_s(restarts + 1),
+                    extra={"camera": alias, "silent_s": round(silent_s), "restarts": restarts + 1,
+                           "next_wait_s": round(_wait_s(restarts + 1))})
+
+
+def _wait_s(restarts: int) -> float:
+    """How long a camera must be silent before its path is restarted, `restarts`
+    restarts in a row having failed to bring it back: the base wait, doubled each
+    time up to camera_silence_restart_max_s. The doubling stops growing past the
+    cap (a count in the thousands overflows a float), however long it has been off."""
+    base = settings.camera_silence_restart_s
+    return min(base * 2.0 ** min(restarts, 30), max(base, settings.camera_silence_restart_max_s))
+
+
+def _watch_once() -> None:
+    db = SessionLocal()
+    try:
+        restart_silent(db)
+    finally:
+        db.close()
+
+
+async def watch_forever() -> None:
+    """The silence watchdog's loop, started with the app (main.py) beside the
+    sync loop but faster, so a camera that stopped is back within seconds. Logs
+    only when its state changes, not on every failed attempt."""
+    failing = False
+    while True:
+        try:
+            await run_in_threadpool(_watch_once)
+            failing = False
+        except Exception as e:  # keep the loop alive whatever one attempt hits
+            if not failing:
+                log.warning("Camera silence watchdog failing, retrying every %ss: %s", settings.camera_watchdog_interval_s, e)
+            failing = True
+        await asyncio.sleep(settings.camera_watchdog_interval_s)
+
+
 def _sync_once() -> None:
     db = SessionLocal()
     try:

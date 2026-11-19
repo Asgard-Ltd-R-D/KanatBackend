@@ -122,3 +122,19 @@ def test_only_the_last_days_are_kept(tmp_path):
     handler.handle(_record("now"))
     kept = sorted(p.name for p in tmp_path.glob("detection.log.*"))
     assert len(kept) == 3 and kept[-1] == f"detection.log.{datetime.fromtimestamp(long_ago, timezone.utc).date()}"
+
+
+def test_a_day_another_process_just_archived_is_never_replaced(tmp_path, monkeypatch):
+    """Two writers both see yesterday's file after midnight: the second must not
+    replace the archive the first made, with a view of the folder that is stale."""
+    path = tmp_path / "detection.log"
+    long_ago = time.time() - 36 * 3600
+    day = datetime.fromtimestamp(long_ago, timezone.utc).date().isoformat()
+    archive = tmp_path / f"detection.log.{day}"
+    archive.write_text("yesterday's lines\n")   # the first writer has archived the day
+    path.write_text("today's first line\n")      # and started today's file,
+    os.utime(path, (long_ago, long_ago))           # which the second writer still sees as yesterday's
+    monkeypatch.setattr(logs.Path, "exists", lambda self: False)   # a stale view of the folder
+    logs.SharedFileHandler(path).handle(_record("second writer"))
+    assert archive.read_text() == "yesterday's lines\n"
+    assert "today's first line" in path.read_text() and "second writer" in path.read_text()

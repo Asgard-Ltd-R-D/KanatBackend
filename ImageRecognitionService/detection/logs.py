@@ -22,6 +22,7 @@ import json
 import logging
 import logging.handlers
 import os
+import time
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -110,10 +111,17 @@ class SharedFileHandler(logging.Handler):
             return
         past = self.path.with_name(f"{self.path.name}.{last_written.isoformat()}")
         try:
-            if not past.exists():
-                os.replace(self.path, past)
-        except OSError:   # another process rotated it first, or has it open this instant: the next line retries
+            # A link, not a rename: it fails if `past` exists, atomically, where a rename would
+            # replace a day another process has just archived with today's new file
+            os.link(self.path, past)
+        except OSError:   # another process rotated it first (or the filesystem has no links): leave it
             return
+        for _ in range(5):
+            try:
+                os.unlink(self.path)   # the lines other processes append meanwhile are in `past` too
+                break
+            except OSError:   # held open this instant (Windows): tried again
+                time.sleep(0.05)
         for old in sorted(self.path.parent.glob(f"{self.path.name}.*"))[:-self.backups]:
             try:
                 old.unlink()

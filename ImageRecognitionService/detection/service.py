@@ -115,7 +115,7 @@ class _Run:
         self.baseline_marks, self.error = None, None
         self.dropping = False
         self.stalled = False   # the stall check has dealt with it: not judged again
-        self.draining = False   # a process Run has finished looking and is posting what it confirmed
+        self.draining = None   # when a process Run finished looking, and is posting what it confirmed
         self.baseline_view = None
         # In a process of its own (`--run-mode process`), `loop` is a `_RemoteLoop`
         # and `remote` the same: how far it has watched is what it last sent
@@ -355,6 +355,8 @@ class DetectionService:
         for run, watching in runs:
             if run.stalled:
                 continue   # already ended or being killed: its retirement is under way
+            if run.draining and now - run.draining < webapp.DRAIN_TIMEOUT_S + KILL_AFTER_S:
+                continue   # done looking, only posting what it confirmed: the publisher's limit applies
             if not watching:
                 run.mark_at = now   # its stall time counts from when it watches
                 continue
@@ -539,7 +541,7 @@ class DetectionService:
                 elif kind == "input":
                     remote.down = message[1]
                 elif kind == "draining":
-                    run.draining = True
+                    run.draining = time.monotonic()
                 elif kind == "error":
                     run.error = message[1]
                 elif kind == "ended":

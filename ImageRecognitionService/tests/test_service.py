@@ -1015,3 +1015,48 @@ def test_a_process_run_sends_where_it_last_looked_before_it_ends(monkeypatch):
     run_process.main(conn, None, SESSION, CAMERA, URL, "http://backend", None)
     watched = [m[1]["looked_at"] for m in conn.sent if m[0] == "watched"]
     assert watched[-1] == "last look" and conn.sent[-1] == ("ended",)
+
+
+def test_a_process_run_that_is_draining_its_posts_is_not_judged_stalled_until_the_drain_limit(api):
+    run = _watching_process_run(api.service, "t0")
+    run.draining = CLOCK   # it finished looking, and posts what it confirmed
+    api.service.check_stalls(CLOCK)
+    api.service.check_stalls(CLOCK + service.STALL_AFTER_S * 3)
+    assert not run.process.killed   # no look in 30 s is not a stall now
+    api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1)
+    api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1 + service.STALL_AFTER_S)
+    assert run.process.killed   # a drain that never ends is still bounded
+    api.service._runs.clear()
+
+
+def test_a_process_run_whose_detection_fails_still_announces_that_it_is_draining(monkeypatch):
+    from detection import run_process
+
+    class _Loop:
+        registered, looked, source = None, "first look", types.SimpleNamespace(down=False)
+
+    class _Publisher:
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def process(loop, _, publish, watching):
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(run_process, "WATCHED_EVERY_S", 30)
+    monkeypatch.setattr(run_process.logs, "configure", lambda directory: None)
+    monkeypatch.setattr(nbh, "preset_capture_options", lambda: None)
+    monkeypatch.setattr(nbh, "load_model", lambda path: None)
+    monkeypatch.setattr(service, "warm", lambda model: "cpu")
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", staticmethod(lambda *a, **kw: _Loop()))
+    monkeypatch.setattr(nbh, "process", process)
+    monkeypatch.setattr(run_process.webapp, "WebAppPublisher", _Publisher)
+    conn = _EndlessConn()
+    run_process.main(conn, None, SESSION, CAMERA, URL, "http://backend", None)
+    kinds = [m[0] for m in conn.sent]
+    assert kinds.index("draining") < kinds.index("error") < kinds.index("ended")

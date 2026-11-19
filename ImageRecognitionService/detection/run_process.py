@@ -137,8 +137,12 @@ def main(conn, model_path, session_id, camera, stream_url, backend_url, log_dir)
                              extra={"camera": camera})
                 else:
                     publisher.publish(hole)
-            nbh.process(loop, None, publish=publish, watching=watching)
-            send("draining")   # the publisher's exit drains its posts next, which has its own time limit
+            try:
+                nbh.process(loop, None, publish=publish, watching=watching)
+            finally:
+                # Looking is over, whether it ended or failed: the publisher's exit drains its posts
+                # next, which has its own time limit and is not a stall
+                send("draining")
     except BaseException as error:   # SystemExit too: how a Run's open fails
         why = str(error) or type(error).__name__
         log.error("Run on camera %s failed: %s", camera, why,

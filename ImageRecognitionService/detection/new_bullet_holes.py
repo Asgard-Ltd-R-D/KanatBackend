@@ -800,6 +800,12 @@ class Stream:
                                         daemon=True)
         self._reader.start()
 
+    @property
+    def down(self):
+        """True while the stream has dropped and is being reopened: no video is
+        arriving, which is not the same as a loop that is stuck (the stall check)."""
+        return self._down
+
     def stop(self):
         """End iteration after the look in hand, from any thread. It only sets
         a flag, which the reader and `read` poll: the command line calls it

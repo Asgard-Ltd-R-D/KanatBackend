@@ -144,6 +144,9 @@ def api(monkeypatch):
     api.close()
 
 
+CLOCK = 1024.0   # the stall check is handed its time: a power of two, so adding 10 or 120 s is exact (a fresh CI machine's small clock rounded 120 s to just under it)
+
+
 def _still(run):
     """`run` less what moves on with each Look: `registered` and `looked_at`."""
     return {k: v for k, v in run.items() if k not in ("registered", "looked_at")}
@@ -610,3 +613,492 @@ def test_a_warm_up_that_fails_is_logged_and_raised(caplog):
         service.warm(Broken())
     assert [(r.levelname, r.getMessage(), r.exc_info is not None) for r in caplog.records] == [
         ("ERROR", "Detector warm-up failed", True)]
+
+
+# --- the stall check ---
+
+def _stall_a_run(api):
+    """A Run watching `CAMERA`, then stuck inside its registration: alive, and
+    looking at nothing. Returns the Event that frees it."""
+    assert api.start()[0] == 200
+    freed, real = threading.Event(), api.registration.register
+
+    def stuck(frame, index):
+        freed.wait(10)
+        return real(frame, index)
+
+    api.registration.register = stuck
+    time.sleep(0.3)   # a Look in hand finishes, then the next one sticks
+    return freed
+
+
+def test_a_run_that_keeps_looking_is_never_ended_as_stalled(api):
+    assert api.start()[0] == 200
+    now = CLOCK
+    api.service.check_stalls(now)
+    time.sleep(0.3)
+    api.service.check_stalls(now + 1000)   # a long time on, but it looked on meanwhile
+    assert [r["state"] for r in api.service.status()] == ["watching"]
+
+
+def test_a_watching_run_that_looks_at_no_frame_for_the_stall_time_is_ended(api):
+    freed = _stall_a_run(api)
+    try:
+        now = CLOCK
+        api.service.check_stalls(now)
+        api.service.check_stalls(now + service.STALL_AFTER_S - 1)
+        assert len(api.service.status()) == 1   # not yet
+        api.service.check_stalls(now + service.STALL_AFTER_S)
+        assert api.service.status() == []   # ended, so the backend's reconcile starts it again
+        freed.set()
+        assert api.start()[0] == 200        # and the Session is free to
+    finally:
+        freed.set()
+
+
+def test_a_stalled_runs_late_bullet_holes_are_not_posted(api):
+    freed = _stall_a_run(api)
+    try:
+        run = next(iter(api.service._runs.values()))
+        now = CLOCK
+        api.service.check_stalls(now)
+        api.service.check_stalls(now + service.STALL_AFTER_S)
+        assert run.dropping and run.error.startswith("stalled")
+    finally:
+        freed.set()
+
+
+class _Process:
+    def __init__(self):
+        self.killed = False
+
+    def kill(self):
+        self.killed = True
+
+
+def _watching_process_run(svc, looked_at=None):
+    run = service._Run(SESSION, CAMERA)
+    run.remote = run.loop = service._RemoteLoop(None)
+    run.remote.watched = {"registered": None, "looked_at": looked_at}
+    run.process, run.baseline_view = _Process(), {}
+    run.enter("watching")
+    run.mark_at = CLOCK   # its stall time counts from here, on the same clock the tests hand the check
+    svc._runs[(SESSION, CAMERA)] = run
+    return run
+
+
+def test_a_process_run_whose_looked_at_stands_still_is_killed(api):
+    run = _watching_process_run(api.service, "2026-10-22T10:15:02.120Z")
+    now = CLOCK
+    api.service.check_stalls(now)
+    run.remote.watched = {"registered": None, "looked_at": "2026-10-22T10:15:02.193Z"}   # it moved
+    api.service.check_stalls(now + service.STALL_AFTER_S)
+    assert not run.process.killed
+    api.service.check_stalls(now + 2 * service.STALL_AFTER_S)
+    assert run.process.killed and run.error.startswith("stalled")
+    api.service._runs.clear()
+
+
+def test_a_process_run_that_never_reports_a_look_is_killed_too(api):
+    run = _watching_process_run(api.service, None)
+    now = CLOCK
+    api.service.check_stalls(now)
+    api.service.check_stalls(now + service.STALL_AFTER_S)
+    assert run.process.killed
+    api.service._runs.clear()
+
+
+def test_a_run_still_starting_is_not_judged_by_the_stall_check(api):
+    run = _watching_process_run(api.service)
+    run.enter("starting")
+    now = CLOCK
+    api.service.check_stalls(now)
+    api.service.check_stalls(now + 10 * service.STALL_AFTER_S)
+    assert not run.process.killed
+    api.service._runs.clear()
+
+
+def test_a_stalled_thread_run_exits_the_service_when_asked_to(monkeypatch, api):
+    api.service._exit_on_stall = True
+    exits = []
+    monkeypatch.setattr(service.os, "_exit", exits.append)
+    freed = _stall_a_run(api)
+    try:
+        now = CLOCK
+        api.service.check_stalls(now)
+        api.service.check_stalls(now + service.STALL_AFTER_S)
+        assert exits == [3]
+    finally:
+        freed.set()
+
+
+# --- a camera that is down is not a Run that is stuck ---
+
+def test_a_process_run_whose_camera_is_down_is_waited_for_then_ended_alone(api):
+    run = _watching_process_run(api.service, "2026-10-22T10:15:02.120Z")
+    run.remote.down = True
+    now = CLOCK
+    api.service.check_stalls(now)
+    api.service.check_stalls(now + service.STALL_AFTER_S + 1)
+    api.service.check_stalls(now + service.CAMERA_DOWN_AFTER_S - 1)
+    assert not run.process.killed          # the stream is reopening itself: waited for
+    api.service.check_stalls(now + service.CAMERA_DOWN_AFTER_S)
+    assert run.process.killed              # down for good: this Run is ended
+    api.service._runs.clear()
+
+
+def test_a_process_run_whose_camera_comes_back_is_not_ended(api):
+    run = _watching_process_run(api.service, "t0")
+    run.remote.down = True
+    now = CLOCK
+    api.service.check_stalls(now)
+    run.remote.down = False
+    run.remote.watched = {"registered": None, "looked_at": "t1"}   # it looks again
+    api.service.check_stalls(now + service.STALL_AFTER_S + 5)
+    run.remote.watched = {"registered": None, "looked_at": "t2"}   # and keeps looking
+    api.service.check_stalls(now + service.CAMERA_DOWN_AFTER_S + 5)
+    assert not run.process.killed
+    api.service._runs.clear()
+
+
+class _DownStream:
+    down = True
+
+
+class _LoopOnADownStream:
+    looked, source = 7, _DownStream()
+
+    def stop(self):
+        pass
+
+
+def test_a_thread_run_whose_camera_is_down_never_exits_the_service(monkeypatch, api):
+    """One dead camera must not stop the other cameras' Runs."""
+    api.service._exit_on_stall = True
+    exits = []
+    monkeypatch.setattr(service.os, "_exit", exits.append)
+    run = service._Run(SESSION, CAMERA)
+    run.loop, run.baseline_view = _LoopOnADownStream(), {}
+    run.enter("watching")
+    api.service._runs[(SESSION, CAMERA)] = run
+    now = CLOCK
+    api.service.check_stalls(now)
+    api.service.check_stalls(now + service.CAMERA_DOWN_AFTER_S + 1)
+    assert exits == []                       # the service lives on
+    assert api.service.status() == []        # only this Run is ended
+    assert run.error.startswith("stalled")
+
+
+# --- a stall is dealt with once, and the exit saves the other cameras first ---
+
+def test_a_killed_process_run_is_not_judged_again_while_it_is_retired(api, caplog):
+    """Its process takes a moment to be seen gone: the checks in between must not
+    kill it and log the same error again."""
+    run = _watching_process_run(api.service, "t0")
+    kills = []
+    run.process.kill = lambda: kills.append(1)
+    now = CLOCK
+    api.service.check_stalls(now)
+    for second in range(service.STALL_AFTER_S, service.STALL_AFTER_S + 5):
+        api.service.check_stalls(now + second)
+    assert kills == [1]
+    errors = [r for r in caplog.records if r.levelname == "ERROR" and "looked at no frame" in r.getMessage()]
+    assert len(errors) == 1
+    assert errors[0].camera == CAMERA and errors[0].session_id == SESSION and errors[0].run_mode == "process"
+    api.service._runs.clear()
+
+
+def test_a_run_is_retired_once(api, caplog):
+    """A stalled thread Run is retired by the stall check, and again if its own
+    thread ever wakes: one 'ended' line, not two."""
+    caplog.set_level("INFO")
+    run = service._Run(SESSION, CAMERA)
+    api.service._runs[(SESSION, CAMERA)] = run
+    api.service._retire(run)
+    api.service._retire(run)
+    assert [r.getMessage() for r in caplog.records].count(f"Run on camera {CAMERA} ended") == 1
+
+
+class _SavingLoop:
+    """A healthy Run's loop: finishing it ends the Run, as a drained one does."""
+    def __init__(self, run, saves=True):
+        self.run, self.saves, self.finished, self._looks = run, saves, False, 0
+
+    @property
+    def looked(self):   # a healthy Run looks on: every read is further than the last
+        self._looks += 1
+        return self._looks
+
+    def finish(self):
+        self.finished = True
+        if self.saves:
+            self.run.ended.set()
+
+    def stop(self):
+        if self.saves:
+            self.run.ended.set()
+
+
+def _healthy_thread_run(svc, camera, saves=True):
+    run = service._Run(SESSION, camera)
+    run.loop, run.baseline_view = _SavingLoop(run, saves), {}
+    run.enter("watching")
+    svc._runs[(SESSION, camera)] = run
+    return run
+
+
+def test_the_service_saves_the_other_cameras_before_it_exits_for_a_stuck_thread(monkeypatch, api, caplog):
+    monkeypatch.setattr(service, "ENDING_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(service, "EXIT_DRAIN_S", 1)
+    api.service._exit_on_stall = True
+    exits = []
+    monkeypatch.setattr(service.os, "_exit", exits.append)
+    stuck = _healthy_thread_run(api.service, "stuck")
+    stuck.loop = _LoopOnADownStream()      # no `finish`: it never answers
+    stuck.loop.source = type("S", (), {"down": False})()   # its video arrives
+    good = _healthy_thread_run(api.service, "good")
+    slow = _healthy_thread_run(api.service, "slow", saves=False)   # cannot finish in time
+    try:
+        now = CLOCK
+        api.service.check_stalls(now)
+        api.service.check_stalls(now + service.STALL_AFTER_S)
+        assert exits == [3]
+        assert good.loop.finished and good.ended.is_set()
+        messages = [r.getMessage() for r in caplog.records if r.levelname == "CRITICAL"]
+        assert any("exiting to be restarted" in m and "stuck" in m for m in messages)
+        assert any("were saved" in m and "good" in m and "slow" in m for m in messages)
+        final = [r for r in caplog.records if "were saved" in r.getMessage()][0]
+        assert final.saved == ["good"] and final.not_saved == ["slow"]
+    finally:
+        api.service._runs.clear()
+        slow.ended.set()
+
+
+class _Conn:
+    """A Pipe's end: what is sent is kept; `recv` answers `ended` at once."""
+    def __init__(self):
+        self.sent = []
+
+    def send(self, message):
+        self.sent.append(message)
+
+    def poll(self, timeout=None):
+        return True
+
+    def recv(self):
+        return ("ended",)
+
+    def close(self):
+        pass
+
+
+def test_a_process_run_that_is_draining_its_posts_is_not_killed_at_the_kill_time(api, monkeypatch):
+    """Done looking and posting what it confirmed has the publisher's own limit:
+    a kill at KILL_AFTER_S would lose those holes while `end` still answered."""
+    monkeypatch.setattr(service, "KILL_AFTER_S", 0.2)
+    monkeypatch.setattr(service, "ENDING_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(webapp, "DRAIN_TIMEOUT_S", 5)
+    results = {}
+    for draining in (True, False):
+        run = _watching_process_run(api.service, "t0")
+        run.remote._conn, run.draining = _Conn(), draining
+        threading.Timer(0.8, run.ended.set).start()   # it drains for longer than the kill time
+        api.service._end(run)
+        results[draining] = run.process.killed
+        api.service._runs.clear()
+    assert results == {True: False, False: True}   # a hung one, not draining, is still killed
+
+
+def test_a_process_run_whose_end_came_before_its_process_started_is_stopped_once_it_has(api, monkeypatch):
+    parent, child = _Conn(), _Conn()
+    started = []
+
+    class _Context:
+        def Pipe(self):
+            return parent, child
+
+        def Process(self, **kw):
+            process = _Process()
+            process.start = lambda: started.append(list(parent.sent))   # what was sent before it started
+            process.join = lambda timeout=None: None
+            process.is_alive = lambda: False
+            return process
+
+    monkeypatch.setattr(service.multiprocessing, "get_context", lambda method: _Context())
+    run = service._Run(SESSION, CAMERA)
+    run.enter("ending")   # `end` arrived while the Run was still being set up
+    api.service._runs[(SESSION, CAMERA)] = run
+    api.service._work_process(run, URL)
+    assert parent.sent == ["stop"]   # told to stop, so it does not go on to watch with no one waiting
+    assert run.ended.is_set()
+
+
+def test_a_process_run_whose_process_cannot_start_is_retired_not_left_registered(api, monkeypatch):
+    class _Context:
+        def Pipe(self):
+            return _Conn(), _Conn()
+
+        def Process(self, **kw):
+            process = _Process()
+
+            def start():
+                raise OSError("cannot allocate another process")
+
+            def join(timeout=None):
+                raise AssertionError("can only join a started process")
+            process.start, process.join = start, join
+            return process
+
+    monkeypatch.setattr(service.multiprocessing, "get_context", lambda method: _Context())
+    run = service._Run(SESSION, CAMERA)
+    api.service._runs[(SESSION, CAMERA)] = run
+    api.service._work_process(run, URL)
+    assert run.ended.is_set() and (SESSION, CAMERA) not in api.service._runs
+    assert "cannot allocate" in run.error
+
+
+def test_a_process_run_whose_pipe_cannot_be_made_is_retired_too(api, monkeypatch):
+    class _Context:
+        def Pipe(self):
+            raise OSError("too many open files")
+
+    monkeypatch.setattr(service.multiprocessing, "get_context", lambda method: _Context())
+    run = service._Run(SESSION, CAMERA)
+    api.service._runs[(SESSION, CAMERA)] = run
+    api.service._work_process(run, URL)
+    assert run.ended.is_set() and (SESSION, CAMERA) not in api.service._runs
+    assert "too many open files" in run.error
+
+
+class _EndlessConn(_Conn):
+    """The service's end of the Pipe: nothing is ever sent to the Run."""
+    def __init__(self):
+        super().__init__()
+        self._never = threading.Event()
+
+    def recv(self):
+        self._never.wait()
+
+
+def test_a_process_run_sends_where_it_last_looked_before_it_ends(monkeypatch):
+    """Its last Look may fall between two reports: `end` still answers that one."""
+    from detection import run_process
+
+    class _Loop:
+        registered, looked, source = None, "first look", types.SimpleNamespace(down=False)
+
+    class _Publisher:
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def process(loop, _, publish, watching):
+        watching(None, [])
+        loop.looked = "last look"   # looked at once more, then the Stream ended
+
+    monkeypatch.setattr(run_process, "WATCHED_EVERY_S", 30)   # no report of its own falls in this test
+    monkeypatch.setattr(run_process.logs, "configure", lambda directory: None)
+    monkeypatch.setattr(nbh, "preset_capture_options", lambda: None)
+    monkeypatch.setattr(nbh, "load_model", lambda path: None)
+    monkeypatch.setattr(service, "warm", lambda model: "cpu")
+    monkeypatch.setattr(service, "_baseline_view", lambda *a: {})
+    monkeypatch.setattr(service, "_watched_of", lambda loop: {"registered": None, "looked_at": loop.looked})
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", staticmethod(lambda *a, **kw: _Loop()))
+    monkeypatch.setattr(nbh, "process", process)
+    monkeypatch.setattr(run_process.webapp, "WebAppPublisher", _Publisher)
+    conn = _EndlessConn()
+    run_process.main(conn, None, SESSION, CAMERA, URL, "http://backend", None)
+    watched = [m[1]["looked_at"] for m in conn.sent if m[0] == "watched"]
+    assert watched[-1] == "last look" and conn.sent[-1] == ("ended",)
+
+
+def test_a_process_run_that_is_draining_its_posts_is_not_judged_stalled_until_the_drain_limit(api):
+    run = _watching_process_run(api.service, "t0")
+    run.draining = CLOCK   # it finished looking, and posts what it confirmed
+    api.service.check_stalls(CLOCK)
+    api.service.check_stalls(CLOCK + service.STALL_AFTER_S * 3)
+    assert not run.process.killed   # no look in 30 s is not a stall now
+    api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1)
+    api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1 + service.STALL_AFTER_S)
+    assert run.process.killed   # a drain that never ends is still bounded
+    api.service._runs.clear()
+
+
+def test_a_process_run_whose_detection_fails_still_announces_that_it_is_draining(monkeypatch):
+    from detection import run_process
+
+    class _Loop:
+        registered, looked, source = None, "first look", types.SimpleNamespace(down=False)
+
+    class _Publisher:
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def process(loop, _, publish, watching):
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(run_process, "WATCHED_EVERY_S", 30)
+    monkeypatch.setattr(run_process.logs, "configure", lambda directory: None)
+    monkeypatch.setattr(nbh, "preset_capture_options", lambda: None)
+    monkeypatch.setattr(nbh, "load_model", lambda path: None)
+    monkeypatch.setattr(service, "warm", lambda model: "cpu")
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", staticmethod(lambda *a, **kw: _Loop()))
+    monkeypatch.setattr(nbh, "process", process)
+    monkeypatch.setattr(run_process.webapp, "WebAppPublisher", _Publisher)
+    conn = _EndlessConn()
+    run_process.main(conn, None, SESSION, CAMERA, URL, "http://backend", None)
+    kinds = [m[0] for m in conn.sent]
+    assert kinds.index("draining") < kinds.index("error") < kinds.index("ended")
+
+
+def test_a_thread_run_whose_detection_fails_is_draining_while_its_posts_drain(api, monkeypatch):
+    run = service._Run(SESSION, CAMERA)
+    seen = {}
+
+    class _Publisher:
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            seen["draining"] = run.draining   # the drain happens here
+            return False
+
+    def process(loop, _, publish, watching):
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(nbh.RegisteredFrames, "open", staticmethod(lambda *a, **kw: types.SimpleNamespace(stop=lambda: None)))
+    monkeypatch.setattr(nbh, "process", process)
+    monkeypatch.setattr(webapp, "WebAppPublisher", _Publisher)
+    api.service._runs[(SESSION, CAMERA)] = run
+    api.service._work(run, URL)
+    assert seen["draining"]   # so the stall check leaves it to the publisher's own limit
+
+
+def test_a_run_whose_camera_comes_back_after_a_long_outage_gets_a_fresh_stall_time(api):
+    """Back means video again, not yet a Look: the outage is not counted as the Run being stuck."""
+    run = _watching_process_run(api.service, "t0")
+    api.service.check_stalls(CLOCK)
+    run.remote.down = True
+    api.service.check_stalls(CLOCK + 1)
+    api.service.check_stalls(CLOCK + 50)               # down 50 s: waited for
+    run.remote.down = False                              # video again, no Look yet
+    api.service.check_stalls(CLOCK + 51)
+    api.service.check_stalls(CLOCK + 51 + service.STALL_AFTER_S - 1)
+    assert not run.process.killed
+    api.service.check_stalls(CLOCK + 51 + service.STALL_AFTER_S + 1)
+    assert run.process.killed                            # video flows and it still looks at nothing: stuck
+    api.service._runs.clear()

@@ -44,11 +44,36 @@ def move_up_after(db: DBSession, session_id: uuid.UUID, camera_alias: str | None
     ).update({"rank": BulletHole.rank - 1}, synchronize_session=False)
 
 
-def add(db: DBSession, bullet: BulletHole) -> BulletHole:
+def renumber_board(db: DBSession, session_id: uuid.UUID, camera_alias: str | None) -> int:
+    """Ranks this board's non-deleted Bullet Holes 1..n by when each was first
+    seen (`first_seen_at`), the older rank breaking a tie, so a shot confirmed
+    late but seen early takes its place among the earlier ones. Only holes whose
+    rank changes are written. Answers how many changed. Committed with the next save."""
+    holes = db.query(BulletHole).filter(
+        BulletHole.session_id == session_id,
+        BulletHole.camera_alias.is_(camera_alias) if camera_alias is None else BulletHole.camera_alias == camera_alias,
+        BulletHole.deleted_at.is_(None),
+    # populate_existing: read the ranks as stored, not as a hole already loaded
+    # in this session remembers them (move_up_after updates in bulk)
+    ).order_by(BulletHole.first_seen_at, BulletHole.rank).populate_existing().all()
+    changed = 0
+    for rank, hole in enumerate(holes, start=1):
+        if hole.rank != rank:
+            hole.rank = rank
+            changed += 1
+    return changed
+
+
+def add_in_time_order(db: DBSession, bullet: BulletHole) -> tuple[BulletHole, int]:
+    """Stores the hole, then renumbers its board by `first_seen_at`, in one
+    commit: no reader sees it ranked before the others have moved. Answers the
+    hole and how many holes (it included) have a new rank."""
     db.add(bullet)
+    db.flush()
+    changed = renumber_board(db, bullet.session_id, bullet.camera_alias)
     db.commit()
     db.refresh(bullet)
-    return bullet
+    return bullet, changed
 
 
 def save(db: DBSession) -> None:

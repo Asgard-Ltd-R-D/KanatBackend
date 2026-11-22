@@ -36,14 +36,15 @@ def stored(monkeypatch):
     """The Bullet Holes stored, in order."""
     rows = []
 
-    def add(db, bullet):
+    def add_in_time_order(db, bullet):
+        # The time ordering itself is tested on a real database (test_bullet_ranking.py)
         bullet.created_at = NOW
         rows.append(bullet)
-        return bullet
+        return bullet, 0
 
     monkeypatch.setattr(bullets_repo, "find_by_idempotency_key", lambda db, session_id, key: None)
     monkeypatch.setattr(bullets_repo, "count_active", lambda db, session_id, camera_alias: len(rows))
-    monkeypatch.setattr(bullets_repo, "add", add)
+    monkeypatch.setattr(bullets_repo, "add_in_time_order", add_in_time_order)
     return rows
 
 

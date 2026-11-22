@@ -241,14 +241,14 @@ def test_a_bullet_hole_posted_during_the_end_window_is_stored(client, db, detect
     # posts what persisted meanwhile
     stored = []
 
-    def add(db, bullet):
+    def add_in_time_order(db, bullet):
         bullet.created_at = NOW
         stored.append(bullet)
-        return bullet
+        return bullet, 0
 
     monkeypatch.setattr(bullets_repo, "find_by_idempotency_key", lambda db, session_id, key: None)
     monkeypatch.setattr(bullets_repo, "count_active", lambda db, session_id, camera_alias: len(stored))
-    monkeypatch.setattr(bullets_repo, "add", add)
+    monkeypatch.setattr(bullets_repo, "add_in_time_order", add_in_time_order)
     session_id = start_session(client, add_camera(db))
     posted = []
     detection.on_end = lambda sid, camera: posted.append(client.post(f"/sessions/{sid}/bullets", json={

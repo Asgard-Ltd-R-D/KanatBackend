@@ -40,6 +40,38 @@ def test_a_log_line_is_json_with_the_calls_own_fields(new_lines):
     assert "request_id" not in line                  # not logged during a request
 
 
+def test_a_line_with_a_session_id_also_carries_the_sessions_name(new_lines):
+    from app.core.logs import remember_session
+
+    session_id = uuid.uuid4()
+    remember_session(session_id, "Range A")
+    logging.getLogger("app.services.detection_sync").info("Run started", extra={"session_id": session_id})
+    # A name the call gave itself is kept, and an unknown Session gets none
+    logging.getLogger("app.test").info("Own name", extra={"session_id": session_id, "session_name": "Other"})
+    logging.getLogger("app.test").info("Unknown", extra={"session_id": uuid.uuid4()})
+
+    started, own, unknown = new_lines()
+    assert started["session_name"] == "Range A"
+    assert own["session_name"] == "Other"
+    assert "session_name" not in unknown
+
+
+def test_a_session_saved_or_renamed_is_remembered_for_the_log():
+    from app.core.logs import _session_names, forget_session
+    from app.models import Session
+
+    session = Session(id=uuid.uuid4(), name="Range B", status="active", started_at=datetime.now(timezone.utc))
+    from app.models import session as session_model
+
+    session_model._saved(None, None, session)
+    assert _session_names[str(session.id)] == "Range B"
+    session.name = "Range C"
+    session_model._saved(None, None, session)
+    assert _session_names[str(session.id)] == "Range C"
+    forget_session(session.id)
+    assert str(session.id) not in _session_names
+
+
 def test_the_fonts_libraries_chatter_is_not_logged(new_lines):
     # WeasyPrint's fontTools narrates every table it drops, dozens of lines a PDF.
     # Set up as the app does at start: another test's alembic run (fileConfig) may

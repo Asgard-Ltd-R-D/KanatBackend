@@ -13,7 +13,9 @@ Logs tab shows:
 
 A field may not take the name of a LogRecord attribute (`name`, `message`,
 `args`, `module`...): use e.g. `session_name`. Every line logged while a request
-is handled also carries its `request_id` (core/request_log.py).
+is handled also carries its `request_id` (core/request_log.py). A line with a
+`session_id` also gets the Session's `session_name` (see remember_session), so
+searching a Session's name in the Logs tab finds everything about it.
 """
 import contextvars
 import json
@@ -90,6 +92,33 @@ class ConsoleFormatter(logging.Formatter):
         return line
 
 
+# Session names by id, so a line that names a Session by its `session_id` also
+# says its name (`session_name`) and can be found by it. Kept current by the
+# Session model (models/session.py) whenever a Session is loaded, created or
+# renamed; never asked of the database from inside a log call.
+_session_names: dict[str, str] = {}
+
+
+def remember_session(session_id, name: str) -> None:
+    _session_names[str(session_id)] = name
+
+
+def forget_session(session_id) -> None:
+    _session_names.pop(str(session_id), None)
+
+
+class _SessionName(logging.Filter):
+    """Adds `session_name` to a record that has a `session_id` and no name yet."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        session_id = getattr(record, "session_id", None)
+        if session_id is not None and not hasattr(record, "session_name"):
+            name = _session_names.get(str(session_id))
+            if name is not None:
+                record.session_name = name
+        return True
+
+
 # Libraries whose INFO/DEBUG lines are not about KANAT: fontTools narrates every
 # table it drops while WeasyPrint embeds a font in a PDF (dozens of lines a report)
 _QUIET_LIBRARIES = ("fontTools", "weasyprint", "PIL", "multipart", "asyncio")
@@ -113,8 +142,12 @@ def configure_logging() -> None:
         root.removeHandler(handler)
     root.setLevel(settings.log_level.upper())
 
+    # On the handlers, not the root logger: a logger's filters skip the records of
+    # its child loggers, a handler's see every one
+    session_name = _SessionName()
     console = logging.StreamHandler()
     console.setFormatter(ConsoleFormatter())
+    console.addFilter(session_name)
     root.addHandler(console)
 
     directory = log_dir()
@@ -124,6 +157,7 @@ def configure_logging() -> None:
             directory / LOG_FILE, when="midnight", backupCount=BACKUP_DAYS, encoding="utf-8", utc=True
         )
         file.setFormatter(JsonFormatter())
+        file.addFilter(session_name)
         root.addHandler(file)
     except OSError as e:
         logging.getLogger(__name__).warning("Logging to %s failed, console only: %s", directory, e)

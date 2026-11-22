@@ -4,10 +4,11 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Index, String, Uuid, text
+from sqlalchemy import CheckConstraint, Index, String, Uuid, event, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.logs import forget_session, remember_session
 from app.core.types import UtcDateTime
 
 if TYPE_CHECKING:
@@ -58,3 +59,26 @@ class Session(Base):
         cascade="all, delete-orphan",
         order_by="Run.taken_at",
     )
+
+
+# Keeps the log's id -> name list (core/logs.py) current, so every line that names
+# a Session by its id can say its name too
+@event.listens_for(Session, "load")
+def _loaded(target: Session, context) -> None:
+    remember_session(target.id, target.name)
+
+
+@event.listens_for(Session, "refresh")
+def _refreshed(target: Session, context, attrs) -> None:
+    remember_session(target.id, target.name)
+
+
+@event.listens_for(Session, "after_insert")
+@event.listens_for(Session, "after_update")
+def _saved(mapper, connection, target: Session) -> None:
+    remember_session(target.id, target.name)
+
+
+@event.listens_for(Session, "after_delete")
+def _deleted(mapper, connection, target: Session) -> None:
+    forget_session(target.id)

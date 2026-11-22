@@ -20,6 +20,9 @@ function Write-Utf8($path, $text) {
 # Asked for by path, so nothing of the PC's own (another Python, another
 # MediaMTX) is touched.
 function Stop-KanatProcesses([string]$Root, [switch]$IncludeApp) {
+    # In PowerShell a single-quoted '\' is ONE backslash (no escaping there), so
+    # these read C:\Program Files\KANAT\ and ...\app\, as Win32_Process.ExecutablePath
+    # spells a path: with no folder separator doubled
     $prefix = $Root.TrimEnd('\') + '\'
     $appPrefix = $prefix + 'app\'
     $found = @(Get-CimInstance Win32_Process | Where-Object {

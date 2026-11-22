@@ -1,7 +1,7 @@
 """Exporting a Session's results (routers/export.py): refused while it is still
 active, so no one hands out a report of a live Session."""
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -67,6 +67,19 @@ def test_the_pdf_report_html_has_the_session_times_each_bullets_timestamp_and_mp
     assert " UTC" not in html and "(UTC)" not in html and ">UTC<" not in html
     # MPI (Group statistics) is present and labelled
     assert "Group statistics (MPI)" in html and "MPI X (mm)" in html
+
+
+@pytest.mark.parametrize("seconds, expected", [
+    (724, "12m 4s"),        # under an hour: minutes and seconds
+    (3599, "59m 59s"),
+    (3600, "1h 0m 0s"),     # from an hour on: hours, never 60m+
+    (7509, "2h 5m 9s"),
+])
+def test_the_pdf_duration_shows_hours_from_the_first_hour_on(seconds, expected):
+    started = datetime(2026, 11, 16, 9, 0, 0, tzinfo=timezone.utc)
+    session = SimpleNamespace(started_at=started, ended_at=started + timedelta(seconds=seconds))
+
+    assert export_svc._session_duration(session) == expected
 
 
 def test_the_pdf_report_shows_the_target_picture_with_a_marker_per_bullet():

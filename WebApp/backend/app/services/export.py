@@ -294,10 +294,12 @@ def _local_clock(moment: datetime) -> str:
 
 def _session_duration(session: Session) -> str:
     if session.ended_at and session.started_at:
-        delta = session.ended_at - session.started_at
-        total_s = int(delta.total_seconds())
-        m, s = divmod(total_s, 60)
-        return f"{m}m {s:02d}s"
+        # As the app writes it (frontend utils/format.ts): 12m 4s, and from an
+        # hour on 1h 5m 4s, never 65m 4s
+        total_s = max(0, int((session.ended_at - session.started_at).total_seconds()))
+        h, rest = divmod(total_s, 3600)
+        m, s = divmod(rest, 60)
+        return f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
     return "—"
 
 

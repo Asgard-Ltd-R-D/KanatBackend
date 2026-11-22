@@ -14,14 +14,16 @@ from app.schemas.bullet_hole import BulletCreate
 log = logging.getLogger(__name__)
 
 
-def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> BulletHole:
+def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> tuple[BulletHole, int]:
+    """The stored hole, and how many OTHER holes of its board changed rank because
+    it was seen before them (0 for one that is the newest, or a retried one)."""
     # Serialized (db_write), so two bullets reported at once cannot read the same
     # count and take the same rank: on SQLite get_for_update does not lock
     with db_write:
         return _create_bullet(session_id, body, db)
 
 
-def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> BulletHole:
+def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> tuple[BulletHole, int]:
     session = session_repo.get_for_update(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -53,13 +55,16 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
                 "Bullet Hole reported again, the stored one kept",
                 extra={"session_id": session_id, "bullet_id": dup.id, "rank": dup.rank, "source": dup.source},
             )
-            return dup
+            return dup, 0
 
+    # A manual hole is stamped with the moment the backend stores it, not a time
+    # the client sends: it is the newest on its board, so it ranks last
+    first_seen_at = datetime.now(timezone.utc) if body.source == "manual" else body.first_seen_at
     bullet = BulletHole(
         id=uuid.uuid4(),
         session_id=session_id,
         camera_alias=body.camera,
-        first_seen_at=body.first_seen_at,
+        first_seen_at=first_seen_at,
         position_x=body.position.x,
         position_y=body.position.y,
         target_index=body.target_index,
@@ -67,9 +72,11 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
         y_mm=body.y_mm,
         source=body.source,
         idempotency_key=body.idempotency_key,
+        # Provisionally last, so a tie in time keeps the earlier arrival first; the
+        # board is then ranked by when each hole was first seen
         rank=repo.count_active(db, session_id, body.camera) + 1,
     )
-    bullet = repo.add(db, bullet)
+    bullet, renumbered = repo.add_in_time_order(db, bullet)
     delay_s = (datetime.now(timezone.utc) - bullet.first_seen_at).total_seconds()
     log.info(
         "Bullet Hole #%s received from %s", bullet.rank, "the model" if bullet.source == "model" else "the operator",
@@ -79,9 +86,12 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
             "x_mm": bullet.x_mm, "y_mm": bullet.y_mm, "first_seen_at": bullet.first_seen_at,
             # From the model seeing it to the backend storing it
             "delay_s": round(delay_s, 3),
+            # Other holes whose rank changed: some when it was seen before holes
+            # already stored
+            "renumbered": renumbered,
         },
     )
-    return bullet
+    return bullet, renumbered
 
 
 def delete_bullet(session_id: uuid.UUID, bullet_id: uuid.UUID, db: DBSession) -> None:

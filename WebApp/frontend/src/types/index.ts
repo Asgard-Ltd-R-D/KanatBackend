@@ -125,7 +125,7 @@ export interface WhepSession {
 
 // Pushed by the backend as Server-Sent Events from /sessions/{id}/live
 export type LiveEvent =
-  | { type: 'bullet_created'; bullet: BulletHole }
+  | { type: 'bullet_created'; bullet: BulletHole; renumbered?: boolean } // renumbered: it moved other holes of its board to a new rank
   | { type: 'bullet_deleted'; bullet_id: string }
   | { type: 'session_updated'; name: string; status: Session['status']; ended_at: string | null }
   | { type: 'detection_updated'; camera_alias: string; detection: Detection } // the board named by camera_alias

@@ -14,11 +14,12 @@ router = APIRouter(prefix="/sessions/{session_id}/bullets", tags=["bullets"])
 
 @router.post("", response_model=BulletHoleResponse, status_code=201)
 def report_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession = Depends(get_db)):
-    bullet = svc.create_bullet(session_id, body, db)
+    bullet, renumbered = svc.create_bullet(session_id, body, db)
     # A retried POST returns the existing bullet; publishing it again is harmless,
     # the frontend keys bullets by id
     hub.publish_from_thread(
-        session_id, BulletCreatedEvent(bullet=BulletHoleInSession.model_validate(bullet))
+        session_id,
+        BulletCreatedEvent(bullet=BulletHoleInSession.model_validate(bullet), renumbered=renumbered > 0),
     )
     return bullet
 

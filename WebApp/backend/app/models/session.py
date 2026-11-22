@@ -40,14 +40,14 @@ class Session(Base):
         "BulletHole",
         back_populates="session",
         cascade="all, delete-orphan",
-        order_by="BulletHole.first_seen_at",
+        order_by="BulletHole.first_seen_at, BulletHole.rank",
     )
 
     active_bullet_holes: Mapped[list["BulletHole"]] = relationship(  # type: ignore[name-defined]
         "BulletHole",
         primaryjoin="and_(Session.id == BulletHole.session_id, BulletHole.deleted_at == None)",
         foreign_keys="[BulletHole.session_id]",
-        order_by="BulletHole.first_seen_at",
+        order_by="BulletHole.first_seen_at, BulletHole.rank",
         viewonly=True,
         overlaps="bullet_holes,session",
     )

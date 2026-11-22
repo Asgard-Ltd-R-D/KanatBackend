@@ -15,6 +15,9 @@ from app.schemas.session import Detection
 class BulletCreatedEvent(BaseModel):
     type: Literal["bullet_created"] = "bullet_created"
     bullet: BulletHoleInSession
+    # Other holes of its board moved to a new rank because it was seen before them:
+    # a frontend that only added this hole would show their old ranks
+    renumbered: bool = False
 
 
 class BulletDeletedEvent(BaseModel):

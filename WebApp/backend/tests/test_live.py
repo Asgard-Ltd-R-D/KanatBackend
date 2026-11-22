@@ -83,16 +83,27 @@ BULLET_BODY = {
 
 def test_a_reported_bullet_is_published(client, subscribed, monkeypatch):
     bullet = make_bullet()
-    monkeypatch.setattr(bullet_svc, "create_bullet", lambda session_id, body, db: bullet)
+    monkeypatch.setattr(bullet_svc, "create_bullet", lambda session_id, body, db: (bullet, 0))
 
     assert client.post(f"/sessions/{SESSION_ID}/bullets", json=BULLET_BODY).status_code == 201
     event = next_event(subscribed)
 
     assert event["type"] == "bullet_created"
+    assert event["renumbered"] is False   # the newest hole moved none of the others
     assert event["bullet"]["id"] == str(bullet.id)
     assert event["bullet"]["rank"] == 1
     assert event["bullet"]["x_mm"] == 1.5
     assert event["bullet"]["camera_alias"] == "lane1"
+
+
+def test_a_bullet_that_moved_other_holes_says_so_in_its_event(client, subscribed, monkeypatch):
+    # A frontend that only added this hole would show the others' old ranks
+    bullet = make_bullet()
+    monkeypatch.setattr(bullet_svc, "create_bullet", lambda session_id, body, db: (bullet, 2))
+
+    assert client.post(f"/sessions/{SESSION_ID}/bullets", json=BULLET_BODY).status_code == 201
+
+    assert next_event(subscribed)["renumbered"] is True
 
 
 def test_a_deleted_bullet_is_published(client, subscribed, monkeypatch):

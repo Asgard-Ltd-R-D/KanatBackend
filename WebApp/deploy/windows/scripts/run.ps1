@@ -37,9 +37,11 @@ if ((Test-Path $launcherLog) -and (Get-Item $launcherLog).Length -gt 5MB) {
     Move-Item -Force $launcherLog "$launcherLog.prev"
 }
 
-# One component at a time: what is left of a previous run (its task stopped,
-# its processes not) would hold the port
-Stop-KanatProcesses $Root
+# One copy of this component: what is left of a previous run (its task stopped,
+# its processes not) would hold the port. Only this component's folder: the other
+# two tasks start at the same time, and what they run is not this task's to end
+$ownFolder = @{ mediamtx = "video"; backend = "backend"; detection = "detection" }[$Component]
+Stop-KanatProcesses $Root -Only $ownFolder
 
 # The command this component runs: the program, its arguments, its folder and
 # its settings (environment variables, which the child inherits)

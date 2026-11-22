@@ -17,14 +17,19 @@ function Write-Utf8($path, $text) {
 # Ends every process that runs from KANAT's install folder: both Python
 # environments (the backend, the Detection Service, its supervisor and every
 # Run's process) and MediaMTX. The app (KANAT.exe) too, with -IncludeApp.
+# With -Only <folder> (video, backend or detection), just the processes under that
+# one folder: what a launcher asks for its own component, so that starting one
+# task does not kill what the other two are running. The installer and the
+# uninstaller ask for the whole install.
 # Asked for by path, so nothing of the PC's own (another Python, another
 # MediaMTX) is touched.
-function Stop-KanatProcesses([string]$Root, [switch]$IncludeApp) {
+function Stop-KanatProcesses([string]$Root, [switch]$IncludeApp, [string]$Only) {
     # In PowerShell a single-quoted '\' is ONE backslash (no escaping there), so
     # these read C:\Program Files\KANAT\ and ...\app\, as Win32_Process.ExecutablePath
     # spells a path: with no folder separator doubled
-    $prefix = $Root.TrimEnd('\') + '\'
-    $appPrefix = $prefix + 'app\'
+    $base = $Root.TrimEnd('\') + '\'
+    $prefix = if ($Only) { $base + $Only.Trim('\') + '\' } else { $base }
+    $appPrefix = $base + 'app\'
     $found = @(Get-CimInstance Win32_Process | Where-Object {
         $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and
         ($IncludeApp -or -not $_.ExecutablePath.StartsWith($appPrefix, [StringComparison]::OrdinalIgnoreCase))

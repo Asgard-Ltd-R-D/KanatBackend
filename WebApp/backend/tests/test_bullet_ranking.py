@@ -36,13 +36,18 @@ def make_session(db, status="active"):
     return session
 
 
-def shoot(db, session, seconds, camera="lane1", source="model", **fields):
-    """A hole first seen `seconds` after T0, reported to the backend now."""
+def create(db, session, seconds, camera="lane1", source="model", **fields):
+    """A hole first seen `seconds` after T0, reported to the backend now: the hole
+    and how many OTHER holes of its board moved to a new rank."""
     body = BulletCreate(
         version="v2", first_seen_at=T0 + timedelta(seconds=seconds), position={"x": 1.0, "y": 2.0},
         camera=camera, source=source, **fields,
     )
     return svc.create_bullet(session.id, body, db)
+
+
+def shoot(db, session, seconds, **kwargs):
+    return create(db, session, seconds, **kwargs)[0]
 
 
 def ranks(db, session, camera="lane1"):
@@ -163,6 +168,27 @@ def test_ranks_stored_out_of_time_order_before_this_change_are_put_right_by_the_
     shoot(db, session, 30)
 
     assert ranks(db, session) == [(10, 1), (20, 2), (30, 3)]
+
+
+def test_a_hole_says_how_many_other_holes_it_moved(db):
+    session = make_session(db)
+    assert create(db, session, 10)[1] == 0     # the first on its board
+    assert create(db, session, 15)[1] == 0     # the newest: nothing moves
+    assert create(db, session, 5)[1] == 2      # seen before both: both move down
+    assert create(db, session, 20)[1] == 0
+    assert create(db, session, 12)[1] == 2     # between: only the two after it (15 and 20) move down
+    assert ranks(db, session) == [(5, 1), (10, 2), (12, 3), (15, 4), (20, 5)]
+
+
+def test_a_manual_hole_a_retried_one_and_a_hole_on_another_board_move_no_other_hole(db):
+    session = make_session(db)
+    create(db, session, 5, idempotency_key="k1")
+    create(db, session, 10, camera="lane2")
+    assert create(db, session, 3, camera="lane2")[1] == 1             # lane2's own later hole moves
+    assert create(db, session, 5, idempotency_key="k1")[1] == 0       # a retry changes nothing
+    session.status = "completed"
+    db.commit()
+    assert create(db, session, 0, source="manual")[1] == 0            # stamped now: the newest
 
 
 def test_a_hole_reported_again_with_the_same_key_changes_no_rank(db):

@@ -14,14 +14,16 @@ from app.schemas.bullet_hole import BulletCreate
 log = logging.getLogger(__name__)
 
 
-def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> BulletHole:
+def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> tuple[BulletHole, int]:
+    """The stored hole, and how many OTHER holes of its board changed rank because
+    it was seen before them (0 for one that is the newest, or a retried one)."""
     # Serialized (db_write), so two bullets reported at once cannot read the same
     # count and take the same rank: on SQLite get_for_update does not lock
     with db_write:
         return _create_bullet(session_id, body, db)
 
 
-def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> BulletHole:
+def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> tuple[BulletHole, int]:
     session = session_repo.get_for_update(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -53,7 +55,7 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
                 "Bullet Hole reported again, the stored one kept",
                 extra={"session_id": session_id, "bullet_id": dup.id, "rank": dup.rank, "source": dup.source},
             )
-            return dup
+            return dup, 0
 
     # A manual hole is stamped with the moment the backend stores it, not a time
     # the client sends: it is the newest on its board, so it ranks last
@@ -84,12 +86,12 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
             "x_mm": bullet.x_mm, "y_mm": bullet.y_mm, "first_seen_at": bullet.first_seen_at,
             # From the model seeing it to the backend storing it
             "delay_s": round(delay_s, 3),
-            # Holes whose rank changed, this one included: more than 1 when it was
-            # seen before holes already stored
+            # Other holes whose rank changed: some when it was seen before holes
+            # already stored
             "renumbered": renumbered,
         },
     )
-    return bullet
+    return bullet, renumbered
 
 
 def delete_bullet(session_id: uuid.UUID, bullet_id: uuid.UUID, db: DBSession) -> None:

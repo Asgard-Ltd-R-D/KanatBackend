@@ -3,8 +3,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '../api/client'
 import { openSessionLive } from '../api/live'
 import { getSession } from '../api/sessions'
-import { BulletHole, LiveEvent, Session } from '../types'
+import { LiveEvent, Session } from '../types'
 import { log } from '../utils/logger'
+import { applyEvent } from '../utils/sessionEvents'
 
 // Retries after the backend refuses the stream because the Session is unknown,
 // before giving up. Any other refusal (the database down) is retried until it
@@ -16,46 +17,6 @@ const REFUSED_RETRY_MS = 1000
 const SILENCE_MS = 40_000
 // Wait between attempts to refetch the Session after one failed
 const RECONCILE_RETRY_MS = 2000
-
-function upsertBullet(session: Session, bullet: BulletHole): Session {
-  const others = (session.bullet_holes ?? []).filter((b) => b.id !== bullet.id)
-  return { ...session, bullet_holes: [...others, bullet].sort((a, b) => a.rank - b.rank) }
-}
-
-// As the backend does: the bullets after the deleted one move up a rank
-function removeBullet(session: Session, bulletId: string): Session {
-  const bullets = session.bullet_holes ?? []
-  const gone = bullets.find((b) => b.id === bulletId)
-  if (!gone) return session
-  return {
-    ...session,
-    bullet_holes: bullets
-      .filter((b) => b.id !== bulletId)
-      // Ranks run per board, so only the deleted bullet's own board moves up
-      .map((b) =>
-        b.camera_alias === gone.camera_alias && b.rank > gone.rank ? { ...b, rank: b.rank - 1 } : b
-      ),
-  }
-}
-
-function applyEvent(session: Session, event: LiveEvent): Session {
-  switch (event.type) {
-    case 'bullet_created':
-      return upsertBullet(session, event.bullet)
-    case 'bullet_deleted':
-      return removeBullet(session, event.bullet_id)
-    case 'session_updated':
-      return { ...session, name: event.name, status: event.status, ended_at: event.ended_at }
-    case 'detection_updated': {
-      // Upsert the board named by camera_alias, keeping the others
-      const others = (session.detections ?? []).filter(d => d.camera_alias !== event.camera_alias)
-      return { ...session, detections: [...others, { camera_alias: event.camera_alias, detection: event.detection }] }
-    }
-    case 'run_moved':
-      // The new place is carried by the refetch (reconcile) this event triggers
-      return session
-  }
-}
 
 // Keeps the ['session', id] query current from the backend's live events while
 // `enabled`. A dropped stream is reconnected by the browser itself, a silent or
@@ -119,8 +80,9 @@ export function useSessionLive(sessionId: string | undefined, enabled: boolean) 
         qc.setQueryData<Session>(key, (s) => s && applyEvent(s, event))
         // Then confirm with the backend, except for a plain new bullet. A fetch
         // already in flight may have read the database before this event and
-        // would overwrite it: reconcile restarts it.
-        if (event.type !== 'bullet_created' || qc.isFetching({ queryKey: key })) reconcile()
+        // would overwrite it: reconcile restarts it. A hole that moved the others'
+        // ranks (renumbered) is confirmed too, as a deleted one is.
+        if (event.type !== 'bullet_created' || event.renumbered || qc.isFetching({ queryKey: key })) reconcile()
         if (event.type === 'session_updated') qc.invalidateQueries({ queryKey: ['sessions'] })
       }
 

@@ -1,7 +1,7 @@
 """Exporting a Session's results (routers/export.py): refused while it is still
 active, so no one hands out a report of a live Session."""
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +21,17 @@ def test_exporting_an_active_session_is_refused(client, monkeypatch, fmt):
 
     assert res.status_code == 409
     assert "close it before exporting" in res.json()["detail"]
+
+
+def _moment(utc_text):
+    return datetime.strptime(utc_text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+
+def _local(utc_text):
+    """A UTC 'YYYY-MM-DD HH:MM:SS' as this PC's clock reads it."""
+    return _moment(utc_text).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
 
 
 def _hole(rank, alias, x, y, *, source="model", target_index=0, x_mm=1.0, y_mm=2.0, second=0):
@@ -47,13 +58,28 @@ def _completed_session():
 def test_the_pdf_report_html_has_the_session_times_each_bullets_timestamp_and_mpi():
     html = export_svc._render_report_html(_completed_session())
 
-    # The Session's own date and time, both ends, each under its readout label
+    # The Session's own date and time, both ends, each under its readout label,
+    # converted from the stored UTC to the PC's clock, with no zone label
     assert "Started" in html and "Ended" in html
-    assert "2026-11-16 09:30:00" in html and "2026-11-16 09:42:00" in html
+    assert _local("2026-11-16 09:30:00") in html and _local("2026-11-16 09:42:00") in html
     # A full timestamp (date and time) for a bullet, not only the time of day
-    assert "2026-11-16 09:30:05" in html
+    assert _local("2026-11-16 09:30:05") in html
+    assert " UTC" not in html and "(UTC)" not in html and ">UTC<" not in html
     # MPI (Group statistics) is present and labelled
     assert "Group statistics (MPI)" in html and "MPI X (mm)" in html
+
+
+@pytest.mark.parametrize("seconds, expected", [
+    (724, "12m 4s"),        # under an hour: minutes and seconds
+    (3599, "59m 59s"),
+    (3600, "1h 0m 0s"),     # from an hour on: hours, never 60m+
+    (7509, "2h 5m 9s"),
+])
+def test_the_pdf_duration_shows_hours_from_the_first_hour_on(seconds, expected):
+    started = datetime(2026, 11, 16, 9, 0, 0, tzinfo=timezone.utc)
+    session = SimpleNamespace(started_at=started, ended_at=started + timedelta(seconds=seconds))
+
+    assert export_svc._session_duration(session) == expected
 
 
 def test_the_pdf_report_shows_the_target_picture_with_a_marker_per_bullet():
@@ -65,6 +91,69 @@ def test_the_pdf_report_shows_the_target_picture_with_a_marker_per_bullet():
     assert html.count('class="hole"') == 3
     # lane1's first hole at (700, 500) maps to ~49.8% / ~44.6% of 1405 x 1120
     assert "left: 49.822%" in html and "top: 44.643%" in html
+
+
+def _decode_target():
+    import base64
+    import io
+
+    from PIL import Image
+
+    uri = export_svc._target_data_uri()
+    return Image.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1]))).convert("RGB")
+
+
+def test_the_target_picture_has_a_pure_white_background_not_a_noisy_near_white_one():
+    image = _decode_target()
+    colours = {colour for colour in image.get_flattened_data()}
+
+    # Corners (the paper) are pure white, and no near-white shade is left over: a PDF
+    # viewer draws such noise as faint lines in a grid over the picture
+    assert all(image.getpixel(p) == (255, 255, 255) for p in ((0, 0), (image.width - 1, 0), (0, image.height - 1)))
+    assert not [c for c in colours if min(c) >= export_svc._NEAR_WHITE and c != (255, 255, 255)]
+    # The ink is still there: the green rings of the target
+    assert any(g > r + 40 and g > b + 40 for r, g, b in colours)
+
+
+def test_only_near_white_palette_entries_are_made_white():
+    import io
+
+    from PIL import Image
+
+    image = Image.new("P", (3, 1))
+    palette = [253, 254, 254,   10, 120, 60,   236, 240, 250,   200, 200, 200] + [0] * (768 - 12)
+    image.putpalette(palette)
+    image.putdata([0, 1, 2])
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+
+    out = Image.open(io.BytesIO(export_svc._flat_white(buffer.getvalue())))
+    assert [out.convert("RGB").getpixel((x, 0)) for x in range(3)] == [(255, 255, 255), (10, 120, 60), (255, 255, 255)]
+    assert out.getpalette()[9:12] == [200, 200, 200]   # a light grey, not paper, is kept
+
+
+def test_a_picture_that_is_not_a_palette_image_is_embedded_as_it_came():
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (2, 2), (253, 253, 253)).save(buffer, format="PNG")
+
+    assert export_svc._flat_white(buffer.getvalue()) == buffer.getvalue()
+
+
+def test_the_pdf_has_no_hairline_dividers_under_the_title_and_paints_table_headers_as_one_row():
+    html = export_svc._render_report_html(_completed_session())
+    css = html.split("</style>")[0]
+
+    # The cards under the title are separated by space, not by lines
+    assert "border-left" not in css
+    assert ".readout { display: flex; margin-bottom: 26px; }" in css
+    # A header is one rectangle on its row, not a background per cell (a viewer draws a
+    # hairline where two painted cells meet)
+    assert "thead tr { background: #13283f; }" in css and ".shotlog thead tr { background: #f0f3f6; }" in css
+    assert "thead th { background" not in css
 
 
 def test_the_pdf_report_is_organised_by_board():
@@ -79,7 +168,7 @@ def test_the_pdf_shot_log_has_no_source_column():
 
     # Source was dropped from the shot log; the shot columns are # / time / X / Y
     assert "Source" not in html
-    assert "Detected at (UTC)" in html
+    assert "Detected at" in html
 
 
 def test_the_csv_drops_source_and_appends_the_mpi_table():
@@ -102,9 +191,41 @@ def test_the_excel_bullet_sheet_drops_source_and_mpi_lives_in_the_groups_sheet()
 
     bullet_headers = [c.value for c in wb["Bullet Holes"][1]]
     assert "Source" not in bullet_headers
-    assert bullet_headers == ["Board", "#", "Detected At (UTC)", "Position X", "Position Y"]
+    assert bullet_headers == ["Board", "#", "Detected At", "Position X", "Position Y"]
     # MPI is on the Groups sheet
     assert "MPI X (mm)" in [c.value for c in wb["Groups"][1]]
+
+
+def test_the_csv_times_are_on_the_pcs_clock_with_no_zone_label():
+    lines = export_svc.generate_csv(_completed_session()).splitlines()
+
+    # lane1's first hole was first seen 09:30:05 UTC; the CSV prints this PC's clock
+    assert lines[1] == f"lane1,1,{_local('2026-11-16 09:30:05')},700,500"
+
+
+def test_the_excel_times_are_on_the_pcs_clock_with_no_zone_label():
+    import io
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(export_svc.generate_excel(_completed_session())))
+    rows = [[c.value for c in row] for row in wb["Bullet Holes"].iter_rows(min_row=2)]
+
+    assert rows[0][:3] == ["lane1", 1, _local("2026-11-16 09:30:05")]
+
+
+def test_the_download_filename_dates_the_session_on_the_pcs_clock():
+    # Started 23:30 UTC on the 15th: on a PC east of UTC that is already the 16th
+    session = SimpleNamespace(name="Range A", started_at=datetime(2026, 11, 15, 23, 30, 0, tzinfo=timezone.utc))
+    expected = _local("2026-11-15 23:30:00")[:10].replace("-", "")
+
+    assert f"_{expected}.pdf" in export_svc._content_disposition(session, "pdf")
+
+
+def test_an_exported_time_stored_without_a_timezone_is_taken_as_utc():
+    naive = datetime(2026, 11, 16, 9, 30, 5)   # the database hands back UTC, whatever the driver does to it
+
+    assert export_svc._local_clock(naive) == _local("2026-11-16 09:30:05")
 
 
 def test_shots_outside_the_reference_artwork_are_still_plotted():

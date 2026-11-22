@@ -32,18 +32,17 @@ _REPORT_HTML = """<!DOCTYPE html>
 
     /* Masthead: steel band, the session name is the title, system mark at right */
     .masthead { display: flex; justify-content: space-between; align-items: flex-end;
-                background: #13283f; color: #fff; padding: 18px 20px 14px; border-radius: 3px; }
+                background: #13283f; color: #fff; padding: 18px 20px 14px; }
     .masthead h1 { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
     .m-sub { color: #9db3cc; font-size: 10px; margin-top: 3px; }
     .m-mark { text-align: right; }
     .m-sys { font-size: 13px; font-weight: 700; letter-spacing: 0.22em; }
     .m-gen { color: #9db3cc; font-size: 8.5px; margin-top: 3px; }
-    .accent { height: 2px; background: #c62a1b; margin-bottom: 20px; border-radius: 0 0 2px 2px; }
+    .accent { height: 2px; background: #c62a1b; margin-bottom: 20px; }
 
     /* Spec readout: label over value, hairline-separated, instrument style */
-    .readout { display: flex; border: 1px solid #e2e7ec; border-radius: 3px; margin-bottom: 26px; }
-    .ro { flex: 1; padding: 9px 14px; border-left: 1px solid #e2e7ec; }
-    .ro:first-child { border-left: 0; }
+    .readout { display: flex; margin-bottom: 26px; }
+    .ro { flex: 1; padding: 9px 14px 9px 0; }
     .ro-k { display: block; font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
             text-transform: uppercase; color: #8893a2; margin-bottom: 3px; }
     .ro-v { display: block; font-size: 14px; font-weight: 700; color: #13283f; }
@@ -64,10 +63,9 @@ _REPORT_HTML = """<!DOCTYPE html>
        board), the artwork is placed inside it, and shots sit on top. No clipping,
        so a shot on a neighbouring Target (outside the artwork) still shows. */
     .target { position: relative; height: 0; }
-    .target-img { position: absolute; display: block; border: 1px solid #cfd6de; border-radius: 2px; background: #fff; }
+    .target-img { position: absolute; display: block; }
     .hole { position: absolute; transform: translate(-50%, -50%); width: 16px; height: 16px;
             border-radius: 50%; background: #c62a1b; border: 1.5px solid #fff;
-            box-shadow: 0 0 0 0.5px rgba(19,40,63,0.35);
             color: #fff; font-size: 8.5px; font-weight: 700; line-height: 13px; text-align: center; }
 
     .stats { flex: 1; padding-top: 2px; }
@@ -77,18 +75,22 @@ _REPORT_HTML = """<!DOCTYPE html>
     .note b { color: #1a2433; font-weight: 700; }
 
     table { width: 100%; border-collapse: collapse; }
-    thead th { background: #13283f; color: #fff; text-align: left; font-weight: 600;
+    /* The header's colour is on the row, one rectangle: painted cell by cell, a viewer
+       draws a hairline between two neighbours */
+    thead tr { background: #13283f; }
+    thead th { color: #fff; text-align: left; font-weight: 600;
                font-size: 8.5px; letter-spacing: 0.04em; padding: 6px 9px; }
     tbody td { padding: 5px 9px; border-bottom: 1px solid #eef1f4; font-size: 10px; color: #27313f; }
     tbody tr:last-child td { border-bottom: 0; }
     .num { text-align: right; }
     th.num { text-align: right; }
-    .stats table { border: 1px solid #e2e7ec; border-radius: 3px; overflow: hidden; }
+    .stats table { border: 1px solid #e2e7ec; }
 
     .shotlog { margin-top: 4px; }
     .shotlog-title { font-size: 9px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
                      color: #8893a2; margin: 15px 0 6px; break-after: avoid; }
-    .shotlog thead th { background: #f0f3f6; color: #51607a; }
+    .shotlog thead tr { background: #f0f3f6; }
+    .shotlog thead th { color: #51607a; }
     .shotlog tbody td { color: #3a4454; }
   </style>
 </head>
@@ -106,8 +108,8 @@ _REPORT_HTML = """<!DOCTYPE html>
   <div class="accent"></div>
 
   <div class="readout">
-    <div class="ro"><span class="ro-k">Started</span><span class="ro-v">{{ started }} <small>UTC</small></span></div>
-    <div class="ro"><span class="ro-k">Ended</span><span class="ro-v">{% if ended %}{{ ended }} <small>UTC</small>{% else %}&mdash;{% endif %}</span></div>
+    <div class="ro"><span class="ro-k">Started</span><span class="ro-v">{{ started }}</span></div>
+    <div class="ro"><span class="ro-k">Ended</span><span class="ro-v">{% if ended %}{{ ended }}{% else %}&mdash;{% endif %}</span></div>
     <div class="ro"><span class="ro-k">Duration</span><span class="ro-v">{{ duration }}</span></div>
     <div class="ro"><span class="ro-k">Shots</span><span class="ro-v">{{ total_bullets }}</span></div>
     <div class="ro"><span class="ro-k">Boards</span><span class="ro-v">{{ boards | length }}</span></div>
@@ -175,7 +177,7 @@ _REPORT_HTML = """<!DOCTYPE html>
       <thead>
         <tr>
           <th class="num">#</th>
-          <th>Detected at (UTC)</th>
+          <th>Detected at</th>
           <th class="num">Position X</th>
           <th class="num">Position Y</th>
         </tr>
@@ -206,9 +208,37 @@ _TEMPLATE_H = 1120
 @lru_cache(maxsize=1)
 def _target_data_uri() -> str:
     """The Target picture as a data URI, so the PDF carries it with no file or
-    network lookup at render time. Cached: the same bytes for every report."""
+    network lookup at render time. Cached: the same bytes for every report.
+
+    The artwork's white is not white: its palette holds dozens of near-whites
+    (253, 254, 255...) in a noisy pattern, which a PDF viewer shows as faint lines
+    in a grid over the picture. Every near-white entry is made pure white."""
     data = (Path(__file__).resolve().parent.parent / "assets" / "target.png").read_bytes()
-    return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+    return "data:image/png;base64," + base64.b64encode(_flat_white(data)).decode("ascii")
+
+
+# A palette colour with every channel at or above this is paper, not ink
+_NEAR_WHITE = 235
+
+
+def _flat_white(png: bytes) -> bytes:
+    """`png` with its near-white palette entries made pure white; the bytes as they
+    came if it is not a palette image or the imaging library is missing."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return png
+    image = Image.open(io.BytesIO(png))
+    palette = image.getpalette()
+    if image.mode != "P" or palette is None:
+        return png
+    for i in range(0, len(palette) - 2, 3):
+        if min(palette[i:i + 3]) >= _NEAR_WHITE:
+            palette[i:i + 3] = [255, 255, 255]
+    image.putpalette(palette)
+    out = io.BytesIO()
+    image.save(out, format="PNG", optimize=True)
+    return out.getvalue()
 
 
 def _board_canvas(holes) -> dict:
@@ -254,7 +284,7 @@ def _boards_for_report(bullets) -> list[dict]:
             "canvas": canvas,
             "bullets": [{
                 "rank": b.rank,
-                "ts": b.first_seen_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "ts": _local_clock(b.first_seen_at),
                 "x": b.position_x,
                 "y": b.position_y,
                 "left": (b.position_x - canvas["min_x"]) / canvas["cw"] * 100,
@@ -266,24 +296,40 @@ def _boards_for_report(bullets) -> list[dict]:
 
 def _render_report_html(session: Session) -> str:
     bullets = _by_board_then_rank(session.bullet_holes)
+    now = _as_local(datetime.now(timezone.utc))
     return _jinja_env.from_string(_REPORT_HTML).render(
         session=session,
         total_bullets=len(bullets),
         boards=_boards_for_report(bullets),
         target_uri=_target_data_uri(),
-        started=session.started_at.strftime("%Y-%m-%d %H:%M:%S"),
-        ended=session.ended_at.strftime("%Y-%m-%d %H:%M:%S") if session.ended_at else None,
+        started=_local_clock(session.started_at),
+        ended=_local_clock(session.ended_at) if session.ended_at else None,
         duration=_session_duration(session),
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        generated_at=f"{now:%Y-%m-%d %H:%M}",
     )
+
+
+def _as_local(moment: datetime) -> datetime:
+    """A stored time (UTC) converted to the PC's time zone. The database keeps UTC;
+    every export shows the conversion, as the PC's own clock reads it."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone()
+
+
+def _local_clock(moment: datetime) -> str:
+    """The converted time, written YYYY-MM-DD HH:MM:SS: what every export prints."""
+    return _as_local(moment).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _session_duration(session: Session) -> str:
     if session.ended_at and session.started_at:
-        delta = session.ended_at - session.started_at
-        total_s = int(delta.total_seconds())
-        m, s = divmod(total_s, 60)
-        return f"{m}m {s:02d}s"
+        # As the app writes it (frontend utils/format.ts): 12m 4s, and from an
+        # hour on 1h 5m 4s, never 65m 4s
+        total_s = max(0, int((session.ended_at - session.started_at).total_seconds()))
+        h, rest = divmod(total_s, 3600)
+        m, s = divmod(rest, 60)
+        return f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
     return "—"
 
 
@@ -295,7 +341,7 @@ def _ascii_slug(name: str) -> str:
 
 
 def _content_disposition(session: Session, ext: str) -> str:
-    date_str = session.started_at.strftime("%Y%m%d")
+    date_str = _as_local(session.started_at).strftime("%Y%m%d")
     fallback = f"session_{_ascii_slug(session.name)}_{date_str}.{ext}"
     utf8_name = f"session_{session.name.replace(' ', '_')}_{date_str}.{ext}"
     encoded = urllib.parse.quote(utf8_name, safe="-._~")
@@ -332,7 +378,7 @@ def generate_csv(session: Session) -> str:
         writer.writerow([
             b.camera_alias or "",
             b.rank,
-            b.first_seen_at.isoformat(),
+            _local_clock(b.first_seen_at),
             b.position_x,
             b.position_y,
         ])
@@ -370,13 +416,13 @@ def generate_excel(session: Session) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Bullet Holes"
-    _append_header(ws, ["Board", "#", "Detected At (UTC)", "Position X", "Position Y"])
+    _append_header(ws, ["Board", "#", "Detected At", "Position X", "Position Y"])
 
     for b in bullets:
         ws.append([
             b.camera_alias or "—",
             b.rank,
-            b.first_seen_at.strftime("%Y-%m-%d %H:%M:%S"),
+            _local_clock(b.first_seen_at),
             b.position_x,
             b.position_y,
         ])

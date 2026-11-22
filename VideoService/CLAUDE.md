@@ -16,4 +16,4 @@ MediaMTX (binary not committed). MediaMTX reads each camera's RTP multicast dire
 - **The `run_record` scripts are the earlier project's**, kept for other uses. If you edit them, keep the two equivalent (same GStreamer pipeline, parameters and defaults); `run_record.ps1` targets Windows PowerShell 5.1 and has CRLF line endings, `run_record.sh` has LF (`.gitattributes`).
 - **Ports bound to 127.0.0.1 stay local.** On Windows, the installer also blocks `mediamtx.exe` from the network; the containers reach it through `host.docker.internal`.
 - **MediaMTX forgets the cameras when it restarts**; the backend re-adds them on its next sync.
-- **The MediaMTX version** is pinned in `WebApp/deploy/windows/build-bundle.sh`; check its release notes before changing config keys.
+- **The MediaMTX version** is pinned in `WebApp/deploy/windows/build-installer.ps1`; check its release notes before changing config keys.

@@ -1,31 +1,36 @@
-# Windows offline install
+# Windows installer
 
-The bundle that installs KANAT on an offline Windows 10 22H2 (build 19045+) or 11 PC. `README.md` is the operator's guide.
+The installers that put KANAT on a Windows 10 22H2 (build 19045+) or 11 PC, with no internet and no Docker. `README.md` is the operator's guide.
 
 | File | What |
 |---|---|
-| `build-bundle.sh` | Runs on the Mac. Downloads the pinned installers (checked against their SHA-256), builds the backend and detection images for `linux/amd64`, saves the base images, builds the app's installer, copies the app files, writes `SHA256SUMS.txt`, and zips it all into `~/KanatBundle/KANAT-<version>{/,.zip}`. CPU-only by default; `KANAT_GPU=1` adds the CUDA image (+4 GB). |
-| `install.ps1` | Runs on the PC as Administrator: WSL 2, Docker Desktop, the files to `C:\Kanat`, `.env`, `kanat-config.json`, firewall, multicast route, power, images, `docker compose up`, the "KANAT MediaMTX" task, the app, and a health check. Safe to run again: it skips what's done and keeps `.env`, data and logs. |
-| `README.md` | Requirements, install, what it changes, update, troubleshooting. |
+| `build-installer.ps1` | Runs on a Windows PC. Checks the build's inputs (Inno Setup, MediaMTX against its pinned SHA-256, the GTK3 runtime, the model, the CUDA PyTorch environment), parses the scripts, stages `build\stage\` (app, backend, detection, video, scripts) and compiles `kanat.iss` once per run mode into `build\output\KANAT-Setup-<version>-<threads\|processes>.exe`, with `SHA256SUMS.txt`. |
+| `kanat.iss` | The Inno Setup script: copies the files to `C:\Program Files\KANAT`, asks which adapter the cameras are on, runs `install-services.ps1`, makes the shortcuts and the optional start with Windows, and removes the tasks on uninstall. |
+| `scripts\install-services.ps1` | Run by the installer as Administrator: `kanat-config.json` (with the Logs-tab password hash), firewall, the cameras' adapter and multicast route, power, the three scheduled tasks, a health check. Safe to run again. |
+| `scripts\run.ps1` | What each task runs: one component (mediamtx, backend, detection), started again with a growing wait when it exits. |
+| `scripts\uninstall-services.ps1` | Stops KANAT and removes its tasks and firewall rules (`-StopOnly` just stops, before an update copies files). |
+| `scripts\kanat-common.ps1` | Shared: the task names, the data and log folders, `Write-Utf8`, `Stop-KanatProcesses`. |
+| `mediamtx.yml` | MediaMTX's production config: `VideoService\mediamtx.yml` without its development path. Keep it ASCII: the backend reads it. |
 
 ## How it runs on the PC
 
-- **Docker Desktop (WSL 2):** the backend (with its SQLite database on a volume) and detection (`WebApp/docker-compose.yml`, profile `app`). The app's Logs tab reads the log files directly, so there is no Loki/Grafana stack.
-- **Windows:** MediaMTX (Task Scheduler at login), the KANAT app.
-- **Containers reach MediaMTX** through `host.docker.internal`; the app reaches everything on `127.0.0.1`.
+- **Installed** to `C:\Program Files\KANAT`, which nothing writes to while KANAT runs: `app\` (Electron), `backend\{python,gtk,service}`, `detection\{python,service}`, `video\`, `scripts\`. Each Python is its own copy with its packages, so the PC needs none.
+- **Data** in `C:\ProgramData\Kanat`: `kanat.db`, `logs\`, `kanat-config.json`. Kept when KANAT is updated or removed.
+- **Three scheduled tasks** (`KANAT MediaMTX`, `KANAT Backend`, `KANAT Detection`), at startup, as SYSTEM, each running `run.ps1`. The backend applies its migrations before it serves. Detection runs `detection.supervisor`, which runs the service and restarts it.
+- **One installer per run mode** (`--run-mode thread` or `process`): the same product and `AppId`, so one installed over the other changes the mode.
+- **Nothing for development goes in:** no `dev/` bridges, no MediaMTX demo path, no tests or evaluation tools, no database.
 
 ## Rules
 
 - **Windows PowerShell 5.1**, not PowerShell 7. Its traps:
   - `"$var:"` is a parse error; write `"${var}:"`.
-  - `-Encoding UTF8` writes a byte order mark that JSON readers refuse; use the script's `Write-Utf8`.
+  - `-Encoding UTF8` writes a byte order mark that JSON readers refuse; use `Write-Utf8`.
   - `ConvertTo-Json` stops at depth 2; pass `-Depth 20`.
-  - `wsl.exe` writes UTF-16 unless `WSL_UTF8=1`.
-  - Native programs don't throw: check `$LASTEXITCODE` (the script's `Run` does).
+  - Native programs don't throw: check `$LASTEXITCODE`.
   - CRLF line endings (`.gitattributes`).
-- **Never trust a fixed install path:** Docker Desktop 4.94 installed to `Program Files\Docker\` while older versions use `Docker\Docker\`. Look in every known place, and fail with a clear message.
-- **Every download is pinned** to a version at least two weeks old and its publisher's SHA-256. Changing a version means changing its hash.
-- **Nothing from a developer's database goes in the bundle:** the database starts empty on the PC.
+- **Every input is pinned and checked:** MediaMTX by SHA-256 (changing its version means changing both in `build-installer.ps1`), Inno Setup 6, the tested detection environment (the CUDA PyTorch in `ImageRecognitionService\.venv`).
+- **Nothing from a developer's database goes in the installer:** the database starts empty on the PC.
 - **Every failure prints `FAILED: <what> (<what to do>)`**, so an operator can send that one line.
-- **Before building a bundle:** parse both `.ps1` files (`[System.Management.Automation.Language.Parser]::ParseFile`) and run PSScriptAnalyzer. CI does this on `windows-latest`.
-- **Not verifiable on the Mac:** WSL, Docker Desktop, the firewall, the route, the scheduled task. Say so; don't claim it works until it's been run on a Windows PC.
+- **Before building:** the build parses every script; run PSScriptAnalyzer too.
+- **The logs password** is a scrypt hash in `scripts\install-services.ps1` (`admin` today); change it by generating a new hash, as the comment there shows.
+- **Not verifiable on a development PC:** the firewall, the multicast route, the scheduled tasks as SYSTEM, the real cameras. Say so; don't claim it works until it has been run on a range PC.

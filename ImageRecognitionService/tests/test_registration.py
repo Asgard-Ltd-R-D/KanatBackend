@@ -187,13 +187,29 @@ def test_a_grossly_wrong_fit_is_lost_and_feeds_the_re_anchor(monkeypatch, capsys
     """Frames 1..N converge on the wrong scene: each is lost, the count runs
     on, and frame N+1 is re-anchored from the last right view (#110, #80)."""
     reg = _registration(monkeypatch, lambda i: True,
-                        correlation=lambda i: 0.2, disagreement=lambda i: GROSS)
+                        correlation=lambda i: 0.6, disagreement=lambda i: GROSS)
     views = _register(reg, N + 3)
     assert views == [None] * (N + 3)   # none recovers: the re-anchor fails too
     assert _reanchored(reg) == [N + 1]
     assert all(last is reg.space for how, i, last in reg.calls if i <= N + 1)
     reg.report()
     assert "[REGISTRATION] 1 re-anchor attempt(s)" in capsys.readouterr().out
+
+
+def test_an_uncorrelated_fit_the_silhouette_check_would_pass_is_lost(monkeypatch, capsys):
+    """#383: a covered frame converges at 0.23 on a degenerate fit that keeps
+    the reference Target's centre, so the silhouette check reads it under the
+    gross bound. Kept, it seeded every later Look. It is Lost, unchecked, and
+    the next frame is tracked from the last right view."""
+    reg = _registration(monkeypatch, lambda i: True,
+                        correlation=lambda i: 0.23 if i == 2 else 0.98,
+                        disagreement=lambda i: 16.0)
+    views = _register(reg, 3)
+    assert views[1] is None and None not in (views[0], views[2])
+    assert reg.silhouetted == []
+    assert [last.index for how, i, last in reg.calls if i == 3] == [1]
+    reg.report()
+    assert "1 of 3 converged fit(s) below 0.5 correlation" in capsys.readouterr().out
 
 
 def test_a_moderate_disagreement_keeps_the_frame_and_warns_once(monkeypatch, capsys):
@@ -213,7 +229,7 @@ def test_a_moderate_disagreement_keeps_the_frame_and_warns_once(monkeypatch, cap
 def test_a_check_with_no_verdict_keeps_the_frame(monkeypatch, capsys):
     """A silhouette fit that fails says nothing about the tracked one."""
     reg = _registration(monkeypatch, lambda i: True,
-                        correlation=lambda i: 0.2, disagreement=lambda i: None)
+                        correlation=lambda i: 0.6, disagreement=lambda i: None)
     assert None not in _register(reg, 3)
     reg.report()
     assert "0 of 3 converged fit(s) checked" in capsys.readouterr().out

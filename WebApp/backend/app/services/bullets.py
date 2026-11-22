@@ -14,6 +14,11 @@ from app.schemas.bullet_hole import BulletCreate
 log = logging.getLogger(__name__)
 
 
+def _board(camera_alias: str | None) -> str:
+    """The board a hole is on, for a log line."""
+    return f"board '{camera_alias}'" if camera_alias else "no board"
+
+
 def create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> tuple[BulletHole, int]:
     """The stored hole, and how many OTHER holes of its board changed rank because
     it was seen before them (0 for one that is the newest, or a retried one)."""
@@ -30,8 +35,9 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
 
     if body.source == "model" and session.status == "completed":
         log.warning(
-            "Bullet Hole from the model refused: session %s is completed", session_id,
-            extra={"session_id": session_id, "source": body.source, "first_seen_at": body.first_seen_at},
+            "Bullet Hole from the model on %s refused: session '%s' is completed", _board(body.camera), session.name,
+            extra={"session_id": session_id, "session_name": session.name, "camera": body.camera,
+                   "source": body.source, "first_seen_at": body.first_seen_at},
         )
         raise HTTPException(
             status_code=409,
@@ -39,8 +45,8 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
         )
     if body.source == "manual" and session.status == "active":
         log.warning(
-            "Manual Bullet Hole refused: session %s is still active", session_id,
-            extra={"session_id": session_id, "source": body.source},
+            "Manual Bullet Hole on %s refused: session '%s' is still active", _board(body.camera), session.name,
+            extra={"session_id": session_id, "session_name": session.name, "camera": body.camera, "source": body.source},
         )
         raise HTTPException(
             status_code=409,
@@ -52,8 +58,10 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
         if dup is not None:
             # The model retried a POST whose answer it did not get
             log.info(
-                "Bullet Hole reported again, the stored one kept",
-                extra={"session_id": session_id, "bullet_id": dup.id, "rank": dup.rank, "source": dup.source},
+                "Bullet Hole #%s on %s reported again (a retry), the stored one kept; session '%s'",
+                dup.rank, _board(dup.camera_alias), session.name,
+                extra={"session_id": session_id, "session_name": session.name, "camera": dup.camera_alias,
+                       "bullet_id": dup.id, "rank": dup.rank, "source": dup.source},
             )
             return dup, 0
 
@@ -79,9 +87,11 @@ def _create_bullet(session_id: uuid.UUID, body: BulletCreate, db: DBSession) -> 
     bullet, renumbered = repo.add_in_time_order(db, bullet)
     delay_s = (datetime.now(timezone.utc) - bullet.first_seen_at).total_seconds()
     log.info(
-        "Bullet Hole #%s received from %s", bullet.rank, "the model" if bullet.source == "model" else "the operator",
+        "Bullet Hole #%s on %s added by %s to session '%s'",
+        bullet.rank, _board(bullet.camera_alias), "the model" if bullet.source == "model" else "the operator", session.name,
         extra={
-            "session_id": session_id, "bullet_id": bullet.id, "rank": bullet.rank, "source": bullet.source,
+            "session_id": session_id, "session_name": session.name, "camera": bullet.camera_alias,
+            "bullet_id": bullet.id, "rank": bullet.rank, "source": bullet.source,
             "x": bullet.position_x, "y": bullet.position_y, "target_index": bullet.target_index,
             "x_mm": bullet.x_mm, "y_mm": bullet.y_mm, "first_seen_at": bullet.first_seen_at,
             # From the model seeing it to the backend storing it
@@ -115,6 +125,10 @@ def _delete_bullet(session_id: uuid.UUID, bullet_id: uuid.UUID, db: DBSession) -
     repo.move_up_after(db, session_id, bullet.camera_alias, bullet.rank)
     repo.save(db)
     log.info(
-        "Bullet Hole #%s deleted by the operator", bullet.rank,
-        extra={"session_id": session_id, "bullet_id": bullet_id, "rank": bullet.rank, "source": bullet.source},
+        "Bullet Hole #%s on %s deleted by the operator from session '%s'",
+        bullet.rank, _board(bullet.camera_alias), session.name,
+        extra={
+            "session_id": session_id, "session_name": session.name, "camera": bullet.camera_alias,
+            "bullet_id": bullet_id, "rank": bullet.rank, "source": bullet.source,
+        },
     )

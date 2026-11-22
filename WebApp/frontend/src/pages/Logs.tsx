@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRight, FolderOpen, Lock, Pause, Play, RotateCw, ServerOff } from 'lucide-react'
-import { readLogs, type LogLine } from '../api/logs'
+import { ChevronRight, Download, FolderOpen, Lock, Pause, Play, RotateCw, ServerOff } from 'lucide-react'
+import { logsExportUrl, readLogs, type LogLine } from '../api/logs'
+import { getSessions } from '../api/sessions'
 import { log } from '../utils/logger'
 
 // The Logs tab is for engineers: when the install bakes a password
@@ -86,10 +87,22 @@ const LEVEL_STYLE: Record<string, string> = {
   debug: 'text-slate-500 bg-slate-50 dark:text-slate-400 dark:bg-slate-800/60',
 }
 
-// HH:MM:SS from an ISO timestamp, or the raw value if it is not one
-function clock(time: string): string {
+// YYYY-MM-DD HH:MM:SS on this PC's clock, from an ISO timestamp (or the raw value
+// if it is not one): a line from yesterday must not read like one from today
+function stamp(time: string): string {
   const d = new Date(time)
-  return isNaN(d.getTime()) ? time : d.toLocaleTimeString()
+  if (isNaN(d.getTime())) return time
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+// The Session a line is about: the name it carries, else the name of its session_id
+// from the Sessions list (the Detection Service logs the id only)
+function sessionNameOf(line: LogLine, names: Map<string, string>): string | undefined {
+  const own = line.fields.session_name
+  if (typeof own === 'string' && own) return own
+  const id = line.fields.session_id
+  return typeof id === 'string' ? names.get(id) : undefined
 }
 
 function LogsViewer() {
@@ -104,6 +117,11 @@ function LogsViewer() {
     refetchInterval: live ? REFRESH_MS : false,
   })
 
+  // Session names by id, so searching a name finds every line about that Session,
+  // the Detection Service's too (they carry the id only)
+  const sessions = useQuery({ queryKey: ['sessions'], queryFn: getSessions })
+  const names = useMemo(() => new Map((sessions.data ?? []).map((s) => [s.id, s.name])), [sessions.data])
+
   const lines = query.data ?? []
   const filtered = useMemo(() => {
     const floor = LEVELS.indexOf(minLevel)
@@ -113,12 +131,12 @@ function LogsViewer() {
       if (rank !== -1 && rank < floor) return false
       if (service !== 'all' && l.service !== service) return false
       if (needle) {
-        const hay = `${l.message} ${l.logger ?? ''} ${JSON.stringify(l.fields)}`.toLowerCase()
+        const hay = `${l.message} ${l.logger ?? ''} ${sessionNameOf(l, names) ?? ''} ${JSON.stringify(l.fields)}`.toLowerCase()
         if (!hay.includes(needle)) return false
       }
       return true
     })
-  }, [lines, minLevel, service, search])
+  }, [lines, minLevel, service, search, names])
 
   // readLogs returns newest first; show oldest to newest, the newest at the
   // bottom, as a terminal does
@@ -193,6 +211,7 @@ function LogsViewer() {
             Reload
           </button>
           <OpenLogFolder />
+          <DownloadLogs />
         </div>
       </div>
 
@@ -211,6 +230,7 @@ function LogsViewer() {
               <Row
                 key={`${line.time}|${line.service}|${line.logger ?? ''}|${line.message}|${JSON.stringify(line.fields)}`}
                 line={line}
+                session={sessionNameOf(line, names)}
               />
             ))}
           </ul>
@@ -220,7 +240,7 @@ function LogsViewer() {
   )
 }
 
-function Row({ line }: { line: LogLine }) {
+function Row({ line, session }: { line: LogLine; session?: string }) {
   const [open, setOpen] = useState(false)
   const hasFields = Object.keys(line.fields).length > 0
   return (
@@ -233,12 +253,17 @@ function Row({ line }: { line: LogLine }) {
           size={12}
           className={`mt-0.5 flex-shrink-0 text-slate-400 transition-transform ${open ? 'rotate-90' : ''} ${hasFields ? '' : 'invisible'}`}
         />
-        <span className="flex-shrink-0 tabular-nums text-slate-400 dark:text-slate-500">{clock(line.time)}</span>
+        <span className="flex-shrink-0 tabular-nums text-slate-400 dark:text-slate-500">{stamp(line.time)}</span>
         <span className={`flex-shrink-0 px-1.5 rounded uppercase font-semibold ${LEVEL_STYLE[line.level] ?? LEVEL_STYLE.info}`}>
           {line.level}
         </span>
         <span className="flex-shrink-0 w-16 text-slate-500 dark:text-slate-400">{line.service}</span>
         <span className="text-slate-800 dark:text-slate-200 break-all">{line.message}</span>
+        {session && !line.message.includes(session) && (
+          <span className="flex-shrink-0 px-1.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300">
+            {session}
+          </span>
+        )}
       </button>
       {open && hasFields && (
         <pre className="ml-8 mt-1 p-2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 overflow-x-auto">
@@ -269,12 +294,34 @@ function OpenLogFolder() {
   )
 }
 
+// Downloading the logs for support: the backend zips the whole log folder and
+// the app saves it (a target="_blank" link, which window.ts turns into a Save
+// dialog). The operator emails the one file to support.
+function DownloadLogs() {
+  return (
+    <a
+      href={logsExportUrl()}
+      target="_blank"
+      rel="noreferrer"
+      title="Save all log files as a single .zip to send to support"
+      className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+    >
+      <Download size={14} />
+      Download logs (.zip)
+    </a>
+  )
+}
+
 function NoViewer() {
   return (
     <div className="h-full flex items-center justify-center p-8">
       <div className="max-w-md text-center text-slate-500 dark:text-slate-400">
         <ServerOff size={28} className="mx-auto" />
         <p className="mt-4 text-sm">The log viewer runs inside the desktop app.</p>
+        {/* The zip comes from the backend over HTTP, which needs no Electron: a browser can still send it to support */}
+        <div className="mt-4 flex justify-center">
+          <DownloadLogs />
+        </div>
       </div>
     </div>
   )

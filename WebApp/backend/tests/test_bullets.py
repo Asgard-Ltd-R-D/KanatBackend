@@ -25,7 +25,7 @@ class FakeDB:
 @pytest.fixture
 def session(monkeypatch):
     """The only Session there is, active until a test completes it."""
-    session = SimpleNamespace(id=uuid.uuid4(), status="active")
+    session = SimpleNamespace(id=uuid.uuid4(), name="Range A", status="active")
     monkeypatch.setattr(sessions_repo, "get_for_update",
                         lambda db, session_id: session if session_id == session.id else None)
     return session

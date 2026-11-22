@@ -32,18 +32,17 @@ _REPORT_HTML = """<!DOCTYPE html>
 
     /* Masthead: steel band, the session name is the title, system mark at right */
     .masthead { display: flex; justify-content: space-between; align-items: flex-end;
-                background: #13283f; color: #fff; padding: 18px 20px 14px; border-radius: 3px; }
+                background: #13283f; color: #fff; padding: 18px 20px 14px; }
     .masthead h1 { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
     .m-sub { color: #9db3cc; font-size: 10px; margin-top: 3px; }
     .m-mark { text-align: right; }
     .m-sys { font-size: 13px; font-weight: 700; letter-spacing: 0.22em; }
     .m-gen { color: #9db3cc; font-size: 8.5px; margin-top: 3px; }
-    .accent { height: 2px; background: #c62a1b; margin-bottom: 20px; border-radius: 0 0 2px 2px; }
+    .accent { height: 2px; background: #c62a1b; margin-bottom: 20px; }
 
     /* Spec readout: label over value, hairline-separated, instrument style */
-    .readout { display: flex; border: 1px solid #e2e7ec; border-radius: 3px; margin-bottom: 26px; }
-    .ro { flex: 1; padding: 9px 14px; border-left: 1px solid #e2e7ec; }
-    .ro:first-child { border-left: 0; }
+    .readout { display: flex; margin-bottom: 26px; }
+    .ro { flex: 1; padding: 9px 14px 9px 0; }
     .ro-k { display: block; font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
             text-transform: uppercase; color: #8893a2; margin-bottom: 3px; }
     .ro-v { display: block; font-size: 14px; font-weight: 700; color: #13283f; }
@@ -64,10 +63,9 @@ _REPORT_HTML = """<!DOCTYPE html>
        board), the artwork is placed inside it, and shots sit on top. No clipping,
        so a shot on a neighbouring Target (outside the artwork) still shows. */
     .target { position: relative; height: 0; }
-    .target-img { position: absolute; display: block; border: 1px solid #cfd6de; border-radius: 2px; background: #fff; }
+    .target-img { position: absolute; display: block; }
     .hole { position: absolute; transform: translate(-50%, -50%); width: 16px; height: 16px;
             border-radius: 50%; background: #c62a1b; border: 1.5px solid #fff;
-            box-shadow: 0 0 0 0.5px rgba(19,40,63,0.35);
             color: #fff; font-size: 8.5px; font-weight: 700; line-height: 13px; text-align: center; }
 
     .stats { flex: 1; padding-top: 2px; }
@@ -77,18 +75,22 @@ _REPORT_HTML = """<!DOCTYPE html>
     .note b { color: #1a2433; font-weight: 700; }
 
     table { width: 100%; border-collapse: collapse; }
-    thead th { background: #13283f; color: #fff; text-align: left; font-weight: 600;
+    /* The header's colour is on the row, one rectangle: painted cell by cell, a viewer
+       draws a hairline between two neighbours */
+    thead tr { background: #13283f; }
+    thead th { color: #fff; text-align: left; font-weight: 600;
                font-size: 8.5px; letter-spacing: 0.04em; padding: 6px 9px; }
     tbody td { padding: 5px 9px; border-bottom: 1px solid #eef1f4; font-size: 10px; color: #27313f; }
     tbody tr:last-child td { border-bottom: 0; }
     .num { text-align: right; }
     th.num { text-align: right; }
-    .stats table { border: 1px solid #e2e7ec; border-radius: 3px; overflow: hidden; }
+    .stats table { border: 1px solid #e2e7ec; }
 
     .shotlog { margin-top: 4px; }
     .shotlog-title { font-size: 9px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
                      color: #8893a2; margin: 15px 0 6px; break-after: avoid; }
-    .shotlog thead th { background: #f0f3f6; color: #51607a; }
+    .shotlog thead tr { background: #f0f3f6; }
+    .shotlog thead th { color: #51607a; }
     .shotlog tbody td { color: #3a4454; }
   </style>
 </head>
@@ -206,9 +208,37 @@ _TEMPLATE_H = 1120
 @lru_cache(maxsize=1)
 def _target_data_uri() -> str:
     """The Target picture as a data URI, so the PDF carries it with no file or
-    network lookup at render time. Cached: the same bytes for every report."""
+    network lookup at render time. Cached: the same bytes for every report.
+
+    The artwork's white is not white: its palette holds dozens of near-whites
+    (253, 254, 255...) in a noisy pattern, which a PDF viewer shows as faint lines
+    in a grid over the picture. Every near-white entry is made pure white."""
     data = (Path(__file__).resolve().parent.parent / "assets" / "target.png").read_bytes()
-    return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+    return "data:image/png;base64," + base64.b64encode(_flat_white(data)).decode("ascii")
+
+
+# A palette colour with every channel at or above this is paper, not ink
+_NEAR_WHITE = 235
+
+
+def _flat_white(png: bytes) -> bytes:
+    """`png` with its near-white palette entries made pure white; the bytes as they
+    came if it is not a palette image or the imaging library is missing."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return png
+    image = Image.open(io.BytesIO(png))
+    palette = image.getpalette()
+    if image.mode != "P" or palette is None:
+        return png
+    for i in range(0, len(palette) - 2, 3):
+        if min(palette[i:i + 3]) >= _NEAR_WHITE:
+            palette[i:i + 3] = [255, 255, 255]
+    image.putpalette(palette)
+    out = io.BytesIO()
+    image.save(out, format="PNG", optimize=True)
+    return out.getvalue()
 
 
 def _board_canvas(holes) -> dict:

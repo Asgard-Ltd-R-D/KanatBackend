@@ -93,6 +93,69 @@ def test_the_pdf_report_shows_the_target_picture_with_a_marker_per_bullet():
     assert "left: 49.822%" in html and "top: 44.643%" in html
 
 
+def _decode_target():
+    import base64
+    import io
+
+    from PIL import Image
+
+    uri = export_svc._target_data_uri()
+    return Image.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1]))).convert("RGB")
+
+
+def test_the_target_picture_has_a_pure_white_background_not_a_noisy_near_white_one():
+    image = _decode_target()
+    colours = {colour for colour in image.get_flattened_data()}
+
+    # Corners (the paper) are pure white, and no near-white shade is left over: a PDF
+    # viewer draws such noise as faint lines in a grid over the picture
+    assert all(image.getpixel(p) == (255, 255, 255) for p in ((0, 0), (image.width - 1, 0), (0, image.height - 1)))
+    assert not [c for c in colours if min(c) >= export_svc._NEAR_WHITE and c != (255, 255, 255)]
+    # The ink is still there: the green rings of the target
+    assert any(g > r + 40 and g > b + 40 for r, g, b in colours)
+
+
+def test_only_near_white_palette_entries_are_made_white():
+    import io
+
+    from PIL import Image
+
+    image = Image.new("P", (3, 1))
+    palette = [253, 254, 254,   10, 120, 60,   236, 240, 250,   200, 200, 200] + [0] * (768 - 12)
+    image.putpalette(palette)
+    image.putdata([0, 1, 2])
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+
+    out = Image.open(io.BytesIO(export_svc._flat_white(buffer.getvalue())))
+    assert [out.convert("RGB").getpixel((x, 0)) for x in range(3)] == [(255, 255, 255), (10, 120, 60), (255, 255, 255)]
+    assert out.getpalette()[9:12] == [200, 200, 200]   # a light grey, not paper, is kept
+
+
+def test_a_picture_that_is_not_a_palette_image_is_embedded_as_it_came():
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (2, 2), (253, 253, 253)).save(buffer, format="PNG")
+
+    assert export_svc._flat_white(buffer.getvalue()) == buffer.getvalue()
+
+
+def test_the_pdf_has_no_hairline_dividers_under_the_title_and_paints_table_headers_as_one_row():
+    html = export_svc._render_report_html(_completed_session())
+    css = html.split("</style>")[0]
+
+    # The cards under the title are separated by space, not by lines
+    assert "border-left" not in css
+    assert ".readout { display: flex; margin-bottom: 26px; }" in css
+    # A header is one rectangle on its row, not a background per cell (a viewer draws a
+    # hairline where two painted cells meet)
+    assert "thead tr { background: #13283f; }" in css and ".shotlog thead tr { background: #f0f3f6; }" in css
+    assert "thead th { background" not in css
+
+
 def test_the_pdf_report_is_organised_by_board():
     html = export_svc._render_report_html(_completed_session())
 

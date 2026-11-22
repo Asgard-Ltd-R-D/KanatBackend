@@ -7,7 +7,8 @@ The installers that put KANAT on a Windows 10 22H2 (build 19045+) or 11 PC, with
 | `build-installer.ps1` | Runs on a Windows PC. Checks the build's inputs (Inno Setup, MediaMTX against its pinned SHA-256, the GTK3 runtime, the model, the CUDA PyTorch environment), parses the scripts, stages `build\stage\` (app, backend, detection, video, scripts) and compiles `kanat.iss` once per run mode into `build\output\KANAT-Setup-<version>-<threads\|processes>.exe`, with `SHA256SUMS.txt`. |
 | `kanat.iss` | The Inno Setup script: copies the files to `C:\Program Files\KANAT`, asks which adapter the cameras are on, runs `install-services.ps1`, makes the shortcuts and the optional start with Windows, and removes the tasks on uninstall. |
 | `scripts\install-services.ps1` | Run by the installer as Administrator: `kanat-config.json` (with the Logs-tab password hash), firewall, the cameras' adapter and multicast route, power, the three scheduled tasks, a health check. Safe to run again. |
-| `scripts\run.ps1` | What each task runs: one component (mediamtx, backend, detection), started again with a growing wait when it exits. |
+| `scripts\run.ps1` | What each task runs: one component (mediamtx, backend, detection), started again with a growing wait when it exits. At start it ends only what is left of its own component (`Stop-KanatProcesses -Only`), never what the other two tasks run. |
+| `tests\stop-kanat-processes.test.ps1` | Checks that cleanup helper on a fake install folder (also a step in `.github/workflows/windows.yml`). |
 | `scripts\uninstall-services.ps1` | Stops KANAT and removes its tasks and firewall rules (`-StopOnly` just stops, before an update copies files). |
 | `scripts\kanat-common.ps1` | Shared: the task names, the data and log folders, `Write-Utf8`, `Stop-KanatProcesses`. |
 | `mediamtx.yml` | MediaMTX's production config: `VideoService\mediamtx.yml` without its development path. Keep it ASCII: the backend reads it. |

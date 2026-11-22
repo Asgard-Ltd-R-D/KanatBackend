@@ -35,6 +35,20 @@ MCAST="${MCAST:-226.0.0.1:5001}"
 RTSP="rtsp://${CAM_USER}:${CAM_PASS}@${CAM_IP}:554${CAM_PATH}"
 OUT="rtp://${MCAST%:*}:${MCAST#*:}?localaddr=${NIC_IP}&ttl=16&pkt_size=1316"
 
+# ENCODER=h264_nvenc moves the decode and the encode onto an NVIDIA GPU's own
+# video chips (NVDEC, NVENC), leaving the CPU free; the default, libx264, runs
+# on any PC (the Mac included).
+ENCODER="${ENCODER:-libx264}"
+if [ "$ENCODER" = "h264_nvenc" ]; then
+  DECODE=(-hwaccel cuda -hwaccel_output_format cuda)
+  ENCODE=(-c:v h264_nvenc -preset p1 -tune ull -profile:v main -rc cbr -zerolatency 1 -delay 0
+          -b:v 8M -maxrate 8M -bufsize 1M -bf 0 -g 25 -bsf:v dump_extra=freq=keyframe)
+else
+  DECODE=()
+  ENCODE=(-c:v libx264 -preset veryfast -tune zerolatency -profile:v main -pix_fmt yuv420p
+          -bf 0 -g 50 -x264-params repeat-headers=1)
+fi
+
 echo "[restream] camera  : ${CAM_IP}"
 echo "[restream] multicast: ${MCAST} via NIC ${NIC_IP}"
 echo "[restream] In the app, point the camera at multicast ${MCAST%:*}, port ${MCAST#*:},"
@@ -42,11 +56,16 @@ echo "[restream] and pick the network card whose IP is ${NIC_IP} (e.g. en8 / Eth
 
 while true; do
   echo "[restream] $(date '+%H:%M:%S') connecting to camera..."
+  # Low delay on the way in (the Detection Service opens its streams the same way,
+  # new_bullet_holes.STREAM_CAPTURE_OPTIONS): a short probe, because by default
+  # ffmpeg buffers a couple of seconds of stream to learn what it holds and then
+  # stays that far behind; and one decoder thread, because each decoder thread
+  # holds back about a frame
   ffmpeg -nostdin -loglevel warning \
     -rtsp_transport tcp -timeout 8000000 \
-    -i "$RTSP" \
-    -an -c:v libx264 -preset veryfast -tune zerolatency -profile:v main -pix_fmt yuv420p \
-    -bf 0 -g 50 -x264-params repeat-headers=1 \
+    -probesize 32768 -analyzeduration 100000 -threads 1 \
+    "${DECODE[@]}" -i "$RTSP" \
+    -an "${ENCODE[@]}" \
     -f rtp -payload_type 96 "$OUT" || true
   echo "[restream] $(date '+%H:%M:%S') ffmpeg stopped; reconnecting in 2s"
   sleep 2

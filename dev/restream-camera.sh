@@ -39,6 +39,8 @@ OUT="rtp://${MCAST%:*}:${MCAST#*:}?localaddr=${NIC_IP}&ttl=16&pkt_size=1316"
 # video chips (NVDEC, NVENC), leaving the CPU free; the default, libx264, runs
 # on any PC (the Mac included).
 ENCODER="${ENCODER:-libx264}"
+# DECODE is empty on the default path; "${DECODE[@]+...}" below keeps `set -u` from
+# failing on an empty array in Bash older than 4.4 (macOS ships 3.2)
 if [ "$ENCODER" = "h264_nvenc" ]; then
   DECODE=(-hwaccel cuda -hwaccel_output_format cuda)
   ENCODE=(-c:v h264_nvenc -preset p1 -tune ull -profile:v main -rc cbr -zerolatency 1 -delay 0
@@ -64,7 +66,7 @@ while true; do
   ffmpeg -nostdin -loglevel warning \
     -rtsp_transport tcp -timeout 8000000 \
     -probesize 32768 -analyzeduration 100000 -threads 1 \
-    "${DECODE[@]}" -i "$RTSP" \
+    ${DECODE[@]+"${DECODE[@]}"} -i "$RTSP" \
     -an "${ENCODE[@]}" \
     -f rtp -payload_type 96 "$OUT" || true
   echo "[restream] $(date '+%H:%M:%S') ffmpeg stopped; reconnecting in 2s"

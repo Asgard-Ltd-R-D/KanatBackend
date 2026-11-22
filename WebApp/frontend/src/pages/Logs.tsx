@@ -318,6 +318,10 @@ function NoViewer() {
       <div className="max-w-md text-center text-slate-500 dark:text-slate-400">
         <ServerOff size={28} className="mx-auto" />
         <p className="mt-4 text-sm">The log viewer runs inside the desktop app.</p>
+        {/* The zip comes from the backend over HTTP, which needs no Electron: a browser can still send it to support */}
+        <div className="mt-4 flex justify-center">
+          <DownloadLogs />
+        </div>
       </div>
     </div>
   )

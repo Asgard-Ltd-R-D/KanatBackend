@@ -106,8 +106,8 @@ _REPORT_HTML = """<!DOCTYPE html>
   <div class="accent"></div>
 
   <div class="readout">
-    <div class="ro"><span class="ro-k">Started</span><span class="ro-v">{{ started }} <small>UTC</small></span></div>
-    <div class="ro"><span class="ro-k">Ended</span><span class="ro-v">{% if ended %}{{ ended }} <small>UTC</small>{% else %}&mdash;{% endif %}</span></div>
+    <div class="ro"><span class="ro-k">Started</span><span class="ro-v">{{ started }}</span></div>
+    <div class="ro"><span class="ro-k">Ended</span><span class="ro-v">{% if ended %}{{ ended }}{% else %}&mdash;{% endif %}</span></div>
     <div class="ro"><span class="ro-k">Duration</span><span class="ro-v">{{ duration }}</span></div>
     <div class="ro"><span class="ro-k">Shots</span><span class="ro-v">{{ total_bullets }}</span></div>
     <div class="ro"><span class="ro-k">Boards</span><span class="ro-v">{{ boards | length }}</span></div>
@@ -175,7 +175,7 @@ _REPORT_HTML = """<!DOCTYPE html>
       <thead>
         <tr>
           <th class="num">#</th>
-          <th>Detected at (UTC)</th>
+          <th>Detected at</th>
           <th class="num">Position X</th>
           <th class="num">Position Y</th>
         </tr>
@@ -254,7 +254,7 @@ def _boards_for_report(bullets) -> list[dict]:
             "canvas": canvas,
             "bullets": [{
                 "rank": b.rank,
-                "ts": b.first_seen_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "ts": _local_clock(b.first_seen_at),
                 "x": b.position_x,
                 "y": b.position_y,
                 "left": (b.position_x - canvas["min_x"]) / canvas["cw"] * 100,
@@ -266,16 +266,30 @@ def _boards_for_report(bullets) -> list[dict]:
 
 def _render_report_html(session: Session) -> str:
     bullets = _by_board_then_rank(session.bullet_holes)
+    now = _as_local(datetime.now(timezone.utc))
     return _jinja_env.from_string(_REPORT_HTML).render(
         session=session,
         total_bullets=len(bullets),
         boards=_boards_for_report(bullets),
         target_uri=_target_data_uri(),
-        started=session.started_at.strftime("%Y-%m-%d %H:%M:%S"),
-        ended=session.ended_at.strftime("%Y-%m-%d %H:%M:%S") if session.ended_at else None,
+        started=_local_clock(session.started_at),
+        ended=_local_clock(session.ended_at) if session.ended_at else None,
         duration=_session_duration(session),
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        generated_at=f"{now:%Y-%m-%d %H:%M}",
     )
+
+
+def _as_local(moment: datetime) -> datetime:
+    """A stored time (UTC) converted to the PC's time zone. The database keeps UTC;
+    every export shows the conversion, as the PC's own clock reads it."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone()
+
+
+def _local_clock(moment: datetime) -> str:
+    """The converted time, written YYYY-MM-DD HH:MM:SS: what every export prints."""
+    return _as_local(moment).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _session_duration(session: Session) -> str:
@@ -295,7 +309,7 @@ def _ascii_slug(name: str) -> str:
 
 
 def _content_disposition(session: Session, ext: str) -> str:
-    date_str = session.started_at.strftime("%Y%m%d")
+    date_str = _as_local(session.started_at).strftime("%Y%m%d")
     fallback = f"session_{_ascii_slug(session.name)}_{date_str}.{ext}"
     utf8_name = f"session_{session.name.replace(' ', '_')}_{date_str}.{ext}"
     encoded = urllib.parse.quote(utf8_name, safe="-._~")
@@ -332,7 +346,7 @@ def generate_csv(session: Session) -> str:
         writer.writerow([
             b.camera_alias or "",
             b.rank,
-            b.first_seen_at.isoformat(),
+            _local_clock(b.first_seen_at),
             b.position_x,
             b.position_y,
         ])
@@ -370,13 +384,13 @@ def generate_excel(session: Session) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Bullet Holes"
-    _append_header(ws, ["Board", "#", "Detected At (UTC)", "Position X", "Position Y"])
+    _append_header(ws, ["Board", "#", "Detected At", "Position X", "Position Y"])
 
     for b in bullets:
         ws.append([
             b.camera_alias or "—",
             b.rank,
-            b.first_seen_at.strftime("%Y-%m-%d %H:%M:%S"),
+            _local_clock(b.first_seen_at),
             b.position_x,
             b.position_y,
         ])

@@ -44,6 +44,12 @@ jobs:
           }
           if ($failed) { exit 1 }
 
+      # Runs the cleanup helper on a fake install folder: a launcher ends only its
+      # own component, the installer the whole install, the app only when asked
+      - name: Stop-KanatProcesses ends only what it is asked to
+        shell: powershell
+        run: .\WebApp\deploy\windows\tests\stop-kanat-processes.test.ps1
+
   app-installer:
     name: KANAT app installer
     runs-on: windows-latest

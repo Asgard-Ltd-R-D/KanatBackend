@@ -90,6 +90,11 @@ class ConsoleFormatter(logging.Formatter):
         return line
 
 
+# Libraries whose INFO/DEBUG lines are not about KANAT: fontTools narrates every
+# table it drops while WeasyPrint embeds a font in a PDF (dozens of lines a report)
+_QUIET_LIBRARIES = ("fontTools", "weasyprint", "PIL", "multipart", "asyncio")
+
+
 class _RequestFailure(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return record.getMessage() != "Exception in ASGI application"
@@ -138,5 +143,5 @@ def configure_logging() -> None:
     access.handlers.clear()
     access.propagate = False
     # httpx logs every request it makes, e.g. to MediaMTX every 5 s
-    for name in ("httpx", "httpcore"):
+    for name in ("httpx", "httpcore", *_QUIET_LIBRARIES):
         logging.getLogger(name).setLevel(logging.WARNING)

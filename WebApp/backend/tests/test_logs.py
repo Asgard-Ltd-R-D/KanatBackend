@@ -40,6 +40,20 @@ def test_a_log_line_is_json_with_the_calls_own_fields(new_lines):
     assert "request_id" not in line                  # not logged during a request
 
 
+def test_the_fonts_libraries_chatter_is_not_logged(new_lines):
+    # WeasyPrint's fontTools narrates every table it drops, dozens of lines a PDF.
+    # Set up as the app does at start: another test's alembic run (fileConfig) may
+    # have reset the levels since
+    from app.core.logs import configure_logging
+
+    configure_logging()
+    logging.getLogger("fontTools.subset").info("glyf pruned")
+    logging.getLogger("weasyprint").info("Step 1 - Fetching and parsing HTML")
+    logging.getLogger("fontTools.subset").warning("a real problem")
+
+    assert [l["message"] for l in new_lines()] == ["a real problem"]
+
+
 def test_an_exception_is_logged_with_its_traceback(new_lines):
     try:
         raise ValueError("boom")

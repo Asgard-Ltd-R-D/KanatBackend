@@ -191,6 +191,18 @@ def test_a_manual_hole_a_retried_one_and_a_hole_on_another_board_move_no_other_h
     assert create(db, session, 0, source="manual")[1] == 0            # stamped now: the newest
 
 
+def test_the_log_line_of_a_hole_names_its_session_board_and_who_added_it(db, caplog):
+    session = make_session(db)
+    with caplog.at_level("INFO", logger="app.services.bullets"):
+        hole = shoot(db, session, 5)
+        svc.delete_bullet(session.id, hole.id, db)
+
+    added, deleted = [r for r in caplog.records if r.name == "app.services.bullets"]
+    assert added.getMessage() == "Bullet Hole #1 on board 'lane1' added by the model to session 'Range'"
+    assert deleted.getMessage() == "Bullet Hole #1 on board 'lane1' deleted by the operator from session 'Range'"
+    assert added.session_name == "Range" and added.camera == "lane1" and added.session_id == session.id
+
+
 def test_a_hole_reported_again_with_the_same_key_changes_no_rank(db):
     session = make_session(db)
     shoot(db, session, 10, idempotency_key="k1")

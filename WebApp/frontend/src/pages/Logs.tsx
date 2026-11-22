@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRight, FolderOpen, Lock, Pause, Play, RotateCw, ServerOff } from 'lucide-react'
-import { readLogs, type LogLine } from '../api/logs'
+import { ChevronRight, Download, FolderOpen, Lock, Pause, Play, RotateCw, ServerOff } from 'lucide-react'
+import { logsExportUrl, readLogs, type LogLine } from '../api/logs'
 import { log } from '../utils/logger'
 
 // The Logs tab is for engineers: when the install bakes a password
@@ -193,6 +193,7 @@ function LogsViewer() {
             Reload
           </button>
           <OpenLogFolder />
+          <DownloadLogs />
         </div>
       </div>
 
@@ -266,6 +267,24 @@ function OpenLogFolder() {
       <FolderOpen size={14} />
       Open folder
     </button>
+  )
+}
+
+// Downloading the logs for support: the backend zips the whole log folder and
+// the app saves it (a target="_blank" link, which window.ts turns into a Save
+// dialog). The operator emails the one file to support.
+function DownloadLogs() {
+  return (
+    <a
+      href={logsExportUrl()}
+      target="_blank"
+      rel="noreferrer"
+      title="Save all log files as a single .zip to send to support"
+      className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+    >
+      <Download size={14} />
+      Download logs (.zip)
+    </a>
   )
 }
 

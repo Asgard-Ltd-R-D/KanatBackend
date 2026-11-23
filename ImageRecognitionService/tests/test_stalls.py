@@ -113,7 +113,7 @@ def test_a_process_run_whose_camera_is_down_is_waited_for_then_ended_alone(api):
     run.remote.down = True
     now = CLOCK
     api.service.check_stalls(now)
-    api.service.check_stalls(now + stalls.STALL_AFTER_S + 1)
+    api.service.check_stalls(min(now + stalls.STALL_AFTER_S + 1, now + stalls.CAMERA_DOWN_AFTER_S - 1))
     api.service.check_stalls(now + stalls.CAMERA_DOWN_AFTER_S - 1)
     assert not run.process.killed          # the stream is reopening itself: waited for
     api.service.check_stalls(now + stalls.CAMERA_DOWN_AFTER_S)
@@ -252,8 +252,8 @@ def test_a_process_run_that_is_draining_its_posts_is_not_judged_stalled_until_th
     run = _watching_process_run(api.service, "t0")
     run.draining = CLOCK   # it finished looking, and posts what it confirmed
     api.service.check_stalls(CLOCK)
-    api.service.check_stalls(CLOCK + stalls.STALL_AFTER_S * 3)
-    assert not run.process.killed   # no look in 30 s is not a stall now
+    api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S - 1)
+    assert not run.process.killed   # no look, but within the drain limit: not a stall now
     api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1)
     api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1 + stalls.STALL_AFTER_S)
     assert run.process.killed   # a drain that never ends is still bounded

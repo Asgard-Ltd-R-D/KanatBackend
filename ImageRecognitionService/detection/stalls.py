@@ -19,10 +19,12 @@ log = logging.getLogger("detection.stalls")
 # healthy one): it is ended, and the backend's reconcile starts it again.
 # Measured with 4 Runs on 1080p streams, in both modes, 3 minutes each, with a
 # Run ended and started again among them: a healthy Run's longest wait between
-# two looks was 0.76 s. 10 s is over 10 times that; the shorter it is, the less
-# a stuck Run costs (a thread-mode stall restarts every camera, so a false alarm
-# costs as much as a real one: keep the margin).
-STALL_AFTER_S = 10
+# two looks was 0.76 s. It was 10 s, but under load the silhouette check's
+# alignment (cv2.findTransformECC, once or twice a look, on every Run at once)
+# kept a healthy Run past that and restarted every camera: three stall dumps all
+# sat in it. It is 60 s: a thread-mode stall
+# restarts every camera, so a false alarm costs as much as a real one.
+STALL_AFTER_S = 60
 # A Run that looks at nothing because its camera is down (the Stream reopens
 # itself) is not stuck: it is waited for, and only past this long is it ended,
 # alone and never with the service, for the backend to start again

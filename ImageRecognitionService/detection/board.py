@@ -138,6 +138,11 @@ ECC_EPS = 1e-3             # PROVISIONAL
 # the baseline, four CamA/CamB clips: the right Target 0.97-0.99, a neighbour
 # 0.55 (182 frame px off) and 0.20, or no convergence. Not swept.
 REANCHOR_MIN_CORRELATION = 0.9   # PROVISIONAL
+# A non-reference Target's fitted outline (#396) stands only while it covers
+# this fraction of the gate's blob. Measured 2026-11-23 on frame 125 of every
+# CamA/CamB clip: right fits 0.97-1.00 on CamA, 0.92-0.94 on CamB, where the
+# green spills onto the paper (#297); a fit one Target over ~0. Not swept.
+OUTLINE_MIN_COVER = 0.8   # PROVISIONAL
 # ...measured, and so scored, on the greyscale Board within this many Target
 # spans of the ring (a square), the ECC region before #321. The sheets alone
 # cannot tell the Targets apart: with the reference Target out of view, a
@@ -776,9 +781,14 @@ def build_view(frame, template_mask, board_scale=None):
         board_scale = board_scale_for(contour_span(template_contour(template_mask)),
                                       contour_span(contours[0]))
 
-    # Where the Targets land before the origin is chosen.
+    # Where the Targets land before the origin is chosen: the artwork's
+    # outline through each Target's fit, not the green gate's edge, which
+    # compression notches where the print's hue nears GREEN_HI (_103223).
+    tpl = template_contour(template_mask).reshape(-1, 2).astype(np.float32)
+    outlines = [apply(H, tpl)] + [_fitted_outline(template_mask, frame_mask, c, contours[0], H, tpl)
+                                  for c in contours[1:]]
     unshifted = _as_matrix(board_scale) @ np.linalg.inv(H)
-    placed = [apply(unshifted, c.reshape(-1, 2)) for c in contours]
+    placed = [apply(unshifted, o) for o in outlines]
     allpts = np.vstack(placed)
 
     # The canvas spans every Target plus a margin, for `--out`.
@@ -802,6 +812,36 @@ def build_view(frame, template_mask, board_scale=None):
                       reference, mean_hue(frame, frame_mask, contours[0])), correlation)
 
 
+def _fitted_outline(template_mask, frame_mask, contour, reference, H, tpl):
+    """The artwork's outline in frame px for a non-reference Target `contour`:
+    the reference's fit `H` moved onto its blob, by a translation-only
+    silhouette fit seeded with the two blobs' centroid offset. Translation
+    only, as `ring_centre` and `sheet_bounds` assume: a free affine shears
+    on a Target the frame cuts (CamB `_101550`).
+
+    The fit runs on the whole frame mask, every Target in it, so its ECC
+    correlation says little about this one; it stands only while the outline
+    covers `OUTLINE_MIN_COVER` of the blob it was seeded on. The gate's edge
+    otherwise, and when the fit does not converge."""
+    gate = contour.reshape(-1, 2).astype(np.float32)
+    dx, dy = _centroid(contour) - _centroid(reference)
+    try:
+        own, _ = register(template_mask, frame_mask, contour,
+                          _as_matrix(1.0, (dx, dy)) @ H, cv2.MOTION_TRANSLATION)
+    except cv2.error:
+        return gate
+    outline = apply(own, tpl)
+    return outline if _cover(outline, contour, frame_mask.shape) >= OUTLINE_MIN_COVER else gate
+
+
+def _cover(outline, contour, shape):
+    """The fraction of `contour`'s area inside `outline`, both frame px."""
+    blob, inside = np.zeros(shape, np.uint8), np.zeros(shape, np.uint8)
+    cv2.fillPoly(blob, [contour.reshape(-1, 1, 2).astype(np.int32)], 1)
+    cv2.fillPoly(inside, [np.round(outline).reshape(-1, 1, 2).astype(np.int32)], 1)
+    return (blob & inside).sum() / max(int(blob.sum()), 1)
+
+
 def _centroid(polygon):
     m = cv2.moments(polygon)
     return np.array([m["m10"] / m["m00"], m["m01"] / m["m00"]])
@@ -815,9 +855,8 @@ def sheet_bounds(targets, tpl_to_board, bound_tpl=None, reference=0):
 
     ponytail: axis-aligned in Board space, as #271 placed the sheets; a Target
     turned against the reference gets an upright bound. A Target the frame's
-    edge cuts (CamA's second) has its centroid, and so its sheet, pulled
-    toward what is in view. Place each sheet by its own silhouette fit if a
-    sheet's truth ever sits near that edge."""
+    edge cuts (CamA's second) is placed whole, by its outline's fit
+    (`build_view`, #396), not pulled toward what is in view."""
     x0, y0, x1, y1 = sheet_bound_tpl() if bound_tpl is None else bound_tpl
     ref = apply(tpl_to_board, [[x0, y0], [x1, y1]]).astype(np.float64).ravel()
     origin = _centroid(targets[reference])

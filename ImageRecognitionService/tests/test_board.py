@@ -690,6 +690,29 @@ def test_a_bullet_hole_on_the_disk_edge_does_not_move_the_ring():
     assert np.linalg.norm(ring - board.apply(P, [board.RING_CENTRE_TPL])[0]) < 0.25   # frame px
 
 
+def test_a_hole_on_print_the_green_gate_drops_is_on_the_target():
+    """`_103223`: compression pushes blocks of the print's edge past
+    `GREEN_HI` (hue 96-100 against the print's 93), and the gate's notch
+    made a Bullet Hole on the print a Miss. The outline is the artwork's,
+    through the fit, not the gate's."""
+    frame, template_mask, P, _ = _synthetic_board()
+    edge = board.apply(P, board.template_contour(template_mask).reshape(-1, 2).astype(np.float32))
+    x, y = edge[len(edge) // 3].astype(int)
+    block = frame[y - 12:y + 12, x - 12:x + 12]
+    green = cv2.inRange(cv2.cvtColor(block, cv2.COLOR_BGR2HSV), board.GREEN_LO, board.GREEN_HI) > 0
+    block[green] = cv2.cvtColor(np.uint8([[[98, 165, 165]]]), cv2.COLOR_HSV2BGR)[0, 0]
+    inside = np.zeros(frame.shape[:2], np.uint8)
+    cv2.fillPoly(inside, [np.round(edge).astype(np.int32)], 255)
+    inside = cv2.erode(inside, np.ones((9, 9), np.uint8))[y - 12:y + 12, x - 12:x + 12] > 0
+    ys, xs = np.nonzero(inside & green)
+    assert len(xs)   # the block reaches 4 px into the print
+
+    view, _ = board.build_view(frame, template_mask)
+
+    on_print = view.frame_to_board(np.c_[xs + x - 12, ys + y - 12].astype(np.float32))
+    assert all(view.assign(p) == view.reference_target for p in on_print)
+
+
 def test_half_a_digit_row_out_of_view_keeps_the_silhouette_fit():
     """#302: the other half alone fits scales 2-4% wrong on real frames."""
     frame, template_mask, P, silhouette = _synthetic_board()
@@ -771,6 +794,26 @@ def test_targets_are_numbered_by_place_not_by_area(upper_scale, lower_scale, ref
     assert len(view.targets) == 2 and view.reference_target == reference
     for i, ring in enumerate(rings):   # index 0 the upper Target, 1 the lower
         assert view.board_to_frame([view.ring_centre(i)])[0] == pytest.approx(ring, abs=3)
+
+
+def test_a_fit_that_leaves_its_target_falls_back_to_the_gate_edge(monkeypatch):
+    """Codex on #397: ECC can settle off a clipped or occluded Target without
+    throwing. An outline that no longer covers its blob is not used."""
+    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    frame, rings = _two_target_frame(0.3, 0.25)
+    register = board.register
+
+    def astray(template_mask, frame_mask, contour, init=None, motion=cv2.MOTION_HOMOGRAPHY):
+        H, corr = register(template_mask, frame_mask, contour, init, motion)
+        if motion == cv2.MOTION_TRANSLATION:
+            H = board._as_matrix(1.0, (300, 0)) @ H
+        return H, corr
+    monkeypatch.setattr(board, "register", astray)
+
+    view, _ = board.build_view(frame, template_mask)
+
+    lower = view.board_to_frame([view.ring_centre(1)])[0]
+    assert lower == pytest.approx(rings[1], abs=6)   # the gate's, not 300 px off
 
 
 def test_targets_at_about_one_height_read_left_to_right():

@@ -113,7 +113,7 @@ def test_a_process_run_whose_camera_is_down_is_waited_for_then_ended_alone(api):
     run.remote.down = True
     now = CLOCK
     api.service.check_stalls(now)
-    api.service.check_stalls(now + stalls.STALL_AFTER_S + 1)
+    api.service.check_stalls(min(now + stalls.STALL_AFTER_S + 1, now + stalls.CAMERA_DOWN_AFTER_S - 1))
     api.service.check_stalls(now + stalls.CAMERA_DOWN_AFTER_S - 1)
     assert not run.process.killed          # the stream is reopening itself: waited for
     api.service.check_stalls(now + stalls.CAMERA_DOWN_AFTER_S)
@@ -252,8 +252,8 @@ def test_a_process_run_that_is_draining_its_posts_is_not_judged_stalled_until_th
     run = _watching_process_run(api.service, "t0")
     run.draining = CLOCK   # it finished looking, and posts what it confirmed
     api.service.check_stalls(CLOCK)
-    api.service.check_stalls(CLOCK + stalls.STALL_AFTER_S * 3)
-    assert not run.process.killed   # no look in 30 s is not a stall now
+    api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S - 1)
+    assert not run.process.killed   # no look, but within the drain limit: not a stall now
     api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1)
     api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1 + stalls.STALL_AFTER_S)
     assert run.process.killed   # a drain that never ends is still bounded
@@ -273,4 +273,37 @@ def test_a_run_whose_camera_comes_back_after_a_long_outage_gets_a_fresh_stall_ti
     assert not run.process.killed
     api.service.check_stalls(CLOCK + 51 + stalls.STALL_AFTER_S + 1)
     assert run.process.killed                            # video flows and it still looks at nothing: stuck
+    api.service._runs.clear()
+
+
+def test_a_stall_logs_in_one_line_where_the_run_is_stuck(api, caplog):
+    freed = _stall_a_run(api)
+    try:
+        now = CLOCK
+        api.service.check_stalls(now)
+        with caplog.at_level("ERROR", logger="detection.stalls"):
+            api.service.check_stalls(now + stalls.STALL_AFTER_S)
+        record = next(r for r in caplog.records if "is stuck for" in r.getMessage())
+        message = record.getMessage()
+        assert f"Camera {CAMERA}" in message and "\n" not in message   # one readable line
+        assert "threading.py" in message and "in wait" in message   # the file, line and function it is in
+        assert any(line.endswith("in stuck") for line in record.run_stack)   # the whole stack is a field
+        assert record.other_threads
+        assert record.model_lock_held in (True, False)
+    finally:
+        freed.set()
+
+
+def test_a_stalled_process_runs_line_does_not_blame_its_pipe_monitor(api, caplog):
+    """In process mode the Run's thread only waits on the worker's pipe: the line says the
+    worker's place is not captured, not that the monitor is where it is stuck."""
+    run = _watching_process_run(api.service, "t0")
+    now = CLOCK
+    api.service.check_stalls(now)
+    with caplog.at_level("ERROR", logger="detection.stalls"):
+        api.service.check_stalls(now + stalls.STALL_AFTER_S)
+    record = next(r for r in caplog.records if "worker process is stuck" in r.getMessage())
+    assert "not captured" in record.getMessage()
+    assert record.stuck_in is None and not hasattr(record, "run_stack") and not hasattr(record, "model_lock_held")
+    assert run.process.killed
     api.service._runs.clear()

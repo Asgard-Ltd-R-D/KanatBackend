@@ -9,8 +9,11 @@ Nothing here imports the detector's libraries: the supervisor reads its default
 """
 import logging
 import os
+import re
+import sys
 import threading
 import time
+import traceback
 
 log = logging.getLogger("detection.stalls")
 
@@ -35,6 +38,12 @@ STALL_CHECK_EVERY_S = 1
 # but not yet sent is otherwise lost with the exit. The stuck Run may hold what
 # they need (the GPU, the model's lock), so it is a bounded try, never a wait.
 EXIT_DRAIN_S = 8   # PROVISIONAL
+
+
+def _where(stack_line):
+    """A stack line as `board.py:291 in register`."""
+    match = re.match(r'File "(.*)", line (\d+), in (.*)', stack_line)
+    return f"{os.path.basename(match[1])}:{match[2]} in {match[3]}" if match else stack_line
 
 
 class StallChecks:
@@ -83,11 +92,46 @@ class StallChecks:
                 self._stalled(run, stuck_s, input_flowing=False)   # camera down for long: this Run alone
             # else: the camera is down and its stream reopens itself: wait
 
+    def _dump_threads(self, run, silent_s, input_flowing):
+        """Logs, in one line, what the stuck Run was doing, before it is ended: a
+        stall leaves no error behind, so this is the only record of what it was
+        stuck on (the decoder, the shared model's lock, the GPU, a post). The line
+        names the file, line and function the Run's thread is in; its full stack
+        and where every other thread is are fields, opened by a click in the
+        Logs tab."""
+        try:
+            lock = getattr(self, "_inference_lock", None)
+            names = {t.ident: t.name for t in threading.enumerate()}
+            frames = sys._current_frames()
+            own = f"Run {run.session_id} {run.camera}"   # the Run's thread name (service.py)
+            run_stack, others = [], {}
+            for ident, frame in frames.items():
+                if ident == threading.get_ident():
+                    continue   # the stall check itself
+                name = names.get(ident, str(ident))
+                if name == own:
+                    run_stack = [entry.strip().splitlines()[0] for entry in traceback.format_stack(frame, limit=12)]
+                else:
+                    last = traceback.extract_stack(frame)[-1]
+                    others[name] = f"{os.path.basename(last.filename)}:{last.lineno} in {last.name}"
+            where = _where(run_stack[-1]) if run_stack else "a place that could not be read"
+            holds = "" if lock is None else f"; the model lock is {'held' if lock.locked() else 'free'}"
+            camera_state = "its camera is down" if run.camera_down() else "its video is still arriving"
+            log.error("Camera %s: its Run is stuck for %.0f s, in %s (%s%s)",
+                      run.camera, silent_s, where, camera_state, holds,
+                      extra={"camera": run.camera, "silent_s": round(silent_s), "input_flowing": input_flowing,
+                             "stuck_in": where, "stream_down": run.camera_down(), "looked": run.progress(),
+                             "model_lock_held": lock.locked() if lock is not None else None,
+                             "run_stack": run_stack, "other_threads": others})
+        except Exception:   # a diagnostic must never stop the stall from being dealt with
+            log.exception("Stall dump failed")
+
     def _stalled(self, run, silent_s, input_flowing):
         with self._lock:
             if run.stalled:
                 return   # a pass that overlaps the last one: dealt with once
             run.stalled = True
+        self._dump_threads(run, silent_s, input_flowing)
         mode = "process" if run.process is not None else "thread"
         if input_flowing:
             why = "video kept arriving but the Run looked at nothing"

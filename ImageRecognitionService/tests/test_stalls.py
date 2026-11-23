@@ -274,3 +274,21 @@ def test_a_run_whose_camera_comes_back_after_a_long_outage_gets_a_fresh_stall_ti
     api.service.check_stalls(CLOCK + 51 + stalls.STALL_AFTER_S + 1)
     assert run.process.killed                            # video flows and it still looks at nothing: stuck
     api.service._runs.clear()
+
+
+def test_a_stall_logs_in_one_line_where_the_run_is_stuck(api, caplog):
+    freed = _stall_a_run(api)
+    try:
+        now = CLOCK
+        api.service.check_stalls(now)
+        with caplog.at_level("ERROR", logger="detection.stalls"):
+            api.service.check_stalls(now + stalls.STALL_AFTER_S)
+        record = next(r for r in caplog.records if "is stuck for" in r.getMessage())
+        message = record.getMessage()
+        assert f"Camera {CAMERA}" in message and "\n" not in message   # one readable line
+        assert "threading.py" in message and "in wait" in message   # the file, line and function it is in
+        assert any(line.endswith("in stuck") for line in record.run_stack)   # the whole stack is a field
+        assert record.other_threads
+        assert record.model_lock_held in (True, False)
+    finally:
+        freed.set()

@@ -53,6 +53,17 @@ on the sheet, drawn 15-20 screen px from it, all offset the same way.
 The recording is a re-encoded 1264 px screen capture, not the camera's stream,
 so none of the sharpness or drift figures above is the camera's own.
 
+## Since #383 (2026-11-22)
+
+On `198ed00`, the same recording replayed from 2.1 s at stride 4 reports 36
+false Bullet Holes at 17.43 s. A covered frame converged at correlation 0.23
+with its sheet corners ~130 Board px off. `silhouette_disagreement` read it
+at the reference Target's centre, 16 Board px, so it was kept. Every later
+Look was seeded from it and stuck ~720 px off at ~0.2. A fit under 0.5 is now
+Lost without the check (`MIN_FIT_CORRELATION`): 36 becomes 1, an existing hole
+the replay's baseline missed. The 5-7 px drift at ECC 0.97 described above
+still passes unchecked, and the rest of this record stands.
+
 ## Why this is out of scope
 
 A shooting range does not cover its camera. Nothing in a normal Range puts

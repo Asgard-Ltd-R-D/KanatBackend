@@ -132,6 +132,16 @@ GROSS_DISAGREEMENT_PX = 66.0    # PROVISIONAL
 # Past the most a still clip read, a checked fit is counted and the run warns once.
 MODERATE_DISAGREEMENT_PX = 3.1  # PROVISIONAL: the most a right fit read on a still clip
 
+# A fit converging below this correlation is Lost without the silhouette check
+# (#383). That check sees only the reference Target's centre, and a degenerate
+# fit can keep the centre in place: on the 2026-11-17 cover a covered frame
+# converged at 0.23, read 16 Board px there with the sheet corners ~130 px off,
+# was kept, and seeded every later Look, stuck ~720 px off at ~0.2 (36 false
+# Bullet Holes). #92's gross fits converged at 0.29 or less, still clips at
+# 0.917 or more; the 2026-11-22 board poke, an arm over the sheet, at 0.81-0.85
+# and right. The bound sits between them.
+MIN_FIT_CORRELATION = 0.5   # PROVISIONAL
+
 # How many frames the baseline is built from.
 #
 # The baseline answers "was this mark already on the Board?", and whatever it
@@ -1208,6 +1218,7 @@ class Registration:
         self.reanchors = self._reanchored = 0   # attempts, and those that registered (#80)
         # Converged fits after the first, those checked, and the verdicts (#110).
         self._converged = self._checked = self._gross = self._moderate = 0
+        self._uncorrelated = 0   # converged below MIN_FIT_CORRELATION (#383)
         self._sharpness, self._defocused = sharpness(base), 0
 
     def register(self, frame, index):
@@ -1253,7 +1264,9 @@ class Registration:
         costs ~0.5-1 s a 1080p frame (0.96 on `_141846`, #110), against 0.2-0.6 s
         for `track_view` itself.
         Every wrong fit #92 measured converged at 0.82 or less, the gross ones
-        at 0.29 or less; still clips at 0.917 or more.
+        at 0.29 or less; still clips at 0.917 or more. One below
+        `MIN_FIT_CORRELATION` is gross without the check, which a degenerate
+        fit can pass (#383).
 
         ponytail: a gross fit converging at or above the floor passes unchecked;
         #92 measured none. Since #276 that includes a frame with no Target in
@@ -1265,6 +1278,9 @@ class Registration:
         self._converged += 1
         if correlation >= board.REANCHOR_MIN_CORRELATION:
             return False
+        if correlation < MIN_FIT_CORRELATION:
+            self._uncorrelated += 1
+            return True
         disagreement = board.silhouette_disagreement(frame, self._template_mask, view)
         if disagreement is None:
             return False   # no verdict: the frame keeps its fit
@@ -1277,6 +1293,8 @@ class Registration:
 
     def _report_checks(self):
         floor = board.REANCHOR_MIN_CORRELATION
+        print(f"[REGISTRATION] {self._uncorrelated} of {self._converged} converged fit(s) "
+              f"below {MIN_FIT_CORRELATION} correlation: counted lost, unchecked (#383)")
         print(f"[REGISTRATION] {self._checked} of {self._converged} converged fit(s) checked "
               f"against an independent silhouette fit (only those converging below "
               f"{floor}): {self._gross} grossly wrong, at or past {GROSS_DISAGREEMENT_PX:.0f} "

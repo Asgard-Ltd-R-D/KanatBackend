@@ -292,3 +292,18 @@ def test_a_stall_logs_in_one_line_where_the_run_is_stuck(api, caplog):
         assert record.model_lock_held in (True, False)
     finally:
         freed.set()
+
+
+def test_a_stalled_process_runs_line_does_not_blame_its_pipe_monitor(api, caplog):
+    """In process mode the Run's thread only waits on the worker's pipe: the line says the
+    worker's place is not captured, not that the monitor is where it is stuck."""
+    run = _watching_process_run(api.service, "t0")
+    now = CLOCK
+    api.service.check_stalls(now)
+    with caplog.at_level("ERROR", logger="detection.stalls"):
+        api.service.check_stalls(now + stalls.STALL_AFTER_S)
+    record = next(r for r in caplog.records if "worker process is stuck" in r.getMessage())
+    assert "not captured" in record.getMessage()
+    assert record.stuck_in is None and not hasattr(record, "run_stack") and not hasattr(record, "model_lock_held")
+    assert run.process.killed
+    api.service._runs.clear()

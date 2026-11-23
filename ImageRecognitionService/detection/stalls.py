@@ -100,6 +100,15 @@ class StallChecks:
         and where every other thread is are fields, opened by a click in the
         Logs tab."""
         try:
+            if run.process is not None:
+                # The Run's thread here only watches the worker's pipe: the work, and
+                # the model's lock, are in the worker process, which is killed next
+                camera_state = "its camera is down" if run.camera_down() else "its video is still arriving"
+                log.error("Camera %s: its Run's worker process is stuck for %.0f s (%s); where it is stuck is "
+                          "not captured in process mode", run.camera, silent_s, camera_state,
+                          extra={"camera": run.camera, "silent_s": round(silent_s), "input_flowing": input_flowing,
+                                 "stuck_in": None, "stream_down": run.camera_down(), "looked": run.progress()})
+                return
             lock = getattr(self, "_inference_lock", None)
             names = {t.ident: t.name for t in threading.enumerate()}
             frames = sys._current_frames()

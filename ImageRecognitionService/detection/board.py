@@ -138,6 +138,11 @@ ECC_EPS = 1e-3             # PROVISIONAL
 # the baseline, four CamA/CamB clips: the right Target 0.97-0.99, a neighbour
 # 0.55 (182 frame px off) and 0.20, or no convergence. Not swept.
 REANCHOR_MIN_CORRELATION = 0.9   # PROVISIONAL
+# A non-reference Target's fitted outline (#396) stands only while it covers
+# this fraction of the gate's blob. Measured 2026-11-23 on frame 125 of every
+# CamA/CamB clip: right fits 0.97-1.00 on CamA, 0.92-0.94 on CamB, where the
+# green spills onto the paper (#297); a fit one Target over ~0. Not swept.
+OUTLINE_MIN_COVER = 0.8   # PROVISIONAL
 # ...measured, and so scored, on the greyscale Board within this many Target
 # spans of the ring (a square), the ECC region before #321. The sheets alone
 # cannot tell the Targets apart: with the reference Target out of view, a
@@ -814,14 +819,27 @@ def _fitted_outline(template_mask, frame_mask, contour, reference, H, tpl):
     only, as `ring_centre` and `sheet_bounds` assume: a free affine shears
     on a Target the frame cuts (CamB `_101550`).
 
-    ponytail: the gate's edge when the fit does not converge."""
+    The fit runs on the whole frame mask, every Target in it, so its ECC
+    correlation says little about this one; it stands only while the outline
+    covers `OUTLINE_MIN_COVER` of the blob it was seeded on. The gate's edge
+    otherwise, and when the fit does not converge."""
+    gate = contour.reshape(-1, 2).astype(np.float32)
     dx, dy = _centroid(contour) - _centroid(reference)
     try:
         own, _ = register(template_mask, frame_mask, contour,
                           _as_matrix(1.0, (dx, dy)) @ H, cv2.MOTION_TRANSLATION)
     except cv2.error:
-        return contour.reshape(-1, 2).astype(np.float32)
-    return apply(own, tpl)
+        return gate
+    outline = apply(own, tpl)
+    return outline if _cover(outline, contour, frame_mask.shape) >= OUTLINE_MIN_COVER else gate
+
+
+def _cover(outline, contour, shape):
+    """The fraction of `contour`'s area inside `outline`, both frame px."""
+    blob, inside = np.zeros(shape, np.uint8), np.zeros(shape, np.uint8)
+    cv2.fillPoly(blob, [contour.reshape(-1, 1, 2).astype(np.int32)], 1)
+    cv2.fillPoly(inside, [np.round(outline).reshape(-1, 1, 2).astype(np.int32)], 1)
+    return (blob & inside).sum() / max(int(blob.sum()), 1)
 
 
 def _centroid(polygon):

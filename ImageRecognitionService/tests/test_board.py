@@ -796,6 +796,26 @@ def test_targets_are_numbered_by_place_not_by_area(upper_scale, lower_scale, ref
         assert view.board_to_frame([view.ring_centre(i)])[0] == pytest.approx(ring, abs=3)
 
 
+def test_a_fit_that_leaves_its_target_falls_back_to_the_gate_edge(monkeypatch):
+    """Codex on #397: ECC can settle off a clipped or occluded Target without
+    throwing. An outline that no longer covers its blob is not used."""
+    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    frame, rings = _two_target_frame(0.3, 0.25)
+    register = board.register
+
+    def astray(template_mask, frame_mask, contour, init=None, motion=cv2.MOTION_HOMOGRAPHY):
+        H, corr = register(template_mask, frame_mask, contour, init, motion)
+        if motion == cv2.MOTION_TRANSLATION:
+            H = board._as_matrix(1.0, (300, 0)) @ H
+        return H, corr
+    monkeypatch.setattr(board, "register", astray)
+
+    view, _ = board.build_view(frame, template_mask)
+
+    lower = view.board_to_frame([view.ring_centre(1)])[0]
+    assert lower == pytest.approx(rings[1], abs=6)   # the gate's, not 300 px off
+
+
 def test_targets_at_about_one_height_read_left_to_right():
     """Top to bottom, and left to right within a row a few px out of level."""
     targets = [_square(500, 6, 100), _square(0, 0, 100), _square(250, 400, 100),

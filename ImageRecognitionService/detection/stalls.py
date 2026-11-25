@@ -38,6 +38,15 @@ STALL_CHECK_EVERY_S = 1
 # but not yet sent is otherwise lost with the exit. The stuck Run may hold what
 # they need (the GPU, the model's lock), so it is a bounded try, never a wait.
 EXIT_DRAIN_S = 8   # PROVISIONAL
+# A Run stuck in "ending" for this long is retired anyway. A thread-mode end
+# cannot kill its work thread, and `_end` waits on `run.ended` with no timeout,
+# so a Run whose stream died while it was ending would hold the single session
+# slot forever ("busy with another session") until the service restarts. A real
+# end finishes well within this (its judge is ENDING_TIMEOUT_S = 5 s, and a Run
+# draining its posts is skipped separately), so this only catches the wedge.
+# Starting a new Session abandons a leftover Run at once (service.start), so this
+# only bounds the case where no new Session comes to clear it.
+END_STUCK_AFTER_S = 10   # PROVISIONAL
 
 
 def _where(stack_line):
@@ -59,8 +68,9 @@ class StallChecks:
 
     def check_stalls(self, now=None):
         """End every watching Run that has looked at no frame for
-        `stall_after_s`. A Run that is still starting or already ending has its
-        own timeouts, so only a watching one is judged here."""
+        `stall_after_s`, and retire a Run stuck in "ending" for longer than
+        `END_STUCK_AFTER_S`. A starting Run has its own start timeout, so it is
+        left alone here."""
         now = time.monotonic() if now is None else now
         with self._lock:
             runs = [(run, run.state == "watching") for run in self._runs.values()]
@@ -70,7 +80,25 @@ class StallChecks:
             if run.draining and now - run.draining < self.drain_limit_s():
                 continue   # done looking, only posting what it confirmed: the publisher's limit applies
             if not watching:
-                run.mark_at = now   # its stall time counts from when it watches
+                if run.state == "ending":
+                    # A Run stuck ending holds the single session slot — thread
+                    # mode cannot kill it, and `_end` waits on it with no timeout —
+                    # so retire it if it overruns (a draining one is skipped above).
+                    # Track progress like a watching Run: a Look resets the
+                    # allowance, so a slow frame in progress is not taken for a
+                    # wedge. A down camera has no frame coming, so it gets the short
+                    # END_STUCK_AFTER_S; one with video still flowing gets the full
+                    # stall interval, as a registration can run past it under load.
+                    mark = run.progress()
+                    if run.end_seen_at is None or mark != run.mark:
+                        run.mark, run.end_seen_at = mark, now
+                    else:
+                        down = run.camera_down()
+                        allowance = END_STUCK_AFTER_S if down else self._stall_after_s
+                        if now - run.end_seen_at >= allowance:
+                            self._stalled(run, now - run.end_seen_at, input_flowing=not down)
+                else:
+                    run.mark_at = now   # starting: its stall time counts from when it watches
                 continue
             mark = run.progress()
             if mark != run.mark:
@@ -137,9 +165,17 @@ class StallChecks:
 
     def _stalled(self, run, silent_s, input_flowing):
         with self._lock:
-            if run.stalled:
-                return   # a pass that overlaps the last one: dealt with once
+            if run.stalled or run.ended.is_set():
+                # Dealt with once; and a Run evicted by a concurrent start (ended,
+                # dropped from _runs) is gone — never escalate it, which could
+                # exit the service out from under the newly admitted Session.
+                return
             run.stalled = True
+            # Commit the exit decision under this same lock, so a concurrent
+            # start cannot admit a new Session between here and _exit_for_restart:
+            # once _exiting is set, start refuses (service.start).
+            if run.process is None and self._exit_on_stall and input_flowing:
+                self._exiting = True
         self._dump_threads(run, silent_s, input_flowing)
         mode = "process" if run.process is not None else "thread"
         if input_flowing:

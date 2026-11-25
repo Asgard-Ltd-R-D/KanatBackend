@@ -209,6 +209,45 @@ def test_a_second_sessions_run_is_refused_while_the_first_is_active(api):
     assert api.opened == [URL]   # the refused Session never opened a Stream
 
 
+def test_a_leftover_ending_run_from_a_previous_session_is_evicted_on_start(api):
+    """A previous Session's Run that did not end cleanly (stuck in 'ending', e.g.
+    a thread-mode end wedged on a dead stream) is abandoned when a new Session
+    starts, so the new Session need not wait for the stall check to clear it."""
+    stale = service._Run(OTHER, CAMERA)
+    stale.enter("ending")
+    api.service._runs[(OTHER, CAMERA)] = stale
+    status, _ = api.start(session_id=SESSION, camera=CAMERA2, url=URL2)
+    assert status == 200                       # not refused: the leftover was abandoned
+    assert stale.ended.is_set()                # the leftover is retired, its slot freed
+    assert set(_runs(api)) == {CAMERA2}        # only the new Session's Run remains
+
+
+def test_a_draining_leftover_run_is_also_abandoned_on_start(api):
+    """Eviction is instant by choice: a previous Session's Run still draining its
+    confirmed Bullet Holes is abandoned too, so starting a new Session never
+    waits (its last few in-flight posts may be lost)."""
+    draining = service._Run(OTHER, CAMERA)
+    draining.enter("ending")
+    draining.draining = time.monotonic()        # posting its confirmed holes
+    api.service._runs[(OTHER, CAMERA)] = draining
+    status, _ = api.start(session_id=SESSION, camera=CAMERA2, url=URL2)
+    assert status == 200                        # not refused: abandoned at once
+    assert draining.ended.is_set()
+    assert set(_runs(api)) == {CAMERA2}
+
+
+def test_a_starting_leftover_run_is_not_evicted_on_start(api):
+    """A previous Session's Run still building its baseline ('starting') is not
+    abandoned by a new Session's start; it is refused instead, so a healthy
+    start is never killed by a concurrent one."""
+    starting = service._Run(OTHER, CAMERA)      # _Run enters 'starting'
+    api.service._runs[(OTHER, CAMERA)] = starting
+    status, _ = api.start(session_id=SESSION, camera=CAMERA2, url=URL2)
+    assert status == 409
+    assert not starting.ended.is_set()
+    api.service._runs.clear()
+
+
 def test_a_runs_start_log_names_its_camera(api, caplog):
     """So the two concurrent Runs' lines are told apart by camera."""
     caplog.set_level("INFO")

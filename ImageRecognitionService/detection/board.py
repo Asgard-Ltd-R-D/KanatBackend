@@ -204,11 +204,12 @@ def find_targets(frame, min_area=MIN_TARGET_AREA_PX):
 
     The segmentation model finds them by shape, not colour (ADR-0013): sun,
     white balance and H.264 move the print's hue. Each Target's contour is the
-    outer edge of its instance mask's largest piece.
+    outer edge of its instance mask's largest piece. Handed no device, as the
+    detector is (`_detect`): CUDA if available, else CPU, never MPS (#129).
     """
     with _target_lock:
         result = target_model().predict(frame, imgsz=TARGET_IMGSZ, conf=MIN_TARGET_CONFIDENCE,
-                                        device="cpu", retina_masks=True, verbose=False)[0]
+                                        retina_masks=True, verbose=False)[0]
     mask = np.zeros(frame.shape[:2], np.uint8)
     keep = []
     for instance in ([] if result.masks is None else result.masks.data.cpu().numpy()):

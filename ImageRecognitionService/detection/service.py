@@ -183,7 +183,8 @@ def warm(model, device=None):
     the detector resolved to, not what was asked for: handed none, `cuda:0`
     when CUDA is visible, else `cpu`. A failure is logged and raised: the
     service then never answers, so never reads as up. The Target finder
-    (`board.find_targets`, on the CPU) is loaded and warmed with it."""
+    (`board.find_targets`, always handed no device, so `cuda:0` or `cpu` by the
+    same rule) is loaded and warmed with it."""
     started = time.perf_counter()
     try:
         for _ in range(3):

@@ -5,9 +5,11 @@ alone. Driven in-process on `service.DetectionService`, with its fixtures."""
 import threading
 import time
 
-from test_service import CAMERA, CLOCK, SESSION, _watching_process_run, api  # noqa: F401 (api is a fixture)
+from test_service import (  # noqa: F401 (api is a fixture)
+    CAMERA, CAMERA2, CLOCK, OTHER, SESSION, URL2, _watching_process_run, api,
+)
 
-from detection import service, stalls, webapp
+from detection import service, stalls
 
 
 def _stall_a_run(api):
@@ -92,6 +94,24 @@ def test_a_run_still_starting_is_not_judged_by_the_stall_check(api):
     api.service._runs.clear()
 
 
+def test_once_a_stall_commits_to_exit_a_new_session_is_refused(monkeypatch, api):
+    """The exit decision and start admission are coordinated under one lock: once
+    the stall check commits to exiting for a stuck thread, a new Session is
+    refused, so the restart never ends a Session admitted in between."""
+    api.service._exit_on_stall = True
+    monkeypatch.setattr(stalls.os, "_exit", lambda code: None)   # commit the exit without leaving
+    freed = _stall_a_run(api)
+    try:
+        now = CLOCK
+        api.service.check_stalls(now)
+        api.service.check_stalls(now + stalls.STALL_AFTER_S)   # video flowing + stuck: commits to exit
+        assert api.service._exiting
+        status, body = api.start(session_id=OTHER, camera=CAMERA2, url=URL2)
+        assert status == 409 and "restarting" in body["detail"]
+    finally:
+        freed.set()
+
+
 def test_a_stalled_thread_run_exits_the_service_when_asked_to(monkeypatch, api):
     api.service._exit_on_stall = True
     exits = []
@@ -161,6 +181,39 @@ def test_a_thread_run_whose_camera_is_down_never_exits_the_service(monkeypatch, 
     assert exits == []                       # the service lives on
     assert api.service.status() == []        # only this Run is ended
     assert run.error.startswith("stalled")
+
+
+def test_a_run_stuck_ending_is_retired_so_the_session_is_freed(api):
+    """A thread-mode end cannot kill its work thread, and `_end` waits on the Run
+    with no timeout; a Run whose stream died while it was ending would hold the
+    single session slot forever. The stall check retires it after the bound."""
+    run = service._Run(SESSION, CAMERA)
+    run.loop = _LoopOnADownStream()   # baseline_view stays None: it never finished watching
+    run.enter("ending")
+    api.service._runs[(SESSION, CAMERA)] = run
+    now = CLOCK
+    api.service.check_stalls(now)                                 # first sight: the bound starts here
+    api.service.check_stalls(now + stalls.END_STUCK_AFTER_S - 1)
+    assert api.service.status() != []                            # within the bound: waited for
+    api.service.check_stalls(now + stalls.END_STUCK_AFTER_S)
+    assert api.service.status() == []                           # retired
+    assert run.ended.is_set() and not api.service._runs         # and the session slot is freed
+    assert api.start()[0] == 200                                 # so a new Session can start
+
+
+def test_a_run_still_looking_while_ending_is_not_retired(api):
+    """An end during a slow frame is not mistaken for a wedge: while the Run
+    still makes progress (its camera up), it is left to finish, not retired at
+    END_STUCK_AFTER_S."""
+    run = service._Run(SESSION, CAMERA)
+    run.loop = _SavingLoop(run)   # `looked` advances on each read; camera up (no source.down)
+    run.enter("ending")
+    api.service._runs[(SESSION, CAMERA)] = run
+    now = CLOCK
+    for step in range(0, 4 * stalls.END_STUCK_AFTER_S, 2):   # well past END_STUCK_AFTER_S
+        api.service.check_stalls(now + step)
+    assert run in api.service._runs.values()   # still looking: not a wedge, not retired
+    api.service._runs.clear()
 
 
 # --- a stall is dealt with once, and the exit saves the other cameras first ---
@@ -249,13 +302,14 @@ def test_the_service_saves_the_other_cameras_before_it_exits_for_a_stuck_thread(
 
 
 def test_a_process_run_that_is_draining_its_posts_is_not_judged_stalled_until_the_drain_limit(api):
+    limit = api.service.drain_limit_s()   # the publisher's full window and a margin
     run = _watching_process_run(api.service, "t0")
     run.draining = CLOCK   # it finished looking, and posts what it confirmed
     api.service.check_stalls(CLOCK)
-    api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S - 1)
+    api.service.check_stalls(CLOCK + limit - 1)
     assert not run.process.killed   # no look, but within the drain limit: not a stall now
-    api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1)
-    api.service.check_stalls(CLOCK + webapp.DRAIN_TIMEOUT_S + service.KILL_AFTER_S + 1 + stalls.STALL_AFTER_S)
+    api.service.check_stalls(CLOCK + limit + 1)
+    api.service.check_stalls(CLOCK + limit + 1 + stalls.STALL_AFTER_S)
     assert run.process.killed   # a drain that never ends is still bounded
     api.service._runs.clear()
 

@@ -34,6 +34,7 @@ import signal
 import threading
 import time
 import uuid
+from contextlib import suppress
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -105,6 +106,8 @@ class _Run:
         self.deadline = time.monotonic() + (START_TIMEOUT_S if start_timeout_s is None else start_timeout_s)
         # The stall check's memory: the last progress it saw, and when it changed
         self.mark, self.mark_at = None, time.monotonic()
+        # When the stall check first saw it ending, to bound a stuck end (stalls.py)
+        self.end_seen_at = None
         self.enter("starting")
 
     def enter(self, state):
@@ -231,6 +234,10 @@ class DetectionService(StallChecks):
         # holds no model (`model` is None)
         self._run_mode, self._model_path, self._log_dir = run_mode, model_path, log_dir
         self._lock = threading.Lock()
+        # Set under _lock once the stall check commits to exiting for a stuck
+        # thread: from then `start` refuses, so no new Session is admitted into a
+        # service that is about to restart (stalls.py, _exit_for_restart).
+        self._exiting = False
         # Every active Run, keyed by (session_id, camera): a Session watches
         # every enabled camera at once, each on its own Stream and worker
         # thread (#341). They share the one loaded model, serialised by:
@@ -247,31 +254,72 @@ class DetectionService(StallChecks):
         with self._lock:
             return [run.view() for run in self._runs.values()]
 
+    def _evictable_leftover(self, run):
+        """A leftover Run from another Session that `start` abandons so a new
+        Session starts at once: one in "ending" (its Session was closed). This is
+        instant by the operator's choice, so a Run still draining its confirmed
+        posts is abandoned too and its last few in-flight posts may be lost. A
+        watching or still-starting other-Session Run is not touched (left to
+        `start` to refuse), so a live or just-starting Session is never killed."""
+        return run.state == "ending"
+
     def start(self, session_id, camera, stream_url):
         """The Run on this camera's Stream, started unless it is already
-        active, answered once it is watching. Another Session's Run still
-        active is a 409 (the backend keeps one Session; this holds the one Run
-        a time per Session, so `current_session` is never another's); this
-        Session's other cameras run concurrently. The same (session, camera)
-        Run already ending is a 409. A Run that fails to start, or is not
-        watching by `START_TIMEOUT_S`, is a 502 naming why, and leaves nothing
-        behind."""
+        active, answered once it is watching. A previous Session's leftover Run
+        (in "ending", its Session closed) is abandoned so this Session starts at
+        once, even one still draining its last posts (the operator's choice, so a
+        few in-flight posts may be lost); any other Session's Run still watching
+        or starting is a 409 (the backend keeps one Session, so `current_session`
+        is never another's). This Session's other cameras run concurrently. The
+        same (session, camera) Run already ending is a 409. A Run that fails to
+        start, or is not watching by `START_TIMEOUT_S`, is a 502 naming why, and
+        leaves nothing behind."""
         key = (session_id, camera)
+        abandoned = []
+        # Eviction, admission and insertion are one locked step, so two concurrent
+        # starts cannot both pass admission and take the single Session slot.
         with self._lock:
-            other = next((r for r in self._runs.values() if r.session_id != session_id), None)
-            if other is not None:
+            if self._exiting:
+                # The stall check has committed to exiting for a stuck thread; do
+                # not admit a Session the imminent restart would end (stalls.py).
+                return 409, {"detail": "the service is restarting"}
+            others = [r for r in self._runs.values() if r.session_id != session_id]
+            blocker = next((r for r in others if not self._evictable_leftover(r)), None)
+            if blocker is not None:
                 log.warning("Run refused for session %s: another Session's Run is active", session_id,
-                            extra={"session_id": session_id, "active_session_id": other.session_id})
-                return 409, {"detail": "another Session's Run is active", "run": other.view()}
+                            extra={"session_id": session_id, "active_session_id": blocker.session_id})
+                return 409, {"detail": "another Session's Run is active", "run": blocker.view()}
+            for leftover in others:
+                # Abandon here under the lock (not _retire, which re-locks): drop it
+                # from the Runs and mark it ended; its process/thread is stopped after
+                # the lock. It has no confirmed posts in flight, so nothing is lost.
+                leftover.dropping = True
+                if not leftover.ended.is_set():
+                    if self._runs.get((leftover.session_id, leftover.camera)) is leftover:
+                        del self._runs[(leftover.session_id, leftover.camera)]
+                    leftover.ready.set()
+                    leftover.ended.set()
+                    abandoned.append(leftover)
             run = self._runs.get(key)
             if run is None:
                 run = self._runs[key] = _Run(session_id, camera, self.start_timeout_s)
-                logs.current_session = session_id
                 log.info("Run starting on %s for camera %s (%s)", nbh._redacted(stream_url), camera,
                          self._run_mode, extra={"stream_url": nbh._redacted(stream_url), "camera": camera})
                 work = self._work_process if self._run_mode == "process" else self._work
                 threading.Thread(target=work, args=(run, stream_url), daemon=True,
                                  name=f"Run {session_id} {camera}").start()
+            logs.current_session = session_id
+        for leftover in abandoned:
+            log.warning("Abandoned a leftover Run on camera %s from session %s to start session %s",
+                        leftover.camera, leftover.session_id, session_id,
+                        extra={"camera": leftover.camera, "leftover_session_id": leftover.session_id,
+                               "session_id": session_id})
+            if leftover.process is not None:
+                with suppress(AttributeError, ValueError, OSError):
+                    leftover.process.kill()   # a process Run: free its model/GPU memory
+            elif leftover.loop is not None:
+                with suppress(Exception):
+                    leftover.loop.stop()   # a thread Run cannot be killed: ask, then abandon
         if not run.ready.wait(max(0.0, run.deadline - time.monotonic())):
             log.error("Run on camera %s not watching within %g s: no baseline was built, so it is ended",
                       camera, self.start_timeout_s, extra={"camera": camera})
@@ -319,9 +367,11 @@ class DetectionService(StallChecks):
             thread.join()
 
     def drain_limit_s(self):
-        """How long a Run that has finished looking may take to post what it confirmed: the
-        publisher's own limit and a margin. Past it, the Run is stuck, not draining."""
-        return webapp.DRAIN_TIMEOUT_S + KILL_AFTER_S
+        """How long a Run that has finished looking may take to post what it
+        confirmed: the publisher's full window (its drain wait plus a socket
+        request still in flight at the end of it) and a margin. Past it, the Run
+        is stuck, not draining."""
+        return webapp.DRAIN_TIMEOUT_S + webapp.SOCKET_TIMEOUT_S + KILL_AFTER_S
 
     def _end(self, run, judge=True):
         with self._lock:

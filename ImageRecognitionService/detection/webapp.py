@@ -24,8 +24,11 @@ log = logging.getLogger("detection.post")
 # 9 attempts in all.
 RETRY_DELAYS_S = (2, 4, 8, 16, 32, 60, 60, 60)
 
-# How long leaving the `with` waits for what is queued to be posted.
-DRAIN_TIMEOUT_S = 120
+# How long leaving the `with` waits for what is queued to be posted. Kept short
+# so ending a Run (hence closing a session) is not held by a slow or unreachable
+# backend: a reachable backend drains in well under a second, so this only caps
+# the pathological tail, after which retries stop and the rest is logged lost.
+DRAIN_TIMEOUT_S = 5
 
 # One POST's socket timeout, and the grace one in flight gets past the drain.
 SOCKET_TIMEOUT_S = 10

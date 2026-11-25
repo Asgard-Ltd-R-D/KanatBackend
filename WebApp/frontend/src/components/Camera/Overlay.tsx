@@ -74,7 +74,7 @@ export function Overlay({ run, place, bullets, runs, videoRef }: OverlayContent 
   const colour = (b: BulletHole) => (fromEarlierRun(run, runs, b.first_seen_at) ? BASELINE_MARK_COLOUR : colourOf(b))
 
   return (
-    <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden>
+    <svg data-detection-overlay className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden>
       {view.targets.map((outline, i) => {
         const points = outline.map(toElement)
         if (points.length === 0) return null

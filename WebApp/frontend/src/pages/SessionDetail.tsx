@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -11,6 +11,7 @@ import { StatStrip } from '../components/UI/StatStrip'
 import { ConfirmDialog } from '../components/UI/ConfirmDialog'
 import { BoardTabs } from '../components/Session/BoardTabs'
 import { RetakeBaselineControl } from '../components/Session/RetakeBaselineControl'
+import { DebugRecordButton } from '../components/Session/DebugRecordButton'
 import { CameraFeeds } from '../components/Camera/CameraFeeds'
 import { useCameras } from '../hooks/useCameras'
 import { useSessionLive } from '../hooks/useSessionLive'
@@ -32,6 +33,8 @@ export function SessionDetail() {
 
   useSessionLive(id, session?.status === 'active')
   const { data: cameras } = useCameras()
+  // TEMPORARY debug capture: a ref to the live feed, so its view can be recorded
+  const feedRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (session?.status !== 'active') return
@@ -88,6 +91,8 @@ export function SessionDetail() {
   // The boards: every enabled camera, merged with the Session's detections,
   // groupings and holes by camera_alias
   const boards = boardsOf(session, cameras)
+  // TEMPORARY debug capture: the one enabled camera to record (one camera setup)
+  const liveCamera = cameras?.find(c => c.enabled)?.alias
 
   return (
     // Active: fill the viewport so the camera feed can grow to the bottom on any
@@ -116,6 +121,8 @@ export function SessionDetail() {
         <div className="flex items-center gap-2">
           {active && (
             <>
+              {/* TEMPORARY debug capture; remove with the rest of the feature */}
+              <DebugRecordButton feedRef={feedRef} camera={liveCamera} active={active} />
               <RetakeBaselineControl session={session} boards={boards} />
               <button
                 onClick={() => setShowEndConfirm(true)}
@@ -178,7 +185,7 @@ export function SessionDetail() {
           stream (CameraFeeds). Retake is in the header; no Bullet Log while live. */}
       {active && (
         <div className="flex-1 min-h-0">
-          <div className="h-full min-h-[320px]">
+          <div ref={feedRef} className="h-full min-h-[320px]">
             <CameraFeeds runs={session.runs ?? []} bullets={bullets} detections={session.detections ?? []} />
           </div>
         </div>

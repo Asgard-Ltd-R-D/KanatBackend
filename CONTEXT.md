@@ -33,6 +33,12 @@ number (#240). The largest at the baseline is the Run's reference Target,
 the one registration fits; it need not be Target 1.
 _Avoid_: bullseye
 
+**Target finder**:
+What finds every Target visible in a frame, one outline each, before
+Registration places them on the Board. It finds Targets by their shape, not by
+the print's colour.
+_Avoid_: colour gate, board finder
+
 **Target Sheet**:
 The printed page one Target's artwork is on, fixed to a Board. The white
 margin around the artwork is part of the sheet, not of the Target.

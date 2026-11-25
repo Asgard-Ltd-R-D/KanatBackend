@@ -15,14 +15,14 @@ baseline frame's is fitted to the reference Target's silhouette as an affine
 (ADR-0012: the silhouette does not constrain perspective), and every later
 frame is registered to the baseline frame on the Board's own texture (#50). This
 assumes the Board is a single plane. The sheets are stapled separately and
-visibly curl, so the assumption is known to be imperfect; `residuals` exists to
-measure what it costs if SOW 2.3.2's 5mm proves unreachable. The alternative is
+visibly curl, so the assumption is known to be imperfect. The alternative is
 one homography per Target, which absorbs curl a Board-level fit cannot.
 """
 import functools
 import json
 import math
 import os
+import threading
 from typing import NamedTuple
 
 import cv2
@@ -30,6 +30,10 @@ import numpy as np
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # ImageRecognitionService/
 DEFAULT_TEMPLATE = os.path.join(BASE_DIR, "data", "targets", "kanat_silhouette_a4.png")
+# The Target finder (ADR-0013, #406): YOLO26n-seg, one class,
+# sha256 34cbe6daea2eceda5fb3223eac7d23287d8fe2cacde79bb555417b523e8580c6
+TARGET_MODEL = os.path.join(BASE_DIR, "trained_models", "target_seg_406", "best.pt")
+TARGET_IMGSZ = 640
 PRINT_SCALE_PATH = os.path.join(BASE_DIR, "config", "print_scale.json")
 
 # --- Target artwork landmarks, measured on the source PNG -------------------
@@ -57,16 +61,14 @@ OUTSIDE_RINGS = 0          # on the Target, beyond the 6-ring
 # once (#31); sealing is gone since (ADR-0010). Every number below is a
 # starting point, not a requirement. See docs/adr/0003-a-bullet-hole-is-new-when-it-persists.md.
 
-GREEN_LO = (35, 40, 30)    # PROVISIONAL: hue gate for the printed Target
-GREEN_HI = (95, 255, 255)  # PROVISIONAL: one artwork, one lighting condition
-MIN_TARGET_AREA_PX = 5000  # PROVISIONAL: rejects specks, may reject distant Targets
-# A green blob shows the white disk only if it is the printed artwork; trees,
-# glass, a wall pass the hue gate too (`board_targets`). A second Target is
-# the same print under the same light as the reference, so its mean hue is
-# within this of the reference's. Measured 2026-11-17: Targets 0-10 apart on
-# every CamA/CamB clip; the office camera's trees and glass 37-49 from its
-# print. Set between the two, not swept.
-TARGET_HUE_TOLERANCE = 15  # PROVISIONAL
+# The template PNG's artwork by hue (`template_mask`): its colour is known.
+# Frames are never gated by colour (ADR-0013).
+GREEN_LO = (35, 40, 30)
+GREEN_HI = (95, 255, 255)
+# What the Target finder counts as a Target: an instance at this confidence
+# and this many frame px, set by the sweep on held-out and bench frames (#413).
+MIN_TARGET_CONFIDENCE = 0.5  # PROVISIONAL: not swept yet
+MIN_TARGET_AREA_PX = 5000    # PROVISIONAL: rejects specks, may reject distant Targets
 
 # Apparent size at which the detector actually works.
 #
@@ -139,8 +141,8 @@ ECC_EPS = 1e-3             # PROVISIONAL
 # 0.55 (182 frame px off) and 0.20, or no convergence. Not swept.
 REANCHOR_MIN_CORRELATION = 0.9   # PROVISIONAL
 # A non-reference Target's fitted outline (#396) stands only while it covers
-# this fraction of the gate's blob. Measured 2026-11-23 on frame 125 of every
-# CamA/CamB clip: right fits 0.97-1.00 on CamA, 0.92-0.94 on CamB, where the
+# this fraction of the Target finder's blob. Measured 2026-11-23 on the hue
+# gate's blobs, frame 125 of every CamA/CamB clip: right fits 0.97-1.00 on CamA, 0.92-0.94 on CamB, where the
 # green spills onto the paper (#297); a fit one Target over ~0. Not swept.
 OUTLINE_MIN_COVER = 0.8   # PROVISIONAL
 # ...measured, and so scored, on the greyscale Board within this many Target
@@ -168,18 +170,48 @@ def apply(matrix, points):
     return cv2.perspectiveTransform(pts, matrix.astype(np.float32)).reshape(-1, 2)
 
 
-def find_targets(frame, min_area=MIN_TARGET_AREA_PX):
-    """Every printed Target visible in `frame`, largest first, plus the mask.
-    Largest first picks the registration reference; `build_view` then numbers
-    the Targets by `reading_order` (#240).
+def template_mask(image):
+    """The template PNG's artwork mask, by its known hue: what registration
+    fits onto a frame's Target mask."""
+    mask = cv2.inRange(cv2.cvtColor(image, cv2.COLOR_BGR2HSV), GREEN_LO, GREEN_HI)
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
 
-    One hue threshold does this: the artwork is saturated green against paper,
-    dirt and plywood. No model is involved, and none is needed.
+
+@functools.cache
+def target_model():
+    """The Target finder's weights, loaded once a process; `service.warm`
+    loads and warms them with the detector's (#319)."""
+    from ultralytics import YOLO  # imported lazily: pulls in torch
+    return YOLO(TARGET_MODEL)
+
+
+# ponytail: one model for every Run in a thread-mode service, so its calls are
+# serialised; one per Run if baselines and re-anchors ever queue on it.
+_target_lock = threading.Lock()
+
+
+def find_targets(frame, min_area=MIN_TARGET_AREA_PX):
+    """Every printed Target visible in `frame`, largest first, plus the mask
+    `register` fits on: the union of their instance masks. Largest first picks
+    the registration reference; `build_view` then numbers the Targets by
+    `reading_order` (#240).
+
+    The segmentation model finds them by shape, not colour (ADR-0013): sun,
+    white balance and H.264 move the print's hue. Each Target's contour is the
+    outer edge of its instance mask's largest piece.
     """
-    mask = cv2.inRange(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV), GREEN_LO, GREEN_HI)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    keep = [c for c in contours if cv2.contourArea(c) >= min_area]
+    with _target_lock:
+        result = target_model().predict(frame, imgsz=TARGET_IMGSZ, conf=MIN_TARGET_CONFIDENCE,
+                                        device="cpu", retina_masks=True, verbose=False)[0]
+    mask = np.zeros(frame.shape[:2], np.uint8)
+    keep = []
+    for instance in ([] if result.masks is None else result.masks.data.cpu().numpy()):
+        instance = (instance > 0.5).astype(np.uint8)
+        contours, _ = cv2.findContours(instance, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contour = max(contours, key=cv2.contourArea, default=None)
+        if contour is not None and cv2.contourArea(contour) >= min_area:
+            keep.append(contour)
+            mask[instance > 0] = 255
     return sorted(keep, key=cv2.contourArea, reverse=True), mask
 
 
@@ -187,11 +219,10 @@ def board_targets(frame, template_mask):
     """`(contours, frame_mask, H)`: the Targets in `frame`, the registration
     reference first, and its affine fit, `H` None when there is none.
 
-    The reference is the largest green blob the white disk is found in, by
-    the box seed (cheap) or else the ECC fit; scenery shows none. Every other
-    blob is kept only at the reference's hue (`TARGET_HUE_TOLERANCE`): a
-    Target the frame cuts, or a shaded one, need not show its disk, but it
-    is the same print.
+    The reference is the largest Target the white disk is found in, by the
+    box seed (cheap) or else the ECC fit, as `interior_fit` needs the disk.
+    Every other Target is kept: one the frame cuts, or a shaded one, need not
+    show its disk.
 
     ponytail: one ECC fit for each blob bigger than the reference, at the
     baseline only; crop the masks if a busy scene makes that slow.
@@ -208,21 +239,8 @@ def board_targets(frame, template_mask):
             break
     else:
         return [], frame_mask, None
-    others = at_hue(frame, frame_mask, [c for c in contours if c is not reference],
-                    mean_hue(frame, frame_mask, reference))
+    others = [c for c in contours if c is not reference]
     return [reference] + others, frame_mask, (H, correlation)
-
-
-def mean_hue(frame, frame_mask, contour):
-    """The mean hue of `frame_mask`'s pixels inside `contour`."""
-    inside = cv2.drawContours(np.zeros_like(frame_mask), [contour], -1, 255, -1)
-    return cv2.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV), inside & frame_mask)[0]
-
-
-def at_hue(frame, frame_mask, contours, hue):
-    """`contours` within `TARGET_HUE_TOLERANCE` of `hue`: the same print."""
-    return [c for c in contours
-            if abs(mean_hue(frame, frame_mask, c) - hue) <= TARGET_HUE_TOLERANCE]
 
 
 def reading_order(polygons):
@@ -647,14 +665,13 @@ class BoardView:
     """
 
     def __init__(self, H, tpl_to_board, canvas_size, targets, anchor=None, sheets=(),
-                 crops=(), reference_target=0, hue=None):
+                 crops=(), reference_target=0):
         self.H = H                        # template -> frame
         self.tpl_to_board = tpl_to_board  # template -> Board space (scale + origin)
         self.canvas_size = canvas_size    # (width, height) of the rectified Board
         self.targets = targets            # Target polygons, Board-space coords,
                                           # in `target_index` order (`reading_order`)
         self.reference_target = reference_target  # index of the one registration fits
-        self.hue = hue                    # its mean hue in the baseline frame (`board_targets`)
         self.anchor = anchor              # what `track_view` registers onto
         # Per Target, its sheet's bound, (x0, y0, x1, y1) Board px (ADR-0011),
         # and the canvas the detector is shown it on, (x, y, w, h) whole Board
@@ -782,8 +799,8 @@ def build_view(frame, template_mask, board_scale=None):
                                       contour_span(contours[0]))
 
     # Where the Targets land before the origin is chosen: the artwork's
-    # outline through each Target's fit, not the green gate's edge, which
-    # compression notches where the print's hue nears GREEN_HI (_103223).
+    # outline through each Target's fit, not the finder's edge, which the
+    # hue gate notched where compression moved the print's hue (_103223).
     tpl = template_contour(template_mask).reshape(-1, 2).astype(np.float32)
     outlines = [apply(H, tpl)] + [_fitted_outline(template_mask, frame_mask, c, contours[0], H, tpl)
                                   for c in contours[1:]]
@@ -809,7 +826,7 @@ def build_view(frame, template_mask, board_scale=None):
     anchor = Anchor(gray(frame), texture_region(H @ np.linalg.inv(tpl_to_board),
                                                 frame.shape[1::-1], sheets), H, identity)
     return (BoardView(H, tpl_to_board, size, targets, anchor, sheets, sheet_crops(sheets),
-                      reference, mean_hue(frame, frame_mask, contours[0])), correlation)
+                      reference), correlation)
 
 
 def _fitted_outline(template_mask, frame_mask, contour, reference, H, tpl):
@@ -821,17 +838,17 @@ def _fitted_outline(template_mask, frame_mask, contour, reference, H, tpl):
 
     The fit runs on the whole frame mask, every Target in it, so its ECC
     correlation says little about this one; it stands only while the outline
-    covers `OUTLINE_MIN_COVER` of the blob it was seeded on. The gate's edge
-    otherwise, and when the fit does not converge."""
-    gate = contour.reshape(-1, 2).astype(np.float32)
+    covers `OUTLINE_MIN_COVER` of the blob it was seeded on. The finder's
+    polygon otherwise, and when the fit does not converge."""
+    polygon = contour.reshape(-1, 2).astype(np.float32)
     dx, dy = _centroid(contour) - _centroid(reference)
     try:
         own, _ = register(template_mask, frame_mask, contour,
                           _as_matrix(1.0, (dx, dy)) @ H, cv2.MOTION_TRANSLATION)
     except cv2.error:
-        return gate
+        return polygon
     outline = apply(own, tpl)
-    return outline if _cover(outline, contour, frame_mask.shape) >= OUTLINE_MIN_COVER else gate
+    return outline if _cover(outline, contour, frame_mask.shape) >= OUTLINE_MIN_COVER else polygon
 
 
 def _cover(outline, contour, shape):
@@ -953,7 +970,7 @@ def track_view(frame, reference, seed=None, previous=None, region=None):
                               a.region if region is None else region)
     return BoardView(W @ a.H, reference.tpl_to_board, reference.canvas_size,
                      reference.targets, a, reference.sheets, reference.crops,
-                     reference.reference_target, reference.hue), correlation
+                     reference.reference_target), correlation
 
 
 def shifted(view, d):
@@ -967,7 +984,7 @@ def shifted(view, d):
     return BoardView(view.H, move @ view.tpl_to_board, view.canvas_size,
                      [t - d for t in view.targets], view.anchor,
                      [tuple(np.subtract(b, d)) for b in view.sheets], view.crops,
-                     view.reference_target, view.hue)
+                     view.reference_target)
 
 
 def reanchor_view(frame, template_mask, reference):
@@ -1033,17 +1050,11 @@ def silhouette_disagreement(frame, template_mask, view):
     where a neighbour is largest reads ~one Target spacing and is lost; none was
     on #110's six clips. Match the contour to the baseline's Target if one is.
 
-    Only blobs at the baseline reference's hue (`at_hue`) are Targets:
-    scenery bigger than the Target (trees through a window, #370) would
-    otherwise be fitted and a right fit dropped.
-
     Infinite when no Target is visible: a fit with nothing to fit is wrong
     (`track_view` does not look for one). None when the silhouette fit
     fails: no verdict.
     """
     contours, frame_mask = find_targets(frame)
-    if view.hue is not None:
-        contours = at_hue(frame, frame_mask, contours, view.hue)
     if not contours:
         return math.inf
     try:
@@ -1053,33 +1064,6 @@ def silhouette_disagreement(frame, template_mask, view):
     centre = view.targets[view.reference_target].reshape(-1, 2).mean(axis=0, keepdims=True)
     own = apply(view.tpl_to_board @ np.linalg.inv(own_H), view.board_to_frame(centre))
     return float(np.linalg.norm(own - centre))
-
-
-def residuals(frame, template_mask, view):
-    """Per-Target registration error under the Board-level homography, in Board px.
-
-    The measurement that settles the single-plane assumption. Each Target is
-    registered on its own and compared against where the Board-level fit puts it;
-    a Target whose own fit disagrees is one the Board-level homography is placing
-    wrongly, which is how sheet curl would show up.
-
-    Run this before spending effort on per-Target homographies: if the residuals
-    are small, curl is not what is costing the 5mm.
-    """
-    contours, frame_mask = find_targets(frame)
-    out = []
-    for contour in contours:
-        centre_board = view.frame_to_board(
-            [contour.reshape(-1, 2).mean(axis=0)])[0]
-        try:
-            own_H, _ = register(template_mask, frame_mask, contour)
-        except cv2.error:
-            out.append(None)
-            continue
-        own_centre = apply(view.tpl_to_board @ np.linalg.inv(own_H),
-                           [contour.reshape(-1, 2).mean(axis=0)])[0]
-        out.append(float(np.linalg.norm(centre_board - own_centre)))
-    return out
 
 
 def _canvas_gray(canvas):

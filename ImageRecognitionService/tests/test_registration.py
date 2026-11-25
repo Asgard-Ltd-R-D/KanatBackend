@@ -243,7 +243,7 @@ def test_a_jumped_board_re_anchors_into_the_affine_baseline_board_space(monkeypa
     import cv2
     monkeypatch.setattr(nbh, "REANCHOR_AFTER_LOST", 1)
     template = cv2.imread(nbh.board.DEFAULT_TEMPLATE)
-    _, template_mask = nbh.board.find_targets(template, min_area=1)
+    template_mask = nbh.board.template_mask(template)
     h, w = template.shape[:2]
     P = np.float64([[0.5, 0.02, 300], [0.01, 0.5, 200], [4e-5, 0, 1]])
     size = (w + 600, h + 400)

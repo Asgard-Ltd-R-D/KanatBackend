@@ -154,7 +154,7 @@ def propose_recording(entry):
     per truth line. Frames are read as the Run reads them: the one seek to
     the window's start, at the Recording's own frame rate."""
     name = os.path.splitext(entry["file"])[0]
-    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    template_mask = board.template_mask(cv2.imread(board.DEFAULT_TEMPLATE))
     source, base, view, _ = nbh.open_board_space(
         os.path.join(position_error.VIDEO_DIR, entry["file"]), entry["window"][0], template_mask)
     try:

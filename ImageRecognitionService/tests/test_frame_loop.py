@@ -296,7 +296,7 @@ def _openable(monkeypatch):
     and Board space built without a model, artwork or geometry."""
     monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
     monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _FakeCap(1))
-    monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
+    monkeypatch.setattr(nbh.board, "template_mask", lambda image: None)
     monkeypatch.setattr(nbh.board, "template_contour", lambda mask: None)
     monkeypatch.setattr(nbh.board, "contour_span", lambda contour: 100.0)
     monkeypatch.setattr(nbh.board, "net_scale", lambda *args: 1.0)
@@ -940,7 +940,7 @@ def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd, caplo
     logged."""
     caplog.set_level("INFO")
     monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
-    monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
+    monkeypatch.setattr(nbh.board, "template_mask", lambda image: None)
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]

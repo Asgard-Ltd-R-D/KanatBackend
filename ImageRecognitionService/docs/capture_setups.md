@@ -47,7 +47,8 @@ decode of the first frame plus the container header:
   and mtime is the moment writing finished. Nothing in the delivery contradicts
   a filename.
 - **Geometry** — `board.find_targets` on frame 0: the printed green Targets
-  found by the same hue gate the runtime uses, largest first. Centroid is
+  found by the hue gate the runtime used then (the Target finder since
+  ADR-0013), largest first. Centroid is
   camera pose, span is distance.
 - **First-frame MAD** — mean absolute difference of the full-resolution
   grayscale first frames, pairwise. The measure `dataset_audit.md` §3 used to

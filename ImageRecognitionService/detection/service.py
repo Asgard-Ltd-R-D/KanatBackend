@@ -182,12 +182,14 @@ def warm(model, device=None):
     call is handed none, so it warms the device Runs use. Answers the device
     the detector resolved to, not what was asked for: handed none, `cuda:0`
     when CUDA is visible, else `cpu`. A failure is logged and raised: the
-    service then never answers, so never reads as up."""
+    service then never answers, so never reads as up. The Target finder
+    (`board.find_targets`, on the CPU) is loaded and warmed with it."""
     started = time.perf_counter()
     try:
         for _ in range(3):
-            nbh._detect(model, [np.zeros((640, 640, 3), np.uint8)], 640,
-                        nbh.DEFAULT_CONFIDENCE, device)
+            blank = np.zeros((640, 640, 3), np.uint8)
+            nbh._detect(model, [blank], 640, nbh.DEFAULT_CONFIDENCE, device)
+            nbh.board.find_targets(blank)
         resolved = str(model.predictor.device)   # ultralytics' predictor, set up by the first call
     except Exception:
         log.exception("Detector warm-up failed")

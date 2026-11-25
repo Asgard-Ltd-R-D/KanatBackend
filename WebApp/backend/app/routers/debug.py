@@ -58,6 +58,16 @@ async def upload_overlay(recording_id: str, request: Request):
         raise HTTPException(404, "no such recording")
 
 
+@router.post("/{recording_id}/heartbeat", status_code=204)
+async def heartbeat(recording_id: str):
+    # The renderer's keepalive while it records, so the backend safety lease
+    # does not stop a live recording (which would lose its not-yet-uploaded view).
+    try:
+        await run_in_threadpool(debug_recorder.heartbeat, recording_id)
+    except KeyError:
+        raise HTTPException(404, "no such recording")
+
+
 @router.post("/{recording_id}/stop", response_model=StoppedRecording)
 async def stop_recording(recording_id: str):
     try:

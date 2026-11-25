@@ -38,10 +38,12 @@ log = __import__("logging").getLogger(__name__)
 _LOG_FILES = ("backend.log", "detection.log", "frontend.log")
 # How long stop() waits for ffmpeg to flush and exit before it kills it
 _FFMPEG_STOP_WAIT_S = 5
-# A safety lease: if the renderer never stops a recording (the Electron window
-# was closed, reloaded or crashed, so no stop call comes), it is stopped anyway
-# after this, so ffmpeg can never write forever.
-_MAX_RECORDING_S = 30 * 60
+# A safety lease: a live recorder sends a heartbeat (below), which rearms the
+# lease; if none arrives within this, the renderer has vanished (window closed,
+# reloaded or crashed, missing even the beacon) and the recording is stopped so
+# ffmpeg can never write forever. A long live recording keeps its lease by
+# heartbeating, so the lease never cuts it short (and its overlay is not lost).
+_LEASE_S = 5 * 60
 
 
 def recordings_dir() -> Path:
@@ -130,24 +132,42 @@ def start(camera: Camera) -> dict:
     ffmpeg = _start_raw_capture(folder, camera, notes)
     rec = _Recording(id=rec_id, folder=folder, started_at=time.time(),
                      ffmpeg=ffmpeg, log_offsets=offsets, notes=notes)
-    rec.timer = threading.Timer(_MAX_RECORDING_S, _auto_stop, args=[rec.id])
-    rec.timer.daemon = True
     with _lock:
         _recordings[rec.id] = rec
-    rec.timer.start()
+        _arm_lease(rec)
     log.info("Debug recording started", extra={"camera": camera.alias, "folder": str(folder)})
     return {"id": rec.id, "folder": str(folder)}
 
 
+def _arm_lease(rec: _Recording) -> None:
+    """(Re)start the safety lease. Call under _lock."""
+    if rec.timer is not None:
+        rec.timer.cancel()
+    rec.timer = threading.Timer(_LEASE_S, _auto_stop, args=[rec.id])
+    rec.timer.daemon = True
+    rec.timer.start()
+
+
+def heartbeat(recording_id: str) -> None:
+    """A live recorder's keepalive: rearm the lease so it does not fire while the
+    renderer is still recording (which would lose the not-yet-uploaded view)."""
+    with _lock:
+        rec = _recordings.get(recording_id)
+        if rec is None:
+            raise KeyError(recording_id)
+        _arm_lease(rec)
+
+
 def _auto_stop(recording_id: str) -> None:
-    """The safety lease fired: stop a recording the renderer never stopped."""
+    """The safety lease fired: no heartbeat arrived, so the renderer is gone;
+    stop the recording it left running."""
     with _lock:
         rec = _recordings.get(recording_id)
     if rec is None:
         return
-    rec.notes.append(f"auto-stopped after {_MAX_RECORDING_S // 60} min: the app did not stop it "
-                     "(window closed, reloaded or crashed)")
-    log.warning("Debug recording auto-stopped at its max duration", extra={"folder": str(rec.folder)})
+    rec.notes.append(f"auto-stopped after {_LEASE_S // 60} min without a heartbeat: "
+                     "the app stopped sending keepalives (window closed or crashed)")
+    log.warning("Debug recording auto-stopped: no heartbeat from the app", extra={"folder": str(rec.folder)})
     with suppress(KeyError):
         stop(recording_id)
 
@@ -165,10 +185,10 @@ def stop(recording_id: str) -> dict:
     remux the app-view to MP4 if it came as WebM, and write notes.txt."""
     with _lock:
         rec = _recordings.pop(recording_id, None)
+        if rec is not None and rec.timer is not None:
+            rec.timer.cancel()  # pop and cancel together: no heartbeat can rearm after
     if rec is None:
         raise KeyError(recording_id)
-    if rec.timer is not None:
-        rec.timer.cancel()  # a real stop pre-empts the safety lease
 
     if rec.ffmpeg is not None:
         _stop_ffmpeg(rec.ffmpeg)

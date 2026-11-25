@@ -1521,8 +1521,8 @@ All are named constants marked `PROVISIONAL`. **None is validated.**
 | `LIVE_STRIDE` | 4 | `detection/new_bullet_holes.py` | Live stride at 25 fps: the slowest in-scope Look Time P99 on the dev Mac (94.6 ms, CamB `_102250`), the smallest stride keeping ADR-0007's ~28% spare (160 ms, 41%); strides 3 and 4 pass #268's rule against stride 1 on the regression set, 5 adds a false positive (ADR-0007, #82, #277) |
 | `STREAM_TIMEOUT_MS` | 5000 | `detection/new_bullet_holes.py` | Bounds opening a stream and each read on it, so a silent connection is a drop to recover from (#84). Five keyframe intervals at GOP 25, 25 fps; not tuned on a live stream. A stall fails at 5.1 s against FFmpeg's default 30.0 s (HTTP, spent recording) |
 | `BAND_CONTEXT_PX` | 32 | `detection/new_bullet_holes.py` | Margin-canvas px each exposed-Board band carries for context; one stride-32 cell, not swept (#46) |
-| `MIN_TARGET_CONFIDENCE` | 0.5 | `detection/board.py` | Target finder confidence floor; #413's sweep pending |
-| `MIN_TARGET_AREA_PX` | 5000 | `detection/board.py` | May reject distant Targets; #413's sweep pending |
+| `MIN_TARGET_CONFIDENCE` | 0.6 | `detection/board.py` | Target finder confidence floor; clean band 0.4–0.7 on 430 held-out + bench frames, highest false instance 0.35 (#413) |
+| `MIN_TARGET_AREA_PX` | 5000 | `detection/board.py` | Clean band 2000–5000 px at those confidences; 10000 drops distant Targets (#413) |
 | `INTERIOR_MIN_CORRELATION` | 0.6 | `detection/board.py` | Below it, on either half of the digit row, the baseline keeps the silhouette fit's scale and centre (#302). Truth baselines read 0.68–0.93 a half, a covered half 0.00–0.52; not swept |
 
 `MATCH_TOLERANCE_TPL` (40 px, `evaluate.py`) is provisional too — it is the

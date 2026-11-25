@@ -66,9 +66,15 @@ OUTSIDE_RINGS = 0          # on the Target, beyond the 6-ring
 GREEN_LO = (35, 40, 30)
 GREEN_HI = (95, 255, 255)
 # What the Target finder counts as a Target: an instance at this confidence
-# and this many frame px, set by the sweep on held-out and bench frames (#413).
-MIN_TARGET_CONFIDENCE = 0.5  # PROVISIONAL: not swept yet
-MIN_TARGET_AREA_PX = 5000    # PROVISIONAL: rejects specks, may reject distant Targets
+# and this many frame px. Swept 2026-11-25 (#413) on 430 frames every 2 s of
+# the held-out (indoor, outdoor, h264) and bench recordings: every Target
+# found with no false one and no count change at 0.4-0.7 with an area floor
+# of 2000-5000 px. Below 0.4 an edge object (0.35) gets in, at 0.8 Targets
+# start to drop, an area floor of 10000 drops distant ones. The highest
+# false instance is 0.35; CamB's rock reads 0.11-0.24. Instances between 0.5
+# and 0.6 are all edge slivers under 2500 px, so 0.6 finds what 0.5 did.
+MIN_TARGET_CONFIDENCE = 0.6  # PROVISIONAL: band 0.4-0.7
+MIN_TARGET_AREA_PX = 5000    # PROVISIONAL: band 2000-5000 (lowest swept 2000)
 
 # Apparent size at which the detector actually works.
 #

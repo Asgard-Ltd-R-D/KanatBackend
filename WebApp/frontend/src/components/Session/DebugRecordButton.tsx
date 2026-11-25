@@ -5,12 +5,15 @@
 import { RefObject, useEffect, useRef, useState } from 'react'
 import { Circle, Loader2, Square } from 'lucide-react'
 import clsx from 'clsx'
-import { beaconStop, startRecording, stopRecording, uploadOverlay } from '../../api/debug'
+import { beaconStop, heartbeat, startRecording, stopRecording, uploadOverlay } from '../../api/debug'
 import { ApiError } from '../../api/client'
 import { startAppViewRecording, AppViewRecording } from '../../utils/debugRecorder'
 import { log } from '../../utils/logger'
 
 type State = 'idle' | 'recording' | 'busy'
+
+// Keepalive interval, well under the backend's lease window (5 min)
+const HEARTBEAT_MS = 60_000
 
 export function DebugRecordButton({
   feedRef,
@@ -124,6 +127,16 @@ export function DebugRecordButton({
     window.addEventListener('beforeunload', onUnload)
     return () => window.removeEventListener('beforeunload', onUnload)
   }, [])
+  // While recording, keep the backend lease alive, so a long live recording is
+  // never auto-stopped under the operator (which would lose its view). Well
+  // under the lease window, so one missed beat is harmless.
+  useEffect(() => {
+    if (state !== 'recording') return
+    const t = window.setInterval(() => {
+      if (idRef.current) heartbeat(idRef.current)
+    }, HEARTBEAT_MS)
+    return () => window.clearInterval(t)
+  }, [state])
 
   const recording = state === 'recording'
   return (

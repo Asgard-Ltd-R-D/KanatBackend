@@ -33,6 +33,13 @@ export function stopRecording(recordingId: string): Promise<{ folder: string }> 
   return apiFetch<{ folder: string }>(`/debug/recordings/${recordingId}/stop`, { method: 'POST' })
 }
 
+// Keepalive while recording, so the backend's safety lease doesn't stop a live
+// recording (which would lose its not-yet-uploaded view). Best-effort and quiet
+// — a missed beat only shortens the lease margin.
+export function heartbeat(recordingId: string): void {
+  fetch(`${API_URL}/debug/recordings/${recordingId}/heartbeat`, { method: 'POST' }).catch(() => {})
+}
+
 // Best-effort stop for window close/reload, where async calls don't get to run:
 // sendBeacon hands the request to the OS so the backend still finalises (ffmpeg
 // closed, logs sliced). The overlay can't be uploaded on unload; the backend's

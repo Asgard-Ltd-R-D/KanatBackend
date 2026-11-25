@@ -582,6 +582,7 @@ def test_silhouette_disagreement_is_the_reference_target_centres_offset(monkeypa
     shifted = np.float32([[1, 0, 10], [0, 1, 0], [0, 0, 1]])
     monkeypatch.setattr(board, "register", lambda template_mask, frame_mask, contour:
                         (shifted, 0.9))
+    monkeypatch.setattr(board, "fitted_outline", lambda *args: target)
     view = _view([_square(10, 10, 40)], scale=2.0)
     assert board.silhouette_disagreement(None, None, view) == pytest.approx(20.0)
 
@@ -592,6 +593,7 @@ def test_silhouette_disagreement_is_unknown_without_a_silhouette_fit(monkeypatch
     def fails(*args):
         raise cv2.error("did not converge")
     monkeypatch.setattr(board, "register", fails)
+    monkeypatch.setattr(board, "fitted_outline", lambda *args: _square(0, 0, 40))
     assert board.silhouette_disagreement(None, None, _view([_square(0, 0, 40)])) is None
 
 
@@ -796,9 +798,10 @@ def test_targets_are_numbered_by_place_not_by_area(upper_scale, lower_scale, ref
         assert view.board_to_frame([view.ring_centre(i)])[0] == pytest.approx(ring, abs=3)
 
 
-def test_a_fit_that_leaves_its_target_falls_back_to_the_gate_edge(monkeypatch):
-    """Codex on #397: ECC can settle off a clipped or occluded Target without
-    throwing. An outline that no longer covers its blob is not used."""
+def test_a_blob_the_artwork_does_not_fit_is_not_a_target(monkeypatch):
+    """Codex on #397: ECC can settle off a Target without throwing. A fit
+    that leaves its blob says the blob is not the artwork, so it is not a
+    Target: no outline from the gate's edge, which kept blue bags (CamA outdoors)."""
     _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
     frame, rings = _two_target_frame(0.3, 0.25)
     register = board.register
@@ -812,8 +815,8 @@ def test_a_fit_that_leaves_its_target_falls_back_to_the_gate_edge(monkeypatch):
 
     view, _ = board.build_view(frame, template_mask)
 
-    lower = view.board_to_frame([view.ring_centre(1)])[0]
-    assert lower == pytest.approx(rings[1], abs=6)   # the gate's, not 300 px off
+    assert len(view.targets) == 1
+    assert view.board_to_frame([view.ring_centre(0)])[0] == pytest.approx(rings[0], abs=3)
 
 
 def test_targets_at_about_one_height_read_left_to_right():
@@ -850,7 +853,7 @@ def test_scenery_bigger_than_the_target_is_neither_reference_nor_target():
     # every Target was fitted to them.
     template = cv2.imread(board.DEFAULT_TEMPLATE)
     _, template_mask = board.find_targets(template, min_area=1)
-    frame, P = _artwork_beside((45, 120, 120))
+    frame, P = _artwork_beside((45, 250, 150))
     assert cv2.contourArea(board.find_targets(frame)[0][0]) > 300000   # the scenery is largest
 
     view, _ = board.build_view(frame, template_mask)
@@ -887,7 +890,109 @@ def test_scenery_bigger_than_the_target_does_not_make_a_right_fit_look_wrong():
     # and its Look was dropped.
     template = cv2.imread(board.DEFAULT_TEMPLATE)
     _, template_mask = board.find_targets(template, min_area=1)
-    frame, _ = _artwork_beside((45, 120, 120))
+    frame, _ = _artwork_beside((45, 250, 150))
     view, _ = board.build_view(frame, template_mask)
 
     assert board.silhouette_disagreement(frame, template_mask, view) < 5   # Board px
+
+
+# --- sunlight and zoom: the gate under light it was not tuned on ------------
+
+def _camb_board(zoom=1.0, bag=False):
+    """The artwork in CamB's colours, measured 2026-11-24 (print HSV 93/168/154,
+    paper 107/68/216, the print's hue 2 under the old ceiling of 95), on
+    CamB's white board, digitally zoomed about the ring; with a blue bag bigger
+    than the print when `bag`, in CamB's bags' colour (HSV 105/145/151).
+    And the ring centre in frame px."""
+    template = cv2.imread(board.DEFAULT_TEMPLATE)
+    _, template_mask = board.find_targets(template, min_area=1)
+    hsv = lambda h, s, v: cv2.cvtColor(np.uint8([[(h, s, v)]]), cv2.COLOR_HSV2BGR)[0, 0]
+    art = np.empty_like(template)
+    art[:] = hsv(107, 68, 216)
+    art[template_mask > 0] = hsv(93, 168, 154)
+    k = 0.2 * zoom
+    ring = np.array([960.0, 540.0])
+    P = np.float32([[k, 0, ring[0] - k * board.RING_CENTRE_TPL[0]],
+                    [0, k, ring[1] - k * board.RING_CENTRE_TPL[1]], [0, 0, 1]])
+    frame = cv2.warpPerspective(art, P, (1920, 1080), borderValue=hsv(107, 68, 216).tolist())
+    if bag:
+        cv2.ellipse(frame, (500, 750), (200, 110), 20, 0, 360, hsv(105, 145, 151).tolist(), -1)
+    # Compression noise, in 8 px blocks as H.264's: the print's hue spreads
+    # as CamB's (p5/50/95 91/93/96) in clumps the gate's closing does not
+    # fill, and the paper's into the band, where it holds the Otsu floor down.
+    h, w = frame.shape[:2]
+    noise = np.random.default_rng(0).normal(0, 4, (h // 8, w // 8, 3))
+    noise = cv2.resize(noise, (w, h), interpolation=cv2.INTER_NEAREST)
+    frame = np.clip(frame + noise, 0, 255).astype(np.uint8)
+    return frame, template_mask, ring
+
+
+def _gain(frame, b, g, r):
+    """Per-channel gains with clipping: white balance and exposure."""
+    return np.clip(frame.astype(np.float32) * [b, g, r], 0, 255).astype(np.uint8)
+
+
+def _hue(frame, d):
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    hsv[..., 0] = (hsv[..., 0].astype(int) + d) % 180
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+
+LIGHTING = {
+    "indoor": lambda f: f,
+    "sun-hue+4": lambda f: _hue(f, 4),                    # the print past the old ceiling
+    "cool-white-balance": lambda f: _gain(f, 1.15, 1, 0.87),  # B/R 1.32, the gate's measured limit
+    "warm-white-balance": lambda f: _gain(f, 0.87, 1, 1.15),
+    "overexposed": lambda f: _gain(f, 2.2, 2.2, 2.2),
+    "washed-out": lambda f: cv2.addWeighted(f, 0.4, np.full_like(f, 230), 0.6, 0),
+}
+
+
+@pytest.mark.parametrize("zoom", [1, 2, 4])
+@pytest.mark.parametrize("lighting", list(LIGHTING))
+def test_the_target_is_found_under_sun_and_zoom(lighting, zoom):
+    """The customer visit, outdoors: in direct sun and zoomed in, nothing was
+    found. The print's hue sat 2 under the gate's ceiling, so a few hue units
+    of light dropped all of it before its disk was ever looked at."""
+    frame, template_mask, ring = _camb_board(zoom)
+
+    view, _ = board.build_view(LIGHTING[lighting](frame), template_mask)
+
+    assert view is not None
+    found = board.apply(view.H, [board.RING_CENTRE_TPL])[0]
+    assert np.linalg.norm(found - ring) < 1.0 * zoom   # frame px
+
+
+def test_blue_scenery_at_the_print_s_hue_is_not_a_target():
+    """CamB's blue bags read hue 105, 12 from the print: inside the widened
+    gate and `TARGET_HUE_TOLERANCE`. The artwork does not fit them."""
+    frame, template_mask, ring = _camb_board(bag=True)
+    contours, frame_mask = board.find_targets(frame)
+    assert len(contours) == 2 and cv2.contourArea(contours[0]) > cv2.contourArea(contours[1])
+    assert len(board.at_hue(frame, frame_mask, contours, board.mean_hue(frame, frame_mask, contours[1]))) == 2
+
+    view, _ = board.build_view(frame, template_mask)
+
+    assert len(view.targets) == 1
+    assert np.linalg.norm(board.apply(view.H, [board.RING_CENTRE_TPL])[0] - ring) < 1.0
+    # the per-Look check fits the print, not the bigger bag: a right fit reads right
+    assert board.silhouette_disagreement(frame, template_mask, view) < 2   # Board px
+
+
+def test_the_per_look_check_fits_the_baseline_s_reference_not_the_largest_print():
+    """Outdoors, bluish paper joins a neighbour print's blob and makes it the
+    largest (CamA `_162035`, 26570 px against the reference's 18999). Fitted
+    as the reference, a right fit read one Target spacing out (119 px)."""
+    frame, template_mask, ring = _camb_board()
+    x, y = ring.astype(int)
+    frame[y - 200:y + 200, x - 700:x - 300] = frame[y - 200:y + 200, x - 200:x + 200]  # a neighbour, 500 px left
+    view, _ = board.build_view(frame, template_mask)
+    assert len(view.targets) == 2
+    reference = board.apply(view.H, [board.RING_CENTRE_TPL])[0]
+    neighbour = (x - 500, y) if reference[0] > x - 250 else (x, y)
+    print_bgr = frame[y, x - 40].tolist()   # the print, beside the ring
+    cv2.rectangle(frame, (neighbour[0] + 80, neighbour[1] - 50), (neighbour[0] + 170, neighbour[1] + 90), print_bgr, -1)
+    contours, _ = board.find_targets(frame)
+    assert np.linalg.norm(board._centroid(contours[0]) - neighbour) < 150   # the neighbour is now largest
+
+    assert board.silhouette_disagreement(frame, template_mask, view) < 2   # Board px

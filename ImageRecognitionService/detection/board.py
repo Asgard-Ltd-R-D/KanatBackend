@@ -57,8 +57,21 @@ OUTSIDE_RINGS = 0          # on the Target, beyond the 6-ring
 # once (#31); sealing is gone since (ADR-0010). Every number below is a
 # starting point, not a requirement. See docs/adr/0003-a-bullet-hole-is-new-when-it-persists.md.
 
-GREEN_LO = (35, 40, 30)    # PROVISIONAL: hue gate for the printed Target
-GREEN_HI = (95, 255, 255)  # PROVISIONAL: one artwork, one lighting condition
+# The print reads teal, hue 87 (CamA) to 93 (CamB, sun), its p95 96-97; the
+# paper round it bluish, 102-111, S up to ~100. A 10% white-balance shift
+# moved the print past the old ceiling of 95 and nothing was found
+# (outdoors, zoomed in). Hue cannot part print from paper, saturation
+# relative to the paper can: the floor is Otsu's split of the band's own
+# saturations, never under GREEN_LO's. Holds to B/R gains of 1.32; past
+# that the paper itself reads saturated cyan and merges with the print.
+# ponytail: one Otsu split assumes paper is the low class. A large cyan
+# object more saturated than the print, in a frame showing little paper,
+# lifts the floor over the print (CamA's bags read S 199-218, its print
+# 207-237, the paper keeping the floor at 155). Seen in no recording; a
+# floor capped by the print's own saturation if one is. If the gate itself
+# proves too weak outdoors: docs/disk_first_target_search.md, measured.
+GREEN_LO = (35, 40, 30)    # PROVISIONAL: hue gate for the printed Target, S the floor's floor
+GREEN_HI = (105, 255, 255) # PROVISIONAL: under the paper's hue, CamB's print +12
 MIN_TARGET_AREA_PX = 5000  # PROVISIONAL: rejects specks, may reject distant Targets
 # A green blob shows the white disk only if it is the printed artwork; trees,
 # glass, a wall pass the hue gate too (`board_targets`). A second Target is
@@ -138,11 +151,14 @@ ECC_EPS = 1e-3             # PROVISIONAL
 # the baseline, four CamA/CamB clips: the right Target 0.97-0.99, a neighbour
 # 0.55 (182 frame px off) and 0.20, or no convergence. Not swept.
 REANCHOR_MIN_CORRELATION = 0.9   # PROVISIONAL
-# A non-reference Target's fitted outline (#396) stands only while it covers
-# this fraction of the gate's blob. Measured 2026-11-23 on frame 125 of every
-# CamA/CamB clip: right fits 0.97-1.00 on CamA, 0.92-0.94 on CamB, where the
-# green spills onto the paper (#297); a fit one Target over ~0. Not swept.
-OUTLINE_MIN_COVER = 0.8   # PROVISIONAL
+# A blob at the reference's hue is a Target only while the artwork, fitted
+# onto it (#396), overlaps it by this IoU, both clipped to the frame. Colour
+# alone let blue bags in once the gate reached hue 105. Measured 2026-11-24
+# on frame 125 of every CamA/CamB clip under that gate: Targets 0.67-0.98
+# (the frame cutting them included; low ones spill onto blue paper), bags
+# and bag-covered prints 0.09-0.53. Set in the gap, ~0.07 from each side.
+# Replaces #397's cover rule, under which a bag's blob was kept by its edge.
+TARGET_MIN_IOU = 0.6       # PROVISIONAL
 # ...measured, and so scored, on the greyscale Board within this many Target
 # spans of the ring (a square), the ECC region before #321. The sheets alone
 # cannot tell the Targets apart: with the reference Target out of view, a
@@ -173,11 +189,20 @@ def find_targets(frame, min_area=MIN_TARGET_AREA_PX):
     Largest first picks the registration reference; `build_view` then numbers
     the Targets by `reading_order` (#240).
 
-    One hue threshold does this: the artwork is saturated green against paper,
-    dirt and plywood. No model is involved, and none is needed.
+    A hue band with a saturation floor set per frame: the artwork is more
+    saturated than the paper it is on, whatever light shifts both (see
+    `GREEN_HI`). No model is involved, and none is needed. Which blob is
+    the Target is shape's to say (`board_targets`' disk).
     """
-    mask = cv2.inRange(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV), GREEN_LO, GREEN_HI)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    band = cv2.inRange(hsv, (GREEN_LO[0], 0, GREEN_LO[2]), GREEN_HI)
+    s = hsv[..., 1][band > 0]
+    floor = cv2.threshold(s.reshape(1, -1), 0, 255, cv2.THRESH_OTSU)[0] if s.size else 0
+    mask = band & cv2.inRange(hsv[..., 1], max(floor + 1, GREEN_LO[1]), 255)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    # Cuts bridges under 5 px: the band's paper speckle joined two prints a
+    # clip apart (CamB `_101450`), and the joined blob is not the artwork.
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     keep = [c for c in contours if cv2.contourArea(c) >= min_area]
     return sorted(keep, key=cv2.contourArea, reverse=True), mask
@@ -785,8 +810,10 @@ def build_view(frame, template_mask, board_scale=None):
     # outline through each Target's fit, not the green gate's edge, which
     # compression notches where the print's hue nears GREEN_HI (_103223).
     tpl = template_contour(template_mask).reshape(-1, 2).astype(np.float32)
-    outlines = [apply(H, tpl)] + [_fitted_outline(template_mask, frame_mask, c, contours[0], H, tpl)
-                                  for c in contours[1:]]
+    others = [fitted_outline(template_mask, frame_mask, c,
+                             _as_matrix(1.0, _centroid(c) - _centroid(contours[0])) @ H)
+              for c in contours[1:]]
+    outlines = [apply(H, tpl)] + [o for o in others if o is not None]
     unshifted = _as_matrix(board_scale) @ np.linalg.inv(H)
     placed = [apply(unshifted, o) for o in outlines]
     allpts = np.vstack(placed)
@@ -812,34 +839,38 @@ def build_view(frame, template_mask, board_scale=None):
                       reference, mean_hue(frame, frame_mask, contours[0])), correlation)
 
 
-def _fitted_outline(template_mask, frame_mask, contour, reference, H, tpl):
-    """The artwork's outline in frame px for a non-reference Target `contour`:
-    the reference's fit `H` moved onto its blob, by a translation-only
-    silhouette fit seeded with the two blobs' centroid offset. Translation
-    only, as `ring_centre` and `sheet_bounds` assume: a free affine shears
-    on a Target the frame cuts (CamB `_101550`).
+def fitted_outline(template_mask, frame_mask, contour, seed):
+    """The artwork's outline in frame px on the blob `contour`, or None when
+    the blob is not the artwork: `seed` (template -> frame, near the blob)
+    refined by a translation-only silhouette fit. Translation only, as
+    `ring_centre` and `sheet_bounds` assume: a free affine shears on a
+    Target the frame cuts (CamB `_101550`), and a homography can squash
+    the artwork onto a bag.
 
     The fit runs on the whole frame mask, every Target in it, so its ECC
-    correlation says little about this one; it stands only while the outline
-    covers `OUTLINE_MIN_COVER` of the blob it was seeded on. The gate's edge
-    otherwise, and when the fit does not converge."""
-    gate = contour.reshape(-1, 2).astype(np.float32)
-    dx, dy = _centroid(contour) - _centroid(reference)
+    correlation says little about this one; the shape does. None when the
+    outline overlaps the blob under `TARGET_MIN_IOU` or the fit does not
+    converge: scenery at the print's hue, or a print too hidden to place."""
+    tpl = template_contour(template_mask).reshape(-1, 2).astype(np.float32)
+    # A translation keeps the outline's area and IoU <= outline / blob: a
+    # blob too big to pass is dropped before its ECC (~1 s on a bag).
+    if cv2.contourArea(contour) * TARGET_MIN_IOU > cv2.contourArea(apply(seed, tpl)):
+        return None
     try:
-        own, _ = register(template_mask, frame_mask, contour,
-                          _as_matrix(1.0, (dx, dy)) @ H, cv2.MOTION_TRANSLATION)
+        own, _ = register(template_mask, frame_mask, contour, seed, cv2.MOTION_TRANSLATION)
     except cv2.error:
-        return gate
+        return None
     outline = apply(own, tpl)
-    return outline if _cover(outline, contour, frame_mask.shape) >= OUTLINE_MIN_COVER else gate
+    return outline if _iou(outline, contour, frame_mask.shape) >= TARGET_MIN_IOU else None
 
 
-def _cover(outline, contour, shape):
-    """The fraction of `contour`'s area inside `outline`, both frame px."""
+def _iou(outline, contour, shape):
+    """`outline`'s and `contour`'s intersection over union, both frame px,
+    within the frame: a Target the frame cuts is compared on what it shows."""
     blob, inside = np.zeros(shape, np.uint8), np.zeros(shape, np.uint8)
     cv2.fillPoly(blob, [contour.reshape(-1, 1, 2).astype(np.int32)], 1)
     cv2.fillPoly(inside, [np.round(outline).reshape(-1, 1, 2).astype(np.int32)], 1)
-    return (blob & inside).sum() / max(int(blob.sum()), 1)
+    return (blob & inside).sum() / max(int((blob | inside).sum()), 1)
 
 
 def _centroid(polygon):
@@ -1027,27 +1058,40 @@ def silhouette_disagreement(frame, template_mask, view):
     sees only the reference Target, so it under-reads error elsewhere on the
     Board (#92: 21 here against 98 at another Target's centre).
 
-    ponytail: seeded from the frame's largest Target, as #92 measured it, not
-    the one nearest the tracked fit's reference: a wrong fit landing on a
-    lookalike Target would agree with a fit seeded there. A right fit on a frame
-    where a neighbour is largest reads ~one Target spacing and is lost; none was
-    on #110's six clips. Match the contour to the baseline's Target if one is.
+    Fitted on the blob nearest where the baseline found its reference, not
+    the tracked fit's (a wrong fit landing on a lookalike Target would agree
+    with a fit seeded there) nor the largest: outdoors, bluish paper joins a
+    neighbour's blob and makes it largest (CamA `_162035`), and a right fit
+    read one Target spacing out. The camera does not move during a Range.
 
     Only blobs at the baseline reference's hue (`at_hue`) are Targets:
     scenery bigger than the Target (trees through a window, #370) would
     otherwise be fitted and a right fit dropped.
 
+    That blob is used only if it is the artwork at the tracked fit's scale
+    (`fitted_outline`), else the next nearest: blue bags at the print's hue
+    (CamA `_161935`).
+
     Infinite when no Target is visible: a fit with nothing to fit is wrong
-    (`track_view` does not look for one). None when the silhouette fit
-    fails: no verdict.
+    (`track_view` does not look for one), and so is a frame whose blobs
+    fit and none is the artwork. None when the artwork's silhouette fit
+    does not converge: no verdict.
     """
     contours, frame_mask = find_targets(frame)
     if view.hue is not None:
         contours = at_hue(frame, frame_mask, contours, view.hue)
-    if not contours:
+    tracked = view.board_to_frame(view.targets[view.reference_target].reshape(-1, 2))
+    if view.anchor is not None:   # the baseline's reference, where it was found
+        at = apply(view.anchor.H, [RING_CENTRE_TPL])[0]
+        contours = sorted(contours, key=lambda c: np.linalg.norm(_centroid(c) - at))
+    for contour in contours:
+        seed = _as_matrix(1.0, _centroid(contour) - _centroid(tracked.reshape(-1, 1, 2))) @ view.H
+        if fitted_outline(template_mask, frame_mask, contour, seed) is not None:
+            break   # else, at the tracked fit's scale, the artwork is not this blob
+    else:
         return math.inf
     try:
-        own_H, _ = register(template_mask, frame_mask, contours[0])
+        own_H, _ = register(template_mask, frame_mask, contour)
     except cv2.error:
         return None
     centre = view.targets[view.reference_target].reshape(-1, 2).mean(axis=0, keepdims=True)

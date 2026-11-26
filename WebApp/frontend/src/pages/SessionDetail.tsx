@@ -186,7 +186,7 @@ export function SessionDetail() {
       {active && (
         <div className="flex-1 min-h-0">
           <div ref={feedRef} className="h-full min-h-[320px]">
-            <CameraFeeds runs={session.runs ?? []} bullets={bullets} detections={session.detections ?? []} />
+            <CameraFeeds sessionId={session.id} runs={session.runs ?? []} bullets={bullets} detections={session.detections ?? []} />
           </div>
         </div>
       )}

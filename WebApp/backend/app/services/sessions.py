@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.core.locks import db_write
 from app.models import Session
 from app.repositories import sessions as repo
+from app.services import baseline_image
 from app.schemas.session import SessionCreate, SessionListItem, SessionUpdate
 
 log = logging.getLogger(__name__)
@@ -150,13 +151,15 @@ def _log_changes(session: Session, before: dict) -> None:
 
 
 def delete_session(session_id: uuid.UUID, db: DBSession) -> None:
-    """Deletes the Session and its Bullet Holes and Runs (cascade)."""
+    """Deletes the Session and its Bullet Holes and Runs (cascade), then its
+    Runs' baseline images."""
     with db_write:
         session = repo.get_for_update(db, session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         name = session.name
         repo.delete(db, session)
+        baseline_image.remove_session(session_id)
     log.info(
         "Session '%s' deleted", name,
         extra={"session_id": session_id, "session_name": name},

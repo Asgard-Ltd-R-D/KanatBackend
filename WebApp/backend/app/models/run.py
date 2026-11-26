@@ -41,4 +41,8 @@ class Run(Base):
     # Its latest Look's frame time the backend has read, registered or Lost
     watched_until: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
 
+    # The captured baseline camera frame, relative to the log directory; null
+    # until the Detection Service uploads one
+    baseline_image_path: Mapped[str | None] = mapped_column(String, nullable=True)
+
     session: Mapped["Session"] = relationship("Session", back_populates="runs")

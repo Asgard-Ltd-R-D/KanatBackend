@@ -4,7 +4,7 @@ import { Eye, EyeOff } from 'lucide-react'
 import { BulletHole, Place, Run } from '../../types'
 import { Size, baselineMarksToDraw, fromEarlierRun, holesOver, labelGroups, templateToElement } from '../../utils/overlay'
 
-const OUTLINE_COLOUR = '#22d3ee'
+const OUTLINE_COLOUR = '#ef4444'
 const BASELINE_MARK_COLOUR = '#a3a8b0' // slate-400 (tailwind.config.ts)
 const DETECTED_COLOUR = '#34d399'
 const MANUAL_COLOUR = '#fbbf24' // the manual source badge's amber
@@ -106,7 +106,7 @@ export function Overlay({ run, place, bullets, runs, videoRef }: OverlayContent 
         return <circle key={i} cx={x} cy={y} r={BASELINE_MARK_RADIUS} fill="none" stroke={BASELINE_MARK_COLOUR} strokeWidth={1.5} />
       })}
       {bullets.map((b, i) => (
-        <circle key={b.id} cx={markers[i][0]} cy={markers[i][1]} r={MARKER_RADIUS} fill="none" stroke={colour(b)} strokeWidth={2} />
+        <circle key={b.id} cx={markers[i][0]} cy={markers[i][1]} r={MARKER_RADIUS} fill="none" stroke={colour(b)} strokeWidth={1.25} />
       ))}
       {labelGroups(markers, 2 * MARKER_RADIUS).map(group => {
         // Top right of the group's rings, where a lone ring's label goes

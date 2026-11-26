@@ -1,7 +1,7 @@
 import { Crosshair, Trash2 } from 'lucide-react'
 import { BulletHole } from '../../types'
-import { mmLabel } from '../../utils/bullets'
 import { formatClock } from '../../utils/format'
+import { byTarget, cmLabel } from '../../utils/bullets'
 import { SourceBadge } from './SourceBadge'
 
 interface Props {
@@ -9,7 +9,9 @@ interface Props {
   onDelete: (bullet: BulletHole) => void
 }
 
-// A completed session's Bullet Holes, in order, each one deletable.
+// A completed session's Bullet Holes, one section per Target (ranks as
+// numbered across the board), each one deletable. Positions in cm from the
+// Target's centre.
 export function BulletLog({ bullets, onDelete }: Props) {
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm dark:shadow-none">
@@ -25,7 +27,7 @@ export function BulletLog({ bullets, onDelete }: Props) {
           <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
             <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider w-12">#</th>
             <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Detected At</th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Position</th>
+            <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Position (cm)</th>
             <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Source</th>
             <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
           </tr>
@@ -41,14 +43,21 @@ export function BulletLog({ bullets, onDelete }: Props) {
               </td>
             </tr>
           )}
-          {bullets.map(b => (
+          {byTarget(bullets).map(section => [
+            <tr key={`section-${section.label}`} className="bg-slate-50/70 dark:bg-slate-800/30">
+              <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                {section.label}
+                <span className="ml-1.5 font-normal text-slate-400">({section.bullets.length})</span>
+              </td>
+            </tr>,
+            ...section.bullets.map(b => (
             <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
               <td className="px-4 py-3 text-slate-400 dark:text-slate-600 font-mono text-xs">{b.rank}</td>
               <td className="px-4 py-3 font-mono text-xs text-slate-600 dark:text-slate-300">
                 {formatClock(b.first_seen_at)}
               </td>
               <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">
-                {mmLabel(b)}
+                {cmLabel(b)}
               </td>
               <td className="px-4 py-3"><SourceBadge source={b.source} /></td>
               <td className="px-4 py-3">
@@ -63,7 +72,8 @@ export function BulletLog({ bullets, onDelete }: Props) {
                 </div>
               </td>
             </tr>
-          ))}
+            )),
+          ])}
         </tbody>
       </table>
     </div>

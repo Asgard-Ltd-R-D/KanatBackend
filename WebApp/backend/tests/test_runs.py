@@ -15,6 +15,7 @@ from app.core.database import _make_engine
 from app.core.deps import get_db
 from app.core.live import hub
 from app.main import app
+from app.schemas.run import BaselineView
 from app.services import camera_sync, detection_client
 from app.services import detection_sync
 from tests.fakes import NOW, FakeDetectionService, baseline_view, place
@@ -110,6 +111,16 @@ def stored_runs(engine):
         return conn.execute(text("SELECT count(*) FROM runs")).scalar()
 
 
+def test_baseline_view_parses_without_the_new_fields():
+    """A payload from before the sheets, ring centres and scale were sent."""
+    view = BaselineView(taken_at=NOW, picture={"width": 1920, "height": 1080},
+                        template_to_picture=[[0.25, 0.0, 600.0], [0.0, 0.25, 300.0], [0.0, 0.0, 1.0]],
+                        targets=[[[0.0, 0.0], [1405.0, 0.0], [1405.0, 1120.0], [0.0, 1120.0]]])
+    assert view.sheets == []
+    assert view.ring_centres == []
+    assert view.mm_per_px is None
+
+
 def test_a_sessions_detail_returns_its_run_with_its_baseline_view_and_camera(client, detection, camera):
     session_id = start_session(client, camera)
 
@@ -119,6 +130,9 @@ def test_a_sessions_detail_returns_its_run_with_its_baseline_view_and_camera(cli
     assert run["camera_alias"] == CAM
     assert taken_at(run) == sent.taken_at
     assert run["baseline_view"] == sent.model_dump(mode="json")
+    assert run["baseline_view"]["sheets"] == [[[-145.0, -9.0], [1548.0, 1180.0]], [[1455.0, -9.0], [3148.0, 1180.0]]]
+    assert run["baseline_view"]["ring_centres"] == [[702.5, 560.0], [2310.4, 560.0]]
+    assert run["baseline_view"]["mm_per_px"] == 0.1763
     # Placed where its baseline frame showed the Board, and watched until then
     assert run["places"] == places(place(sent.taken_at))
     assert watched_until(run) == sent.taken_at

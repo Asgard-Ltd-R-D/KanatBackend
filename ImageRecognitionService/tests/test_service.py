@@ -53,6 +53,10 @@ class _Placed(_FakeView):
     targets = [p.reshape(-1, 1, 2).astype(np.float32) for p in (
         _traced(board.RING_CENTRE_TPL, 500.0, 720),
         np.array([[1500.0, 100.0], [2900.0, 100.0], [2900.0, 1000.0], [1500.0, 1000.0]]))]
+    sheets = [(-145.0, -9.0, 1548.0, 1180.0), (1400.0, 0.0, 3000.0, 1100.0)]
+
+    def ring_centre(self, target_index=None):
+        return np.array([(600.0, 500.0), (2200.0, 550.0)][target_index], np.float32)
 
 
 def _shifted(index):
@@ -340,6 +344,43 @@ def test_a_baseline_view_has_one_outline_per_target_in_target_order(placed):
     assert radii == pytest.approx(500.0, abs=3.1)
     assert sorted(map(tuple, square)) == [(1500.0, 100.0), (1500.0, 1000.0),
                                           (2900.0, 100.0), (2900.0, 1000.0)]
+
+
+def test_a_baseline_view_carries_a4_sheets_ring_centres_and_mm_scale(monkeypatch, placed):
+    """Per Target, in template coordinates and `target_index` order: its A4
+    sheet's two corners and its ring centre, and the print scale in mm."""
+    monkeypatch.setattr(nbh.board, "print_scales", lambda: {"a": 0.25, "b": 0.25})
+    view = placed.start()[1]["baseline_view"]
+    assert len(view["sheets"]) == len(view["targets"])
+    for (x0, y0), (x1, y1) in view["sheets"]:
+        assert x1 > x0 and y1 > y0
+    assert view["sheets"][0] == [[-145.0, -9.0], [1548.0, 1180.0]]
+    assert len(view["ring_centres"]) == len(view["targets"])
+    assert view["ring_centres"] == [[600.0, 500.0], [2200.0, 550.0]]
+    assert view["mm_per_px"] == 0.25
+
+
+@pytest.mark.parametrize("scales", [
+    lambda: {"a": 0.1, "b": 0.2},
+    lambda: {},
+    lambda: (_ for _ in ()).throw(FileNotFoundError("print_scale.json")),
+    lambda: (_ for _ in ()).throw(ValueError("malformed")),
+])
+def test_an_indeterminate_mm_scale_leaves_the_run_watching_with_no_scale(monkeypatch, placed, scales):
+    monkeypatch.setattr(nbh.board, "print_scales", scales)
+    _, run = placed.start()
+    assert run["state"] == "watching"
+    view = run["baseline_view"]
+    assert view["mm_per_px"] is None
+    assert len(view["sheets"]) == len(view["ring_centres"]) == 2
+
+
+def test_a_baseline_view_without_one_sheet_per_target_sends_no_sheets(monkeypatch, placed):
+    class Unsheeted(_Placed):
+        sheets = []
+    monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask: (Unsheeted(), 0.95))
+    view = placed.start()[1]["baseline_view"]
+    assert view["sheets"] == [] and len(view["ring_centres"]) == 2
 
 
 def test_a_baseline_views_marks_lie_where_the_fake_detector_planted_them(monkeypatch, placed):

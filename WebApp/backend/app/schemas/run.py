@@ -26,6 +26,14 @@ class BaselineView(BaseModel):
     # One point per Baseline Mark, in template coordinates; none on a Run
     # stored before the Detection Service sent them
     baseline_marks: list[Point] = []
+    # One A4 sheet per Target, a two-corner rectangle in template coordinates;
+    # empty on a Run stored before the Detection Service sent them
+    sheets: list[tuple[Point, Point]] = []
+    # One ring centre per Target, in template coordinates; empty likewise
+    ring_centres: list[Point] = []
+    # Millimetres per template px; None when the scale is indeterminate or
+    # was not sent
+    mm_per_px: float | None = None
 
 
 class Place(BaseModel):

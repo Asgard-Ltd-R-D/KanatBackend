@@ -1035,6 +1035,8 @@ def test_the_client_reads_the_detection_services_answers(monkeypatch):
                 "baseline_marks": 3, "baseline_view": view.model_dump(mode="json"),
                 "registered": registered.model_dump(mode="json"), "looked_at": looked_at}
     read = detection_client.Run(session_id, CAM, "watching", view, registered, datetime.fromisoformat(looked_at))
+    assert watching["baseline_view"]["mm_per_px"] == 0.1763   # the new wire fields ride in the raw payload
+    assert len(watching["baseline_view"]["sheets"]) == len(watching["baseline_view"]["ring_centres"]) == 2
     answers["/status"] = (200, {"runs": [watching]})
     assert detection_client.status() == [read]
     answers["/status"] = (200, {"runs": [{**watching, "state": "starting", "baseline_view": None,

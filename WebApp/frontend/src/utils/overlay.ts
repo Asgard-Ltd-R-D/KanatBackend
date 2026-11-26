@@ -48,13 +48,13 @@ export function placeAt(run: Pick<Run, 'places' | 'watched_until'>, at: number):
 }
 
 // A point through a homography, perspective divide included
-function project(H: number[][], [x, y]: Point): Point {
+export function project(H: number[][], [x, y]: Point): Point {
   const w = H[2][0] * x + H[2][1] * y + H[2][2]
   return [(H[0][0] * x + H[0][1] * y + H[0][2]) / w, (H[1][0] * x + H[1][1] * y + H[1][2]) / w]
 }
 
 // A homography's inverse up to scale, which the perspective divide cancels
-function adjugate([[a, b, c], [d, e, f], [g, h, i]]: number[][]): number[][] {
+export function adjugate([[a, b, c], [d, e, f], [g, h, i]]: number[][]): number[][] {
   return [
     [e * i - f * h, c * h - b * i, b * f - c * e],
     [f * g - d * i, a * i - c * g, c * d - a * f],

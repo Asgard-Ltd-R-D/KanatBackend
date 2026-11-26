@@ -1,8 +1,10 @@
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { AlertCircle, Maximize2, Minimize2, Settings, VideoOff } from 'lucide-react'
 import clsx from 'clsx'
 import { useCameras } from '../../hooks/useCameras'
+import { baselineUploadStarted, uploadBaselineWithRetry } from '../../api/baselineImage'
 import { BoardDetection, BulletHole, Camera, Run } from '../../types'
 import { DetectionBadge } from '../Session/DetectionBadge'
 import { WhepPlayer } from './WhepPlayer'
@@ -27,14 +29,114 @@ const TRIANGLE_CELLS: CSSProperties[] = [
   { gridColumn: '2 / span 2', gridRow: '2' },
 ]
 
+// A board's latest Run (runs are in taken_at order)
+function latestRun(runs: Run[], alias: string): Run | undefined {
+  const boardRuns = runs.filter(r => r.camera_alias === alias)
+  return boardRuns[boardRuns.length - 1]
+}
+
+// Durable "baseline already captured" marks; storage can throw, so best-effort
+function wasCaptured(key: string): boolean {
+  try {
+    return sessionStorage.getItem(key) !== null
+  } catch {
+    return false
+  }
+}
+function markCaptured(key: string): void {
+  try {
+    sessionStorage.setItem(key, '1')
+  } catch {
+    // without storage a remount may re-capture; nothing more to do
+  }
+}
+
 // Every enabled camera (board), live, sharing all of the space it is given. Each
 // tile draws its OWN Overlay from that board's latest Run and Bullet Holes, at
 // its latest place, only while that board's Run watches (matched by camera_alias).
-export function CameraFeeds({ runs, bullets, detections }: { runs: Run[]; bullets: BulletHole[]; detections: BoardDetection[] }) {
+export function CameraFeeds({ sessionId, runs, bullets, detections }: { sessionId: string; runs: Run[]; bullets: BulletHole[]; detections: BoardDetection[] }) {
   const { data: cameras, isLoading, isError } = useCameras()
   const enabled = cameras?.filter(c => c.enabled) ?? []
   // The camera shown big; the others shrink to a strip. null is the equal grid.
   const [focused, setFocused] = useState<string | null>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+  // Frames being encoded, so one Run is not grabbed twice before its upload starts
+  const capturing = useRef(new Set<string>())
+  const qc = useQueryClient()
+  // Bumped when a tile's video decodes its first frame, so a board that was
+  // already watching before its picture arrived is captured then
+  const [framesReady, setFramesReady] = useState(0)
+  // Per board, the Runs it already had when last seen not watching (a retake
+  // or restart starting): the board's next watching is a new Run's, so a frame
+  // is never captured for one of these while the new Run is not yet fetched.
+  // Taken once, as the board leaves watching: the backend stores the new Run
+  // before it reports watching, so a refetch while still starting can already
+  // hold it, and a later snapshot would wrongly count it as one of these
+  const runsBefore = useRef(new Map<string, Set<string>>())
+  // Each board's detection state as last seen, to find where it leaves watching
+  const lastState = useRef(new Map<string, string | undefined>())
+
+  // When a board's latest Run first watches (its baseline is established), grab
+  // one clean frame from its <video> (no overlay) and upload it. Best-effort.
+  // A Run counts as captured only once the upload succeeded, remembered in
+  // sessionStorage so remounting this page never overwrites the run-start
+  // baseline with a later frame; a failed upload is retried by the uploader
+  // (api/baselineImage), which outlives this view.
+  // `cameras` is a dependency so a tile whose video mounts after the board
+  // already watches is still captured.
+  useEffect(() => {
+    const waiting: HTMLVideoElement[] = []
+    const ready = () => setFramesReady(n => n + 1)
+    for (const d of detections) {
+      const alias = d.camera_alias
+      const state = d.detection?.state
+      const before = lastState.current.get(alias)
+      lastState.current.set(alias, state)
+      if (state !== 'watching') {
+        // Only on entering a non-watching state (or the first time this board is
+        // seen not watching), never again while it stays there
+        const entering = before === undefined || before === 'watching' || before === 'ending'
+        if (state !== 'ending' && (entering || !runsBefore.current.has(alias))) {
+          runsBefore.current.set(alias, new Set(runs.filter(r => r.camera_alias === alias).map(r => r.taken_at)))
+        }
+        continue
+      }
+      const run = latestRun(runs, alias)
+      if (!run || runsBefore.current.get(alias)?.has(run.taken_at)) continue
+      const key = `baseline-captured:${sessionId}:${alias}:${run.taken_at}`
+      // Captured in an earlier visit, or being sent (retries included) or done with in this one
+      if (wasCaptured(key) || baselineUploadStarted(sessionId, alias, run.taken_at)) continue
+      const video = gridRef.current?.querySelector<HTMLVideoElement>(`[data-camera="${CSS.escape(alias)}"] video`)
+      // No decoded frame yet: leave it unmarked and retry once the video has one
+      if (!video) continue
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        video.addEventListener('loadeddata', ready, { once: true })
+        waiting.push(video)
+        continue
+      }
+      if (capturing.current.has(key)) continue
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        canvas.getContext('2d')!.drawImage(video, 0, 0, canvas.width, canvas.height)
+        capturing.current.add(key)
+        canvas.toBlob(blob => {
+          capturing.current.delete(key)
+          if (!blob) return
+          uploadBaselineWithRetry(sessionId, alias, run.taken_at, blob, () => {
+            markCaptured(key)
+            // A modal that already asked for this Run's frame (and got none) asks again
+            qc.invalidateQueries({ queryKey: ['baseline-image', sessionId, alias] })
+          })
+        }, 'image/png')
+      } catch (err) {
+        capturing.current.delete(key)
+        console.warn('baseline frame capture failed', err)
+      }
+    }
+    return () => waiting.forEach(video => video.removeEventListener('loadeddata', ready))
+  }, [sessionId, runs, detections, cameras, framesReady, qc])
 
   // One board's tile: name + detection status above, the stream below, and a
   // button to focus it (big) or, when it is the focused one, restore the grid.
@@ -42,12 +144,12 @@ export function CameraFeeds({ runs, bullets, detections }: { runs: Run[]; bullet
     const { compact = false, cell } = opts
     const isFocused = focused === camera.alias
     const boardRuns = runs.filter(r => r.camera_alias === camera.alias)
-    const run = boardRuns[boardRuns.length - 1]
+    const run = latestRun(runs, camera.alias)
     const detection = detections.find(d => d.camera_alias === camera.alias)?.detection
     const watches = detection?.state === 'watching' || detection?.state === 'ending'
     const boardBullets = bullets.filter(b => b.camera_alias === camera.alias)
     return (
-      <div key={camera.id} className={clsx('min-h-0 w-full flex flex-col', !compact && 'h-full')} style={cell}>
+      <div key={camera.id} data-camera={camera.alias} className={clsx('min-h-0 w-full flex flex-col', !compact && 'h-full')} style={cell}>
         <div className="flex items-center gap-1.5 mb-1.5 min-h-[20px]">
           <span className={clsx('font-medium text-slate-500 dark:text-slate-400', compact ? 'text-[11px]' : 'text-xs')}>
             {camera.alias}
@@ -132,7 +234,7 @@ export function CameraFeeds({ runs, bullets, detections }: { runs: Run[]; bullet
   }
 
   return (
-    <div className="grid gap-3 h-full min-h-0" style={containerStyle}>
+    <div ref={gridRef} className="grid gap-3 h-full min-h-0" style={containerStyle}>
       {enabled.map((camera, i) => tile(camera, { compact: spotlight && camera.alias !== focused, cell: cellOf(camera, i) }))}
     </div>
   )

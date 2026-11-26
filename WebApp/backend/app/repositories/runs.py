@@ -38,3 +38,9 @@ def cameras_of(db: DBSession, session_id: uuid.UUID) -> list[str]:
 def save(db: DBSession) -> None:
     """Commits the changes made to Runs loaded from `db`."""
     db.commit()
+
+
+def latest(db: DBSession, session_id: uuid.UUID, camera_alias: str) -> Run | None:
+    """The Session's most recent Run (greatest `taken_at`) on this camera."""
+    return (db.query(Run).filter(Run.session_id == session_id, Run.camera_alias == camera_alias)
+            .order_by(Run.taken_at.desc()).first())

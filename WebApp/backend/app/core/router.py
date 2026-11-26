@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 
-from app.routers import bullets, cameras, debug, export, live, logs, sessions, status
+from app.routers import baseline_image, bullets, cameras, debug, export, live, logs, sessions, status
 
 
 def include_routers(app: FastAPI) -> None:
     app.include_router(sessions.router)
     app.include_router(bullets.router)
+    app.include_router(baseline_image.router)
     app.include_router(export.router)
     app.include_router(live.router)
     app.include_router(cameras.router)

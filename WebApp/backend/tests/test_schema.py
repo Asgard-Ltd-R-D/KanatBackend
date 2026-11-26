@@ -53,6 +53,14 @@ def schema(url):
         engine.dispose()
 
 
+def run_columns(url):
+    engine = _make_engine(url)
+    try:
+        return {c["name"] for c in inspect(engine).get_columns("runs")}
+    finally:
+        engine.dispose()
+
+
 def test_the_migration_applies_and_reverses_cleanly(db_url):
     config = alembic_config()
 
@@ -65,6 +73,13 @@ def test_the_migration_applies_and_reverses_cleanly(db_url):
     # The recordings feature is gone: no record flag, no recording_intervals
     assert "record" not in sessions
     assert not has_intervals
+    # A Run keeps where its captured baseline frame image is stored
+    assert "baseline_image_path" in run_columns(db_url)
+
+    command.downgrade(config, "-1")
+    assert "baseline_image_path" not in run_columns(db_url)
+    command.upgrade(config, "head")
+    assert "baseline_image_path" in run_columns(db_url)
 
     command.downgrade(config, "base")
     assert schema(db_url) == (set(), set(), None, False)   # every table dropped
@@ -74,6 +89,7 @@ def test_the_migration_applies_and_reverses_cleanly(db_url):
     assert "camera_id" not in sessions and "camera_alias" in holes
     assert run_constraints == {"uq_runs_session_id_camera_alias_taken_at"}
     assert "record" not in sessions and not has_intervals
+    assert "baseline_image_path" in run_columns(db_url)
 
 
 def test_dropping_recordings_keeps_the_sessions_bullet_holes(tmp_path, monkeypatch):

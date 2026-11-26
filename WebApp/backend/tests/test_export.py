@@ -283,7 +283,7 @@ def test_a_board_with_a_stored_baseline_frame_is_pictured_by_that_file(tmp_path,
     monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
     (tmp_path / "frame.jpg").write_bytes(b"JPEGBYTES")
     run = _frame_run("frame.jpg")
-    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera", lambda db, sid, alias: [run])
 
     picture = export_svc._board_picture(object(), uuid.uuid4(), "lane1")
 
@@ -295,11 +295,11 @@ def test_a_board_with_a_stored_baseline_frame_is_pictured_by_that_file(tmp_path,
 def test_a_board_without_a_usable_baseline_frame_is_pictured_by_the_static_artwork(tmp_path, monkeypatch, path):
     from app.services import baseline_image
     monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
-    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: _frame_run(path))
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera", lambda db, sid, alias: [_frame_run(path)])
 
     picture = export_svc._board_picture(object(), uuid.uuid4(), "lane1")
 
-    assert picture == {"uri": export_svc._target_data_uri(), "frame": None}
+    assert picture["uri"] == export_svc._target_data_uri() and picture["frame"] is None
 
 
 def test_the_report_places_bullets_on_the_frame_through_the_baseline_homography_with_live_markers(tmp_path, monkeypatch):
@@ -308,7 +308,7 @@ def test_the_report_places_bullets_on_the_frame_through_the_baseline_homography_
     (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
     # template -> picture: scale 0.5 and shift (100, 50)
     run = _frame_run("frame.png", [[0.5, 0, 100], [0, 0.5, 50], [0, 0, 1]])
-    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera", lambda db, sid, alias: [run])
 
     html = export_svc._render_report_html(_completed_session(), db=object())
 
@@ -326,10 +326,10 @@ def test_a_baseline_frame_with_an_invalid_picture_size_falls_back_to_the_artwork
     monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
     (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
     run = _frame_run("frame.png", width=width, height=height)
-    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera", lambda db, sid, alias: [run])
 
-    assert export_svc._board_picture(object(), uuid.uuid4(), "lane1") == {
-        "uri": export_svc._target_data_uri(), "frame": None}
+    picture = export_svc._board_picture(object(), uuid.uuid4(), "lane1")
+    assert picture["uri"] == export_svc._target_data_uri() and picture["frame"] is None
     export_svc._render_report_html(_completed_session(), db=object())  # and the report still renders
 
 
@@ -338,8 +338,8 @@ def test_the_run_is_read_once_per_board(tmp_path, monkeypatch):
     monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
     (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
     calls = []
-    monkeypatch.setattr(export_svc.runs_repo, "latest",
-                        lambda db, sid, alias: calls.append(alias) or _frame_run("frame.png"))
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera",
+                        lambda db, sid, alias: calls.append(alias) or [_frame_run("frame.png")])
 
     export_svc._board_picture(object(), uuid.uuid4(), "lane1")
 
@@ -352,7 +352,7 @@ def test_shots_off_the_frame_are_clipped_and_one_on_the_horizon_does_not_crash(t
     (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
     # w = x - 700: the first shot (700, 500) lies on the line at infinity
     run = _frame_run("frame.png", [[1, 0, 0], [0, 1, 0], [1, 0, -700]])
-    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera", lambda db, sid, alias: [run])
 
     html = export_svc._render_report_html(_completed_session(), db=object())
 
@@ -370,7 +370,7 @@ def test_the_report_outlines_each_target_on_the_frame_and_names_it_above(tmp_pat
     targets = [[[0, 200], [400, 200], [400, 600], [0, 600]],
                [[600, 100], [1000, 100], [1000, 500], [600, 500]]]
     run = _frame_run("frame.png", [[0.5, 0, 100], [0, 0.5, 50], [0, 0, 1]], targets=targets)
-    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera", lambda db, sid, alias: [run])
 
     html = export_svc._render_report_html(_completed_session(), db=object())
 
@@ -385,7 +385,7 @@ def test_the_report_outlines_each_target_on_the_frame_and_names_it_above(tmp_pat
 def test_the_artwork_fallback_draws_no_target_outlines(tmp_path, monkeypatch):
     from app.services import baseline_image
     monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
-    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: _frame_run(None))
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera", lambda db, sid, alias: [_frame_run(None)])
 
     html = export_svc._render_report_html(_completed_session(), db=object())
 
@@ -441,3 +441,48 @@ def test_the_mpi_is_per_target_in_cm_in_every_export():
     shots = [[c.value for c in r] for r in wb["Bullet Holes"].iter_rows(min_row=2)]
     assert [r[1] for r in shots] == ["Target 1", "Target 1", "Target 2", "Target 2", "No target"]
     assert shots[2][4:] == [-5.0, 0.5]
+
+
+def test_a_shot_from_an_earlier_run_is_carried_into_the_latest_runs_space_on_the_frame(tmp_path, monkeypatch):
+    """A retake whose Run hangs its template on another Target: a shot stored
+    over the earlier Run goes onto the frame through that Run's own place, not
+    the latest Run's homography."""
+    from app.services import baseline_image
+    monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
+    (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
+    first_h = [[0.5, 0, 100], [0, 0.5, 50], [0, 0, 1]]
+    first = SimpleNamespace(taken_at=datetime(2026, 11, 16, 9, 29, 0, tzinfo=timezone.utc),
+                            baseline_view={"template_to_picture": first_h, "baseline_marks": []},
+                            places=[{"template_to_picture": first_h}])
+    latest = _frame_run("frame.png", IDENTITY)
+    latest.taken_at = datetime(2026, 11, 16, 9, 35, 0, tzinfo=timezone.utc)
+    latest.baseline_view["baseline_marks"] = []
+    latest.places = [{"template_to_picture": IDENTITY}]
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera", lambda db, sid, alias: [first, latest])
+    s = _completed_session()
+    # Fired 09:30:05, during the first Run: (100, 100) over it is (150, 100) px
+    s.bullet_holes = [_hole(1, "lane1", 100, 100, second=5)]
+
+    html = export_svc._render_report_html(s, db=object())
+
+    # (150, 100) px of a 1000 x 500 frame, not (100, 100) through the latest Run
+    assert 'class="hole" style="left: 15.000%; top: 20.000%"' in html
+
+
+def test_without_a_frame_an_earlier_runs_shot_is_still_carried_onto_the_artwork(monkeypatch):
+    first_h = [[0.5, 0, 100], [0, 0.5, 50], [0, 0, 1]]
+    first = SimpleNamespace(taken_at=datetime(2026, 11, 16, 9, 29, 0, tzinfo=timezone.utc), baseline_image_path=None,
+                            baseline_view={"template_to_picture": first_h, "baseline_marks": []},
+                            places=[{"template_to_picture": first_h}])
+    latest = SimpleNamespace(taken_at=datetime(2026, 11, 16, 9, 35, 0, tzinfo=timezone.utc), baseline_image_path=None,
+                             baseline_view={"template_to_picture": IDENTITY, "baseline_marks": []},
+                             places=[{"template_to_picture": IDENTITY}])
+    monkeypatch.setattr(export_svc.runs_repo, "of_camera", lambda db, sid, alias: [first, latest])
+    s = _completed_session()
+    s.bullet_holes = [_hole(1, "lane1", 100, 100, second=5)]
+
+    [board] = export_svc._boards_for_report(s.bullet_holes, db=object(), session_id=uuid.uuid4())
+
+    # (100, 100) over the first Run is (150, 100) in the latest's space, on the 1405 x 1120 artwork
+    assert board["bullets"][0]["left"] == pytest.approx(150 / 1405 * 100)
+    assert board["bullets"][0]["top"] == pytest.approx(100 / 1120 * 100)

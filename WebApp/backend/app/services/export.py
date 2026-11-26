@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.models import Session
 from app.repositories import runs as runs_repo
-from app.services import baseline_image, groups
+from app.services import baseline_image, groups, run_space
 
 _REPORT_HTML = """<!DOCTYPE html>
 <html>
@@ -288,12 +288,15 @@ def _board_picture(db: DBSession | None, session_id, alias: str | None) -> dict:
     """What a board is drawn over: `{"uri", "frame"}`. When the board's latest
     Run has a stored baseline frame that still exists, `uri` is that frame and
     `frame` carries its `template_to_picture` and pixel size, to project shots
-    onto it; otherwise `uri` is the printed artwork and `frame` is None."""
-    artwork = {"uri": _target_data_uri(), "frame": None}
+    onto it, and the board's Runs (in taken_at order) to carry an earlier Run's
+    shots into the latest's space; otherwise `uri` is the printed artwork and
+    `frame` is None."""
     if db is None or alias is None:
-        return artwork
-    # One Run, read once: the image and the homography come from the same row
-    run = runs_repo.latest(db, session_id, alias)
+        return {"uri": _target_data_uri(), "frame": None, "runs": []}
+    # The Runs, read once: the image and the homography come from the same row
+    runs = runs_repo.of_camera(db, session_id, alias)
+    artwork = {"uri": _target_data_uri(), "frame": None, "runs": runs}
+    run = runs[-1] if runs else None
     path = baseline_image.absolute_path(run.baseline_image_path) if run and run.baseline_image_path else None
     if path is None:
         return artwork
@@ -312,7 +315,7 @@ def _board_picture(db: DBSession | None, session_id, alias: str | None) -> dict:
         uri = f"data:{baseline_image.media_type(path)};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
     except (KeyError, IndexError, TypeError, ValueError, OSError):
         return artwork
-    return {"uri": uri, "frame": frame}
+    return {"uri": uri, "frame": frame, "runs": runs}
 
 
 def _project(matrix, x: float, y: float) -> tuple[float, float] | None:
@@ -323,6 +326,18 @@ def _project(matrix, x: float, y: float) -> tuple[float, float] | None:
         return None
     return ((matrix[0][0] * x + matrix[0][1] * y + matrix[0][2]) / w,
             (matrix[1][0] * x + matrix[1][1] * y + matrix[1][2]) / w)
+
+
+def _carried(runs: list, holes) -> list[tuple[float, float]]:
+    """Each hole's position in the latest Run's template space: as stored with
+    at most one Run, carried from its own Run otherwise; as stored if a Run's
+    view is malformed."""
+    if len(runs) < 2:
+        return [(h.position_x, h.position_y) for h in holes]
+    try:
+        return run_space.holes_over(runs[-1], runs, holes)
+    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
+        return [(h.position_x, h.position_y) for h in holes]
 
 
 def _frame_canvas(frame: dict) -> dict:
@@ -362,7 +377,7 @@ def _target_outlines(frame: dict) -> list[dict]:
     return out
 
 
-def _board_canvas(holes) -> dict:
+def _board_canvas(points: list[tuple[float, float]]) -> dict:
     """The drawing area for a board: the artwork box (0..TEMPLATE) widened to
     hold every shot. A board can watch more than one printed Target, and every
     Target's shots are stored in the one reference Target's coordinates (the
@@ -371,8 +386,8 @@ def _board_canvas(holes) -> dict:
     it off the edge and lose it; instead the canvas grows to cover it and the
     artwork sits in its place. With every shot inside the artwork (the usual, one
     Target per board) the canvas is exactly the artwork, unchanged."""
-    xs = [h.position_x for h in holes]
-    ys = [h.position_y for h in holes]
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
     min_x, max_x = min([0.0, *xs]), max([float(_TEMPLATE_W), *xs])
     min_y, max_y = min([0.0, *ys]), max([float(_TEMPLATE_H), *ys])
     cw, ch = max_x - min_x, max_y - min_y
@@ -400,17 +415,20 @@ def _boards_for_report(bullets, db: DBSession | None = None, session_id=None) ->
         holes = sorted(by_alias.get(bg.camera_alias, []), key=lambda b: b.rank)
         picture = _board_picture(db, session_id, bg.camera_alias)
         frame = picture["frame"]
+        # Each Run may hang its template coordinates on another Target, so a
+        # shot from an earlier Run is first carried into the latest Run's space
+        # (as the live Overlay does), on the frame or on the artwork alike
+        points = _carried(picture["runs"], holes)
+        carried = dict(zip(map(id, holes), points))
         if frame is None:
-            canvas = _board_canvas(holes)
-            place = lambda b: ((b.position_x - canvas["min_x"]) / canvas["cw"] * 100,
-                               (b.position_y - canvas["min_y"]) / canvas["ch"] * 100)
+            canvas = _board_canvas(points)
+            place = lambda b: ((carried[id(b)][0] - canvas["min_x"]) / canvas["cw"] * 100,
+                               (carried[id(b)][1] - canvas["min_y"]) / canvas["ch"] * 100)
         else:
-            # One projection through the frozen baseline homography: template
-            # coordinates are a space shared by every Run
             canvas = _frame_canvas(frame)
 
-            def place(b, frame=frame):
-                projected = _project(frame["matrix"], b.position_x, b.position_y)
+            def place(b, frame=frame, carried=carried):
+                projected = _project(frame["matrix"], *carried[id(b)])
                 if projected is None:
                     return None
                 return projected[0] / frame["width"] * 100, projected[1] / frame["height"] * 100

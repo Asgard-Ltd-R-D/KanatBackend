@@ -7,8 +7,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, FiniteFloat, field_va
 
 
 class BulletPosition(BaseModel):
-    # Template coordinates, unbounded: a Miss or a Bullet Hole on another
-    # Target lies off the artwork's 0–1405 × 0–1120 (ADR-0009)
+    # Template coordinates, unbounded: a Bullet Hole on another Target, or off
+    # the artwork on its sheet, lies off its 0–1405 × 0–1120 (ADR-0009)
     x: FiniteFloat
     y: FiniteFloat
 

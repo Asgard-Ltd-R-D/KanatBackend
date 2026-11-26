@@ -166,8 +166,7 @@ _REPORT_HTML = """<!DOCTYPE html>
         <p class="muted">No group statistics: no positioned shots on a target.</p>
         {% endif %}
         <p class="note">
-          Not in a group &mdash; Misses: <b>{{ board.grouping.misses }}</b>
-          &nbsp;&nbsp; Without a position: <b>{{ board.grouping.without_position }}</b>
+          Not in a group &mdash; Without a position: <b>{{ board.grouping.without_position }}</b>
         </p>
       </div>
     </div>
@@ -394,7 +393,6 @@ def generate_csv(session: Session) -> str:
         for g in bg.grouping.groups:
             writer.writerow([board, f"Target {g.target_index + 1}", g.n, g.mpi_x_mm, g.mpi_y_mm,
                              g.cep_mm, g.mean_radius_mm, g.rms_radius_mm, g.extreme_spread_mm])
-        writer.writerow([board, "Misses", bg.grouping.misses])
         writer.writerow([board, "Without a position", bg.grouping.without_position])
     return output.getvalue()
 
@@ -441,7 +439,6 @@ def generate_excel(session: Session) -> bytes:
                        g.mean_radius_mm, g.rms_radius_mm, g.extreme_spread_mm])
             for cell in ws[ws.max_row][3:]:
                 cell.number_format = "0.0"
-        ws.append([board, "Misses", bg.grouping.misses])
         ws.append([board, "Without a Position", bg.grouping.without_position])
         ws.append([])
     _fit_columns(ws)

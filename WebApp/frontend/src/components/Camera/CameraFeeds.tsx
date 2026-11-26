@@ -1,8 +1,9 @@
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertCircle, Maximize2, Minimize2, Settings, VideoOff } from 'lucide-react'
 import clsx from 'clsx'
 import { useCameras } from '../../hooks/useCameras'
+import { uploadBaselineImage } from '../../api/baselineImage'
 import { BoardDetection, BulletHole, Camera, Run } from '../../types'
 import { DetectionBadge } from '../Session/DetectionBadge'
 import { WhepPlayer } from './WhepPlayer'
@@ -30,11 +31,45 @@ const TRIANGLE_CELLS: CSSProperties[] = [
 // Every enabled camera (board), live, sharing all of the space it is given. Each
 // tile draws its OWN Overlay from that board's latest Run and Bullet Holes, at
 // its latest place, only while that board's Run watches (matched by camera_alias).
-export function CameraFeeds({ runs, bullets, detections }: { runs: Run[]; bullets: BulletHole[]; detections: BoardDetection[] }) {
+export function CameraFeeds({ sessionId, runs, bullets, detections }: { sessionId: string; runs: Run[]; bullets: BulletHole[]; detections: BoardDetection[] }) {
   const { data: cameras, isLoading, isError } = useCameras()
   const enabled = cameras?.filter(c => c.enabled) ?? []
   // The camera shown big; the others shrink to a strip. null is the equal grid.
   const [focused, setFocused] = useState<string | null>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+  // (alias, Run taken_at) pairs whose baseline frame was already grabbed, so a
+  // Run is captured once and a retake (new taken_at) captures again
+  const captured = useRef(new Set<string>())
+
+  // When a board's latest Run first watches (its baseline is established), grab
+  // one clean frame from its <video> (no overlay) and upload it. Best-effort.
+  useEffect(() => {
+    for (const d of detections) {
+      if (d.detection?.state !== 'watching') continue
+      const alias = d.camera_alias
+      const boardRuns = runs.filter(r => r.camera_alias === alias)
+      const run = boardRuns[boardRuns.length - 1]
+      if (!run) continue
+      const key = `${alias}\u0000${run.taken_at}`
+      if (captured.current.has(key)) continue
+      const video = gridRef.current?.querySelector<HTMLVideoElement>(`[data-camera="${CSS.escape(alias)}"] video`)
+      // No decoded frame yet: leave it unmarked so the next update retries
+      if (!video || video.videoWidth === 0 || video.videoHeight === 0) continue
+      captured.current.add(key)
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        canvas.getContext('2d')!.drawImage(video, 0, 0, canvas.width, canvas.height)
+        canvas.toBlob(blob => {
+          if (!blob) return
+          uploadBaselineImage(sessionId, alias, blob).catch(err => console.warn('baseline image upload failed', err))
+        }, 'image/png')
+      } catch (err) {
+        console.warn('baseline frame capture failed', err)
+      }
+    }
+  }, [sessionId, runs, detections])
 
   // One board's tile: name + detection status above, the stream below, and a
   // button to focus it (big) or, when it is the focused one, restore the grid.
@@ -47,7 +82,7 @@ export function CameraFeeds({ runs, bullets, detections }: { runs: Run[]; bullet
     const watches = detection?.state === 'watching' || detection?.state === 'ending'
     const boardBullets = bullets.filter(b => b.camera_alias === camera.alias)
     return (
-      <div key={camera.id} className={clsx('min-h-0 w-full flex flex-col', !compact && 'h-full')} style={cell}>
+      <div key={camera.id} data-camera={camera.alias} className={clsx('min-h-0 w-full flex flex-col', !compact && 'h-full')} style={cell}>
         <div className="flex items-center gap-1.5 mb-1.5 min-h-[20px]">
           <span className={clsx('font-medium text-slate-500 dark:text-slate-400', compact ? 'text-[11px]' : 'text-xs')}>
             {camera.alias}
@@ -132,7 +167,7 @@ export function CameraFeeds({ runs, bullets, detections }: { runs: Run[]; bullet
   }
 
   return (
-    <div className="grid gap-3 h-full min-h-0" style={containerStyle}>
+    <div ref={gridRef} className="grid gap-3 h-full min-h-0" style={containerStyle}>
       {enabled.map((camera, i) => tile(camera, { compact: spotlight && camera.alias !== focused, cell: cellOf(camera, i) }))}
     </div>
   )

@@ -35,7 +35,7 @@ def _require_completed(session_id: uuid.UUID, db: DBSession):
 @router.get("/pdf")
 def export_pdf(session_id: uuid.UUID, db: DBSession = Depends(get_db)):
     session = _require_completed(session_id, db)
-    pdf_bytes = svc.generate_pdf(session)
+    pdf_bytes = svc.generate_pdf(session, db)
     _log_export(session, "PDF", len(pdf_bytes))
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

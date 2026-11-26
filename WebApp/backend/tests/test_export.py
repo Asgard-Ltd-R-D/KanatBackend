@@ -1,5 +1,6 @@
 """Exporting a Session's results (routers/export.py): refused while it is still
 active, so no one hands out a report of a live Session."""
+import base64
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -247,3 +248,57 @@ def test_shots_outside_the_reference_artwork_are_still_plotted():
     # The canvas widened to cover the far shot, so the artwork is narrower than it
     # (1405 / 2000 = 70.25%)
     assert "width: 70.250%" in html
+
+
+# --- the board picture: the captured baseline frame, else the printed artwork ---
+
+IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+
+def _frame_run(path, template_to_picture=IDENTITY, width=1000, height=500):
+    return SimpleNamespace(
+        baseline_image_path=path,
+        baseline_view={"template_to_picture": template_to_picture, "picture": {"width": width, "height": height}},
+    )
+
+
+def test_a_board_with_a_stored_baseline_frame_is_pictured_by_that_file(tmp_path, monkeypatch):
+    from app.services import baseline_image
+    monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
+    (tmp_path / "frame.jpg").write_bytes(b"JPEGBYTES")
+    run = _frame_run("frame.jpg")
+    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+
+    picture = export_svc._board_picture(object(), uuid.uuid4(), "lane1")
+
+    assert picture["uri"] == "data:image/jpeg;base64," + base64.b64encode(b"JPEGBYTES").decode()
+    assert picture["frame"]["width"] == 1000 and picture["frame"]["height"] == 500
+
+
+@pytest.mark.parametrize("path", [None, "missing.png"])
+def test_a_board_without_a_usable_baseline_frame_is_pictured_by_the_static_artwork(tmp_path, monkeypatch, path):
+    from app.services import baseline_image
+    monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
+    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: _frame_run(path))
+
+    picture = export_svc._board_picture(object(), uuid.uuid4(), "lane1")
+
+    assert picture == {"uri": export_svc._target_data_uri(), "frame": None}
+
+
+def test_the_report_places_bullets_on_the_frame_through_the_baseline_homography_with_live_markers(tmp_path, monkeypatch):
+    from app.services import baseline_image
+    monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
+    (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
+    # template -> picture: scale 0.5 and shift (100, 50)
+    run = _frame_run("frame.png", [[0.5, 0, 100], [0, 0.5, 50], [0, 0, 1]])
+    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+
+    html = export_svc._render_report_html(_completed_session(), db=object())
+
+    # (700, 500) -> (450, 300) px of a 1000 x 500 frame = 45% / 60%
+    assert "left: 45.000%" in html and "top: 60.000%" in html
+    assert base64.b64encode(b"PNGBYTES").decode() in html
+    # the live marker: a hollow ring with its number above it
+    assert 'class="hole"' in html and 'class="hole-n"' in html
+    assert "background: #c62a1b" not in html.split("</style>")[0].split(".hole {")[1].split("}")[0]

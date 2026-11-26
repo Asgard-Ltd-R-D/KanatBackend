@@ -11,8 +11,11 @@ import openpyxl
 from jinja2 import Environment
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from sqlalchemy.orm import Session as DBSession
+
 from app.models import Session
-from app.services import groups
+from app.repositories import runs as runs_repo
+from app.services import baseline_image, groups
 
 _REPORT_HTML = """<!DOCTYPE html>
 <html>
@@ -64,9 +67,12 @@ _REPORT_HTML = """<!DOCTYPE html>
        so a shot on a neighbouring Target (outside the artwork) still shows. */
     .target { position: relative; height: 0; }
     .target-img { position: absolute; display: block; }
-    .hole { position: absolute; transform: translate(-50%, -50%); width: 16px; height: 16px;
-            border-radius: 50%; background: #c62a1b; border: 1.5px solid #fff;
-            color: #fff; font-size: 8.5px; font-weight: 700; line-height: 13px; text-align: center; }
+    .hole { position: absolute; transform: translate(-50%, -50%); width: 12px; height: 12px;
+            border-radius: 50%; border: 1.5px solid #c62a1b; }
+    /* The live marker: a hollow ring, its number above it (sits over the frame in white-edged red) */
+    .hole-n { position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); margin-bottom: 1px;
+              color: #c62a1b; font-size: 8.5px; font-weight: 700; line-height: 1; white-space: nowrap;
+              text-shadow: 0 0 2px #fff, 0 0 2px #fff; }
 
     .stats { flex: 1; padding-top: 2px; }
     .stats-title { font-size: 10px; font-weight: 700; color: #13283f; letter-spacing: 0.02em; margin-bottom: 7px; }
@@ -124,10 +130,10 @@ _REPORT_HTML = """<!DOCTYPE html>
     <div class="board-body">
       <figure class="target-fig">
         <div class="target" style="padding-bottom: {{ '%.3f' % board.canvas.pad_pct }}%">
-          <img class="target-img" src="{{ target_uri }}"
+          <img class="target-img" src="{{ board.image_uri }}"
                style="left: {{ '%.3f' % board.canvas.img.left }}%; top: {{ '%.3f' % board.canvas.img.top }}%; width: {{ '%.3f' % board.canvas.img.width }}%; height: {{ '%.3f' % board.canvas.img.height }}%">
           {% for b in board.bullets %}
-          <span class="hole" style="left: {{ '%.3f' % b.left }}%; top: {{ '%.3f' % b.top }}%">{{ b.rank }}</span>
+          <span class="hole" style="left: {{ '%.3f' % b.left }}%; top: {{ '%.3f' % b.top }}%"><span class="hole-n">{{ b.rank }}</span></span>
           {% endfor %}
         </div>
       </figure>
@@ -241,6 +247,47 @@ def _flat_white(png: bytes) -> bytes:
     return out.getvalue()
 
 
+def _board_picture(db: DBSession | None, session_id, alias: str | None) -> dict:
+    """What a board is drawn over: `{"uri", "frame"}`. When the board's latest
+    Run has a stored baseline frame that still exists, `uri` is that frame and
+    `frame` carries its `template_to_picture` and pixel size, to project shots
+    onto it; otherwise `uri` is the printed artwork and `frame` is None."""
+    artwork = {"uri": _target_data_uri(), "frame": None}
+    if db is None or alias is None:
+        return artwork
+    relative = baseline_image.latest_baseline_image_path(db, session_id, alias)
+    path = baseline_image.absolute_path(relative) if relative else None
+    run = runs_repo.latest(db, session_id, alias) if path else None
+    if run is None:
+        return artwork
+    try:
+        view = run.baseline_view
+        frame = {
+            "matrix": view["template_to_picture"],
+            "width": float(view["picture"]["width"]),
+            "height": float(view["picture"]["height"]),
+        }
+        uri = f"data:{baseline_image.media_type(path)};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+    except (KeyError, TypeError, ValueError, OSError):
+        return artwork
+    return {"uri": uri, "frame": frame}
+
+
+def _project(matrix, x: float, y: float) -> tuple[float, float]:
+    """A template point through a 3x3 homography, in picture px."""
+    w = matrix[2][0] * x + matrix[2][1] * y + matrix[2][2]
+    return ((matrix[0][0] * x + matrix[0][1] * y + matrix[0][2]) / w,
+            (matrix[1][0] * x + matrix[1][1] * y + matrix[1][2]) / w)
+
+
+def _frame_canvas(frame: dict) -> dict:
+    """The drawing area when the board is the baseline frame: the frame itself."""
+    return {
+        "pad_pct": frame["height"] / frame["width"] * 100,
+        "img": {"left": 0.0, "top": 0.0, "width": 100.0, "height": 100.0},
+    }
+
+
 def _board_canvas(holes) -> dict:
     """The drawing area for a board: the artwork box (0..TEMPLATE) widened to
     hold every shot. A board can watch more than one printed Target, and every
@@ -267,7 +314,7 @@ def _board_canvas(holes) -> dict:
     }
 
 
-def _boards_for_report(bullets) -> list[dict]:
+def _boards_for_report(bullets, db: DBSession | None = None, session_id=None) -> list[dict]:
     """One entry per board, in the groupings' order (alias order, no-board last),
     each with a canvas, the board's Bullet Holes placed on it (left/top as a
     percentage of the canvas) and its Group statistics."""
@@ -277,31 +324,44 @@ def _boards_for_report(bullets) -> list[dict]:
     boards = []
     for bg in groups.groupings(bullets):
         holes = sorted(by_alias.get(bg.camera_alias, []), key=lambda b: b.rank)
-        canvas = _board_canvas(holes)
+        picture = _board_picture(db, session_id, bg.camera_alias)
+        frame = picture["frame"]
+        if frame is None:
+            canvas = _board_canvas(holes)
+            place = lambda b: ((b.position_x - canvas["min_x"]) / canvas["cw"] * 100,
+                               (b.position_y - canvas["min_y"]) / canvas["ch"] * 100)
+        else:
+            # One projection through the frozen baseline homography: template
+            # coordinates are a space shared by every Run
+            canvas = _frame_canvas(frame)
+
+            def place(b, frame=frame):
+                px, py = _project(frame["matrix"], b.position_x, b.position_y)
+                return px / frame["width"] * 100, py / frame["height"] * 100
         boards.append({
             "alias": bg.camera_alias or "No board",
             "grouping": bg.grouping,
             "canvas": canvas,
+            "image_uri": picture["uri"],
             "bullets": [{
                 "rank": b.rank,
                 "ts": _local_clock(b.first_seen_at),
                 "x": b.position_x,
                 "y": b.position_y,
-                "left": (b.position_x - canvas["min_x"]) / canvas["cw"] * 100,
-                "top": (b.position_y - canvas["min_y"]) / canvas["ch"] * 100,
+                "left": place(b)[0],
+                "top": place(b)[1],
             } for b in holes],
         })
     return boards
 
 
-def _render_report_html(session: Session) -> str:
+def _render_report_html(session: Session, db: DBSession | None = None) -> str:
     bullets = _by_board_then_rank(session.bullet_holes)
     now = _as_local(datetime.now(timezone.utc))
     return _jinja_env.from_string(_REPORT_HTML).render(
         session=session,
         total_bullets=len(bullets),
-        boards=_boards_for_report(bullets),
-        target_uri=_target_data_uri(),
+        boards=_boards_for_report(bullets, db, getattr(session, "id", None)),
         started=_local_clock(session.started_at),
         ended=_local_clock(session.ended_at) if session.ended_at else None,
         duration=_session_duration(session),
@@ -359,8 +419,8 @@ def _by_board_then_rank(bullets):
     return sorted(bullets, key=lambda b: (b.camera_alias is None, b.camera_alias or "", b.rank))
 
 
-def generate_pdf(session: Session) -> bytes:
-    html = _render_report_html(session)
+def generate_pdf(session: Session, db: DBSession | None = None) -> bytes:
+    html = _render_report_html(session, db)
     # Imported here: WeasyPrint needs Pango's system libraries (GTK on
     # Windows), and a PC without them still runs everything but the PDF
     import weasyprint

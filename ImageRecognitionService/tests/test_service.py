@@ -53,6 +53,10 @@ class _Placed(_FakeView):
     targets = [p.reshape(-1, 1, 2).astype(np.float32) for p in (
         _traced(board.RING_CENTRE_TPL, 500.0, 720),
         np.array([[1500.0, 100.0], [2900.0, 100.0], [2900.0, 1000.0], [1500.0, 1000.0]]))]
+    sheets = [(-145.0, -9.0, 1548.0, 1180.0), (1400.0, 0.0, 3000.0, 1100.0)]
+
+    def ring_centre(self, target_index=None):
+        return np.array([(600.0, 500.0), (2200.0, 550.0)][target_index], np.float32)
 
 
 def _shifted(index):
@@ -340,6 +344,19 @@ def test_a_baseline_view_has_one_outline_per_target_in_target_order(placed):
     assert radii == pytest.approx(500.0, abs=3.1)
     assert sorted(map(tuple, square)) == [(1500.0, 100.0), (1500.0, 1000.0),
                                           (2900.0, 100.0), (2900.0, 1000.0)]
+
+
+def test_a_baseline_view_carries_a4_sheets_ring_centres_and_mm_scale(placed):
+    """Per Target, in template coordinates and `target_index` order: its A4
+    sheet's two corners and its ring centre, and the print scale in mm."""
+    view = placed.start()[1]["baseline_view"]
+    assert len(view["sheets"]) == len(view["targets"])
+    for (x0, y0), (x1, y1) in view["sheets"]:
+        assert x1 > x0 and y1 > y0
+    assert view["sheets"][0] == [[-145.0, -9.0], [1548.0, 1180.0]]
+    assert len(view["ring_centres"]) == len(view["targets"])
+    assert view["ring_centres"] == [[600.0, 500.0], [2200.0, 550.0]]
+    assert view["mm_per_px"] == pytest.approx(0.1763)
 
 
 def test_a_baseline_views_marks_lie_where_the_fake_detector_planted_them(monkeypatch, placed):

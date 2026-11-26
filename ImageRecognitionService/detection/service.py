@@ -27,6 +27,7 @@ its own copy of the detector (run_process.py), nothing shared between Runs but
 the GPU. The control API and what `/status` answers are the same either way.
 """
 import argparse
+import functools
 import json
 import logging
 import multiprocessing
@@ -546,13 +547,32 @@ def _baseline_view(view, loop, marks):
     in the camera's picture (ADR-0009): its time on `first_seen_at`'s clock,
     its size, the template's homography onto it, and in template coordinates
     each Target's outline, in `target_index` order, and each of its Baseline
-    Marks, `marks` in Board space."""
+    Marks, `marks` in Board space. Also in template coordinates and
+    `target_index` order, each Target's A4 sheet as two corners and its 10-ring
+    centre, and the print scale, mm per template px."""
     height, width = loop.base.shape[:2]
     return {"taken_at": _at(loop, 0),
             "picture": {"width": width, "height": height},
             "template_to_picture": view.H.tolist(),
             "targets": [_outline(view.board_to_template(t)) for t in view.targets],
-            "baseline_marks": view.board_to_template(marks[:, :2]).astype(float).round(1).tolist()}
+            "baseline_marks": view.board_to_template(marks[:, :2]).astype(float).round(1).tolist(),
+            "sheets": [view.board_to_template([b[:2], b[2:]]).astype(float).round(1).tolist()
+                       for b in view.sheets],
+            "ring_centres": [view.board_to_template([view.ring_centre(i)])[0]
+                             .astype(float).round(1).tolist() for i in range(len(view.targets))],
+            "mm_per_px": _mm_per_px()}
+
+
+@functools.lru_cache(maxsize=1)
+def _mm_per_px():
+    """The print scale, mm per template px, from config/print_scale.json via
+    `board.print_scales`. A stream has no Capture Setup (#83), so the scale
+    must be one for every setup; setups that disagree are refused."""
+    scales = set(nbh.board.print_scales().values())
+    if len(scales) != 1:
+        raise ValueError(f"config/print_scale.json holds {sorted(scales)} mm per template "
+                         "px across Capture Setups; a stream needs exactly one")
+    return scales.pop()
 
 
 def _at(loop, index):

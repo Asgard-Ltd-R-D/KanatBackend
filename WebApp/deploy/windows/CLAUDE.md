@@ -4,7 +4,7 @@ The installers that put KANAT on a Windows 10 22H2 (build 19045+) or 11 PC, with
 
 | File | What |
 |---|---|
-| `build-installer.ps1` | Runs on a Windows PC. Checks the build's inputs (Inno Setup, MediaMTX against its pinned SHA-256, the GTK3 runtime, the model, the CUDA PyTorch environment), parses the scripts, stages `build\stage\` (app, backend, detection, video, scripts) and compiles `kanat.iss` once per run mode into `build\output\KANAT-Setup-<version>-<threads\|processes>.exe`, with `SHA256SUMS.txt`. |
+| `build-installer.ps1` | Runs on a Windows PC. Checks the build's inputs (Inno Setup, MediaMTX against its pinned SHA-256, the GTK3 runtime, the detection and Target finder models, the CUDA PyTorch environment), parses the scripts, stages `build\stage\` (app, backend, detection, video, scripts) and compiles `kanat.iss` once per run mode into `build\output\KANAT-Setup-<version>-<threads\|processes>.exe`, with `SHA256SUMS.txt`. |
 | `kanat.iss` | The Inno Setup script: copies the files to `C:\Program Files\KANAT`, asks which adapter the cameras are on, runs `install-services.ps1`, makes the shortcuts and the optional start with Windows, and removes the tasks on uninstall. |
 | `scripts\install-services.ps1` | Run by the installer as Administrator: `kanat-config.json` (with the Logs-tab password hash), firewall, the cameras' adapter and multicast route, power, the three scheduled tasks, a health check. Safe to run again. |
 | `scripts\run.ps1` | What each task runs: one component (mediamtx, backend, detection), started again with a growing wait when it exits. At start it ends only what is left of its own component (`Stop-KanatProcesses -Only`), never what the other two tasks run. |

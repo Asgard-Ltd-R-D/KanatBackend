@@ -257,9 +257,19 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
                     <g
                       key={p.key}
                       className="cursor-pointer"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Remove shot ${i + 1}`}
                       onClick={e => {
                         e.stopPropagation()
                         removeAt(i)
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          removeAt(i)
+                        }
                       }}
                     >
                       <title>Remove this shot</title>

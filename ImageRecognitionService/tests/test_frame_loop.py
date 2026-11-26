@@ -46,7 +46,7 @@ class _FakeView:
         return [frame for _ in self.crops]
 
     def assign(self, pos):
-        return None   # every Bullet Hole is a Miss: no Target geometry here
+        return None   # no Target geometry here, so no Target
 
 
 class _TwoSheetView(_FakeView):
@@ -296,7 +296,7 @@ def _openable(monkeypatch):
     and Board space built without a model, artwork or geometry."""
     monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
     monkeypatch.setattr(nbh.cv2, "VideoCapture", lambda video: _FakeCap(1))
-    monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
+    monkeypatch.setattr(nbh.board, "template_mask", lambda image: None)
     monkeypatch.setattr(nbh.board, "template_contour", lambda mask: None)
     monkeypatch.setattr(nbh.board, "contour_span", lambda contour: 100.0)
     monkeypatch.setattr(nbh.board, "net_scale", lambda *args: 1.0)
@@ -578,8 +578,8 @@ def test_a_mark_seen_in_the_baseline_looks_is_listed_as_p1_and_is_not_new(
     out = capsys.readouterr().out
     assert run.holes == []
     assert "[INFO] baseline: 1 Baseline Marks over 5 frame(s)" in out
-    assert "[INFO] 1 Baseline Marks (0 on a Target, 1 Miss)" in out
-    assert re.search(r"^  P1  MISS$", out, re.M)
+    assert "[INFO] 1 Baseline Marks:" in out
+    assert re.search(r"^  P1  no Target$", out, re.M)
     assert "[INFO] 0 new Bullet Holes" in out and "  #1" not in out
 
 
@@ -803,7 +803,7 @@ def test_a_live_run_on_a_worker_thread_ends_when_its_caller_stops_it(monkeypatch
     assert isinstance(run, nbh.Run) and len(run.holes) == 1
     assert sent == ["http://backend/sessions/session/bullets"]
     out = capsys.readouterr().out
-    assert "[INFO] 1 Baseline Marks (0 on a Target, 1 Miss)" in out
+    assert "[INFO] 1 Baseline Marks:" in out
     assert "[INFO] 1 new Bullet Holes" in out and "[GROUP]" in out
 
 
@@ -825,7 +825,7 @@ def test_a_live_bullet_hole_is_printed_once_as_soon_as_its_verdict_is_fixed(
     assert len(new) == 1
     printed_at = int(lines[new[0] - 1].split()[1])
     assert first < printed_at and printed_at + 1 < first + nbh.PERSIST_FRAMES
-    assert re.search(r"t=\d\d:\d\d:\d\d\.\d\d  MISS", lines[new[0]])
+    assert re.search(r"t=\d\d:\d\d:\d\d\.\d\d  no Target", lines[new[0]])
     assert [h["first_frame"] for h in run.holes] == [first]   # the report's is the one announced
 
 
@@ -875,8 +875,8 @@ def test_the_end_of_a_live_run_lists_its_baseline_marks(monkeypatch, capsys):
     run = _live_run(monkeypatch, _Watching(lambda i: True, stop_at=80))
     out = capsys.readouterr().out
     assert run.holes == [] and "[NEW]" not in out
-    assert "[INFO] 1 Baseline Marks (0 on a Target, 1 Miss)" in out
-    assert re.search(r"^  P1  MISS$", out, re.M)
+    assert "[INFO] 1 Baseline Marks:" in out
+    assert re.search(r"^  P1  no Target$", out, re.M)
 
 
 def test_a_confirmed_live_bullet_hole_waits_for_change_evidence(monkeypatch, capsys):
@@ -907,11 +907,13 @@ def test_a_live_run_reports_its_rate_and_the_frames_it_looked_at(monkeypatch, ca
 
 
 def test_a_stream_is_never_looked_up_in_the_manifest(monkeypatch):
-    """rtsps too: hashed as a file, its URL reached a traceback, password and all."""
+    """rtsps too: hashed as a file, its URL reached a traceback, password and all.
+    It takes the one print's scale: with none, a live Bullet Hole had no
+    millimetres and the report printed its template px as its Position."""
     monkeypatch.setattr(nbh.manifest, "lookup",
                         lambda *args, **kwargs: pytest.fail("a stream was looked up"))
     for url in ("rtsp://mtx:8554/cam", "rtsps://operator:secret@mtx:8322/cam"):
-        assert nbh._print_scale(url, None, {"x": 0.2}) is None
+        assert nbh._print_scale(url, None, {"x": 0.2}) == board.live_print_scale() == 0.1763
         assert nbh._print_scale(url, 0.3, {"x": 0.2}) == 0.3
 
 
@@ -940,7 +942,7 @@ def test_credentials_in_a_stream_url_are_never_printed(monkeypatch, capfd, caplo
     logged."""
     caplog.set_level("INFO")
     monkeypatch.setattr(nbh.cv2, "imread", lambda path: np.zeros((8, 8, 3), np.uint8))
-    monkeypatch.setattr(nbh.board, "find_targets", lambda image, min_area=None: ([None], None))
+    monkeypatch.setattr(nbh.board, "template_mask", lambda image: None)
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -1404,7 +1406,7 @@ def test_a_recording_publishes_each_bullet_hole_at_ref_time_plus_its_time_in_the
     (value,) = posted
     assert value.first_seen_at == ref + timedelta(seconds=10.52)
     assert value.first_seen_at.tzinfo == timezone.utc
-    # Board space is the template here (`_FakeView`), and every Bullet Hole a Miss.
+    # Board space is the template here (`_FakeView`), with no Target.
     assert value.template_xy == (15.0, 15.0)
     assert value.target is None and value.mm is None
 

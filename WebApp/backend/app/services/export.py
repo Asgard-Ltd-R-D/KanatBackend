@@ -193,8 +193,7 @@ _REPORT_HTML = """<!DOCTYPE html>
     <p class="muted">No group statistics: no positioned shots on a target.</p>
     {% endif %}
     <p class="note">
-      Not in a group &mdash; Misses: <b>{{ board.grouping.misses }}</b>
-      &nbsp;&nbsp; Without a position: <b>{{ board.grouping.without_position }}</b>
+      Not in a group &mdash; Without a position: <b>{{ board.grouping.without_position }}</b>
     </p>
 
     <div class="sec">Shot log</div>
@@ -502,17 +501,15 @@ _jinja_env.filters["cm"] = lambda v: "—" if v is None else f"{round(v / 10, 2)
 
 def _target_label(hole) -> str:
     """Which Target a hole is on, as every export names it: "Target N" (from 1),
-    "Miss" for a detected one on no Target, "No target" for a manual one without."""
+    or "No target" for one without (a manual one, or a Miss stored before #422)."""
     if hole.target_index is not None:
         return f"Target {hole.target_index + 1}"
-    return "Miss" if hole.source == "model" else "No target"
+    return "No target"
 
 
 def _target_order(hole) -> tuple:
-    """Targets in index order, then Misses, then holes on no Target."""
-    if hole.target_index is not None:
-        return (0, hole.target_index)
-    return (1, 0) if hole.source == "model" else (2, 0)
+    """Targets in index order, then the holes on no Target."""
+    return (0, hole.target_index) if hole.target_index is not None else (1, 0)
 
 
 def _by_target(holes) -> list[tuple[str, list]]:
@@ -574,7 +571,6 @@ def generate_csv(session: Session) -> str:
             writer.writerow([board, f"Target {g.target_index + 1}", g.n, _cm(g.mpi_x_mm), _cm(g.mpi_y_mm),
                              _cm(g.cep_mm), _cm(g.mean_radius_mm), _cm(g.rms_radius_mm),
                              _cm(g.extreme_spread_mm)])
-        writer.writerow([board, "Misses", bg.grouping.misses])
         writer.writerow([board, "Without a position", bg.grouping.without_position])
     return output.getvalue()
 
@@ -624,7 +620,6 @@ def generate_excel(session: Session) -> bytes:
                        _cm(g.cep_mm), _cm(g.mean_radius_mm), _cm(g.rms_radius_mm), _cm(g.extreme_spread_mm)])
             for cell in ws[ws.max_row][3:]:
                 cell.number_format = "0.00"
-        ws.append([board, "Misses", bg.grouping.misses])
         ws.append([board, "Without a Position", bg.grouping.without_position])
         ws.append([])
     _fit_columns(ws)

@@ -28,9 +28,9 @@ scored by the same yardstick:
   `--cut-marks` cuts the measured marks out of its region, so none of them
   helps register itself; without it the probe sees what the runtime sees.
 - `silhouette`: the chain before #50, an 8-parameter homography fitted to the
-  one Target's green mask, seeded frame to frame.
+  one Target's mask, seeded frame to frame.
 - `affine` (#50 A): the baseline homography's perspective is held; each frame
-  is registered to the BASELINE frame's green mask by an affine only.
+  is registered to the BASELINE frame's Target mask by an affine only.
 
 Every mode also splits each mark's error into drift (what holds for a second)
 and jitter (the rest) (#50 C): they point at re-anchoring and at smoothing.
@@ -106,7 +106,7 @@ def _registered(source, base, n_frames, view, track):
 
 
 def _silhouette(template_mask):
-    """The pre-#50 `track_view`: the one Target's green mask, frame to frame."""
+    """The pre-#50 `track_view`: the one Target's mask, frame to frame."""
     def track(frame, last, last_frame):
         contours, mask = board.find_targets(frame)
         if not contours:
@@ -116,20 +116,20 @@ def _silhouette(template_mask):
     return track
 
 
-def _green_affine(base):
-    """#50 A: an affine on the green mask, against the baseline frame's."""
-    ref = _green(base)
+def _mask_affine(base):
+    """#50 A: an affine on the Target mask, against the baseline frame's."""
+    ref = _target_mask(base)
 
     def track(frame, last, last_frame):
         a = last.anchor
-        W, _ = board.ecc_warp(ref, _green(frame), cv2.MOTION_AFFINE,
+        W, _ = board.ecc_warp(ref, _target_mask(frame), cv2.MOTION_AFFINE,
                               last.H @ np.linalg.inv(a.H))
         return board.BoardView(W @ a.H, last.tpl_to_board, last.canvas_size, [], a)
     return track
 
 
-def _green(frame):
-    """The blurred green mask the silhouette registration fits."""
+def _target_mask(frame):
+    """The blurred Target mask (`board.find_targets`) the silhouette registration fits."""
     return board._blurred(board.find_targets(frame)[1])
 
 
@@ -252,7 +252,7 @@ if __name__ == "__main__":
                    help="runtime mode: cut the measured marks out of the ECC region")
     a = p.parse_args()
 
-    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    template_mask = board.template_mask(cv2.imread(board.DEFAULT_TEMPLATE))
     span = board.contour_span(board.template_contour(template_mask))
     source, base, view, _ = nbh.open_board_space(a.video, a.start, template_mask)
     if a.appeared is None:
@@ -278,7 +278,7 @@ if __name__ == "__main__":
     elif a.registration == "silhouette":
         track = _silhouette(template_mask)
     else:
-        track = _green_affine(base)
+        track = _mask_affine(base)
     print(manifest.footage_line(manifest.footage(manifest.lookup(a.video)),
                                 os.path.basename(a.video)))
     print(f"[REACH] registration: {a.registration}{', marks cut' if a.cut_marks else ''}")

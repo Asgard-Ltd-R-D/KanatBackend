@@ -189,7 +189,7 @@ if __name__ == "__main__":
               f"no ground truth: rates below are not recall")
     else:
         template = cv2.imread(a.template)
-        _, template_mask = board.find_targets(template, min_area=1)
+        template_mask = board.template_mask(template)
         source, frame, view, _ = nbh.open_board_space(a.video, a.start, template_mask)
         source.close()
         truth, _ = evaluate.load_truth(a.truth_image, a.truth_labels, frame, view)

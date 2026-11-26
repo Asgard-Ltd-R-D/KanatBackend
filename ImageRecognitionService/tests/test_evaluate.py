@@ -13,7 +13,7 @@ from tools.evaluate import (DERIVED_NAME, DETECTOR, DISPLACEMENT, PRE_EXISTING_F
                       attribute, in_the_baseline, load_labels, match, off_sheet,
                       open_moved, parse_move, placement_note, position_errors,
                       pre_existing_labels, refuse_move, register_photograph, score,
-                      score_recording)
+                      score_recording, _hue_targets)
 
 
 def test_greedy_matching_is_one_to_one():
@@ -504,8 +504,8 @@ def test_a_photograph_registers_to_the_frame_far_from_the_artwork():
     def miss(H):
         return np.abs(board.apply(H, far) - board.apply(true, far)).max()
 
-    photo_targets, photo_mask = board.find_targets(photo)
-    frame_targets, frame_mask = board.find_targets(frame)
+    photo_targets, photo_mask = _hue_targets(photo)
+    frame_targets, frame_mask = _hue_targets(frame)
     artwork_only, _ = board.register(photo_mask, frame_mask, frame_targets[0])
     assert miss(artwork_only) > 10
     assert miss(register_photograph(photo, frame)[0]) < 5

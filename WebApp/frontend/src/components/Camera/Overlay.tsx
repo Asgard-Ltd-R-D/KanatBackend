@@ -6,13 +6,17 @@ import { Size, baselineMarksToDraw, fromEarlierRun, holesOver, labelGroups, temp
 
 const OUTLINE_COLOUR = '#ef4444'
 const BASELINE_MARK_COLOUR = '#a3a8b0' // slate-400 (tailwind.config.ts)
-// Every hole is drawn green, hit, miss or manual alike
-const HOLE_COLOUR = '#34d399'
+const DETECTED_COLOUR = '#34d399'
+const MANUAL_COLOUR = '#fbbf24' // the manual source badge's amber
 
 // In screen px, whatever the picture's size
 const MARKER_RADIUS = 9
 const BASELINE_MARK_RADIUS = 7
 
+// Every detected Bullet Hole alike, on its Target or not (ADR-0014)
+function colourOf(b: BulletHole) {
+  return b.source === 'manual' ? MANUAL_COLOUR : DETECTED_COLOUR
+}
 
 // Text legible on any picture: outlined in black
 const textOutline = { stroke: 'black', strokeWidth: 3, paintOrder: 'stroke' } as const
@@ -66,7 +70,7 @@ export function Overlay({ run, place, bullets, runs, videoRef }: OverlayContent 
   const holes = holesOver(run, runs, bullets)
   const markers = holes.map(toElement)
   // A hole from an earlier Run is part of this Run's baseline: grey, as a Baseline Mark
-  const colour = (b: BulletHole) => (fromEarlierRun(run, runs, b.first_seen_at) ? BASELINE_MARK_COLOUR : HOLE_COLOUR)
+  const colour = (b: BulletHole) => (fromEarlierRun(run, runs, b.first_seen_at) ? BASELINE_MARK_COLOUR : colourOf(b))
 
   return (
     <svg data-detection-overlay className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden>

@@ -49,6 +49,8 @@ $DetectionSrc = Join-Path $Repo "ImageRecognitionService"
 $MediaMtxVersion = "v1.21.3"
 $MediaMtxSha256 = "13a0bfaa852d83ce976c94342a1af130941bd79fac2c1e95a2175879c92304c0"
 $ModelFolder = "kanat_yolo26x_v1"
+# The Target finder (ADR-0013), loaded by detection\board.py at startup
+$TargetModelFolder = "target_seg_406"
 
 function Step($text) { Write-Host ""; Write-Host "==> $text" -ForegroundColor Cyan }
 function Ok($text) { Write-Host "    $text" -ForegroundColor Green }
@@ -96,6 +98,8 @@ if (-not (Test-Path (Join-Path $gtk "bin\libpango-1.0-0.dll"))) {
 
 $model = Join-Path $DetectionSrc "trained_models\$ModelFolder\weights\best.pt"
 if (-not (Test-Path $model)) { Fail "the detection model is missing: $model (it is git-ignored: copy it from where it was trained)" }
+$targetModel = Join-Path $DetectionSrc "trained_models\$TargetModelFolder\best.pt"
+if (-not (Test-Path $targetModel)) { Fail "the Target finder model is missing: $targetModel (it is git-ignored: copy it from where it was trained)" }
 
 # The detection environment that ships is the tested one: the venv's packages and
 # the interpreter it was made from. It has to be PyTorch with CUDA, or the range's GPU is not used.
@@ -189,7 +193,9 @@ Copy-Tree (Join-Path $DetectionSrc "config") (Join-Path $service "config")
 Copy-Tree (Join-Path $DetectionSrc "data\targets") (Join-Path $service "data\targets")
 New-Item -ItemType Directory -Force -Path (Join-Path $service "trained_models\$ModelFolder\weights") | Out-Null
 Copy-Item $model (Join-Path $service "trained_models\$ModelFolder\weights")
-Ok "detection staged ($ModelFolder only)"
+New-Item -ItemType Directory -Force -Path (Join-Path $service "trained_models\$TargetModelFolder") | Out-Null
+Copy-Item $targetModel (Join-Path $service "trained_models\$TargetModelFolder")
+Ok "detection staged ($ModelFolder and $TargetModelFolder only)"
 
 Step "MediaMTX, the scripts"
 New-Item -ItemType Directory -Force -Path (Join-Path $Stage "video") | Out-Null

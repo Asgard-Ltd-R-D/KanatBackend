@@ -839,7 +839,10 @@ def test_a_process_run_sends_where_it_last_looked_before_it_ends(monkeypatch):
         def __exit__(self, *exc):
             return False
 
-    def process(loop, _, publish, watching):
+    scales = []
+
+    def process(loop, _, publish, watching, mm_per_tpl_px):
+        scales.append(mm_per_tpl_px)
         watching(None, [])
         loop.looked = "last look"   # looked at once more, then the Stream ended
 
@@ -857,6 +860,7 @@ def test_a_process_run_sends_where_it_last_looked_before_it_ends(monkeypatch):
     run_process.main(conn, None, SESSION, CAMERA, URL, "http://backend", None)
     watched = [m[1]["looked_at"] for m in conn.sent if m[0] == "watched"]
     assert watched[-1] == "last look" and conn.sent[-1] == ("ended",)
+    assert scales == [board.live_print_scale()]   # else no millimetres reach the report
 
 
 def test_a_process_run_whose_detection_fails_still_announces_that_it_is_draining(monkeypatch):
@@ -875,7 +879,7 @@ def test_a_process_run_whose_detection_fails_still_announces_that_it_is_draining
         def __exit__(self, *exc):
             return False
 
-    def process(loop, _, publish, watching):
+    def process(loop, _, publish, watching, mm_per_tpl_px):
         raise RuntimeError("registration failed")
 
     monkeypatch.setattr(run_process, "WATCHED_EVERY_S", 30)
@@ -907,7 +911,8 @@ def test_a_thread_run_whose_detection_fails_is_draining_while_its_posts_drain(ap
             seen["draining"] = run.draining   # the drain happens here
             return False
 
-    def process(loop, _, publish, watching):
+    def process(loop, _, publish, watching, mm_per_tpl_px):
+        seen["scale"] = mm_per_tpl_px
         raise RuntimeError("registration failed")
 
     monkeypatch.setattr(nbh.RegisteredFrames, "open", staticmethod(lambda *a, **kw: types.SimpleNamespace(stop=lambda: None)))
@@ -916,3 +921,4 @@ def test_a_thread_run_whose_detection_fails_is_draining_while_its_posts_drain(ap
     api.service._runs[(SESSION, CAMERA)] = run
     api.service._work(run, URL)
     assert seen["draining"]   # so the stall check leaves it to the publisher's own limit
+    assert seen["scale"] == board.live_print_scale()   # a live Run posts millimetres

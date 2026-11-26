@@ -31,7 +31,7 @@ import os
 import threading
 import time
 
-from detection import logs, webapp
+from detection import board, logs, webapp
 from detection import new_bullet_holes as nbh
 
 log = logging.getLogger("detection.run")
@@ -138,7 +138,8 @@ def main(conn, model_path, session_id, camera, stream_url, backend_url, log_dir)
                 else:
                     publisher.publish(hole)
             try:
-                nbh.process(loop, None, publish=publish, watching=watching)
+                nbh.process(loop, None, mm_per_tpl_px=board.live_print_scale(), publish=publish,
+                            watching=watching)
             finally:
                 # Looking is over, whether it ended or failed: the publisher's exit drains its posts
                 # next, which has its own time limit and is not a stall

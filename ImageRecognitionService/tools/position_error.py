@@ -156,5 +156,5 @@ if __name__ == "__main__":
         rows = [row for camera, (_, r) in zip(cameras, scored)
                 if label in ("pooled", camera) for row in r["rows"]]
         print_summary(label, summarise([row[3:] for row in rows],
-                                       [row[2] != "MISS" for row in rows]))
+                                       [row[2] != "no Target" for row in rows]))
         print("\n" + NOT_COVERED)

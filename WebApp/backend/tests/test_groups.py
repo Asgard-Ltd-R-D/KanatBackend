@@ -33,7 +33,8 @@ def on(target, x, y, source="model"):
     return {"target_index": target, "x_mm": x, "y_mm": y, "source": source}
 
 
-MISS = on(None, None, None)
+# A row stored as a Miss before #422: detected, no Target, no millimetres
+OLD_MISS = on(None, None, None)
 MANUAL = on(None, None, None, source="manual")
 # A 6 x 8 mm rectangle around (10, -5) plus its centre: every corner is a 3-4-5
 # triangle away from the MPI, so the distances are 5, 5, 5, 5 and 0
@@ -71,7 +72,7 @@ def grouping(client, holes):
     assert res.status_code == 200
     boards = res.json()["groupings"]
     if not boards:
-        return {"groups": [], "misses": 0, "without_position": 0}
+        return {"groups": [], "without_position": 0}
     [board] = boards
     assert board["camera_alias"] is None
     return board["grouping"]
@@ -80,7 +81,7 @@ def grouping(client, holes):
 def test_a_hand_computable_group_gives_known_statistics(client):
     got = grouping(client, RECTANGLE)
 
-    assert got["misses"] == got["without_position"] == 0
+    assert got["without_position"] == 0
     [g] = got["groups"]
     assert g["target_index"] == 0 and g["n"] == 5
     assert (g["mpi_x_mm"], g["mpi_y_mm"]) == pytest.approx((10.0, -5.0))
@@ -106,20 +107,20 @@ def test_two_targets_are_two_groups_in_target_order(client):
     assert got[0]["extreme_spread_mm"] == pytest.approx(10.0)
 
 
-def test_misses_and_bullet_holes_without_a_position_are_in_no_group_and_counted(client):
+def test_bullet_holes_without_a_position_are_in_no_group_and_counted(client):
     # A detected one on a Target without millimetres: no print scale configured
     unscaled = on(0, None, None)
-    got = grouping(client, RECTANGLE + [MISS, MISS, MANUAL, unscaled])
+    got = grouping(client, RECTANGLE + [OLD_MISS, OLD_MISS, MANUAL, unscaled])
 
-    assert (got["misses"], got["without_position"]) == (2, 2)
+    assert "misses" not in got and got["without_position"] == 4
     [g] = got["groups"]
     assert g["n"] == 5
     assert (g["mpi_x_mm"], g["mpi_y_mm"]) == pytest.approx((10.0, -5.0))
 
 
 def test_a_session_without_a_bullet_hole_on_a_target_has_no_group(client):
-    assert grouping(client, [MISS, MANUAL]) == {"groups": [], "misses": 1, "without_position": 1}
-    assert grouping(client, []) == {"groups": [], "misses": 0, "without_position": 0}
+    assert grouping(client, [OLD_MISS, MANUAL]) == {"groups": [], "without_position": 2}
+    assert grouping(client, []) == {"groups": [], "without_position": 0}
 
 
 def groups_sheet(client):
@@ -129,7 +130,7 @@ def groups_sheet(client):
 
 
 def test_the_excel_groups_sheet_holds_the_detail_numbers(client):
-    got = grouping(client, RECTANGLE + [on(1, 2, -3), MISS, MANUAL])
+    got = grouping(client, RECTANGLE + [on(1, 2, -3), OLD_MISS, MANUAL])
 
     rows = groups_sheet(client)
     # Every row now names its board first; these holes are all on no board. The
@@ -140,8 +141,7 @@ def test_the_excel_groups_sheet_holds_the_detail_numbers(client):
          cm(g["cep_mm"]), cm(g["mean_radius_mm"]), cm(g["rms_radius_mm"]), cm(g["extreme_spread_mm"]))
         for g in got["groups"]
     ]
-    assert rows[3:5] == [("No board", "Misses", got["misses"]) + (None,) * 6,
-                         ("No board", "Without a Position", got["without_position"]) + (None,) * 6]
+    assert rows[3:4] == [("No board", "Without a Position", got["without_position"]) + (None,) * 6]
 
 
 def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
@@ -153,7 +153,7 @@ def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
         return real(string=string, base_url=base_url)
 
     monkeypatch.setattr(weasyprint, "HTML", html)
-    client.holes = RECTANGLE + [MISS]
+    client.holes = RECTANGLE + [OLD_MISS]
 
     res = client.get(f"/sessions/{SESSION_ID}/export/pdf")
 
@@ -164,18 +164,18 @@ def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
     # MPI, CEP, Mean Radius, RMS radius (sqrt 20) and Extreme Spread, in cm to 0.01
     for cell in ("1.00", "-0.50", "0.50", "0.40", "0.45"):
         assert f'<td class="num">{cell}</td>' in page
-    assert "Misses: <b>1</b>" in page
+    assert "Misses" not in page and "Without a position: <b>1</b>" in page
 
 
-def test_without_a_group_the_pdf_still_gives_the_two_counts(client, monkeypatch):
+def test_without_a_group_the_pdf_still_gives_the_count(client, monkeypatch):
     rendered = []
     monkeypatch.setattr(weasyprint, "HTML",
                         lambda string, base_url: rendered.append(string) or SimpleNamespace(write_pdf=lambda: b"%PDF"))
-    client.holes = [MISS, MANUAL, MANUAL]
+    client.holes = [OLD_MISS, MANUAL, MANUAL]
 
     assert client.get(f"/sessions/{SESSION_ID}/export/pdf").status_code == 200
     assert "<td>Target" not in rendered[0]
-    assert "Misses: <b>1</b>" in rendered[0] and "Without a position: <b>2</b>" in rendered[0]
+    assert "Misses" not in rendered[0] and "Without a position: <b>3</b>" in rendered[0]
 
 
 def test_a_deleted_bullet_hole_leaves_its_group(db_url):

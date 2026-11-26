@@ -74,8 +74,7 @@ export interface Group {
 // Target, and the Bullet Holes left out of every Group
 export interface Grouping {
   groups: Group[]
-  misses: number
-  without_position: number // manual ones, and detected ones without a print scale
+  without_position: number // manual ones, detected ones without a print scale, pre-#422 Misses
 }
 
 // Whether a Run of the Detection Service watches a session. none: no camera,

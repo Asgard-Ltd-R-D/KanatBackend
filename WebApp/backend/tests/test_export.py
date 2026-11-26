@@ -172,6 +172,22 @@ def test_the_pdf_shot_log_has_no_source_column():
     assert "Detected at" in html
 
 
+def test_the_shot_log_gives_centimetres_from_the_centre_not_template_px():
+    """2026-11-26 range Session: the log printed each shot's template px
+    (370.4, 897.3), all positive with Y down, under "Position X/Y". A shot's
+    Position is its offset from the Target's centre, X right, Y up, stored in mm
+    and shown in cm."""
+    s = _completed_session()
+    s.bullet_holes = [_hole(1, "lane3", 370.4, 897.3, x_mm=-57.3, y_mm=-45.5),
+                      _hole(2, "lane3", 548.0, 865.9, x_mm=None, y_mm=None, second=4)]
+    html = export_svc._render_report_html(s)
+    assert "X (cm)" in html and "Position X" not in html
+    assert "-5.73" in html and "-4.55" in html and "—" in html
+    assert "370.4" not in html and "897.3" not in html
+    rows = export_svc.generate_csv(s).splitlines()
+    assert rows[1].endswith(",-5.73,-4.55") and rows[2].endswith(",,")
+
+
 def test_the_csv_drops_source_and_appends_the_mpi_table():
     text = export_svc.generate_csv(_completed_session())
     lines = text.splitlines()
@@ -398,7 +414,7 @@ def test_the_pdf_shot_log_has_one_section_per_target_keeping_the_ranks_in_cm():
 
     t1 = log.index('card-name">Target 1<')
     t2 = log.index('card-name">Target 2<')
-    miss = log.index('card-name">Miss<')
+    miss = log.index('card-name">No target<')
     assert t1 < t2 < miss
     assert '<td class="num">1</td>' in log[t1:t2] and '<td class="num">3</td>' in log[t2:miss]
     # 10 mm -> 1.00 cm, -50 mm -> -5.00 cm
@@ -417,11 +433,11 @@ def test_the_mpi_is_per_target_in_cm_in_every_export():
 
     csv_text = export_svc.generate_csv(_two_target_session())
     assert "lane1,Target 1,2,2.0,3.0," in csv_text and "lane1,Target 2,2,-6.0,1.0," in csv_text
-    assert "lane1,Target 2,3," in csv_text and "lane1,Miss,5," in csv_text
+    assert "lane1,Target 2,3," in csv_text and "lane1,No target,5," in csv_text
 
     wb = openpyxl.load_workbook(io.BytesIO(export_svc.generate_excel(_two_target_session())))
     groups = [[c.value for c in r][:5] for r in wb["Groups"].iter_rows(min_row=2) if r[1].value]
     assert ["lane1", "Target 1", 2, 2.0, 3.0] in groups and ["lane1", "Target 2", 2, -6.0, 1.0] in groups
     shots = [[c.value for c in r] for r in wb["Bullet Holes"].iter_rows(min_row=2)]
-    assert [r[1] for r in shots] == ["Target 1", "Target 1", "Target 2", "Target 2", "Miss"]
+    assert [r[1] for r in shots] == ["Target 1", "Target 1", "Target 2", "Target 2", "No target"]
     assert shots[2][4:] == [-5.0, 0.5]

@@ -13,15 +13,14 @@ export function cmLabel(b: Pick<BulletHole, 'x_mm' | 'y_mm'>): string {
 }
 
 // Which Target a hole is on, as the exports name it
-export function targetLabel(b: Pick<BulletHole, 'target_index' | 'source'>): string {
-  if (b.target_index != null) return `Target ${b.target_index + 1}`
-  return b.source === 'model' ? 'Miss' : 'No target'
+// ("No target": a manual one, or a Miss stored before #422)
+export function targetLabel(b: Pick<BulletHole, 'target_index'>): string {
+  return b.target_index != null ? `Target ${b.target_index + 1}` : 'No target'
 }
 
-// Targets in index order, then Misses, then holes on no Target
-function targetOrder(b: Pick<BulletHole, 'target_index' | 'source'>): number {
-  if (b.target_index != null) return b.target_index
-  return b.source === 'model' ? 1e6 : 1e6 + 1
+// Targets in index order, then the holes on no Target
+function targetOrder(b: Pick<BulletHole, 'target_index'>): number {
+  return b.target_index ?? Number.MAX_SAFE_INTEGER
 }
 
 // A board's holes, one section per Target, each in rank order (ranks unchanged)

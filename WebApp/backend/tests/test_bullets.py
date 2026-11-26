@@ -62,7 +62,7 @@ def body(x, y, **fields):
 
 @pytest.mark.parametrize("x, y", [
     (774.8, 560.3),     # on the artwork
-    (1500.4, -3.6),     # a Miss beyond it
+    (1500.4, -3.6),     # off the artwork on its sheet
     (-2210.0, 3405.5),  # on another Target
 ])
 def test_a_position_is_stored_as_sent(client, session, stored, x, y):

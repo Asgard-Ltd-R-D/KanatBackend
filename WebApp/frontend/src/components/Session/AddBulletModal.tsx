@@ -41,25 +41,36 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
   const [points, setPoints] = useState<Point[]>([])
   const [notice, setNotice] = useState<string | null>(null)
 
+  // The latest Run's view says whether the real frame can be used at all: only
+  // with sheets, ring centres and a print scale. Without them the artwork is
+  // all there is, so the frame is not even fetched.
+  const latestRun = runs[runs.length - 1]
+  const view = latestRun?.baseline_view
+  const hasGeometry = !!(
+    view && view.sheets && view.sheets.length > 0 && view.ring_centres &&
+    view.ring_centres.length >= view.sheets.length && typeof view.mm_per_px === 'number'
+  )
+
   // The board's real baseline frame, when one was captured (null on 404)
   const frame = useQuery({
     queryKey: ['baseline-image', sessionId, camera],
     queryFn: () => getBaselineImage(sessionId, camera as string),
-    enabled: open && camera !== null,
+    enabled: open && camera !== null && hasGeometry,
     retry: false,
     staleTime: Infinity,
   })
   const frameBlob = frame.data ?? null
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
   useEffect(() => {
-    if (!frameBlob) {
+    // Also released while the modal is closed (the blob stays cached)
+    if (!frameBlob || !open) {
       setFrameUrl(null)
       return
     }
     const url = URL.createObjectURL(frameBlob)
     setFrameUrl(url)
     return () => URL.revokeObjectURL(url)
-  }, [frameBlob])
+  }, [frameBlob, open])
 
   const mutation = useMutation({
     // Add every placed point in one go. Sent one after another (not in parallel)
@@ -143,21 +154,19 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
   // starts a new Run, ADR-0009). Carry them into the latest Run's space — the one
   // the artwork stands for — the same way the live overlay does, so the reference
   // dots sit where the holes really are. No Runs (manual-only board): drawn as-is.
-  const latestRun = runs[runs.length - 1]
   const contextPoints = latestRun
     ? holesOver(latestRun, runs, context)
     : context.map(b => [b.position_x, b.position_y] as [number, number])
 
   // The real frame is used only with a captured frame and a Baseline View that
   // resolved sheets, ring centres and a print scale; otherwise the artwork, as before
-  const view = latestRun?.baseline_view
   const geometry =
-    frameUrl && view && view.sheets && view.sheets.length > 0 && view.ring_centres &&
-    view.ring_centres.length >= view.sheets.length && typeof view.mm_per_px === 'number'
+    frameUrl && hasGeometry && view && view.sheets && view.ring_centres && typeof view.mm_per_px === 'number'
       ? { H: view.template_to_picture, sheets: view.sheets, ringCentres: view.ring_centres, mmPerPx: view.mm_per_px, view }
       : null
   // Frame still loading: wait, rather than flash the artwork then swap it
-  const waiting = camera !== null && frame.isLoading
+  // (also the render between the blob arriving and its URL being made)
+  const waiting = camera !== null && hasGeometry && (frame.isLoading || (frameBlob !== null && !frameUrl))
   const space = waiting
     ? null
     : geometry

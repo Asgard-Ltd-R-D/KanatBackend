@@ -52,7 +52,7 @@ def test_a_value_becomes_the_v2_payload(monkeypatch):
     with webapp.WebAppPublisher("session", CAMERA, "http://backend:8000/") as publisher:
         publisher.publish(_value())
         publisher.publish(_value(frame=20, xy=(700.0, 500.0), target=None, mm=None))
-    (url, on_target), (_, miss) = sent
+    (url, on_target), (_, off_sheet) = sent
     assert url == "http://backend:8000/sessions/session/bullets"
     assert on_target == {
         "version": "v2",
@@ -65,7 +65,8 @@ def test_a_value_becomes_the_v2_payload(monkeypatch):
         "source": "model",
         "idempotency_key": str(uuid.uuid5(uuid.NAMESPACE_URL, f"session:{CAMERA}:13:1500:-4")),
     }
-    assert miss["target_index"] is miss["x_mm"] is miss["y_mm"] is None
+    # Beyond every sheet (bench paths only, ADR-0014): no Target, no millimetres
+    assert off_sheet["target_index"] is off_sheet["x_mm"] is off_sheet["y_mm"] is None
 
 
 def test_two_cameras_on_the_same_frame_and_px_get_different_keys(monkeypatch):

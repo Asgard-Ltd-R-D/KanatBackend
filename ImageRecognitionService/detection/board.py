@@ -744,7 +744,12 @@ class BoardView:
     def assign(self, point):
         """Index of the Target this Bullet Hole is on: the one whose outline
         holds it, else the one whose sheet bound does (ADR-0014). None only
-        beyond every sheet, where detection never looks (ADR-0011)."""
+        beyond every sheet, where detection never looks (ADR-0011).
+
+        ponytail: where two sheet bounds overlap, off both outlines, the lower
+        index wins (`sheet_of`), not the nearer Target; pick by distance to
+        each `ring_centre` if adjacent sheets ever overlap by more than the
+        5 mm bands."""
         p = (float(point[0]), float(point[1]))
         inside = [i for i, t in enumerate(self.targets)
                   if cv2.pointPolygonTest(t, p, False) >= 0]

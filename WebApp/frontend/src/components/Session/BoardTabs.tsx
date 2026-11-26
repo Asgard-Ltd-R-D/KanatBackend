@@ -7,7 +7,6 @@ import { BulletHole, Session } from '../../types'
 import { Board } from '../../utils/boards'
 import { ConfirmDialog } from '../UI/ConfirmDialog'
 import { DetectionBadge } from './DetectionBadge'
-import { GroupsCard } from './GroupsCard'
 import { BulletLog } from './BulletLog'
 import { AddBulletModal } from './AddBulletModal'
 
@@ -19,8 +18,8 @@ const RETAKEABLE = ['none', 'watching', 'not_watching']
 // on no board (alias null)
 const boardLabel = (alias: string | null) => alias ?? 'No board'
 
-// One board's section: its detection state, a retake-baseline button, its Group,
-// its Bullet Log (filtered to this board), and a manual-add posting to this board.
+// One board's section: its detection state, a retake-baseline button, its
+// Bullet Log (filtered to this board), and a manual-add posting to this board.
 // A Session watches every enabled camera, so there is one board per camera, shown
 // as tabs when there is more than one.
 export function BoardTabs({ session, boards }: { session: Session; boards: Board[] }) {
@@ -126,11 +125,6 @@ export function BoardTabs({ session, boards }: { session: Session; boards: Board
               )}
             </div>
           </div>
-
-          {/* Group statistics once the session is complete: while it is active the
-              live bullet feed updates the holes but not the groupings, so the card
-              would read stale (as it did before: it showed only when completed) */}
-          {!active && board.grouping && <GroupsCard grouping={board.grouping} />}
 
           <BulletLog bullets={board.bullets} onDelete={setDeleteTarget} />
 

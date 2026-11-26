@@ -170,23 +170,18 @@ frame took to arrive — the camera, the network, the video service, the
 buffering ahead of the decoder — is end-to-end latency, not Frame Wait.
 _Avoid_: latency, lag, buffering, delay
 
-**Miss**:
-A Bullet Hole on a Target Sheet, or within 5 mm of its edge, that falls
-outside the Target printed on it. A real Hit, and counted as one, but carrying
-no Shot Distance and no score. A Bullet Hole further than 5 mm off every Target
-Sheet is not a Miss: the system does not look there (ADR-0011).
-_Avoid_: stray, off-target hit
-
 **Position**:
 A Bullet Hole's offset from its Target's centre, as (X, Y) in millimetres along
-the Target's printed axes, not the camera's. Its length is the Shot Distance. A
-Miss has no Position.
-_Avoid_: hit coordinates, location, point of impact
+the Target's printed axes, not the camera's. Its length is the Shot Distance.
+A Bullet Hole's Target is the one printed on the Target Sheet it lies on, so a
+Bullet Hole outside the Target's outline, on the sheet's margin or within 5 mm
+of its edge, still has a Position (ADR-0014).
+_Avoid_: hit coordinates, location, point of impact, Miss
 
 **Position Error**:
 The error in where the system places a Bullet Hole on the Board, per axis
-along the Target's printed axes: the system's place minus the true one. For a
-Bullet Hole on a Target, it is the error in its Position; a Miss has one too.
+along the Target's printed axes: the system's place minus the true one, which is
+the error in its Position.
 Only as independent as the truth it is measured against: truth carried into
 the footage's own frame of reference shares its registration to the artwork
 and its print scale, so errors in those cancel out of it.
@@ -195,7 +190,7 @@ _Avoid_: accuracy, localisation error, offset error
 **Group**:
 The new Bullet Holes on one Target during one Range, after the operator's
 corrections. Bullet Holes that were already on the Board when the Range
-started, and Misses, belong to no Group. Since a Group counts Bullet Holes,
+started belong to no Group. Since a Group counts Bullet Holes,
 not Hits, a tight Group can be under-counted (ADR-0001); its MPI, CEP and
 Extreme Spread carry the same caveat, with no fixed direction of error.
 _Avoid_: grouping, cluster, string

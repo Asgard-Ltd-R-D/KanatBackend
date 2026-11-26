@@ -173,6 +173,19 @@ def test_an_upload_for_a_run_that_is_not_there_is_a_404(client, run):
     assert run.baseline_image_path is None
 
 
+def test_deleting_a_session_removes_its_baseline_images(client, run, tmp_path):
+    from app.services import baseline_image
+    client.post(url(), content=PNG, headers={"content-type": "image/png"})
+    other = tmp_path / "baseline-images" / "other-session" / "x.png"
+    other.parent.mkdir(parents=True)
+    other.write_bytes(PNG)
+
+    baseline_image.remove_session(SESSION)
+
+    assert not (tmp_path / "baseline-images" / str(SESSION)).exists()
+    assert other.is_file()
+
+
 def test_an_upload_or_read_without_the_run_is_a_422(client, run):
     bare = f"/sessions/{SESSION}/cameras/cam1/baseline-image"
     assert client.post(bare, content=PNG, headers={"content-type": "image/png"}).status_code == 422
@@ -223,3 +236,15 @@ def test_a_second_upload_for_a_run_without_replace_is_a_409_and_keeps_the_first(
     assert res.status_code == 409
     assert run.baseline_image_path == first
     assert [p for p in tmp_path.rglob("*") if p.is_file()] == [tmp_path / first]
+
+
+def test_session_image_cleanup_never_raises(monkeypatch, caplog):
+    from app.services import baseline_image
+
+    def denied(path, onexc=None):
+        raise PermissionError("no traversal")
+    monkeypatch.setattr(baseline_image.shutil, "rmtree", denied)
+
+    baseline_image.remove_session(SESSION)  # the Session is already deleted: logged, not raised
+
+    assert "Could not remove" in caplog.text

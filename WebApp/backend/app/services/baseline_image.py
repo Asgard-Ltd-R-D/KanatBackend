@@ -4,6 +4,7 @@ import hashlib
 import io
 import logging
 import re
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -120,6 +121,23 @@ def read(db: DBSession, session_id: uuid.UUID, alias: str, taken_at: datetime) -
             return path.read_bytes(), media_type(path)
         except FileNotFoundError:
             return None
+
+
+def remove_session(session_id: uuid.UUID) -> None:
+    """Deletes every baseline image of a deleted Session. Called under the
+    write lock, so no upload can be writing into the folder meanwhile. A file
+    held open (a download on Windows) is left and logged, not retried."""
+    folder = log_dir() / "baseline-images" / str(session_id)
+
+    def failed(_function, path, exc):
+        if not isinstance(exc, FileNotFoundError):
+            log.warning("Could not remove a deleted Session's baseline image",
+                        extra={"session_id": str(session_id), "path": str(path)}, exc_info=exc)
+    # Best effort: the Session is already deleted, so no error reaches the caller
+    try:
+        shutil.rmtree(folder, onexc=failed)
+    except OSError as exc:
+        failed(None, folder, exc)
 
 
 def absolute_path(relative: str) -> Path | None:

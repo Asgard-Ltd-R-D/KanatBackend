@@ -691,6 +691,21 @@ def test_a_bullet_hole_on_the_disk_edge_does_not_move_the_ring():
     assert np.linalg.norm(ring - board.apply(P, [board.RING_CENTRE_TPL])[0]) < 0.25   # frame px
 
 
+def test_a_disk_search_that_cycles_settles_on_the_cycle():
+    """#413: CamB `_102250` at 21.5 s, the patch round the ring through the
+    Target finder's fit. A ray beside a Bullet Hole on the disk's edge drops
+    in and out, so the centre swings ~1 template px between two answers and
+    never steps under 0.05: the disk was reported missing and the live start
+    failed. The same rays seen again end the search at the cycle's mean."""
+    patch = cv2.imread(str(Path(__file__).parent / "data" / "disk_cycle_patch.png"),
+                       cv2.IMREAD_GRAYSCALE).astype(np.float32)
+
+    centre = board.disk_centre(patch)
+
+    assert centre is not None
+    assert np.linalg.norm(centre - board.RING_CENTRE_TPL) < 25   # template px, where the fit put it
+
+
 def test_a_hole_on_print_the_green_gate_drops_is_on_the_target():
     """`_103223`: compression pushes blocks of the print's edge past
     `GREEN_HI` (hue 96-100 against the print's 93), and the gate's notch

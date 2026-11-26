@@ -373,10 +373,11 @@ def disk_centre(g):
     Each ray's half-level edge; a circle fitted to them, rays more than
     `_DISK_RAY_TOL` off it dropped (a Bullet Hole on the edge, something in
     front of the disk), refitted; repeated from the new centre until it
-    moves under 0.05 px, or until the rays kept are a set kept before: a ray
-    beside a Bullet Hole on the edge then drops in and out, the centre swings
-    ~1 px between two answers and never settles, so the cycle's mean is
-    taken (#413). None when fewer than `_DISK_MIN_RAYS` rays are kept or it
+    moves under 0.05 px, or until the rays kept are a set kept before with
+    another in between (the same set twice running is still converging): a
+    ray beside a Bullet Hole on the edge then drops in and out, the centre
+    swings ~1 px between two answers and never settles, so the cycle's mean
+    is taken (#413). None when fewer than `_DISK_MIN_RAYS` rays are kept or it
     does not settle in `_DISK_ITERATIONS`."""
     g = cv2.GaussianBlur(g, (0, 0), 1)
     rs = np.arange(60, 170, 0.5)
@@ -410,6 +411,10 @@ def disk_centre(g):
         if np.hypot(*fit[1:]) < 0.05:
             return c
         rays = frozenset(a[keep])
+        # the same rays as the last step are still converging, not a cycle
+        if seen and seen[-1][0] == rays:
+            seen[-1] = (rays, c)
+            continue
         for i, (kept, _) in enumerate(seen):
             if kept == rays:
                 return np.mean([centre for _, centre in seen[i + 1:]] + [c], axis=0)

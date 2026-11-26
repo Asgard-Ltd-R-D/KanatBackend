@@ -706,6 +706,25 @@ def test_a_disk_search_that_cycles_settles_on_the_cycle():
     assert np.linalg.norm(centre - board.RING_CENTRE_TPL) < 25   # template px, where the fit put it
 
 
+def test_the_same_rays_twice_running_are_not_a_cycle(monkeypatch):
+    """#421 review: an oval disk 25 px off keeps every ray from one step to the
+    next while the centre still moves; that is convergence, not a cycle, and
+    stopping there left the centre ~0.09 px short. The answer is where the
+    search settles with no cycle check at all."""
+    w, h = (2 * board._PATCH_HALF * board._PATCH_K).astype(int)
+    patch = np.full((h, w), 40, np.uint8)
+    cx, cy = (board.RING_CENTRE_TPL + [-25, 0] - board._PATCH_ORIGIN) * board._PATCH_K * 16
+    cv2.ellipse(patch, (round(cx), round(cy)), (round(116 * board._PATCH_K * 16), round(104 * board._PATCH_K * 16)),
+                0, 0, 360, 220, -1, cv2.LINE_AA, 4)
+    patch = patch.astype(np.float32)
+
+    centre = board.disk_centre(patch)
+    monkeypatch.setattr(board, "frozenset", lambda rays: object(), raising=False)   # no set ever repeats
+    settled = board.disk_centre(patch)
+
+    assert np.linalg.norm(centre - settled) < 0.01   # template px
+
+
 def test_a_hole_on_print_the_green_gate_drops_is_on_the_target():
     """`_103223`: compression pushes blocks of the print's edge past
     `GREEN_HI` (hue 96-100 against the print's 93), and the gate's notch

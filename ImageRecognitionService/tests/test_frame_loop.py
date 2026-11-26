@@ -347,47 +347,6 @@ def test_a_baseline_frame_with_no_target_is_refused(monkeypatch):
         nbh.open_board_space("clip.mkv", 10.0, None)
 
 
-class _LiveSource:
-    live = True
-
-    def __init__(self, frame):
-        self.frame, self.closed = frame, False
-
-    def close(self):
-        self.closed = True
-
-
-def _stream_opener(opened):
-    def opener(video, start, ref_time):
-        source = _LiveSource(np.full((8, 8, 3), len(opened), np.uint8))
-        opened.append(source)
-        return source, source.frame
-    return opener
-
-
-def test_a_stream_whose_first_frame_builds_no_board_is_reopened(monkeypatch):
-    """#413: a live start whose first frame fails the disk check reopens the
-    stream, on a newer frame, instead of failing the Run; the source given
-    up on is closed."""
-    opened = []
-    monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask:
-                        (None, None) if frame[0, 0, 0] == 0 else (_FakeView(), 0.95))
-
-    source, base, view, _ = nbh.open_board_space("rtsp://cam", None, None,
-                                                 opener=_stream_opener(opened))
-
-    assert len(opened) == 2 and opened[0].closed and not opened[1].closed
-    assert source is opened[1] and (base == 1).all() and isinstance(view, _FakeView)
-
-
-def test_a_stream_that_never_builds_a_board_is_refused_after_its_attempts(monkeypatch):
-    opened = []
-    monkeypatch.setattr(nbh.board, "build_view", lambda frame, mask: (None, None))
-    with pytest.raises(SystemExit, match="^no Target found in the baseline frame"):
-        nbh.open_board_space("rtsp://cam", None, None, opener=_stream_opener(opened))
-    assert len(opened) == nbh.BASELINE_ATTEMPTS and all(s.closed for s in opened)
-
-
 def test_a_run_opened_with_a_detector_loads_no_weights(monkeypatch):
     """The Detection Service loads the detector once and hands it to every
     Run it opens (#221): opening one imports and loads nothing."""

@@ -1132,14 +1132,6 @@ def _open_source(video, start, ref_time=None):
     return (Stream if _is_stream(video) else Recording).open(video, start, ref_time)
 
 
-# A live start whose first frame builds no Board space reopens the stream
-# this many times in all (#413): the white disk is not found on some frames
-# (CamB _102250 from 20 s: 8 of 75 with the Target finder, 1 of 75 with the
-# hue gate), and a new RTSP session starts on a newer frame. Each reopen takes
-# ~1-2 s of the start's budget (service.START_TIMEOUT_S). Not swept.
-BASELINE_ATTEMPTS = 3   # PROVISIONAL
-
-
 def open_board_space(video, start, template_mask, ref_time=None, opener=None,
                      canvas_shift=0):
     """The source opened at `start` by `opener` (by default `_open_source`),
@@ -1154,22 +1146,11 @@ def open_board_space(video, start, template_mask, ref_time=None, opener=None,
     prints nothing; the caller closes the source. A `canvas_shift` of d
     Board px moves Board space under the fixed sheet canvases
     (`board.shifted`, #272).
-
-    A live source whose frame 0 builds none is closed and reopened, up to
-    `BASELINE_ATTEMPTS` in all; a Recording's frame 0 is fixed by `start`, so
-    it is refused at once.
     """
-    for attempt in range(1, BASELINE_ATTEMPTS + 1):
-        source, base = (opener or _open_source)(video, start, ref_time)
-        view, correlation = board.build_view(base, template_mask)
-        if view is not None:
-            break
-        source.close()
-        if not getattr(source, "live", False) or attempt == BASELINE_ATTEMPTS:
-            raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
-        log_live.warning("No Board space in the stream's first frame (attempt %d of %d): "
-                         "reopening it for a newer one (#413)", attempt, BASELINE_ATTEMPTS,
-                         extra={"attempt": attempt})
+    source, base = (opener or _open_source)(video, start, ref_time)
+    view, correlation = board.build_view(base, template_mask)
+    if view is None:
+        raise SystemExit("no Target found in the baseline frame; cannot locate the Board")
     if canvas_shift:
         view = board.shifted(view, canvas_shift)
     return source, base, view, correlation

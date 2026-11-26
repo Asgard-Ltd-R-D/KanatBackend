@@ -4,20 +4,15 @@ import { Eye, EyeOff } from 'lucide-react'
 import { BulletHole, Place, Run } from '../../types'
 import { Size, baselineMarksToDraw, fromEarlierRun, holesOver, labelGroups, templateToElement } from '../../utils/overlay'
 
-const OUTLINE_COLOUR = '#22d3ee'
+const OUTLINE_COLOUR = '#ef4444'
 const BASELINE_MARK_COLOUR = '#a3a8b0' // slate-400 (tailwind.config.ts)
-const TARGET_COLOUR = '#34d399'
-const MISS_COLOUR = '#f87171'
-const MANUAL_COLOUR = '#fbbf24' // the manual source badge's amber
+// Every hole is drawn green, hit, miss or manual alike
+const HOLE_COLOUR = '#34d399'
 
 // In screen px, whatever the picture's size
 const MARKER_RADIUS = 9
 const BASELINE_MARK_RADIUS = 7
 
-function colourOf(b: BulletHole) {
-  if (b.source === 'manual') return MANUAL_COLOUR
-  return b.target_index !== null ? TARGET_COLOUR : MISS_COLOUR
-}
 
 // Text legible on any picture: outlined in black
 const textOutline = { stroke: 'black', strokeWidth: 3, paintOrder: 'stroke' } as const
@@ -71,7 +66,7 @@ export function Overlay({ run, place, bullets, runs, videoRef }: OverlayContent 
   const holes = holesOver(run, runs, bullets)
   const markers = holes.map(toElement)
   // A hole from an earlier Run is part of this Run's baseline: grey, as a Baseline Mark
-  const colour = (b: BulletHole) => (fromEarlierRun(run, runs, b.first_seen_at) ? BASELINE_MARK_COLOUR : colourOf(b))
+  const colour = (b: BulletHole) => (fromEarlierRun(run, runs, b.first_seen_at) ? BASELINE_MARK_COLOUR : HOLE_COLOUR)
 
   return (
     <svg data-detection-overlay className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden>
@@ -107,7 +102,7 @@ export function Overlay({ run, place, bullets, runs, videoRef }: OverlayContent 
         return <circle key={i} cx={x} cy={y} r={BASELINE_MARK_RADIUS} fill="none" stroke={BASELINE_MARK_COLOUR} strokeWidth={1.5} />
       })}
       {bullets.map((b, i) => (
-        <circle key={b.id} cx={markers[i][0]} cy={markers[i][1]} r={MARKER_RADIUS} fill="none" stroke={colour(b)} strokeWidth={2} />
+        <circle key={b.id} cx={markers[i][0]} cy={markers[i][1]} r={MARKER_RADIUS} fill="none" stroke={colour(b)} strokeWidth={1.25} />
       ))}
       {labelGroups(markers, 2 * MARKER_RADIUS).map(group => {
         // Top right of the group's rings, where a lone ring's label goes

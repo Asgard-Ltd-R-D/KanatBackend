@@ -20,8 +20,8 @@ const TEMPLATE_H = 1120
 type Point = { x: number; y: number; key: string; target_index?: number; x_mm?: number; y_mm?: number }
 
 // Same style as the live overlay (Camera/Overlay.tsx): a hollow ring, number above
-const OUTLINE_COLOUR = '#22d3ee'
-const SHEET_COLOUR = '#fbbf24'
+const OUTLINE_COLOUR = '#ef4444'
+const SHEET_COLOUR = '#ef4444'
 const MANUAL_COLOUR = '#fbbf24'
 const textOutline = { stroke: 'black', strokeWidth: 3, paintOrder: 'stroke' } as const
 
@@ -214,10 +214,9 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
                     <polygon
                       key={`sheet-${i}`}
                       points={corners.map(c => toSpace(c).join(',')).join(' ')}
-                      fill="rgba(251,191,36,0.08)"
+                      fill="rgba(239,68,68,0.08)"
                       stroke={SHEET_COLOUR}
                       strokeWidth={1.5 * unit}
-                      strokeDasharray={`${6 * unit} ${4 * unit}`}
                       pointerEvents="none"
                     />
                   )

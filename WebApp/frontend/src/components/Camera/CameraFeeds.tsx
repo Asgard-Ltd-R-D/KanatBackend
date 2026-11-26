@@ -68,8 +68,13 @@ export function CameraFeeds({ sessionId, runs, bullets, detections }: { sessionI
   const [framesReady, setFramesReady] = useState(0)
   // Per board, the Runs it already had when last seen not watching (a retake
   // or restart starting): the board's next watching is a new Run's, so a frame
-  // is never captured for one of these while the new Run is not yet fetched
+  // is never captured for one of these while the new Run is not yet fetched.
+  // Taken once, as the board leaves watching: the backend stores the new Run
+  // before it reports watching, so a refetch while still starting can already
+  // hold it, and a later snapshot would wrongly count it as one of these
   const runsBefore = useRef(new Map<string, Set<string>>())
+  // Each board's detection state as last seen, to find where it leaves watching
+  const lastState = useRef(new Map<string, string | undefined>())
 
   // When a board's latest Run first watches (its baseline is established), grab
   // one clean frame from its <video> (no overlay) and upload it. Best-effort.
@@ -84,8 +89,14 @@ export function CameraFeeds({ sessionId, runs, bullets, detections }: { sessionI
     const ready = () => setFramesReady(n => n + 1)
     for (const d of detections) {
       const alias = d.camera_alias
-      if (d.detection?.state !== 'watching') {
-        if (d.detection?.state !== 'ending') {
+      const state = d.detection?.state
+      const before = lastState.current.get(alias)
+      lastState.current.set(alias, state)
+      if (state !== 'watching') {
+        // Only on entering a non-watching state (or the first time this board is
+        // seen not watching), never again while it stays there
+        const entering = before === undefined || before === 'watching' || before === 'ending'
+        if (state !== 'ending' && (entering || !runsBefore.current.has(alias))) {
           runsBefore.current.set(alias, new Set(runs.filter(r => r.camera_alias === alias).map(r => r.taken_at)))
         }
         continue

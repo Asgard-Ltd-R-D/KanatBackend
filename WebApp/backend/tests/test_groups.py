@@ -132,10 +132,12 @@ def test_the_excel_groups_sheet_holds_the_detail_numbers(client):
     got = grouping(client, RECTANGLE + [on(1, 2, -3), MISS, MANUAL])
 
     rows = groups_sheet(client)
-    # Every row now names its board first; these holes are all on no board
+    # Every row now names its board first; these holes are all on no board. The
+    # sheet gives the detail's millimetres in centimetres, to 0.01 cm
+    cm = lambda v: None if v is None else round(v / 10, 2)
     assert rows[1:3] == [
-        ("No board", f"Target {g['target_index'] + 1}", g["n"], g["mpi_x_mm"], g["mpi_y_mm"], g["cep_mm"],
-         g["mean_radius_mm"], g["rms_radius_mm"], g["extreme_spread_mm"])
+        ("No board", f"Target {g['target_index'] + 1}", g["n"], cm(g["mpi_x_mm"]), cm(g["mpi_y_mm"]),
+         cm(g["cep_mm"]), cm(g["mean_radius_mm"]), cm(g["rms_radius_mm"]), cm(g["extreme_spread_mm"]))
         for g in got["groups"]
     ]
     assert rows[3:5] == [("No board", "Misses", got["misses"]) + (None,) * 6,
@@ -158,9 +160,9 @@ def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
     assert res.status_code == 200 and res.content.startswith(b"%PDF")
     [page] = rendered
     assert "Group statistics (MPI)" in page
-    assert "<td>Target 1</td>" in page
-    # MPI, CEP, Mean Radius, RMS radius (sqrt 20) and Extreme Spread, to 0.1 mm
-    for cell in ("10.0", "-5.0", "5.0", "4.0", "4.5"):
+    assert '<td class="t">Target 1</td>' in page
+    # MPI, CEP, Mean Radius, RMS radius (sqrt 20) and Extreme Spread, in cm to 0.01
+    for cell in ("1.00", "-0.50", "0.50", "0.40", "0.45"):
         assert f'<td class="num">{cell}</td>' in page
     assert "Misses: <b>1</b>" in page
 

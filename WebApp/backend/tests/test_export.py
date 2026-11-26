@@ -67,7 +67,7 @@ def test_the_pdf_report_html_has_the_session_times_each_bullets_timestamp_and_mp
     assert _local("2026-11-16 09:30:05") in html
     assert " UTC" not in html and "(UTC)" not in html and ">UTC<" not in html
     # MPI (Group statistics) is present and labelled
-    assert "Group statistics (MPI)" in html and "MPI X (mm)" in html
+    assert "Group statistics (MPI)" in html and "MPI X (cm)" in html
 
 
 @pytest.mark.parametrize("seconds, expected", [
@@ -150,10 +150,10 @@ def test_the_pdf_has_no_hairline_dividers_under_the_title_and_paints_table_heade
 
     # The cards under the title are separated by space, not by lines
     assert "border-left" not in css
-    assert ".readout { display: flex; margin-bottom: 26px; }" in css
+    assert ".readout { width: 100%; border-collapse: collapse; background: #f5f7f9; margin-bottom: 14px; }" in css
     # A header is one rectangle on its row, not a background per cell (a viewer draws a
     # hairline where two painted cells meet)
-    assert "thead tr { background: #13283f; }" in css and ".shotlog thead tr { background: #f0f3f6; }" in css
+    assert "thead tr { background: #13283f; }" in css and ".card thead tr { background: #f0f3f6; }" in css
     assert "thead th { background" not in css
 
 
@@ -177,9 +177,9 @@ def test_the_csv_drops_source_and_appends_the_mpi_table():
     lines = text.splitlines()
 
     # The shots header no longer carries a source column
-    assert lines[0] == "board,rank,first_seen_at,position_x,position_y"
+    assert lines[0] == "board,target,rank,first_seen_at,x_cm,y_cm"
     # A second table with the Group statistics (MPI) is appended
-    assert "mpi_x_mm,mpi_y_mm" in text
+    assert "mpi_x_cm,mpi_y_cm" in text
     assert "Target 1" in text
 
 
@@ -192,16 +192,16 @@ def test_the_excel_bullet_sheet_drops_source_and_mpi_lives_in_the_groups_sheet()
 
     bullet_headers = [c.value for c in wb["Bullet Holes"][1]]
     assert "Source" not in bullet_headers
-    assert bullet_headers == ["Board", "#", "Detected At", "Position X", "Position Y"]
+    assert bullet_headers == ["Board", "Target", "#", "Detected At", "X (cm)", "Y (cm)"]
     # MPI is on the Groups sheet
-    assert "MPI X (mm)" in [c.value for c in wb["Groups"][1]]
+    assert "MPI X (cm)" in [c.value for c in wb["Groups"][1]]
 
 
 def test_the_csv_times_are_on_the_pcs_clock_with_no_zone_label():
     lines = export_svc.generate_csv(_completed_session()).splitlines()
 
     # lane1's first hole was first seen 09:30:05 UTC; the CSV prints this PC's clock
-    assert lines[1] == f"lane1,1,{_local('2026-11-16 09:30:05')},700,500"
+    assert lines[1] == f"lane1,Target 1,1,{_local('2026-11-16 09:30:05')},0.1,0.2"
 
 
 def test_the_excel_times_are_on_the_pcs_clock_with_no_zone_label():
@@ -212,7 +212,7 @@ def test_the_excel_times_are_on_the_pcs_clock_with_no_zone_label():
     wb = openpyxl.load_workbook(io.BytesIO(export_svc.generate_excel(_completed_session())))
     rows = [[c.value for c in row] for row in wb["Bullet Holes"].iter_rows(min_row=2)]
 
-    assert rows[0][:3] == ["lane1", 1, _local("2026-11-16 09:30:05")]
+    assert rows[0][:4] == ["lane1", "Target 1", 1, _local("2026-11-16 09:30:05")]
 
 
 def test_the_download_filename_dates_the_session_on_the_pcs_clock():
@@ -255,11 +255,11 @@ def test_shots_outside_the_reference_artwork_are_still_plotted():
 IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
 
-def _frame_run(path, template_to_picture=IDENTITY, width=1000, height=500):
-    return SimpleNamespace(
-        baseline_image_path=path,
-        baseline_view={"template_to_picture": template_to_picture, "picture": {"width": width, "height": height}},
-    )
+def _frame_run(path, template_to_picture=IDENTITY, width=1000, height=500, targets=None):
+    view = {"template_to_picture": template_to_picture, "picture": {"width": width, "height": height}}
+    if targets is not None:
+        view["targets"] = targets
+    return SimpleNamespace(baseline_image_path=path, baseline_view=view)
 
 
 def test_a_board_with_a_stored_baseline_frame_is_pictured_by_that_file(tmp_path, monkeypatch):
@@ -344,3 +344,84 @@ def test_shots_off_the_frame_are_clipped_and_one_on_the_horizon_does_not_crash(t
     # lane1's (700, 500) is skipped on the picture (but kept in the shot log); its (720, 520) is placed
     assert html.count('class="hole"') < 3
     assert "<td>1</td>" in html or '<td class="num">1</td>' in html
+
+
+def test_the_report_outlines_each_target_on_the_frame_and_names_it_above(tmp_path, monkeypatch):
+    from app.services import baseline_image
+    monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
+    (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
+    # template -> picture: scale 0.5 and shift (100, 50)
+    targets = [[[0, 200], [400, 200], [400, 600], [0, 600]],
+               [[600, 100], [1000, 100], [1000, 500], [600, 500]]]
+    run = _frame_run("frame.png", [[0.5, 0, 100], [0, 0.5, 50], [0, 0, 1]], targets=targets)
+    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+
+    html = export_svc._render_report_html(_completed_session(), db=object())
+
+    # each outline projected into frame px
+    assert 'points="100.00,150.00 300.00,150.00 300.00,350.00 100.00,350.00"' in html
+    assert 'points="400.00,100.00 600.00,100.00 600.00,300.00 400.00,300.00"' in html
+    # named above its topmost corner, numbered from 1 like the live overlay
+    assert "Target 1</span>" in html and "Target 2</span>" in html
+    assert "left: 20.000%; top: 30.000%\">Target 1" in html
+
+
+def test_the_artwork_fallback_draws_no_target_outlines(tmp_path, monkeypatch):
+    from app.services import baseline_image
+    monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
+    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: _frame_run(None))
+
+    html = export_svc._render_report_html(_completed_session(), db=object())
+
+    assert '<svg class="outlines"' not in html and 'class="target-n"' not in html
+
+
+def _two_target_session():
+    # Ranks run across both Targets; each Target keeps its own MPI and shot log
+    return SimpleNamespace(
+        name="Range A", status="completed",
+        started_at=datetime(2026, 11, 16, 9, 30, 0, tzinfo=timezone.utc),
+        ended_at=datetime(2026, 11, 16, 9, 42, 0, tzinfo=timezone.utc),
+        bullet_holes=[
+            _hole(1, "lane1", 0, 0, target_index=0, x_mm=10.0, y_mm=20.0, second=1),
+            _hole(2, "lane1", 0, 0, target_index=0, x_mm=30.0, y_mm=40.0, second=2),
+            _hole(3, "lane1", 0, 0, target_index=1, x_mm=-50.0, y_mm=5.0, second=3),
+            _hole(4, "lane1", 0, 0, target_index=1, x_mm=-70.0, y_mm=15.0, second=4),
+            _hole(5, "lane1", 0, 0, target_index=None, x_mm=None, y_mm=None, second=5),
+        ],
+    )
+
+
+def test_the_pdf_shot_log_has_one_section_per_target_keeping_the_ranks_in_cm():
+    html = export_svc._render_report_html(_two_target_session())
+    log = html.split('<div class="sec">Shot log</div>')[1]
+
+    t1 = log.index('card-name">Target 1<')
+    t2 = log.index('card-name">Target 2<')
+    miss = log.index('card-name">Miss<')
+    assert t1 < t2 < miss
+    assert '<td class="num">1</td>' in log[t1:t2] and '<td class="num">3</td>' in log[t2:miss]
+    # 10 mm -> 1.00 cm, -50 mm -> -5.00 cm
+    assert '<td class="num">1.00</td>' in log[t1:t2] and '<td class="num">-5.00</td>' in log[t2:miss]
+    assert "X (cm)" in log and "Position X" not in log
+
+
+def test_the_mpi_is_per_target_in_cm_in_every_export():
+    import io
+
+    import openpyxl
+
+    html = export_svc._render_report_html(_two_target_session())
+    # Target 1 MPI (20, 30) mm and Target 2 MPI (-60, 10) mm, in cm
+    assert ">2.00<" in html and ">3.00<" in html and ">-6.00<" in html and ">1.00<" in html
+
+    csv_text = export_svc.generate_csv(_two_target_session())
+    assert "lane1,Target 1,2,2.0,3.0," in csv_text and "lane1,Target 2,2,-6.0,1.0," in csv_text
+    assert "lane1,Target 2,3," in csv_text and "lane1,Miss,5," in csv_text
+
+    wb = openpyxl.load_workbook(io.BytesIO(export_svc.generate_excel(_two_target_session())))
+    groups = [[c.value for c in r][:5] for r in wb["Groups"].iter_rows(min_row=2) if r[1].value]
+    assert ["lane1", "Target 1", 2, 2.0, 3.0] in groups and ["lane1", "Target 2", 2, -6.0, 1.0] in groups
+    shots = [[c.value for c in r] for r in wb["Bullet Holes"].iter_rows(min_row=2)]
+    assert [r[1] for r in shots] == ["Target 1", "Target 1", "Target 2", "Target 2", "Miss"]
+    assert shots[2][4:] == [-5.0, 0.5]

@@ -27,7 +27,6 @@ its own copy of the detector (run_process.py), nothing shared between Runs but
 the GPU. The control API and what `/status` answers are the same either way.
 """
 import argparse
-import functools
 import json
 import logging
 import multiprocessing
@@ -556,22 +555,48 @@ def _baseline_view(view, loop, marks):
             "template_to_picture": view.H.tolist(),
             "targets": [_outline(view.board_to_template(t)) for t in view.targets],
             "baseline_marks": view.board_to_template(marks[:, :2]).astype(float).round(1).tolist(),
-            "sheets": [view.board_to_template([b[:2], b[2:]]).astype(float).round(1).tolist()
-                       for b in view.sheets],
-            "ring_centres": [view.board_to_template([view.ring_centre(i)])[0]
-                             .astype(float).round(1).tolist() for i in range(len(view.targets))],
+            "sheets": _sheets(view),
+            "ring_centres": _ring_centres(view),
             "mm_per_px": _mm_per_px()}
 
 
-@functools.lru_cache(maxsize=1)
+def _sheets(view):
+    """Each Target's A4 sheet as two corners in template coordinates, or none
+    when `view` has not one sheet per Target: lists must stay aligned."""
+    if not len(view.targets) or len(view.sheets) != len(view.targets):
+        return []
+    corners = np.array([[b[:2], b[2:]] for b in view.sheets], float).reshape(-1, 2)
+    return view.board_to_template(corners).astype(float).round(1).reshape(-1, 2, 2).tolist()
+
+
+def _ring_centres(view):
+    """Each Target's 10-ring centre in template coordinates, or none when one
+    cannot be placed: lists must stay aligned."""
+    try:
+        centres = np.array([view.ring_centre(i) for i in range(len(view.targets))], float)
+    except Exception:
+        log.warning("Ring centres not placed; baseline_view omits them", exc_info=True)
+        return []
+    if not len(centres):
+        return []
+    return view.board_to_template(centres).astype(float).round(1).tolist()
+
+
 def _mm_per_px():
     """The print scale, mm per template px, from config/print_scale.json via
-    `board.print_scales`. A stream has no Capture Setup (#83), so the scale
-    must be one for every setup; setups that disagree are refused."""
-    scales = set(nbh.board.print_scales().values())
+    `board.print_scales`, or None. A stream has no Capture Setup (#83), so a
+    scale needs every setup to agree; an unreadable file or setups that
+    disagree give None, positions without millimetres, never a failed Run."""
+    try:
+        scales = set(nbh.board.print_scales().values())
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        log.warning("config/print_scale.json unreadable; baseline_view has no mm scale",
+                    exc_info=True)
+        return None
     if len(scales) != 1:
-        raise ValueError(f"config/print_scale.json holds {sorted(scales)} mm per template "
-                         "px across Capture Setups; a stream needs exactly one")
+        log.warning("config/print_scale.json has no single print scale (%s); "
+                    "baseline_view has no mm scale", sorted(scales))
+        return None
     return scales.pop()
 
 

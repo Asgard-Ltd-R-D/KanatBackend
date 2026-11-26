@@ -15,6 +15,19 @@ const sheets: [Point, Point][] = [[[0, 0], [100, 100]], [[50, 0], [200, 100]]]
 
 test('targetOfPoint: inside sheet 1 only', () => assert.equal(targetOfPoint(sheets, [150, 50]), 1))
 test('targetOfPoint: overlap goes to the lowest index', () => assert.equal(targetOfPoint(sheets, [75, 50]), 0))
+test('targetOfPoint: an outline holding the point beats an overlapping lower sheet', () => {
+  // (75, 50) is in both sheets, but inside Target 1's printed outline
+  const outlines: Point[][] = [[[10, 10], [40, 10], [40, 90], [10, 90]], [[60, 10], [190, 10], [190, 90], [60, 90]]]
+  assert.equal(targetOfPoint(sheets, [75, 50], outlines), 1)
+})
+test('targetOfPoint: on an outline edge counts as inside', () => {
+  const outlines: Point[][] = [[[10, 10], [40, 10], [40, 90], [10, 90]], [[60, 10], [190, 10], [190, 90], [60, 90]]]
+  assert.equal(targetOfPoint(sheets, [60, 50], outlines), 1)
+})
+test('targetOfPoint: off every outline, the sheet rule as before', () => {
+  const outlines: Point[][] = [[[10, 10], [40, 10], [40, 90], [10, 90]], [[120, 10], [190, 10], [190, 90], [120, 90]]]
+  assert.equal(targetOfPoint(sheets, [75, 50], outlines), 0)
+})
 test('targetOfPoint: outside all', () => assert.equal(targetOfPoint(sheets, [300, 50]), null))
 
 test('millimetres flips Y to the printed axes', () => {

@@ -136,7 +136,7 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
       return
     }
     const t = pixelToTemplate(geometry.H, [sx, sy])
-    const target = targetOfPoint(geometry.sheets, t)
+    const target = targetOfPoint(geometry.sheets, t, geometry.view.targets)
     if (target === null) {
       setNotice('That spot is outside every target sheet. Click inside a target\'s A4 sheet.')
       return

@@ -203,7 +203,9 @@ def find_targets(frame, min_area=MIN_TARGET_AREA_PX):
     `reading_order` (#240).
 
     The segmentation model finds them by shape, not colour (ADR-0013): sun,
-    white balance and H.264 move the print's hue. Each Target's contour is the
+    white balance and H.264 move the print's hue. Not a print of another
+    colour: hue rotated 60 degrees or more, it misses Targets or adds false
+    ones (ADR-0013, "Known limitation"). Each Target's contour is the
     outer edge of its instance mask's largest piece. Handed no device, as the
     detector is (`_detect`): CUDA if available, else CPU, never MPS (#129).
     """

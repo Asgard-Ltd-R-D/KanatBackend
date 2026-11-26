@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Targets are found by a segmentation model
@@ -37,3 +37,15 @@ Target's fit (#396), Target numbering, the sheets, and every measurement in
 Board space. The model only supplies the masks those start from. Its
 confidence and area floors are provisional, set from a sweep on held-out
 footage.
+
+## Known limitation
+
+Measured 2026-11-25 on the held-out footage (#413), every frame also run
+greyscale, hue-rotated, warm and cool cast, and at 0.3 saturation: the model
+finds every Target with no false one in greyscale, a 30° hue rotation, both
+casts and low saturation, on every set. Large hue rotations break it: at
+60° and 90° indoor it adds false Targets (2 and 4 on 30 Targets), and at 180°,
+the green print turned magenta, it finds 10/30 indoor and 47/60 outdoor. No
+sun, white balance or H.264 moves the print that far, so this is accepted as
+outside the operating conditions, without retraining. If a print in another
+colour is ever used, retrain with hue augmentation first.

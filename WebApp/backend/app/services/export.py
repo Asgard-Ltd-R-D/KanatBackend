@@ -1,6 +1,7 @@
 import base64
 import csv
 import io
+import math
 import re
 import urllib.parse
 from datetime import datetime, timezone
@@ -69,10 +70,12 @@ _REPORT_HTML = """<!DOCTYPE html>
     .target-img { position: absolute; display: block; }
     .hole { position: absolute; transform: translate(-50%, -50%); width: 12px; height: 12px;
             border-radius: 50%; border: 1.5px solid #c62a1b; }
-    /* The live marker: a hollow ring, its number above it (sits over the frame in white-edged red) */
+    /* The live marker: a hollow ring, its number above it (on a light chip so it reads over a photo) */
     .hole-n { position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); margin-bottom: 1px;
               color: #c62a1b; font-size: 8.5px; font-weight: 700; line-height: 1; white-space: nowrap;
-              text-shadow: 0 0 2px #fff, 0 0 2px #fff; }
+              background: rgba(255, 255, 255, 0.85); border-radius: 3px; padding: 1px 2px; }
+    /* Over the frame, a marker projected beyond the picture is clipped, not drawn over the layout */
+    .target.clip { overflow: hidden; }
 
     .stats { flex: 1; padding-top: 2px; }
     .stats-title { font-size: 10px; font-weight: 700; color: #13283f; letter-spacing: 0.02em; margin-bottom: 7px; }
@@ -129,10 +132,10 @@ _REPORT_HTML = """<!DOCTYPE html>
     </div>
     <div class="board-body">
       <figure class="target-fig">
-        <div class="target" style="padding-bottom: {{ '%.3f' % board.canvas.pad_pct }}%">
+        <div class="target{{ ' clip' if board.canvas.clip }}" style="padding-bottom: {{ '%.3f' % board.canvas.pad_pct }}%">
           <img class="target-img" src="{{ board.image_uri }}"
                style="left: {{ '%.3f' % board.canvas.img.left }}%; top: {{ '%.3f' % board.canvas.img.top }}%; width: {{ '%.3f' % board.canvas.img.width }}%; height: {{ '%.3f' % board.canvas.img.height }}%">
-          {% for b in board.bullets %}
+          {% for b in board.bullets if b.left is not none %}
           <span class="hole" style="left: {{ '%.3f' % b.left }}%; top: {{ '%.3f' % b.top }}%"><span class="hole-n">{{ b.rank }}</span></span>
           {% endfor %}
         </div>
@@ -255,10 +258,10 @@ def _board_picture(db: DBSession | None, session_id, alias: str | None) -> dict:
     artwork = {"uri": _target_data_uri(), "frame": None}
     if db is None or alias is None:
         return artwork
-    relative = baseline_image.latest_baseline_image_path(db, session_id, alias)
-    path = baseline_image.absolute_path(relative) if relative else None
-    run = runs_repo.latest(db, session_id, alias) if path else None
-    if run is None:
+    # One Run, read once: the image and the homography come from the same row
+    run = runs_repo.latest(db, session_id, alias)
+    path = baseline_image.absolute_path(run.baseline_image_path) if run and run.baseline_image_path else None
+    if path is None:
         return artwork
     try:
         view = run.baseline_view
@@ -267,15 +270,22 @@ def _board_picture(db: DBSession | None, session_id, alias: str | None) -> dict:
             "width": float(view["picture"]["width"]),
             "height": float(view["picture"]["height"]),
         }
+        if not (math.isfinite(frame["width"]) and math.isfinite(frame["height"])
+                and frame["width"] > 0 and frame["height"] > 0):
+            return artwork
+        _project(frame["matrix"], 0.0, 0.0)  # a malformed matrix falls back too
         uri = f"data:{baseline_image.media_type(path)};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
-    except (KeyError, TypeError, ValueError, OSError):
+    except (KeyError, IndexError, TypeError, ValueError, OSError):
         return artwork
     return {"uri": uri, "frame": frame}
 
 
-def _project(matrix, x: float, y: float) -> tuple[float, float]:
-    """A template point through a 3x3 homography, in picture px."""
+def _project(matrix, x: float, y: float) -> tuple[float, float] | None:
+    """A template point through a 3x3 homography, in picture px; None for a point
+    on its line at infinity."""
     w = matrix[2][0] * x + matrix[2][1] * y + matrix[2][2]
+    if abs(w) < 1e-9:
+        return None
     return ((matrix[0][0] * x + matrix[0][1] * y + matrix[0][2]) / w,
             (matrix[1][0] * x + matrix[1][1] * y + matrix[1][2]) / w)
 
@@ -285,6 +295,7 @@ def _frame_canvas(frame: dict) -> dict:
     return {
         "pad_pct": frame["height"] / frame["width"] * 100,
         "img": {"left": 0.0, "top": 0.0, "width": 100.0, "height": 100.0},
+        "clip": True,
     }
 
 
@@ -336,21 +347,25 @@ def _boards_for_report(bullets, db: DBSession | None = None, session_id=None) ->
             canvas = _frame_canvas(frame)
 
             def place(b, frame=frame):
-                px, py = _project(frame["matrix"], b.position_x, b.position_y)
-                return px / frame["width"] * 100, py / frame["height"] * 100
+                projected = _project(frame["matrix"], b.position_x, b.position_y)
+                if projected is None:
+                    return None
+                return projected[0] / frame["width"] * 100, projected[1] / frame["height"] * 100
         boards.append({
             "alias": bg.camera_alias or "No board",
             "grouping": bg.grouping,
             "canvas": canvas,
             "image_uri": picture["uri"],
+            # A shot that cannot be placed on the frame is left off the picture,
+            # though it stays in the shot log
             "bullets": [{
                 "rank": b.rank,
                 "ts": _local_clock(b.first_seen_at),
                 "x": b.position_x,
                 "y": b.position_y,
-                "left": place(b)[0],
-                "top": place(b)[1],
-            } for b in holes],
+                "left": at[0] if at else None,
+                "top": at[1] if at else None,
+            } for b in holes for at in [place(b)]],
         })
     return boards
 

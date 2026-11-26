@@ -302,3 +302,45 @@ def test_the_report_places_bullets_on_the_frame_through_the_baseline_homography_
     # the live marker: a hollow ring with its number above it
     assert 'class="hole"' in html and 'class="hole-n"' in html
     assert "background: #c62a1b" not in html.split("</style>")[0].split(".hole {")[1].split("}")[0]
+
+
+@pytest.mark.parametrize("width,height", [(0, 500), (1000, 0), (-5, 500), ("x", 500), (float("nan"), 500)])
+def test_a_baseline_frame_with_an_invalid_picture_size_falls_back_to_the_artwork(tmp_path, monkeypatch, width, height):
+    from app.services import baseline_image
+    monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
+    (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
+    run = _frame_run("frame.png", width=width, height=height)
+    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+
+    assert export_svc._board_picture(object(), uuid.uuid4(), "lane1") == {
+        "uri": export_svc._target_data_uri(), "frame": None}
+    export_svc._render_report_html(_completed_session(), db=object())  # and the report still renders
+
+
+def test_the_run_is_read_once_per_board(tmp_path, monkeypatch):
+    from app.services import baseline_image
+    monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
+    (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
+    calls = []
+    monkeypatch.setattr(export_svc.runs_repo, "latest",
+                        lambda db, sid, alias: calls.append(alias) or _frame_run("frame.png"))
+
+    export_svc._board_picture(object(), uuid.uuid4(), "lane1")
+
+    assert calls == ["lane1"]
+
+
+def test_shots_off_the_frame_are_clipped_and_one_on_the_horizon_does_not_crash(tmp_path, monkeypatch):
+    from app.services import baseline_image
+    monkeypatch.setattr(baseline_image, "log_dir", lambda: tmp_path)
+    (tmp_path / "frame.png").write_bytes(b"PNGBYTES")
+    # w = x - 700: the first shot (700, 500) lies on the line at infinity
+    run = _frame_run("frame.png", [[1, 0, 0], [0, 1, 0], [1, 0, -700]])
+    monkeypatch.setattr(export_svc.runs_repo, "latest", lambda db, sid, alias: run)
+
+    html = export_svc._render_report_html(_completed_session(), db=object())
+
+    assert 'class="target clip"' in html
+    # lane1's (700, 500) is skipped on the picture (but kept in the shot log); its (720, 520) is placed
+    assert html.count('class="hole"') < 3
+    assert "<td>1</td>" in html or '<td class="num">1</td>' in html

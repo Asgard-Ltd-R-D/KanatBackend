@@ -52,12 +52,16 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
   )
 
   // The board's real baseline frame, when one was captured (null on 404)
+  // Keyed by the Run, so a retake's new geometry is never laid over an older frame
   const frame = useQuery({
-    queryKey: ['baseline-image', sessionId, camera],
-    queryFn: () => getBaselineImage(sessionId, camera as string),
-    enabled: open && camera !== null && hasGeometry,
+    queryKey: ['baseline-image', sessionId, camera, latestRun?.taken_at],
+    queryFn: () => getBaselineImage(sessionId, camera as string, latestRun!.taken_at),
+    enabled: open && camera !== null && hasGeometry && !!latestRun,
     retry: false,
-    staleTime: Infinity,
+    // Asked again each time the modal opens: another tab may have uploaded
+    // this Run's frame since, or replaced it
+    staleTime: 0,
+    refetchOnWindowFocus: false,
   })
   const frameBlob = frame.data ?? null
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
@@ -166,7 +170,9 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
       : null
   // Frame still loading: wait, rather than flash the artwork then swap it
   // (also the render between the blob arriving and its URL being made)
-  const waiting = camera !== null && hasGeometry && (frame.isLoading || (frameBlob !== null && !frameUrl))
+  // Also while this opening's refetch runs: a frame uploaded since (from another
+  // tab) must replace a cached "none" before a shot is placed on the artwork
+  const waiting = camera !== null && hasGeometry && (frame.isFetching || (frameBlob !== null && !frameUrl))
   const space = waiting
     ? null
     : geometry

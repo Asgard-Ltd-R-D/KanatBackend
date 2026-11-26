@@ -28,6 +28,28 @@ const TRIANGLE_CELLS: CSSProperties[] = [
   { gridColumn: '2 / span 2', gridRow: '2' },
 ]
 
+// A board's latest Run (runs are in taken_at order)
+function latestRun(runs: Run[], alias: string): Run | undefined {
+  const boardRuns = runs.filter(r => r.camera_alias === alias)
+  return boardRuns[boardRuns.length - 1]
+}
+
+// Durable "baseline already captured" marks; storage can throw, so best-effort
+function wasCaptured(key: string): boolean {
+  try {
+    return sessionStorage.getItem(key) !== null
+  } catch {
+    return false
+  }
+}
+function markCaptured(key: string): void {
+  try {
+    sessionStorage.setItem(key, '1')
+  } catch {
+    // without storage a remount may re-capture; nothing more to do
+  }
+}
+
 // Every enabled camera (board), live, sharing all of the space it is given. Each
 // tile draws its OWN Overlay from that board's latest Run and Bullet Holes, at
 // its latest place, only while that board's Run watches (matched by camera_alias).
@@ -37,39 +59,49 @@ export function CameraFeeds({ sessionId, runs, bullets, detections }: { sessionI
   // The camera shown big; the others shrink to a strip. null is the equal grid.
   const [focused, setFocused] = useState<string | null>(null)
   const gridRef = useRef<HTMLDivElement>(null)
-  // (alias, Run taken_at) pairs whose baseline frame was already grabbed, so a
-  // Run is captured once and a retake (new taken_at) captures again
-  const captured = useRef(new Set<string>())
+  // Uploads in flight, so one Run is not sent twice while the first is pending
+  const inFlight = useRef(new Set<string>())
 
   // When a board's latest Run first watches (its baseline is established), grab
   // one clean frame from its <video> (no overlay) and upload it. Best-effort.
+  // A Run counts as captured only once the upload succeeded, remembered in
+  // sessionStorage so remounting this page never overwrites the run-start
+  // baseline with a later frame; a failure leaves it to retry on the next update.
+  // `cameras` is a dependency so a tile whose video mounts after the board
+  // already watches is still captured.
   useEffect(() => {
     for (const d of detections) {
       if (d.detection?.state !== 'watching') continue
       const alias = d.camera_alias
-      const boardRuns = runs.filter(r => r.camera_alias === alias)
-      const run = boardRuns[boardRuns.length - 1]
+      const run = latestRun(runs, alias)
       if (!run) continue
-      const key = `${alias}\u0000${run.taken_at}`
-      if (captured.current.has(key)) continue
+      const key = `baseline-captured:${sessionId}:${alias}:${run.taken_at}`
+      if (inFlight.current.has(key) || wasCaptured(key)) continue
       const video = gridRef.current?.querySelector<HTMLVideoElement>(`[data-camera="${CSS.escape(alias)}"] video`)
       // No decoded frame yet: leave it unmarked so the next update retries
       if (!video || video.videoWidth === 0 || video.videoHeight === 0) continue
-      captured.current.add(key)
       try {
         const canvas = document.createElement('canvas')
         canvas.width = video.videoWidth
         canvas.height = video.videoHeight
         canvas.getContext('2d')!.drawImage(video, 0, 0, canvas.width, canvas.height)
+        inFlight.current.add(key)
         canvas.toBlob(blob => {
-          if (!blob) return
-          uploadBaselineImage(sessionId, alias, blob).catch(err => console.warn('baseline image upload failed', err))
+          if (!blob) {
+            inFlight.current.delete(key)
+            return
+          }
+          uploadBaselineImage(sessionId, alias, blob)
+            .then(() => markCaptured(key))
+            .catch(err => console.warn('baseline image upload failed', err))
+            .finally(() => inFlight.current.delete(key))
         }, 'image/png')
       } catch (err) {
+        inFlight.current.delete(key)
         console.warn('baseline frame capture failed', err)
       }
     }
-  }, [sessionId, runs, detections])
+  }, [sessionId, runs, detections, cameras])
 
   // One board's tile: name + detection status above, the stream below, and a
   // button to focus it (big) or, when it is the focused one, restore the grid.
@@ -77,7 +109,7 @@ export function CameraFeeds({ sessionId, runs, bullets, detections }: { sessionI
     const { compact = false, cell } = opts
     const isFocused = focused === camera.alias
     const boardRuns = runs.filter(r => r.camera_alias === camera.alias)
-    const run = boardRuns[boardRuns.length - 1]
+    const run = latestRun(runs, camera.alias)
     const detection = detections.find(d => d.camera_alias === camera.alias)?.detection
     const watches = detection?.state === 'watching' || detection?.state === 'ending'
     const boardBullets = bullets.filter(b => b.camera_alias === camera.alias)

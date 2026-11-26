@@ -43,8 +43,7 @@ class Grouping(BaseModel):
     Bullet Holes left out of every Group (services/groups.py)."""
 
     groups: list[Group] = []
-    misses: int = 0
-    # Manual ones, and detected ones without a print scale
+    # Manual ones, detected ones without a print scale, and pre-#422 Misses
     without_position: int = 0
 
 

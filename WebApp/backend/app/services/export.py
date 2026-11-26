@@ -166,8 +166,7 @@ _REPORT_HTML = """<!DOCTYPE html>
         <p class="muted">No group statistics: no positioned shots on a target.</p>
         {% endif %}
         <p class="note">
-          Not in a group &mdash; Misses: <b>{{ board.grouping.misses }}</b>
-          &nbsp;&nbsp; Without a position: <b>{{ board.grouping.without_position }}</b>
+          Not in a group &mdash; Without a position: <b>{{ board.grouping.without_position }}</b>
         </p>
       </div>
     </div>
@@ -178,8 +177,8 @@ _REPORT_HTML = """<!DOCTYPE html>
         <tr>
           <th class="num">#</th>
           <th>Detected at</th>
-          <th class="num">Position X</th>
-          <th class="num">Position Y</th>
+          <th class="num">X (mm)</th>
+          <th class="num">Y (mm)</th>
         </tr>
       </thead>
       <tbody>
@@ -187,8 +186,8 @@ _REPORT_HTML = """<!DOCTYPE html>
         <tr>
           <td class="num">{{ b.rank }}</td>
           <td>{{ b.ts }}</td>
-          <td class="num">{{ '%.1f' % b.x }}</td>
-          <td class="num">{{ '%.1f' % b.y }}</td>
+          <td class="num">{{ b.x_mm | mm }}</td>
+          <td class="num">{{ b.y_mm | mm }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -285,8 +284,10 @@ def _boards_for_report(bullets) -> list[dict]:
             "bullets": [{
                 "rank": b.rank,
                 "ts": _local_clock(b.first_seen_at),
-                "x": b.position_x,
-                "y": b.position_y,
+                # From the Target's centre, X right and Y up; the template px
+                # only place the dot on the drawing
+                "x_mm": b.x_mm,
+                "y_mm": b.y_mm,
                 "left": (b.position_x - canvas["min_x"]) / canvas["cw"] * 100,
                 "top": (b.position_y - canvas["min_y"]) / canvas["ch"] * 100,
             } for b in holes],
@@ -373,14 +374,14 @@ def generate_csv(session: Session) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
     # The shots, one per row (no Source column)
-    writer.writerow(["board", "rank", "first_seen_at", "position_x", "position_y"])
+    writer.writerow(["board", "rank", "first_seen_at", "x_mm", "y_mm"])
     for b in bullets:
         writer.writerow([
             b.camera_alias or "",
             b.rank,
             _local_clock(b.first_seen_at),
-            b.position_x,
-            b.position_y,
+            b.x_mm,
+            b.y_mm,
         ])
     # The Group statistics (MPI), the same numbers as the detail response, the
     # PDF and the Excel Groups sheet. A blank row sets this second table apart.
@@ -392,7 +393,6 @@ def generate_csv(session: Session) -> str:
         for g in bg.grouping.groups:
             writer.writerow([board, f"Target {g.target_index + 1}", g.n, g.mpi_x_mm, g.mpi_y_mm,
                              g.cep_mm, g.mean_radius_mm, g.rms_radius_mm, g.extreme_spread_mm])
-        writer.writerow([board, "Misses", bg.grouping.misses])
         writer.writerow([board, "Without a position", bg.grouping.without_position])
     return output.getvalue()
 
@@ -416,15 +416,15 @@ def generate_excel(session: Session) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Bullet Holes"
-    _append_header(ws, ["Board", "#", "Detected At", "Position X", "Position Y"])
+    _append_header(ws, ["Board", "#", "Detected At", "X (mm)", "Y (mm)"])
 
     for b in bullets:
         ws.append([
             b.camera_alias or "—",
             b.rank,
             _local_clock(b.first_seen_at),
-            b.position_x,
-            b.position_y,
+            b.x_mm,
+            b.y_mm,
         ])
     _fit_columns(ws)
 
@@ -439,7 +439,6 @@ def generate_excel(session: Session) -> bytes:
                        g.mean_radius_mm, g.rms_radius_mm, g.extreme_spread_mm])
             for cell in ws[ws.max_row][3:]:
                 cell.number_format = "0.0"
-        ws.append([board, "Misses", bg.grouping.misses])
         ws.append([board, "Without a Position", bg.grouping.without_position])
         ws.append([])
     _fit_columns(ws)

@@ -32,21 +32,19 @@ def groupings(holes) -> list[BoardGrouping]:
 def grouping(holes) -> Grouping:
     """The Groups of `holes`, the Session's non-deleted Bullet Holes, so the
     operator's corrections apply. A Group is the Bullet Holes that share a
-    target_index and have both x_mm and y_mm. A Miss (a detected one with no
-    Target) is in none; neither is one without a Position: every manual one,
-    whose form takes no Target or millimetres, and a detected one without a
-    print scale."""
+    target_index and have both x_mm and y_mm, inside the Target's outline or
+    not (ADR-0014). One without a Position is in none: every manual one, whose
+    form takes no Target or millimetres, a detected one without a print scale,
+    and one stored as a Miss before #422."""
     by_target: dict[int, list[tuple[float, float]]] = {}
-    misses = without_position = 0
+    without_position = 0
     for hole in holes:
         if hole.target_index is not None and hole.x_mm is not None and hole.y_mm is not None:
             by_target.setdefault(hole.target_index, []).append((hole.x_mm, hole.y_mm))
-        elif hole.target_index is None and hole.source == "model":
-            misses += 1
         else:
             without_position += 1
     return Grouping(groups=[_group(t, pts) for t, pts in sorted(by_target.items())],
-                    misses=misses, without_position=without_position)
+                    without_position=without_position)
 
 
 def _group(target_index: int, pts: list[tuple[float, float]]) -> Group:

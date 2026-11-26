@@ -6,17 +6,16 @@ import { Size, baselineMarksToDraw, fromEarlierRun, holesOver, labelGroups, temp
 
 const OUTLINE_COLOUR = '#22d3ee'
 const BASELINE_MARK_COLOUR = '#a3a8b0' // slate-400 (tailwind.config.ts)
-const TARGET_COLOUR = '#34d399'
-const MISS_COLOUR = '#f87171'
+const DETECTED_COLOUR = '#34d399'
 const MANUAL_COLOUR = '#fbbf24' // the manual source badge's amber
 
 // In screen px, whatever the picture's size
 const MARKER_RADIUS = 9
 const BASELINE_MARK_RADIUS = 7
 
+// Every detected Bullet Hole alike, on its Target or not (ADR-0014)
 function colourOf(b: BulletHole) {
-  if (b.source === 'manual') return MANUAL_COLOUR
-  return b.target_index !== null ? TARGET_COLOUR : MISS_COLOUR
+  return b.source === 'manual' ? MANUAL_COLOUR : DETECTED_COLOUR
 }
 
 // Text legible on any picture: outlined in black

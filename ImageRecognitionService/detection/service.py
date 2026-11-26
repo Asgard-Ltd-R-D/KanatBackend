@@ -43,7 +43,7 @@ from urllib.parse import unquote
 import cv2
 import numpy as np
 
-from detection import logs, run_process, webapp
+from detection import board, logs, run_process, webapp
 from detection.stalls import STALL_AFTER_S, StallChecks
 from detection import new_bullet_holes as nbh
 
@@ -430,7 +430,7 @@ class DetectionService(StallChecks):
                     else:
                         publisher.publish(hole)
                 try:
-                    nbh.process(loop, None, publish=publish,
+                    nbh.process(loop, None, mm_per_tpl_px=board.live_print_scale(), publish=publish,
                                 watching=lambda view, marks: self._watching(run, view, marks))
                 finally:
                     # Looking is over, ended or failed: the publisher's exit drains its posts next, which

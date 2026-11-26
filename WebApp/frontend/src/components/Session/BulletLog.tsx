@@ -1,5 +1,6 @@
 import { Crosshair, Trash2 } from 'lucide-react'
 import { BulletHole } from '../../types'
+import { mmLabel } from '../../utils/bullets'
 import { formatClock } from '../../utils/format'
 import { SourceBadge } from './SourceBadge'
 
@@ -47,7 +48,7 @@ export function BulletLog({ bullets, onDelete }: Props) {
                 {formatClock(b.first_seen_at)}
               </td>
               <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">
-                {b.position_x.toFixed(0)}, {b.position_y.toFixed(0)}
+                {mmLabel(b)}
               </td>
               <td className="px-4 py-3"><SourceBadge source={b.source} /></td>
               <td className="px-4 py-3">

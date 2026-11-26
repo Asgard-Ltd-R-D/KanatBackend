@@ -1,5 +1,9 @@
 # Detection is limited to the Target Sheets
 
+*Superseded in part by [ADR-0014](0014-every-bullet-hole-has-a-position.md),
+2026-11-26: there is no Miss. A hole outside its Target on a sheet takes that
+sheet's Target and has a Position.*
+
 The system looks for Bullet Holes only on the Target Sheets, the printed pages
 the Targets are on, plus 5 mm. A Hit anywhere else on the Board is not
 detected, reported or scored. If it matters, the operator adds it by hand (the

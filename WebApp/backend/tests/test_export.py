@@ -171,12 +171,27 @@ def test_the_pdf_shot_log_has_no_source_column():
     assert "Detected at" in html
 
 
+def test_the_shot_log_gives_millimetres_from_the_centre_not_template_px():
+    """2026-11-26 range Session: the log printed each shot's template px
+    (370.4, 897.3), all positive with Y down, under "Position X/Y". A shot's
+    Position is its millimetres from the Target's centre, X right, Y up."""
+    s = _completed_session()
+    s.bullet_holes = [_hole(1, "lane3", 370.4, 897.3, x_mm=-57.3, y_mm=-45.5),
+                      _hole(2, "lane3", 548.0, 865.9, x_mm=None, y_mm=None, second=4)]
+    html = export_svc._render_report_html(s)
+    assert "X (mm)" in html and "Position X" not in html
+    assert "-57.3" in html and "-45.5" in html and "—" in html
+    assert "370.4" not in html and "897.3" not in html
+    rows = export_svc.generate_csv(s).splitlines()
+    assert rows[1].endswith(",-57.3,-45.5") and rows[2].endswith(",,")
+
+
 def test_the_csv_drops_source_and_appends_the_mpi_table():
     text = export_svc.generate_csv(_completed_session())
     lines = text.splitlines()
 
     # The shots header no longer carries a source column
-    assert lines[0] == "board,rank,first_seen_at,position_x,position_y"
+    assert lines[0] == "board,rank,first_seen_at,x_mm,y_mm"
     # A second table with the Group statistics (MPI) is appended
     assert "mpi_x_mm,mpi_y_mm" in text
     assert "Target 1" in text
@@ -191,7 +206,7 @@ def test_the_excel_bullet_sheet_drops_source_and_mpi_lives_in_the_groups_sheet()
 
     bullet_headers = [c.value for c in wb["Bullet Holes"][1]]
     assert "Source" not in bullet_headers
-    assert bullet_headers == ["Board", "#", "Detected At", "Position X", "Position Y"]
+    assert bullet_headers == ["Board", "#", "Detected At", "X (mm)", "Y (mm)"]
     # MPI is on the Groups sheet
     assert "MPI X (mm)" in [c.value for c in wb["Groups"][1]]
 
@@ -200,7 +215,7 @@ def test_the_csv_times_are_on_the_pcs_clock_with_no_zone_label():
     lines = export_svc.generate_csv(_completed_session()).splitlines()
 
     # lane1's first hole was first seen 09:30:05 UTC; the CSV prints this PC's clock
-    assert lines[1] == f"lane1,1,{_local('2026-11-16 09:30:05')},700,500"
+    assert lines[1] == f"lane1,1,{_local('2026-11-16 09:30:05')},1.0,2.0"
 
 
 def test_the_excel_times_are_on_the_pcs_clock_with_no_zone_label():

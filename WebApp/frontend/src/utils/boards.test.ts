@@ -42,13 +42,13 @@ test('holes and groupings are matched to their board by camera_alias', () => {
   const boards = boardsOf(
     session({
       bullet_holes: [hole('camA', 1), hole('camB', 2), hole('camA', 3)],
-      groupings: [{ camera_alias: 'camA', grouping: { groups: [], misses: 1, without_position: 0 } }],
+      groupings: [{ camera_alias: 'camA', grouping: { groups: [], without_position: 1 } }],
     }),
     [camera('camA'), camera('camB')],
   )
   assert.deepEqual(boards.find(b => b.alias === 'camA')?.bullets.map(h => h.rank), [1, 3])
   assert.deepEqual(boards.find(b => b.alias === 'camB')?.bullets.map(h => h.rank), [2])
-  assert.equal(boards.find(b => b.alias === 'camA')?.grouping?.misses, 1)
+  assert.equal(boards.find(b => b.alias === 'camA')?.grouping?.without_position, 1)
 })
 
 test('a board a run watched stays available with no holes even if its camera is gone', () => {

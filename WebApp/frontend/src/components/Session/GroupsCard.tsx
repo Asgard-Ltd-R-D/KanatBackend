@@ -53,7 +53,7 @@ export function GroupsCard({ grouping }: { grouping: Grouping }) {
       </table>
 
       <p className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500">
-        In no Group: Misses: {grouping.misses} · Without a Position: {grouping.without_position}
+        In no Group: Without a Position: {grouping.without_position}
       </p>
     </div>
   )

@@ -104,3 +104,13 @@ def test_an_oversized_upload_is_a_413_and_stores_nothing(client, run, tmp_path, 
     assert res.status_code == 413
     assert run.baseline_image_path is None
     assert not [p for p in tmp_path.rglob("*") if p.is_file()]
+
+
+def test_a_reupload_succeeds_when_the_prior_file_is_already_gone(client, run, tmp_path):
+    client.post(url(), content=PNG, headers={"content-type": "image/png"})
+    (tmp_path / run.baseline_image_path).unlink()
+
+    res = client.post(url(), content=b"\xff\xd8jpeg", headers={"content-type": "image/jpeg"})
+
+    assert res.status_code == 204
+    assert (tmp_path / run.baseline_image_path).read_bytes() == b"\xff\xd8jpeg"

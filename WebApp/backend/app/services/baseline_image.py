@@ -36,11 +36,7 @@ def store(db: DBSession, session_id: uuid.UUID, alias: str, content_type: str | 
     run = runs_repo.latest(db, session_id, alias)
     if run is None:
         raise HTTPException(status_code=404, detail="No Run for this camera in the Session")
-    # A re-upload replaces the Run's image, whatever its type, rather than orphaning it
-    if run.baseline_image_path:
-        previous = absolute_path(run.baseline_image_path)
-        if previous is not None:
-            previous.unlink()
+    previous_relative = run.baseline_image_path
     taken = run.taken_at.strftime("%Y%m%dT%H%M%S%f")
     relative = Path("baseline-images") / str(session_id) / f"{_safe_name(alias)}-{taken}{extension}"
     target = log_dir() / relative
@@ -48,6 +44,13 @@ def store(db: DBSession, session_id: uuid.UUID, alias: str, content_type: str | 
     target.write_bytes(data)
     run.baseline_image_path = relative.as_posix()
     runs_repo.save(db)
+    # Only now is the old image dropped (a re-upload replaces it, whatever its
+    # type): the column never points at a deleted file, and a file already
+    # gone (a concurrent re-upload) is not an error
+    if previous_relative and previous_relative != run.baseline_image_path:
+        previous = absolute_path(previous_relative)
+        if previous is not None:
+            previous.unlink(missing_ok=True)
 
 
 def latest_baseline_image_path(db: DBSession, session_id: uuid.UUID, alias: str) -> str | None:

@@ -63,7 +63,7 @@ _REPORT_HTML = """<!DOCTYPE html>
 
     /* The frame, across the page. Its height comes from padding-bottom (set inline
        per board), the picture is placed inside it, and shots sit on top. */
-    .target-fig { width: 100%; break-inside: avoid; }
+    .target-fig { margin: 0 auto; break-inside: avoid; }
     .target { position: relative; height: 0; }
     .target-img { position: absolute; display: block; }
     .hole { position: absolute; transform: translate(-50%, -50%); width: 14px; height: 14px;
@@ -99,13 +99,15 @@ _REPORT_HTML = """<!DOCTYPE html>
     .grid > tbody > tr > td { width: 50%; vertical-align: top; padding: 0 0 10px 0; border: 0; }
     .grid > tbody > tr > td.l { padding-right: 6px; }
     .grid > tbody > tr > td.r { padding-left: 6px; }
-    .card { border: 1px solid #e2e7ec; break-inside: avoid; }
-    .card-head { display: flex; justify-content: space-between; align-items: baseline;
-                 background: #13283f; color: #fff; padding: 5px 8px; }
-    .card-name { font-size: 9px; font-weight: 700; }
-    .card-count { font-size: 8px; color: #9db3cc; }
-    .card thead tr { background: #f0f3f6; }
-    .card thead th { color: #51607a; }
+    /* A card too tall for a page breaks across it, its header rows (the
+       Target's name and the columns) repeated, rather than leaving a blank
+       page before it */
+    .card { border: 1px solid #e2e7ec; }
+    .card thead tr.card-head { background: #13283f; }
+    .card thead th.card-name { color: #fff; font-size: 9px; font-weight: 700; letter-spacing: 0; padding: 5px 8px; }
+    .card thead th.card-count { color: #9db3cc; font-size: 8px; font-weight: 400; text-align: right; padding: 5px 8px; }
+    .card thead tr.cols { background: #f0f3f6; }
+    .card thead tr.cols th { color: #51607a; }
     .card tbody td { color: #3a4454; }
   </style>
 </head>
@@ -139,7 +141,7 @@ _REPORT_HTML = """<!DOCTYPE html>
       <span class="board-count">{{ board.bullets | length }} shot{{ '' if board.bullets | length == 1 else 's' }}</span>
     </div>
 
-    <figure class="target-fig">
+    <figure class="target-fig" style="width: {{ '%.3f' % board.fig_width }}%">
       <div class="target{{ ' clip' if board.canvas.clip }}" style="padding-bottom: {{ '%.3f' % board.canvas.pad_pct }}%">
         <img class="target-img" src="{{ board.image_uri }}"
              style="left: {{ '%.3f' % board.canvas.img.left }}%; top: {{ '%.3f' % board.canvas.img.top }}%; width: {{ '%.3f' % board.canvas.img.width }}%; height: {{ '%.3f' % board.canvas.img.height }}%">
@@ -204,13 +206,14 @@ _REPORT_HTML = """<!DOCTYPE html>
           {% for section in pair %}
           <td class="{{ 'l' if loop.first else 'r' }}">
             <div class="card">
-              <div class="card-head">
-                <span class="card-name">{{ section.label }}</span>
-                <span class="card-count">{{ section.bullets | length }} shot{{ '' if section.bullets | length == 1 else 's' }}</span>
-              </div>
               <table class="shotlog">
                 <thead>
-                  <tr>
+                  <!-- In the header, so a card that runs onto the next page names its Target there too -->
+                  <tr class="card-head">
+                    <th colspan="2" class="card-name">{{ section.label }}</th>
+                    <th colspan="2" class="card-count">{{ section.bullets | length }} shot{{ '' if section.bullets | length == 1 else 's' }}</th>
+                  </tr>
+                  <tr class="cols">
                     <th class="num">#</th>
                     <th>Detected at</th>
                     <th class="num">X (cm)</th>
@@ -340,6 +343,22 @@ def _carried(runs: list, holes) -> list[tuple[float, float]]:
         return [(h.position_x, h.position_y) for h in holes]
 
 
+# The A4 page's printable width (210 mm less the 40 px margins) and the most
+# height the board's figure may take on it, in CSS px, leaving the session
+# header, the board's title and the start of its statistics room on page one
+_PRINTABLE_W = 210 / 25.4 * 96 - 80
+_FIGURE_MAX_H = 560
+
+
+def _figure_width(pad_pct: float) -> float:
+    """The figure's width, as a percentage of the page's, so its height
+    (pad_pct of its width) stays within _FIGURE_MAX_H: the full width for a
+    camera frame, narrower for a tall canvas (shots on Targets stacked
+    vertically), scaled as a whole so every marker stays on the page."""
+    height_at_full = _PRINTABLE_W * pad_pct / 100
+    return min(100.0, _FIGURE_MAX_H / height_at_full * 100) if height_at_full > 0 else 100.0
+
+
 def _frame_canvas(frame: dict) -> dict:
     """The drawing area when the board is the baseline frame: the frame itself."""
     return {
@@ -434,6 +453,7 @@ def _boards_for_report(bullets, db: DBSession | None = None, session_id=None) ->
                 return projected[0] / frame["width"] * 100, projected[1] / frame["height"] * 100
         boards.append({
             "alias": bg.camera_alias or "No board",
+            "fig_width": _figure_width(canvas["pad_pct"]),
             "targets": _target_outlines(frame) if frame else [],
             "grouping": bg.grouping,
             "canvas": canvas,
@@ -560,7 +580,17 @@ def generate_pdf(session: Session, db: DBSession | None = None) -> bytes:
     # Windows), and a PC without them still runs everything but the PDF
     import weasyprint
 
-    return weasyprint.HTML(string=html, base_url=None).write_pdf()
+    return weasyprint.HTML(string=html, base_url=None, url_fetcher=_embedded_only).write_pdf()
+
+
+def _embedded_only(url: str, *args, **kwargs):
+    """The PDF's URL fetcher: the report's own images are data URIs; anything
+    else (a file or a server) is never fetched."""
+    import weasyprint
+
+    if not url.startswith("data:"):
+        raise ValueError("The report loads only its embedded images")
+    return weasyprint.default_url_fetcher(url, *args, **kwargs)
 
 
 def generate_csv(session: Session) -> str:

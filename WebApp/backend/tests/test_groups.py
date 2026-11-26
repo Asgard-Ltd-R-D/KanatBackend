@@ -148,9 +148,9 @@ def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
     rendered = []
     real = weasyprint.HTML
 
-    def html(string, base_url):
+    def html(string, base_url, **kwargs):
         rendered.append(string)
-        return real(string=string, base_url=base_url)
+        return real(string=string, base_url=base_url, **kwargs)
 
     monkeypatch.setattr(weasyprint, "HTML", html)
     client.holes = RECTANGLE + [OLD_MISS]
@@ -170,7 +170,7 @@ def test_the_pdf_renders_with_a_groups_section(client, monkeypatch):
 def test_without_a_group_the_pdf_still_gives_the_count(client, monkeypatch):
     rendered = []
     monkeypatch.setattr(weasyprint, "HTML",
-                        lambda string, base_url: rendered.append(string) or SimpleNamespace(write_pdf=lambda: b"%PDF"))
+                        lambda string, base_url, **kw: rendered.append(string) or SimpleNamespace(write_pdf=lambda: b"%PDF"))
     client.holes = [OLD_MISS, MANUAL, MANUAL]
 
     assert client.get(f"/sessions/{SESSION_ID}/export/pdf").status_code == 200

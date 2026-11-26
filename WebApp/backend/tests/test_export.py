@@ -153,7 +153,7 @@ def test_the_pdf_has_no_hairline_dividers_under_the_title_and_paints_table_heade
     assert ".readout { width: 100%; border-collapse: collapse; background: #f5f7f9; margin-bottom: 14px; }" in css
     # A header is one rectangle on its row, not a background per cell (a viewer draws a
     # hairline where two painted cells meet)
-    assert "thead tr { background: #13283f; }" in css and ".card thead tr { background: #f0f3f6; }" in css
+    assert "thead tr { background: #13283f; }" in css and ".card thead tr.cols { background: #f0f3f6; }" in css
     assert "thead th { background" not in css
 
 
@@ -469,6 +469,14 @@ def test_a_shot_from_an_earlier_run_is_carried_into_the_latest_runs_space_on_the
     assert 'class="hole" style="left: 15.000%; top: 20.000%"' in html
 
 
+def test_the_pdf_renderer_fetches_only_embedded_images():
+    with pytest.raises(ValueError):
+        export_svc._embedded_only("http://169.254.169.254/latest")
+    with pytest.raises(ValueError):
+        export_svc._embedded_only("file:///etc/passwd")
+    assert export_svc._embedded_only("data:text/plain;base64,aGk=")["file_obj"].read() == b"hi"
+
+
 def test_without_a_frame_an_earlier_runs_shot_is_still_carried_onto_the_artwork(monkeypatch):
     first_h = [[0.5, 0, 100], [0, 0.5, 50], [0, 0, 1]]
     first = SimpleNamespace(taken_at=datetime(2026, 11, 16, 9, 29, 0, tzinfo=timezone.utc), baseline_image_path=None,
@@ -486,3 +494,29 @@ def test_without_a_frame_an_earlier_runs_shot_is_still_carried_onto_the_artwork(
     # (100, 100) over the first Run is (150, 100) in the latest's space, on the 1405 x 1120 artwork
     assert board["bullets"][0]["left"] == pytest.approx(150 / 1405 * 100)
     assert board["bullets"][0]["top"] == pytest.approx(100 / 1120 * 100)
+
+
+def test_a_shot_log_card_names_its_target_in_its_repeated_header():
+    html = export_svc._render_report_html(_two_target_session())
+    log = html.split('<div class="sec">Shot log</div>')[1]
+
+    # The Target's name is a header row, which WeasyPrint repeats on every page
+    # the card runs onto
+    for card in log.split('<div class="card">')[1:]:
+        head = card.split("</thead>")[0]
+        assert 'class="card-name"' in head and 'class="cols"' in head
+
+
+def test_a_tall_board_figure_is_narrowed_to_fit_the_page():
+    s = _completed_session()
+    # A shot on a Target stacked below the reference one: the canvas is twice as tall
+    s.bullet_holes = [_hole(1, "lane1", 700, 500), _hole(2, "lane1", 700, 2140, second=3)]
+
+    [board] = export_svc._boards_for_report(s.bullet_holes)
+
+    height = export_svc._PRINTABLE_W * board["fig_width"] / 100 * board["canvas"]["pad_pct"] / 100
+    assert board["fig_width"] < 100 and height == pytest.approx(export_svc._FIGURE_MAX_H)
+
+
+def test_a_camera_frame_figure_keeps_the_full_width():
+    assert export_svc._figure_width(720 / 1280 * 100) == 100

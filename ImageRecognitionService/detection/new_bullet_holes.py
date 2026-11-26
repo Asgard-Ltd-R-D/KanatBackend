@@ -3,7 +3,7 @@
 The runtime pipeline from bullet_hole_detection_pipeline_updated.md:
 
     frame
-      -> locate Board            board.find_targets, one hue threshold
+      -> locate Board            board.find_targets, the Target segmentation model
       -> homography              board.register (baseline), board.track_view (#50)
       -> Target Sheet canvases   board.BoardView.sheet_canvases, at TARGET_NET_SCALE
       -> YOLO on the sheets      one batched call; beyond every sheet dropped (ADR-0011)
@@ -447,10 +447,12 @@ def _bullet_hole_classes(model):
 
 def load_model(path):
     """The detector at `path`, for `RegisteredFrames.open` (#221). A wrong
-    checkpoint is refused here, before any video work."""
+    checkpoint is refused here, before any video work. The Target finder is
+    loaded with it, so neither load falls in Board space's build time (#79)."""
     from ultralytics import YOLO  # imported lazily: pulls in torch
     model = YOLO(path)
     _bullet_hole_classes(model)
+    board.target_model()
     return model
 
 
@@ -1569,7 +1571,7 @@ class RegisteredFrames:
         template = cv2.imread(template_path)
         if template is None:
             raise SystemExit(f"cannot read Target artwork at {template_path}")
-        _, template_mask = board.find_targets(template, min_area=1)
+        template_mask = board.template_mask(template)
 
         # How long building Board space takes is measured from opening the
         # source, so no model load is in it (#79).

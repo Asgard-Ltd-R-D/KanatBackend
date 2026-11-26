@@ -120,6 +120,17 @@ def load_labels(path):
 PHOTO_ECC_BLUR = 21   # PROVISIONAL: picked on the two recordings it is judged on
 
 
+def _hue_targets(image, min_area=5000):
+    """The Targets in a truth photograph, or the frame it registers to, by
+    the print's hue: the colour gate the pipeline used before the Target
+    finder (ADR-0013), kept here so the bench's own measure did not move
+    with the pipeline's finder. `(contours largest first, mask)`."""
+    mask = board.template_mask(image)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    keep = [c for c in contours if cv2.contourArea(c) >= min_area]   # the gate's floor, fixed
+    return sorted(keep, key=cv2.contourArea, reverse=True), mask
+
+
 def register_photograph(photo, frame):
     """Homography from a photograph's pixels to a video frame's, and its ECC
     correlation.
@@ -138,8 +149,8 @@ def register_photograph(photo, frame):
     that bears on geometry is the pre-existing marks, which `evaluate.py`
     prints after the run.
     """
-    contours, mask = board.find_targets(photo)
-    frame_contours, frame_mask = board.find_targets(frame)
+    contours, mask = _hue_targets(photo)
+    frame_contours, frame_mask = _hue_targets(frame)
     if not contours or not frame_contours:
         raise SystemExit("no Target found in the ground-truth photograph or the "
                          "baseline frame; cannot register one to the other")
@@ -545,7 +556,7 @@ def _photograph(path):
     image = cv2.imread(path)
     if image is None:
         raise SystemExit(f"cannot read photograph {path}")
-    contours, mask = board.find_targets(image)
+    contours, mask = _hue_targets(image)
     if not contours:
         raise SystemExit(f"no Target found in {path}; cannot register it")
     return image, mask, contours[0]
@@ -567,7 +578,7 @@ def derive_new_holes(before_image, before_labels, after_image, after_labels,
     template = cv2.imread(template_path)
     if template is None:
         raise SystemExit(f"cannot read template {template_path}")
-    _, template_mask = board.find_targets(template, min_area=1)
+    template_mask = board.template_mask(template)
 
     before_photo, before_mask, _ = _photograph(before_image)
     after_photo, after_mask, after_target = _photograph(after_image)

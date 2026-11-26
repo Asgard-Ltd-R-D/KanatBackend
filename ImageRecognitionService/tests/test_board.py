@@ -1,7 +1,8 @@
-"""Checks for Board geometry. No model, no video, no torch."""
+"""Checks for Board geometry. No model, no video, no torch, but for the one `target_model` test."""
 
 import json
 import math
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -606,7 +607,7 @@ def test_the_baseline_fit_is_affine_even_on_a_perspective_view():
     """#296: the silhouette does not constrain a perspective term (#295), so
     `build_view` fits the baseline as an affine: no perspective row."""
     template = cv2.imread(board.DEFAULT_TEMPLATE)
-    _, template_mask = board.find_targets(template, min_area=1)
+    template_mask = board.template_mask(template)
     h, w = template.shape[:2]
     P = np.float32([[0.5, 0.02, 300], [0.01, 0.5, 200], [4e-5, 0, 1]])
     frame = cv2.warpPerspective(template, P, (w + 600, h + 400), borderValue=(128, 128, 128))
@@ -622,7 +623,7 @@ def test_board_space_is_fitted_on_the_interior_not_the_silhouette_edge(grow):
     few frame px pulls the silhouette fit's scale; the disk centre and the
     digit row put the ring and the 6-ring's reach back where the artwork is."""
     template = cv2.imread(board.DEFAULT_TEMPLATE)
-    _, template_mask = board.find_targets(template, min_area=1)
+    template_mask = board.template_mask(template)
     h, w = template.shape[:2]
     P = np.float32([[0.5, 0.01, 300], [-0.01, 0.5, 200], [0, 0, 1]])
     frame = cv2.warpPerspective(template, P, (w + 600, h + 400), borderValue=(128, 128, 128))
@@ -653,7 +654,7 @@ def test_board_space_is_fitted_on_the_interior_not_the_silhouette_edge(grow):
 def test_a_low_digit_row_correlation_keeps_the_silhouette_fit(monkeypatch):
     """#302: below `INTERIOR_MIN_CORRELATION` the digit scale is no evidence."""
     template = cv2.imread(board.DEFAULT_TEMPLATE)
-    _, template_mask = board.find_targets(template, min_area=1)
+    template_mask = board.template_mask(template)
     h, w = template.shape[:2]
     frame = cv2.warpPerspective(template, np.float32([[0.5, 0, 300], [0, 0.5, 200], [0, 0, 1]]),
                                 (w + 600, h + 400), borderValue=(128, 128, 128))
@@ -668,7 +669,7 @@ def test_a_low_digit_row_correlation_keeps_the_silhouette_fit(monkeypatch):
 
 def _synthetic_board():
     template = cv2.imread(board.DEFAULT_TEMPLATE)
-    _, template_mask = board.find_targets(template, min_area=1)
+    template_mask = board.template_mask(template)
     h, w = template.shape[:2]
     P = np.float32([[0.5, 0.01, 300], [-0.01, 0.5, 200], [0, 0, 1]])
     frame = cv2.warpPerspective(template, P, (w + 600, h + 400), borderValue=(128, 128, 128))
@@ -688,6 +689,40 @@ def test_a_bullet_hole_on_the_disk_edge_does_not_move_the_ring():
 
     ring = board.apply(view.H, [board.RING_CENTRE_TPL])[0]
     assert np.linalg.norm(ring - board.apply(P, [board.RING_CENTRE_TPL])[0]) < 0.25   # frame px
+
+
+def test_a_disk_search_that_cycles_settles_on_the_cycle():
+    """#413: CamB `_102250` at 21.5 s, the patch round the ring through the
+    Target finder's fit. A ray beside a Bullet Hole on the disk's edge drops
+    in and out, so the centre swings ~1 template px between two answers and
+    never steps under 0.05: the disk was reported missing and the live start
+    failed. The same rays seen again end the search at the cycle's mean."""
+    patch = cv2.imread(str(Path(__file__).parent / "data" / "disk_cycle_patch.png"),
+                       cv2.IMREAD_GRAYSCALE).astype(np.float32)
+
+    centre = board.disk_centre(patch)
+
+    assert centre is not None
+    assert np.linalg.norm(centre - board.RING_CENTRE_TPL) < 25   # template px, where the fit put it
+
+
+def test_the_same_rays_twice_running_are_not_a_cycle(monkeypatch):
+    """#421 review: an oval disk 25 px off keeps every ray from one step to the
+    next while the centre still moves; that is convergence, not a cycle, and
+    stopping there left the centre ~0.09 px short. The answer is where the
+    search settles with no cycle check at all."""
+    w, h = (2 * board._PATCH_HALF * board._PATCH_K).astype(int)
+    patch = np.full((h, w), 40, np.uint8)
+    cx, cy = (board.RING_CENTRE_TPL + [-25, 0] - board._PATCH_ORIGIN) * board._PATCH_K * 16
+    cv2.ellipse(patch, (round(cx), round(cy)), (round(116 * board._PATCH_K * 16), round(104 * board._PATCH_K * 16)),
+                0, 0, 360, 220, -1, cv2.LINE_AA, 4)
+    patch = patch.astype(np.float32)
+
+    centre = board.disk_centre(patch)
+    monkeypatch.setattr(board, "frozenset", lambda rays: object(), raising=False)   # no set ever repeats
+    settled = board.disk_centre(patch)
+
+    assert np.linalg.norm(centre - settled) < 0.01   # template px
 
 
 def test_a_hole_on_print_the_green_gate_drops_is_on_the_target():
@@ -750,7 +785,7 @@ def test_a_turned_sheet_is_tracked_on_the_sheet_not_the_mesh_round_it():
     15-30 Board px off, reported again as new. The ECC region is the
     sheets, so the fit follows the paper."""
     template = cv2.imread(board.DEFAULT_TEMPLATE)
-    _, template_mask = board.find_targets(template, min_area=1)
+    template_mask = board.template_mask(template)
     P = np.float32([[0.5, 0, 450], [0, 0.5, 300], [0, 0, 1]])
     M = np.float32([[1, 0, -800], [0, 1, -600], [0, 0, 1]])
     reference, _ = board.build_view(_sheet_on_mesh(P, M), template_mask)
@@ -786,7 +821,7 @@ def test_targets_are_numbered_by_place_not_by_area(upper_scale, lower_scale, ref
     """#240: a re-aim that makes the other Target the larger must not renumber
     them. Registration still fits the largest, and each Target's ring centre
     is still its own."""
-    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    template_mask = board.template_mask(cv2.imread(board.DEFAULT_TEMPLATE))
     frame, rings = _two_target_frame(upper_scale, lower_scale)
 
     view, _ = board.build_view(frame, template_mask)
@@ -796,10 +831,10 @@ def test_targets_are_numbered_by_place_not_by_area(upper_scale, lower_scale, ref
         assert view.board_to_frame([view.ring_centre(i)])[0] == pytest.approx(ring, abs=3)
 
 
-def test_a_fit_that_leaves_its_target_falls_back_to_the_gate_edge(monkeypatch):
+def test_a_fit_that_leaves_its_target_falls_back_to_the_finders_edge(monkeypatch):
     """Codex on #397: ECC can settle off a clipped or occluded Target without
     throwing. An outline that no longer covers its blob is not used."""
-    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    template_mask = board.template_mask(cv2.imread(board.DEFAULT_TEMPLATE))
     frame, rings = _two_target_frame(0.3, 0.25)
     register = board.register
 
@@ -813,7 +848,7 @@ def test_a_fit_that_leaves_its_target_falls_back_to_the_gate_edge(monkeypatch):
     view, _ = board.build_view(frame, template_mask)
 
     lower = view.board_to_frame([view.ring_centre(1)])[0]
-    assert lower == pytest.approx(rings[1], abs=6)   # the gate's, not 300 px off
+    assert lower == pytest.approx(rings[1], abs=6)   # the finder's edge, not 300 px off
 
 
 def test_targets_at_about_one_height_read_left_to_right():
@@ -824,7 +859,7 @@ def test_targets_at_about_one_height_read_left_to_right():
 
 
 
-# --- build_view: scenery is not a Target --------------------------------------
+# --- build_view: scenery is not the reference ---------------------------------
 
 def _artwork_beside(scenery_hsv, cut=False):
     """The artwork at half size on grey, with a solid scenery patch bigger
@@ -844,18 +879,18 @@ def _artwork_beside(scenery_hsv, cut=False):
     return frame, P
 
 
-def test_scenery_bigger_than_the_target_is_neither_reference_nor_target():
-    # The office camera, 2026-11-17: city trees through a window (hue ~80
-    # against the print's ~42) outgrew the print, became the reference, and
-    # every Target was fitted to them.
+def test_scenery_bigger_than_the_target_is_not_the_reference():
+    # The office camera, 2026-11-17: city trees through a window outgrew the
+    # print, became the reference, and every Target was fitted to them. Kept
+    # out of the Targets by the Target finder now (ADR-0013); the reference
+    # is still the one showing its disk.
     template = cv2.imread(board.DEFAULT_TEMPLATE)
-    _, template_mask = board.find_targets(template, min_area=1)
+    template_mask = board.template_mask(template)
     frame, P = _artwork_beside((45, 120, 120))
     assert cv2.contourArea(board.find_targets(frame)[0][0]) > 300000   # the scenery is largest
 
     view, _ = board.build_view(frame, template_mask)
 
-    assert len(view.targets) == 1
     # net scale's frame span is the Target's, not the scenery's (Codex, #371)
     assert abs(view.reference_span() - board.contour_span(board.find_targets(frame)[0][1])) <= 2
     ring = board.apply(view.H, [board.RING_CENTRE_TPL])[0]
@@ -863,9 +898,9 @@ def test_scenery_bigger_than_the_target_is_neither_reference_nor_target():
 
 
 def test_a_target_the_frame_cuts_is_kept():
-    # Its disk is out of view, so only its colour says it is the same print.
+    # Its disk is out of view: it is kept all the same, not taken for scenery.
     template = cv2.imread(board.DEFAULT_TEMPLATE)
-    _, template_mask = board.find_targets(template, min_area=1)
+    template_mask = board.template_mask(template)
     frame, _ = _artwork_beside(None, cut=True)
     assert len(board.find_targets(frame)[0]) == 2
 
@@ -876,18 +911,29 @@ def test_no_target_without_the_disk():
     # good_shooting_vid2's stone wall: dozens of green blobs, none a Target.
     frame = np.full((600, 800, 3), 128, np.uint8)
     frame[100:500, 100:700] = cv2.cvtColor(np.uint8([[(36, 45, 65)]]), cv2.COLOR_HSV2BGR)[0, 0]
-    _, template_mask = board.find_targets(cv2.imread(board.DEFAULT_TEMPLATE), min_area=1)
+    template_mask = board.template_mask(cv2.imread(board.DEFAULT_TEMPLATE))
 
     assert board.build_view(frame, template_mask) == (None, None)
 
 
-def test_scenery_bigger_than_the_target_does_not_make_a_right_fit_look_wrong():
-    # The registration cross-check (#110) fitted the largest green blob: on
-    # the office camera the trees, so a right fit checked read grossly wrong
-    # and its Look was dropped.
-    template = cv2.imread(board.DEFAULT_TEMPLATE)
-    _, template_mask = board.find_targets(template, min_area=1)
-    frame, _ = _artwork_beside((45, 120, 120))
-    view, _ = board.build_view(frame, template_mask)
+VIDEOS = Path(board.BASE_DIR) / "data" / "videos"
 
-    assert board.silhouette_disagreement(frame, template_mask, view) < 5   # Board px
+
+@pytest.mark.target_model
+@pytest.mark.parametrize("clip, targets", [("CamB_20260915_101550.mkv", 3),
+                                           ("good_shooting_vid2.mp4", 0)])
+def test_the_target_finder_finds_the_print_not_a_green_wall(clip, targets):
+    """best.pt on real frames (ADR-0013): CamB's three Targets, and none on
+    good_shooting_vid2's stone wall, two dozen blobs to the hue gate."""
+    pytest.importorskip("ultralytics")
+    if not (VIDEOS / clip).exists() or not Path(board.TARGET_MODEL).exists():
+        pytest.skip("footage or Target finder weights not on disk")
+    capture = cv2.VideoCapture(str(VIDEOS / clip))
+    capture.set(cv2.CAP_PROP_POS_FRAMES, 125)
+    ok, frame = capture.read()
+    assert ok
+
+    contours, mask = board.find_targets(frame)
+
+    assert len(contours) == targets
+    assert all(mask[tuple(c.reshape(-1, 2).mean(axis=0).astype(int)[::-1])] for c in contours)

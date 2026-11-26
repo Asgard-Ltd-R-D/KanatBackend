@@ -116,7 +116,7 @@ def ground_mask(canvas):
 
 
 def usable_fit(canvas_size, correlation):
-    """Did `build_view` find the Target artwork, rather than something green?"""
+    """Did `build_view` find the Target artwork, rather than something else?"""
     return correlation >= MIN_CORRELATION and max(canvas_size) <= MAX_CANVAS_PX
 
 
@@ -281,7 +281,7 @@ if __name__ == "__main__":
         sources.append((v, sha, source(entries, sha, v)))
 
     template = cv2.imread(a.template)
-    _, template_mask = board.find_targets(template, min_area=1)
+    template_mask = board.template_mask(template)
     for sub in ("images", "labels"):
         os.makedirs(os.path.join(a.out, sub), exist_ok=True)
     with open(os.path.join(a.out, "sources.csv"), "w", newline="") as f:

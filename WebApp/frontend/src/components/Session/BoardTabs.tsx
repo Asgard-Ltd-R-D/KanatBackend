@@ -151,8 +151,10 @@ export function BoardTabs({ session, boards }: { session: Session; boards: Board
         open={addFor !== undefined}
         sessionId={session.id}
         camera={addFor ?? null}
-        context={board?.bullets ?? []}
-        runs={(session.runs ?? []).filter(r => r.camera_alias === (board?.alias ?? null))}
+        // From the board the modal was opened for, not the selected tab: the
+        // tabs can reorder while it is open (the cameras list arriving)
+        context={boards.find(b => b.alias === (addFor ?? null))?.bullets ?? []}
+        runs={(session.runs ?? []).filter(r => r.camera_alias === (addFor ?? null))}
         onClose={() => setAddFor(undefined)}
         onSuccess={() => {}}
       />

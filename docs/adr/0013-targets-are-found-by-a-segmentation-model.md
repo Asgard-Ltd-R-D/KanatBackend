@@ -49,3 +49,15 @@ the green print turned magenta, it finds 10/30 indoor and 47/60 outdoor. No
 sun, white balance or H.264 moves the print that far, so this is accepted as
 outside the operating conditions, without retraining. If a print in another
 colour is ever used, retrain with hue augmentation first.
+
+The reference Target, and so the Board scale (`board_scale_for`, the
+reference at `TARGET_NET_SCALE`), can differ from the hue gate's: the model's
+masks rank the Targets' sizes differently. On CamB `_101450` it takes the
+lower-left Target where the gate took the upper-left, and the scale falls
+from 0.139 to 0.130. The baseline then holds 0 Baseline Marks where `main`
+held 6, real holes on the lower-left sheet that sit at the detector's
+sensitivity edge (forced back to 0.139, they are found again); on `_101550`,
+4 against 9. Accepted (#413): the regression bench passes with no false
+positive added, and a pre-existing hole the baseline misses is reported as
+new only if the detector later catches it. If that shows up, take the scale
+from the largest Target instead of the reference.

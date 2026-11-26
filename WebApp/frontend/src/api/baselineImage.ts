@@ -16,3 +16,14 @@ export async function uploadBaselineImage(sessionId: string, alias: string, blob
   // fetch resolves on HTTP errors too; throw so the caller can log the failure
   if (!res.ok) throw new Error(`baseline image upload failed: HTTP ${res.status}`)
 }
+
+// The stored baseline frame of a camera's latest Run, or null when none was
+// captured (404). Other failures throw.
+export async function getBaselineImage(sessionId: string, alias: string): Promise<Blob | null> {
+  const res = await fetch(
+    `${API_URL}/sessions/${encodeURIComponent(sessionId)}/cameras/${encodeURIComponent(alias)}/baseline-image`,
+  )
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`baseline image fetch failed: HTTP ${res.status}`)
+  return res.blob()
+}

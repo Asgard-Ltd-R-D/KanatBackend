@@ -36,6 +36,10 @@ export interface BaselineView {
   template_to_picture: number[][] // template px -> the baseline frame's px, row-major 3x3
   targets: [number, number][][] // one outline per Target, in template px; its index is target_index
   baseline_marks: [number, number][] // one point per Baseline Mark, in template px
+  // Optional: older Runs, or a detection that could not resolve them, omit or null them
+  sheets?: [[number, number], [number, number]][] // per Target, its A4 sheet as opposite corners, template px
+  ring_centres?: [number, number][] // per Target, the ring centre in template px
+  mm_per_px?: number | null // template px -> mm
 }
 
 // Where a Run's registered Look showed the Board in the camera's picture (ADR-0009)

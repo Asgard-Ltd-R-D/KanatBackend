@@ -1,9 +1,11 @@
-import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { X, Undo2 } from 'lucide-react'
 import { createBullet } from '../../api/bullets'
 import { BulletHole, Run } from '../../types'
-import { holesOver } from '../../utils/overlay'
+import { getBaselineImage } from '../../api/baselineImage'
+import { holesOver, project, type Point as Pt } from '../../utils/overlay'
+import { millimetres, pixelToTemplate, targetOfPoint } from '../../utils/targets'
 import targetImg from '../../assets/target.png'
 
 // The target artwork is authored at this pixel size, and a Bullet Hole's
@@ -12,9 +14,16 @@ import targetImg from '../../assets/target.png'
 const TEMPLATE_W = 1405
 const TEMPLATE_H = 1120
 
-// A placed shot: its position plus a stable idempotency key, fixed when placed
-// so a retry of a partly-failed batch does not duplicate it
-type Point = { x: number; y: number; key: string }
+// A placed shot: its template position plus a stable idempotency key, fixed when
+// placed so a retry of a partly-failed batch does not duplicate it. Placed on the
+// real frame, it also carries its target and millimetres from that target's centre.
+type Point = { x: number; y: number; key: string; target_index?: number; x_mm?: number; y_mm?: number }
+
+// Same style as the live overlay (Camera/Overlay.tsx): a hollow ring, number above
+const OUTLINE_COLOUR = '#22d3ee'
+const SHEET_COLOUR = '#fbbf24'
+const MANUAL_COLOUR = '#fbbf24'
+const textOutline = { stroke: 'black', strokeWidth: 3, paintOrder: 'stroke' } as const
 
 interface Props {
   open: boolean
@@ -30,6 +39,27 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
   const qc = useQueryClient()
   // The points placed so far, in template coordinates, in the order clicked
   const [points, setPoints] = useState<Point[]>([])
+  const [notice, setNotice] = useState<string | null>(null)
+
+  // The board's real baseline frame, when one was captured (null on 404)
+  const frame = useQuery({
+    queryKey: ['baseline-image', sessionId, camera],
+    queryFn: () => getBaselineImage(sessionId, camera as string),
+    enabled: open && camera !== null,
+    retry: false,
+    staleTime: Infinity,
+  })
+  const frameBlob = frame.data ?? null
+  const [frameUrl, setFrameUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!frameBlob) {
+      setFrameUrl(null)
+      return
+    }
+    const url = URL.createObjectURL(frameBlob)
+    setFrameUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [frameBlob])
 
   const mutation = useMutation({
     // Add every placed point in one go. Sent one after another (not in parallel)
@@ -43,6 +73,7 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
           // The moment the user adds them, not a date they pick
           first_seen_at: new Date().toISOString(),
           position: { x: p.x, y: p.y },
+          ...(p.target_index !== undefined ? { target_index: p.target_index, x_mm: p.x_mm, y_mm: p.y_mm } : {}),
           camera,
           source: 'manual',
           idempotency_key: p.key,
@@ -69,18 +100,35 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
     // without cancelling the requests still to run. It auto-closes on success.
     if (mutation.isPending) return
     setPoints([])
+    setNotice(null)
     mutation.reset()
     onClose()
   }
 
-  // Turn a click on the image into template coordinates (the displayed size may
-  // be scaled down; the image's natural size is the template space 1:1)
-  function handleClick(e: React.MouseEvent<HTMLImageElement>) {
-    if (mutation.isPending) return
+  // Turn a click into template coordinates. On the real frame the click is a
+  // picture pixel: map it back to the template, find the A4 sheet it lands in
+  // (its target) and measure millimetres from that target's centre. On the
+  // artwork the image is the template 1:1, with no attribution.
+  function handleClick(e: React.MouseEvent<SVGSVGElement>) {
+    if (mutation.isPending || !space) return
     const rect = e.currentTarget.getBoundingClientRect()
-    const x = ((e.clientX - rect.left) / rect.width) * TEMPLATE_W
-    const y = ((e.clientY - rect.top) / rect.height) * TEMPLATE_H
-    setPoints(ps => [...ps, { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, key: crypto.randomUUID() }])
+    const sx = ((e.clientX - rect.left) / rect.width) * space.width
+    const sy = ((e.clientY - rect.top) / rect.height) * space.height
+    const round = (v: number) => Math.round(v * 10) / 10
+    if (!geometry) {
+      setNotice(null)
+      setPoints(ps => [...ps, { x: round(sx), y: round(sy), key: crypto.randomUUID() }])
+      return
+    }
+    const t = pixelToTemplate(geometry.H, [sx, sy])
+    const target = targetOfPoint(geometry.sheets, t)
+    if (target === null) {
+      setNotice('That spot is outside every target sheet. Click inside a target\'s A4 sheet.')
+      return
+    }
+    setNotice(null)
+    const { x_mm, y_mm } = millimetres(geometry.ringCentres[target], geometry.mmPerPx, t)
+    setPoints(ps => [...ps, { x: round(t[0]), y: round(t[1]), key: crypto.randomUUID(), target_index: target, x_mm, y_mm }])
   }
 
   function removeAt(i: number) {
@@ -100,6 +148,26 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
     ? holesOver(latestRun, runs, context)
     : context.map(b => [b.position_x, b.position_y] as [number, number])
 
+  // The real frame is used only with a captured frame and a Baseline View that
+  // resolved sheets, ring centres and a print scale; otherwise the artwork, as before
+  const view = latestRun?.baseline_view
+  const geometry =
+    frameUrl && view && view.sheets && view.sheets.length > 0 && view.ring_centres &&
+    view.ring_centres.length >= view.sheets.length && typeof view.mm_per_px === 'number'
+      ? { H: view.template_to_picture, sheets: view.sheets, ringCentres: view.ring_centres, mmPerPx: view.mm_per_px, view }
+      : null
+  // Frame still loading: wait, rather than flash the artwork then swap it
+  const waiting = camera !== null && frame.isLoading
+  const space = waiting
+    ? null
+    : geometry
+      ? { width: geometry.view.picture.width, height: geometry.view.picture.height }
+      : { width: TEMPLATE_W, height: TEMPLATE_H }
+  // Template point -> the drawing's space (frame px, or the template itself)
+  const toSpace = (p: Pt): Pt => (geometry ? project(geometry.H, p) : p)
+  const unit = space ? space.width / 600 : 1 // 1 screen-ish px at a ~600px display
+  const RING = 9 * unit
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 dark:bg-black/60 backdrop-blur-sm" onClick={close} />
@@ -114,40 +182,100 @@ export function AddBulletModal({ open, sessionId, camera, context = [], runs = [
         </div>
 
         <div className="relative select-none rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
-          <img
-            src={targetImg}
-            alt="Target"
-            width={TEMPLATE_W}
-            height={TEMPLATE_H}
-            draggable={false}
-            onClick={handleClick}
-            style={{ aspectRatio: `${TEMPLATE_W} / ${TEMPLATE_H}` }}
-            className="block w-full h-auto cursor-crosshair"
-          />
+          {space ? (
+            <>
+              <img
+                src={geometry ? (frameUrl as string) : targetImg}
+                alt={geometry ? 'Baseline frame' : 'Target'}
+                width={space.width}
+                height={space.height}
+                draggable={false}
+                style={{ aspectRatio: `${space.width} / ${space.height}` }}
+                className="block w-full h-auto"
+              />
+              <svg
+                viewBox={`0 0 ${space.width} ${space.height}`}
+                onClick={handleClick}
+                className="absolute inset-0 w-full h-full cursor-crosshair"
+              >
+                {/* Valid zones: each target's A4 sheet and outline */}
+                {geometry?.sheets.map(([a, b], i) => {
+                  const corners = [a, [b[0], a[1]], b, [a[0], b[1]]] as Pt[]
+                  return (
+                    <polygon
+                      key={`sheet-${i}`}
+                      points={corners.map(c => toSpace(c).join(',')).join(' ')}
+                      fill="rgba(251,191,36,0.08)"
+                      stroke={SHEET_COLOUR}
+                      strokeWidth={1.5 * unit}
+                      strokeDasharray={`${6 * unit} ${4 * unit}`}
+                      pointerEvents="none"
+                    />
+                  )
+                })}
+                {geometry?.view.targets.map((outline, i) => (
+                  <polygon
+                    key={`outline-${i}`}
+                    points={outline.map(c => toSpace(c).join(',')).join(' ')}
+                    fill="none"
+                    stroke={OUTLINE_COLOUR}
+                    strokeWidth={2 * unit}
+                    strokeLinejoin="round"
+                    pointerEvents="none"
+                  />
+                ))}
 
-          {/* Existing holes, faint, for context */}
-          {context.map((b, i) => (
-            <span
-              key={b.id}
-              className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-black"
-              style={{ left: `${(contextPoints[i][0] / TEMPLATE_W) * 100}%`, top: `${(contextPoints[i][1] / TEMPLATE_H) * 100}%` }}
-              title={`#${b.rank}`}
-            />
-          ))}
+                {/* Existing holes, faint, for context */}
+                {context.map((b, i) => {
+                  const [x, y] = toSpace(contextPoints[i])
+                  return (
+                    <circle key={b.id} cx={x} cy={y} r={4 * unit} fill="black" fillOpacity={0.7} pointerEvents="none">
+                      <title>{`#${b.rank}`}</title>
+                    </circle>
+                  )
+                })}
 
-          {/* The shots being placed — small red dots, matching the model's hole
-              size; click one to remove it */}
-          {points.map((p, i) => (
-            <button
-              key={p.key}
-              type="button"
-              onClick={() => removeAt(i)}
-              title="Remove this shot"
-              className="no-press absolute -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-red-600 ring-1 ring-white hover:bg-red-700 transition-colors"
-              style={{ left: `${(p.x / TEMPLATE_W) * 100}%`, top: `${(p.y / TEMPLATE_H) * 100}%` }}
-            />
-          ))}
+                {/* The shots being placed, as the live overlay draws a hole: a
+                    hollow ring with its number above; click one to remove it */}
+                {points.map((p, i) => {
+                  const [x, y] = toSpace([p.x, p.y])
+                  return (
+                    <g
+                      key={p.key}
+                      className="cursor-pointer"
+                      onClick={e => {
+                        e.stopPropagation()
+                        removeAt(i)
+                      }}
+                    >
+                      <title>Remove this shot</title>
+                      <circle cx={x} cy={y} r={RING} fill="none" stroke={MANUAL_COLOUR} strokeWidth={2 * unit} />
+                      <circle cx={x} cy={y} r={RING + 4 * unit} fill="transparent" />
+                      <text
+                        x={x}
+                        y={y - RING - 3 * unit}
+                        textAnchor="middle"
+                        fontSize={12 * unit}
+                        fontWeight={700}
+                        fill={MANUAL_COLOUR}
+                        {...textOutline}
+                        strokeWidth={3 * unit}
+                      >
+                        {i + 1}
+                      </text>
+                    </g>
+                  )
+                })}
+              </svg>
+            </>
+          ) : (
+            <div className="flex items-center justify-center text-sm text-slate-500 dark:text-slate-400" style={{ aspectRatio: `${TEMPLATE_W} / ${TEMPLATE_H}` }}>
+              Loading frame…
+            </div>
+          )}
         </div>
+
+        {notice && <p className="text-amber-600 dark:text-amber-400 text-xs mt-2">{notice}</p>}
 
         <div className="mt-3 flex items-center justify-between text-xs">
           <span className="text-slate-500 dark:text-slate-400">

@@ -84,3 +84,23 @@ def test_a_reserved_or_unsafe_alias_gets_a_safe_filename(client, run, monkeypatc
     name = run.baseline_image_path.rsplit("/", 1)[1]
     assert name.startswith("_CON-") and name.endswith(".jpg")
     assert (tmp_path / run.baseline_image_path).is_file()
+
+
+def test_a_reupload_of_another_type_replaces_the_file(client, run, tmp_path):
+    client.post(url(), content=PNG, headers={"content-type": "image/png"})
+    client.post(url(), content=b"\xff\xd8jpeg", headers={"content-type": "image/jpeg"})
+
+    files = [p for p in tmp_path.rglob("*") if p.is_file()]
+    assert files == [tmp_path / run.baseline_image_path]
+    assert run.baseline_image_path.endswith(".jpg")
+
+
+def test_an_oversized_upload_is_a_413_and_stores_nothing(client, run, tmp_path, monkeypatch):
+    from app.routers import baseline_image
+    monkeypatch.setattr(baseline_image, "MAX_BYTES", 8)
+
+    res = client.post(url(), content=PNG, headers={"content-type": "image/png"})
+
+    assert res.status_code == 413
+    assert run.baseline_image_path is None
+    assert not [p for p in tmp_path.rglob("*") if p.is_file()]

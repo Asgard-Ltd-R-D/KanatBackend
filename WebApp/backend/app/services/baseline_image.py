@@ -36,6 +36,11 @@ def store(db: DBSession, session_id: uuid.UUID, alias: str, content_type: str | 
     run = runs_repo.latest(db, session_id, alias)
     if run is None:
         raise HTTPException(status_code=404, detail="No Run for this camera in the Session")
+    # A re-upload replaces the Run's image, whatever its type, rather than orphaning it
+    if run.baseline_image_path:
+        previous = absolute_path(run.baseline_image_path)
+        if previous is not None:
+            previous.unlink()
     taken = run.taken_at.strftime("%Y%m%dT%H%M%S%f")
     relative = Path("baseline-images") / str(session_id) / f"{_safe_name(alias)}-{taken}{extension}"
     target = log_dir() / relative

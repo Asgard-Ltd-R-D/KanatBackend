@@ -881,9 +881,8 @@ def sheet_crops(sheets, context=None):
 
 
 @functools.cache
-def sheet_bound_tpl(path=PRINT_SCALE_PATH):
-    """The Target Sheet grown by `SHEET_BOUND_MM`, `(x0, y0, x1, y1)` template
-    px about the reference Target's artwork (#271, ADR-0011).
+def _the_print(path=PRINT_SCALE_PATH):
+    """The one print every Capture Setup holds: `(sheet_tpl_px, mm_per_tpl_px)`.
 
     ponytail: one print for every Capture Setup, as the file holds today, and
     refused if the setups ever disagree: a stream has no Capture Setup to pick
@@ -896,6 +895,20 @@ def sheet_bound_tpl(path=PRINT_SCALE_PATH):
         raise ValueError(f"{os.path.basename(path)}: the Capture Setups hold {len(prints)} "
                          "different sheets or print scales; detection takes one (ADR-0011)")
     (rect, mm_per_tpl_px), = prints
+    return rect, mm_per_tpl_px
+
+
+def live_print_scale(path=PRINT_SCALE_PATH):
+    """A live Stream's print scale, mm per template px: the one print's, as for
+    its sheet. Without it a live Bullet Hole is posted with no millimetres and
+    the report has no Position or Group for it."""
+    return _the_print(path)[1]
+
+
+def sheet_bound_tpl(path=PRINT_SCALE_PATH):
+    """The Target Sheet grown by `SHEET_BOUND_MM`, `(x0, y0, x1, y1)` template
+    px about the reference Target's artwork (#271, ADR-0011)."""
+    rect, mm_per_tpl_px = _the_print(path)
     grow = SHEET_BOUND_MM / mm_per_tpl_px
     x0, y0, x1, y1 = rect
     return x0 - grow, y0 - grow, x1 + grow, y1 + grow

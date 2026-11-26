@@ -907,11 +907,13 @@ def test_a_live_run_reports_its_rate_and_the_frames_it_looked_at(monkeypatch, ca
 
 
 def test_a_stream_is_never_looked_up_in_the_manifest(monkeypatch):
-    """rtsps too: hashed as a file, its URL reached a traceback, password and all."""
+    """rtsps too: hashed as a file, its URL reached a traceback, password and all.
+    It takes the one print's scale: with none, a live Bullet Hole had no
+    millimetres and the report printed its template px as its Position."""
     monkeypatch.setattr(nbh.manifest, "lookup",
                         lambda *args, **kwargs: pytest.fail("a stream was looked up"))
     for url in ("rtsp://mtx:8554/cam", "rtsps://operator:secret@mtx:8322/cam"):
-        assert nbh._print_scale(url, None, {"x": 0.2}) is None
+        assert nbh._print_scale(url, None, {"x": 0.2}) == board.live_print_scale() == 0.1763
         assert nbh._print_scale(url, 0.3, {"x": 0.2}) == 0.3
 
 

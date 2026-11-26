@@ -496,10 +496,13 @@ def _redacted(source):
 def _print_scale(source, mm_per_px, scales):
     """The run's print scale: `mm_per_px` when given, else the one `scales`
     holds for the Capture Setup the manifest gives a recording, else None. A
-    stream has no Capture Setup on record (#83); nor has a recording the
-    manifest does not list, which runs all the same and says so (ADR-0010)."""
-    if mm_per_px is not None or _is_stream(source):
+    stream has no Capture Setup on record (#83), so it takes the one print's
+    (`board.live_print_scale`), as the Detection Service's live Runs do. A
+    recording the manifest does not list runs without one and says so (ADR-0010)."""
+    if mm_per_px is not None:
         return mm_per_px
+    if _is_stream(source):
+        return board.live_print_scale()
     entry = manifest.lookup(source)
     if entry is None:
         print(f"[WARN] {source} is in no config/recordings.json entry, so it has no "

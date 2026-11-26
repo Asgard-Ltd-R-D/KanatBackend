@@ -66,7 +66,14 @@ def test_board_scale_lands_on_the_requested_net_scale():
                            canvas_long_side=canvas_long) == pytest.approx(0.90)
 
 
-# --- Target assignment and Miss ---------------------------------------------
+# --- Target assignment ------------------------------------------------------
+
+def _sheeted(targets, sheets):
+    """`_view` with a sheet bound per Target, as `build_view` gives (#271)."""
+    view = _view(targets)
+    view.sheets = sheets
+    return view
+
 
 def test_bullet_hole_inside_a_target_is_assigned_to_it():
     view = _view([_square(0, 0, 100), _square(500, 500, 100)])
@@ -74,16 +81,27 @@ def test_bullet_hole_inside_a_target_is_assigned_to_it():
     assert view.assign((550, 550)) == 1
 
 
-def test_bullet_hole_outside_every_target_is_a_miss():
-    """A real Hit on the Board, counted, but carrying no score."""
-    view = _view([_square(0, 0, 100), _square(500, 500, 100)])
+def test_bullet_hole_off_the_outline_takes_the_target_of_its_sheet():
+    """#422: no Miss. A Bullet Hole on a Target Sheet but outside the Target
+    printed on it belongs to that Target, so it gets a Position."""
+    view = _sheeted([_square(0, 0, 100), _square(500, 500, 100)],
+                    [(-50, -50, 150, 150), (450, 450, 650, 650)])
+    assert view.assign((140, 50)) == 0
+    assert view.assign((460, 640)) == 1
+
+
+def test_the_outline_wins_where_a_sheet_bound_overlaps_another_target():
+    """A Bullet Hole inside Target 2's outline is Target 2's even where
+    Target 1's sheet bound reaches over it."""
+    view = _sheeted([_square(0, 0, 100), _square(120, 0, 100)],
+                    [(-50, -50, 160, 150), (70, -50, 270, 150)])
+    assert view.assign((130, 50)) == 1
+
+
+def test_bullet_hole_beyond_every_sheet_has_no_target():
+    """Detection drops these (ADR-0011); only bench paths ever ask."""
+    view = _sheeted([_square(0, 0, 100)], [(-50, -50, 150, 150)])
     assert view.assign((300, 300)) is None
-
-
-def test_miss_is_not_claimed_by_the_nearest_target():
-    """Just outside a Target is still a Miss — proximity does not score."""
-    view = _view([_square(0, 0, 100)])
-    assert view.assign((101, 50)) is None
 
 
 def test_board_with_no_targets_assigns_nothing():
@@ -457,7 +475,7 @@ def _tracked(monkeypatch, reference):
 
 
 def test_a_bullet_hole_on_a_target_the_frame_lost_is_still_on_that_target(monkeypatch):
-    """#33: a shadow hiding Target 2 from the last frame is not a Miss."""
+    """#33: a shadow hiding Target 2 from the last frame does not lose it."""
     baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
     tracked = _tracked(monkeypatch, baseline)
     assert tracked.assign((550, 550)) == 1
@@ -478,10 +496,12 @@ def test_target_numbers_are_the_baselines_when_two_swap_area_order(monkeypatch):
     assert tracked.ring_centre(1) == pytest.approx(baseline.ring_centre(1))
 
 
-def test_a_bullet_hole_on_no_target_is_still_a_miss_on_a_tracked_view(monkeypatch):
-    """#33 keeps Misses Misses: the baseline's polygons are not widened."""
+def test_a_tracked_view_assigns_by_the_baselines_sheets(monkeypatch):
+    """#33: the baseline's polygons are not widened; its sheets decide (#422)."""
     baseline = _view([_square(0, 0, 100), _square(500, 500, 90)])
-    assert _tracked(monkeypatch, baseline).assign((300, 300)) is None
+    baseline.sheets = [(-50, -50, 150, 150), (450, 450, 640, 640)]
+    tracked = _tracked(monkeypatch, baseline)
+    assert tracked.assign((140, 140)) == 0 and tracked.assign((300, 300)) is None
 
 
 def test_the_crop_box_is_the_box_round_both_masks_empty_ones_left_out():

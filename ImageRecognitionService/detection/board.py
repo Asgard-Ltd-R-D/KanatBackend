@@ -742,17 +742,16 @@ class BoardView:
         return found
 
     def assign(self, point):
-        """Index of the Target this Bullet Hole is on, or None for a Miss.
-
-        A Miss is a real Hit on the Board, counted, but carrying no Shot Distance
-        and no score.
-        """
-        if not self.targets:
-            return None
+        """Index of the Target this Bullet Hole is on: the one whose outline
+        holds it, else the one whose sheet bound does (ADR-0014). None only
+        beyond every sheet, where detection never looks (ADR-0011)."""
         p = (float(point[0]), float(point[1]))
         inside = [i for i, t in enumerate(self.targets)
                   if cv2.pointPolygonTest(t, p, False) >= 0]
-        return inside[0] if inside else None
+        if inside:
+            return inside[0]
+        sheet = int(self.sheet_of([p])[0])
+        return None if sheet < 0 else sheet
 
 
 def build_view(frame, template_mask, board_scale=None):
@@ -921,7 +920,7 @@ def track_view(frame, reference, seed=None, previous=None, region=None):
     once, by the baseline view, and every subsequent frame reuses it. Only the
     homography is re-estimated. The Targets are the baseline's polygons in the
     baseline's order, not this frame's contours: a Target lost to a shadow here
-    would turn its Bullet Holes into Misses, and re-sorting by area would
+    would lose its Bullet Holes their Target, and re-sorting by area would
     renumber the rest (#33). This is what makes a position from frame 300
     comparable with a position from frame 1; rebuilding Board space per frame
     would silently move the origin under the history.
@@ -1177,8 +1176,8 @@ def to_millimetres(board_points, view, mm_per_tpl_px=None, target_index=None):
     printed Target, measured off its outline against the sheet
     (docs/ring_measurement.md). It is not a ruler reading of any ring.
 
-    `target_index` names the Target the Bullet Holes are on. A Miss has no
-    Target and therefore no Shot Distance — do not call this for one.
+    `target_index` names the Target the Bullet Holes are on (`assign`): the
+    one whose outline or, outside it, whose sheet holds them (ADR-0014).
 
     Deliberately refuses to guess. Every millimetre figure scales linearly with
     the print scale, and it depends on how the Targets were printed — an
@@ -1220,8 +1219,8 @@ def score(board_points, view, target_index=None):
     so the millimetre scale cancels and `to_millimetres`'s missing print scale
     does not block this.
 
-    Returns `OUTSIDE_RINGS` for a Bullet Hole on the Target but beyond the
-    6-ring. A Miss has no Target and so no score — do not call this for one.
+    Returns `OUTSIDE_RINGS` for a Bullet Hole beyond the 6-ring, its Target's
+    outline included (ADR-0014).
     """
     centre = view.ring_centre(target_index)
     points = np.asarray(board_points, np.float32).reshape(-1, 2)

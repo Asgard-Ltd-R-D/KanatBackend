@@ -18,20 +18,20 @@ import statistics
 
 
 def groups(holes):
-    """Each Target's Group statistics, and how many Misses were left out.
+    """Each Target's Group statistics.
 
     `holes` are reported Bullet Holes: dicts with "target" (an index, or None
-    for a Miss) and "mm" (X, Y offset from that Target's centre, Y up). Returns
-    `({target: {"n", "mpi", "cep", "mean_radius", "rms_radius", "extreme_spread"}},
-    misses)`. A Target with no Bullet Holes has no entry; below two Bullet
-    Holes every spread measure is None.
+    beyond every sheet) and "mm" (X, Y offset from that Target's centre, Y up,
+    or None). Returns `{target: {"n", "mpi", "cep", "mean_radius", "rms_radius",
+    "extreme_spread"}}`; a Bullet Hole without a Target or millimetres is in no
+    Group. A Target with no Bullet Holes has no entry; below two Bullet Holes
+    every spread measure is None.
     """
     by_target = {}
     for hole in holes:
-        if hole["target"] is not None:
+        if hole["target"] is not None and hole["mm"] is not None:
             by_target.setdefault(hole["target"], []).append(tuple(map(float, hole["mm"])))
-    misses = sum(1 for hole in holes if hole["target"] is None)
-    return {t: _group(pts) for t, pts in sorted(by_target.items())}, misses
+    return {t: _group(pts) for t, pts in sorted(by_target.items())}
 
 
 def _group(pts):

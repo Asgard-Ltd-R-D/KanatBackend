@@ -7,7 +7,7 @@ The runtime pipeline from bullet_hole_detection_pipeline_updated.md:
       -> homography              board.register (baseline), board.track_view (#50)
       -> Target Sheet canvases   board.BoardView.sheet_canvases, at TARGET_NET_SCALE
       -> YOLO on the sheets      one batched call; beyond every sheet dropped (ADR-0011)
-      -> Target / Miss           board.BoardView.assign
+      -> Target                  board.BoardView.assign, by outline else sheet (ADR-0014)
       -> baseline + persistence  Persistence, here
       -> millimetres, score      NOT IMPLEMENTED, see board.to_millimetres
 
@@ -589,8 +589,8 @@ class BulletHoleConfirmed(NamedTuple):
     on the detection thread when it is Confirmed, and never updated
     (ADR-0004). `first_seen_at` is its first frame's `wall_clock`, UTC
     (#152). `template_xy` is its place on the Board in Template coordinates,
-    unclipped. `target` is None for a Miss, and `mm` its Position, or None
-    without one."""
+    unclipped. `target` is the Target it is on (ADR-0014), and `mm` its
+    Position, or None without a print scale."""
     first_frame: int
     first_seen_at: datetime
     template_xy: tuple[float, float]
@@ -2160,12 +2160,9 @@ def _corroborates(points, box, match_px):
 
 def _measure(hole, view, mm_per_tpl_px):
     """Set a Bullet Hole's score and millimetres; return why there are no
-    millimetres, if calibration is the reason.
-
-    A Miss has no Target and so no Shot Distance — by definition, not by
-    omission. Measuring it against some Target's centre would be a number with
-    no meaning. See CONTEXT.md, Miss.
-    """
+    millimetres, if calibration is the reason. Measured from the centre of
+    the Target it is on, inside its outline or not (ADR-0014); one beyond
+    every sheet has no Target and so nothing to measure from."""
     hole["mm"] = hole["score"] = None
     if hole["target"] is None:
         return None
@@ -2180,7 +2177,7 @@ def _measure(hole, view, mm_per_tpl_px):
 
 
 def _where(hole):
-    return "MISS" if hole["target"] is None else f"Target {hole['target'] + 1}"
+    return "no Target" if hole["target"] is None else f"Target {hole['target'] + 1}"
 
 
 def _measurement(hole):
@@ -2204,12 +2201,6 @@ def _bullet_hole_line(hole, when):
             f"persistence {hole['persistence']:.0%}  [{evidence}]{_measurement(hole)}")
 
 
-def _on_target_or_miss(holes):
-    """`(n on a Target, m Miss)`, for a count line."""
-    misses = sum(1 for h in holes if h["target"] is None)
-    return f"({len(holes) - misses} on a Target, {misses} Miss)"
-
-
 def _report(new, baseline, when, view, mm_per_tpl_px, looked_at):
     """`when(index)` is a looked-at frame's time as printed (`RegisteredFrames.when`).
 
@@ -2226,12 +2217,12 @@ def _report(new, baseline, when, view, mm_per_tpl_px, looked_at):
     if not marks:
         print("[INFO] no Baseline Marks: the detector saw nothing in the baseline Looks")
     else:
-        print(f"[INFO] {len(marks)} Baseline Marks {_on_target_or_miss(marks)}: what the detector "
+        print(f"[INFO] {len(marks)} Baseline Marks: what the detector "
               f"saw in the baseline Looks, not truth")
     for k, mark in enumerate(marks, 1):
         print(f"  P{k}  {_where(mark):<9}{_measurement(mark)}".rstrip())
 
-    print(f"[INFO] {len(new)} new Bullet Holes {_on_target_or_miss(new)}")
+    print(f"[INFO] {len(new)} new Bullet Holes")
     for i, hole in enumerate(new, 1):
         print(f"  #{i}  {_bullet_hole_line(hole, when)}")
 
@@ -2261,11 +2252,7 @@ def _report_groups(new, mm_per_tpl_px):
         print("[GROUP] no Group statistics: the print scale is not configured for "
               "this Capture Setup")
         return
-    stats, misses = groups.groups(new)
-    if misses:
-        print(f"[GROUP] {misses} Miss excluded from every Group" if misses == 1 else
-              f"[GROUP] {misses} Misses excluded from every Group")
-    for target, g in stats.items():
+    for target, g in groups.groups(new).items():
         print(f"[GROUP] Target {target + 1}: {g['n']} Bullet Hole{'s' if g['n'] > 1 else ''}"
               f" (counts Bullet Holes, not Hits: a tight Group can be under-counted, ADR-0001)")
         print(f"      MPI  X {g['mpi'][0]:+7.1f} mm  Y {g['mpi'][1]:+7.1f} mm")
@@ -2306,9 +2293,8 @@ def _render(video, start, n_frames, views, baseline, new, out_video,
                 continue
             shown += 1
             q = np.int32(hole["pos"])
-            colour = (0, 165, 255) if hole["target"] is None else (0, 0, 255)
-            cv2.circle(vis, tuple(q), 16, colour, 3)
-            cv2.putText(vis, f"#{shown}" + ("M" if hole["target"] is None else ""),
+            cv2.circle(vis, tuple(q), 16, (0, 0, 255), 3)
+            cv2.putText(vis, f"#{shown}",
                         (q[0] + 19, q[1] + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         cv2.putText(vis, f"t {start + idx / fps:5.2f}s", (16, 34),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)

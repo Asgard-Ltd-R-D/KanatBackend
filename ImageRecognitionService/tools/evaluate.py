@@ -971,7 +971,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     goes, and return what a pooled report reads (position_error.py, #126).
     With a `Move`, the run reads a `MovedRecording` (#164). It returns:
 
-    - `rows`: per matched pair, `(found #, truth #, Target or "MISS", dX, dY,
+    - `rows`: per matched pair, `(found #, truth #, Target or "no Target", dX, dY,
       radial)`, 1-based, mm, in truth order;
     - `unmatched` and `missed`: the detections no truth claimed and the truth
       no detection found;
@@ -1095,7 +1095,7 @@ def score_recording(video, start, end, truth_labels, truth_image=None,
     for (i, j, _), (dx, dy, radial) in sorted(zip(result["pairs"], errors),
                                               key=lambda t: t[0][1]):
         target = run.holes[i]["target"]
-        where = "MISS" if target is None else f"Target {target + 1}"
+        where = "no Target" if target is None else f"Target {target + 1}"
         rows.append((i + 1, j + 1, where, dx, dy, radial))
     unit = "template px" if mm_per_tpl_px is None else "mm"
     scale = (f"{mm_per_tpl_px} mm per template px "
